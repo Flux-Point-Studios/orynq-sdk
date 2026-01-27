@@ -1,0 +1,69 @@
+{
+  "name": "@poi-sdk/transport-x402",
+  "version": "0.0.0",
+  "description": "x402 protocol transport implementation for poi-sdk",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "clean": "rimraf dist"
+  },
+  "keywords": [
+    "poi",
+    "x402",
+    "payments",
+    "http-402",
+    "evm",
+    "coinbase"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@poi-sdk/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@x402/fetch": ">=0.1.0",
+    "@x402/evm": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@x402/fetch": {
+      "optional": true
+    },
+    "@x402/evm": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "sideEffects": false
+}

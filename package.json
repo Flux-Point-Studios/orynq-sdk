@@ -1,0 +1,39 @@
+{
+  "name": "poi-sdk",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Dual-protocol commerce layer supporting x402 v2 and Flux protocol",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel dev",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "pnpm -r lint",
+    "lint:fix": "pnpm -r lint:fix",
+    "typecheck": "pnpm -r typecheck",
+    "clean": "pnpm -r clean && rimraf node_modules",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "publish": "pnpm build && changeset publish",
+    "vectors:generate": "tsx scripts/generate-hash-vectors.ts",
+    "vectors:verify": "tsx scripts/verify-hash-vectors.ts",
+    "vectors:verify:python": "python scripts/verify-hash-vectors.py",
+    "vectors:verify:all": "pnpm vectors:verify && pnpm vectors:verify:python"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.0",
+    "@types/node": "^20.11.0",
+    "@vitest/coverage-v8": "1.6.0",
+    "rimraf": "^5.0.5",
+    "tsup": "^8.0.1",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@8.14.0"
+}

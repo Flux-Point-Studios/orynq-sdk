@@ -1,0 +1,69 @@
+{
+  "name": "@poi-sdk/payer-evm-x402",
+  "version": "0.0.0",
+  "description": "EVM payer for x402 protocol with EIP-3009 gasless signatures using Coinbase's @x402/evm",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "clean": "rimraf dist"
+  },
+  "keywords": [
+    "poi",
+    "evm",
+    "x402",
+    "usdc",
+    "viem",
+    "eip-3009",
+    "gasless",
+    "payments",
+    "payer",
+    "coinbase"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@poi-sdk/core": "workspace:*",
+    "@poi-sdk/transport-x402": "workspace:*"
+  },
+  "peerDependencies": {
+    "viem": ">=2.0.0",
+    "@x402/evm": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@x402/evm": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3",
+    "viem": "^2.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "sideEffects": false
+}
