@@ -190,7 +190,7 @@ describe("Client Auto-Pay Flow (Mock Server)", () => {
         amount: paymentRequest?.amountUnits,
       });
     } finally {
-      server.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 
@@ -243,7 +243,9 @@ describe("Client Auto-Pay Flow (Mock Server)", () => {
 
         console.log("  Full auto-pay flow completed successfully");
       } finally {
-        server.close();
+        // Wait a small delay to allow pending connections to complete before closing
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        await new Promise<void>((resolve) => server.close(() => resolve()));
       }
     },
     TEST_TIMEOUT
@@ -269,7 +271,7 @@ describe("Client Auto-Pay Flow (Mock Server)", () => {
       // Server should not have received payment
       expect(serverState.paymentReceived).toBe(false);
     } finally {
-      server.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 
@@ -291,7 +293,7 @@ describe("Client Auto-Pay Flow (Mock Server)", () => {
       // Server should not have received payment
       expect(serverState.paymentReceived).toBe(false);
     } finally {
-      server.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 });
@@ -383,7 +385,7 @@ describe.skipIf(shouldSkipRealTests)("Client Auto-Pay Flow (Real EVM Payer)", ()
 
       console.log("  Integration with real payer verified (payment cancelled)");
     } finally {
-      server.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 });
@@ -436,7 +438,7 @@ describe("Client Budget Enforcement", () => {
 
       console.log("  Per-request budget limit enforced");
     } finally {
-      server.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 
@@ -467,7 +469,7 @@ describe("Client Budget Enforcement", () => {
 
       console.log("  Payment within budget completed");
     } finally {
-      server.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 
@@ -504,7 +506,7 @@ describe("Client Budget Enforcement", () => {
 
       console.log(`  Budget tracking: ${initialBudget} -> ${remainingBudget}`);
     } finally {
-      server.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 });
