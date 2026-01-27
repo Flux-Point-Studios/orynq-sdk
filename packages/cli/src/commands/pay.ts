@@ -15,6 +15,7 @@ import chalk from "chalk";
 import type { Command } from "commander";
 import type { PaymentRequest } from "@poi-sdk/core";
 import { createEvmPayer } from "@poi-sdk/payer-evm-direct";
+import { readFileSync, existsSync } from "node:fs";
 
 /**
  * Register the 'pay' command with the CLI program.
@@ -26,8 +27,15 @@ import { createEvmPayer } from "@poi-sdk/payer-evm-direct";
  *
  * @example
  * ```bash
- * poi pay '{"protocol":"flux","chain":"eip155:8453","asset":"USDC","amountUnits":"1000000","payTo":"0x..."}' -k 0xprivatekey
- * poi pay '{"..."}' -k 0xkey --rpc https://mainnet.base.org
+ * # Using environment variable (RECOMMENDED)
+ * export POI_PRIVATE_KEY=0x...
+ * poi pay '{"protocol":"flux","chain":"eip155:8453","asset":"USDC","amountUnits":"1000000","payTo":"0x..."}'
+ *
+ * # Using key file
+ * poi pay '{"..."}' --key-file ./my-key.txt --rpc https://mainnet.base.org
+ *
+ * # Direct key (NOT RECOMMENDED - stored in shell history)
+ * poi pay '{"..."}' -k 0xprivatekey
  * ```
  */
 export function registerPayCommand(program: Command): void {
@@ -35,7 +43,8 @@ export function registerPayCommand(program: Command): void {
     .command("pay <invoice-json>")
     .description("Pay an invoice manually")
     .option("-p, --payer <type>", "Payer type (evm-direct)", "evm-direct")
-    .option("-k, --key <privateKey>", "Private key (hex with 0x prefix)")
+    .option("-k, --key <privateKey>", "Private key (INSECURE: stored in shell history, use POI_PRIVATE_KEY env var instead)")
+    .option("--key-file <path>", "Path to file containing private key (more secure than --key)")
     .option("--rpc <url>", "RPC URL for EVM chain")
     .action(async (invoiceJson: string, options: PayOptions) => {
       // Parse the invoice JSON
@@ -76,7 +85,52 @@ export function registerPayCommand(program: Command): void {
 interface PayOptions {
   payer: string;
   key?: string;
+  keyFile?: string;
   rpc?: string;
+}
+
+/**
+ * Environment variable name for private key.
+ */
+const PRIVATE_KEY_ENV_VAR = "POI_PRIVATE_KEY";
+
+/**
+ * Resolve the private key from various sources.
+ * Priority: 1) --key-file, 2) --key, 3) POI_PRIVATE_KEY env var
+ *
+ * @param options - Command options
+ * @returns The resolved private key or undefined
+ */
+function resolvePrivateKey(options: PayOptions): string | undefined {
+  // Priority 1: Key file (most secure for CLI usage)
+  if (options.keyFile) {
+    if (!existsSync(options.keyFile)) {
+      console.log(chalk.red(`Error: Key file not found: ${options.keyFile}`));
+      process.exit(1);
+    }
+    try {
+      const key = readFileSync(options.keyFile, "utf-8").trim();
+      return key;
+    } catch (error) {
+      console.log(chalk.red(`Error reading key file: ${error instanceof Error ? error.message : String(error)}`));
+      process.exit(1);
+    }
+  }
+
+  // Priority 2: Direct key argument (warn about shell history)
+  if (options.key) {
+    console.log(chalk.yellow("⚠️  Warning: Private key passed via --key flag is stored in shell history."));
+    console.log(chalk.yellow("   Consider using POI_PRIVATE_KEY env var or --key-file instead."));
+    return options.key;
+  }
+
+  // Priority 3: Environment variable (recommended)
+  const envKey = process.env[PRIVATE_KEY_ENV_VAR];
+  if (envKey) {
+    return envKey;
+  }
+
+  return undefined;
 }
 
 /**
@@ -89,14 +143,19 @@ interface PayOptions {
  * @param options - Command options including private key and RPC URL
  */
 async function handleEvmDirectPayment(request: PaymentRequest, options: PayOptions): Promise<void> {
-  if (!options.key) {
-    console.log(chalk.red("Error: --key required for evm-direct payer"));
-    console.log(chalk.gray("  Provide a private key with 0x prefix"));
+  const privateKey = resolvePrivateKey(options);
+
+  if (!privateKey) {
+    console.log(chalk.red("Error: Private key required for evm-direct payer"));
+    console.log(chalk.gray("\n  Provide a private key using one of these methods (in order of security):"));
+    console.log(chalk.gray(`    1. Environment variable: export ${PRIVATE_KEY_ENV_VAR}=0x...`));
+    console.log(chalk.gray("    2. Key file: --key-file ./path/to/key.txt"));
+    console.log(chalk.gray("    3. Direct (insecure): --key 0x..."));
     process.exit(1);
   }
 
   // Validate key format
-  if (!options.key.startsWith("0x") || options.key.length !== 66) {
+  if (!privateKey.startsWith("0x") || privateKey.length !== 66) {
     console.log(chalk.red("Error: Invalid private key format"));
     console.log(chalk.gray("  Expected: 0x followed by 64 hex characters"));
     process.exit(1);
@@ -107,7 +166,7 @@ async function handleEvmDirectPayment(request: PaymentRequest, options: PayOptio
     if (options.rpc) {
       payerConfig.rpcUrls = { [request.chain]: options.rpc };
     }
-    const payer = createEvmPayer(options.key as `0x${string}`, payerConfig);
+    const payer = createEvmPayer(privateKey as `0x${string}`, payerConfig);
 
     // Check if payer supports this request
     if (!payer.supports(request)) {

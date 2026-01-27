@@ -15,6 +15,7 @@ import chalk from "chalk";
 import type { Command } from "commander";
 import { createPoiClient } from "@poi-sdk/client";
 import { createEvmPayer } from "@poi-sdk/payer-evm-direct";
+import { readFileSync, existsSync } from "node:fs";
 
 /**
  * Register the 'call' command with the CLI program.
@@ -27,8 +28,14 @@ import { createEvmPayer } from "@poi-sdk/payer-evm-direct";
  *
  * @example
  * ```bash
- * poi call https://api.example.com/generate -k 0xprivatekey -b '{"prompt":"hello"}'
- * poi call https://api.example.com/resource -k 0xkey -m POST --partner myapp
+ * # Using environment variable (RECOMMENDED)
+ * export POI_PRIVATE_KEY=0x...
+ * poi call https://api.example.com/generate -b '{"prompt":"hello"}'
+ *
+ * # Using key file
+ * poi call https://api.example.com/resource --key-file ./key.txt -m POST --partner myapp
+ *
+ * # Direct key (NOT RECOMMENDED - stored in shell history)
  * poi call https://api.example.com/expensive -k 0xkey --max-per-request 5000000
  * ```
  */
@@ -38,19 +45,25 @@ export function registerCallCommand(program: Command): void {
     .description("Make a request with automatic payment handling")
     .option("-m, --method <method>", "HTTP method", "POST")
     .option("-b, --body <json>", "Request body as JSON")
-    .option("-k, --key <privateKey>", "Private key for payment (0x...)")
+    .option("-k, --key <privateKey>", "Private key (INSECURE: stored in shell history, use POI_PRIVATE_KEY env var instead)")
+    .option("--key-file <path>", "Path to file containing private key (more secure than --key)")
     .option("--partner <partner>", "Partner ID for attribution")
     .option("--max-per-request <amount>", "Max amount per request (atomic units)")
     .option("--rpc <url>", "RPC URL for EVM chain")
     .action(async (url: string, options: CallOptions) => {
-      if (!options.key) {
-        console.log(chalk.red("Error: --key required for auto-pay"));
-        console.log(chalk.gray("  Provide a private key with 0x prefix"));
+      const privateKey = resolvePrivateKey(options);
+
+      if (!privateKey) {
+        console.log(chalk.red("Error: Private key required for auto-pay"));
+        console.log(chalk.gray("\n  Provide a private key using one of these methods (in order of security):"));
+        console.log(chalk.gray(`    1. Environment variable: export ${PRIVATE_KEY_ENV_VAR}=0x...`));
+        console.log(chalk.gray("    2. Key file: --key-file ./path/to/key.txt"));
+        console.log(chalk.gray("    3. Direct (insecure): --key 0x..."));
         process.exit(1);
       }
 
       // Validate key format
-      if (!options.key.startsWith("0x") || options.key.length !== 66) {
+      if (!privateKey.startsWith("0x") || privateKey.length !== 66) {
         console.log(chalk.red("Error: Invalid private key format"));
         console.log(chalk.gray("  Expected: 0x followed by 64 hex characters"));
         process.exit(1);
@@ -94,7 +107,7 @@ export function registerCallCommand(program: Command): void {
         if (options.rpc) {
           payerConfig.rpcUrls = {};
         }
-        const payer = createEvmPayer(options.key as `0x${string}`, payerConfig);
+        const payer = createEvmPayer(privateKey as `0x${string}`, payerConfig);
 
         // Build client config with proper optional property handling
         type ClientConfig = Parameters<typeof createPoiClient>[0];
@@ -152,7 +165,52 @@ interface CallOptions {
   method: string;
   body?: string;
   key?: string;
+  keyFile?: string;
   partner?: string;
   maxPerRequest?: string;
   rpc?: string;
+}
+
+/**
+ * Environment variable name for private key.
+ */
+const PRIVATE_KEY_ENV_VAR = "POI_PRIVATE_KEY";
+
+/**
+ * Resolve the private key from various sources.
+ * Priority: 1) --key-file, 2) --key, 3) POI_PRIVATE_KEY env var
+ *
+ * @param options - Command options
+ * @returns The resolved private key or undefined
+ */
+function resolvePrivateKey(options: CallOptions): string | undefined {
+  // Priority 1: Key file (most secure for CLI usage)
+  if (options.keyFile) {
+    if (!existsSync(options.keyFile)) {
+      console.log(chalk.red(`Error: Key file not found: ${options.keyFile}`));
+      process.exit(1);
+    }
+    try {
+      const key = readFileSync(options.keyFile, "utf-8").trim();
+      return key;
+    } catch (error) {
+      console.log(chalk.red(`Error reading key file: ${error instanceof Error ? error.message : String(error)}`));
+      process.exit(1);
+    }
+  }
+
+  // Priority 2: Direct key argument (warn about shell history)
+  if (options.key) {
+    console.log(chalk.yellow("⚠️  Warning: Private key passed via --key flag is stored in shell history."));
+    console.log(chalk.yellow("   Consider using POI_PRIVATE_KEY env var or --key-file instead."));
+    return options.key;
+  }
+
+  // Priority 3: Environment variable (recommended)
+  const envKey = process.env[PRIVATE_KEY_ENV_VAR];
+  if (envKey) {
+    return envKey;
+  }
+
+  return undefined;
 }
