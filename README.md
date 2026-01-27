@@ -89,27 +89,40 @@ data = response.json()
 
 ```typescript
 import express from 'express';
-import { createPaymentMiddleware } from '@fluxpointstudios/poi-sdk-server-middleware';
+import {
+  requirePayment,
+  MemoryInvoiceStore,
+  CardanoVerifier,
+  cors402,
+} from '@fluxpointstudios/poi-sdk-server-middleware';
 
 const app = express();
+app.use(express.json());
+app.use(require('cors')(cors402()));
 
-const paymentMiddleware = createPaymentMiddleware({
-  pricing: async (req) => ({
-    amount: '1000000',  // 1 ADA
-    currency: 'ADA',
-    recipient: 'addr1...',
+const store = new MemoryInvoiceStore();
+const verifier = new CardanoVerifier({
+  blockfrostProjectId: process.env.BLOCKFROST_KEY!,
+});
+
+app.get(
+  '/premium',
+  requirePayment({
+    price: async () => ({
+      chain: 'cardano:mainnet',
+      asset: 'ADA',
+      amountUnits: '1000000', // 1 ADA
+    }),
+    payTo: 'addr1...',
+    storage: store,
+    verifiers: [verifier],
+    protocols: ['flux', 'x402'],
   }),
-  verify: async (proof) => {
-    // Verify payment on-chain
-    return { valid: true };
-  },
-  protocols: ['flux', 'x402'],  // Emit both protocols
-});
-
-app.get('/premium', paymentMiddleware, (req, res) => {
-  res.json({ data: 'premium content' });
-});
+  (_req, res) => res.json({ data: 'premium content' })
+);
 ```
+
+> **Note:** The middleware emits both Flux and x402 402 responses, but x402 signature settlement is handled by the gateway, not the middleware directly.
 
 ### Protocol Gateway
 
