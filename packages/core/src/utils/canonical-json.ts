@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/core/src/utils/canonical-json.ts
  * @summary RFC 8785 (JCS) JSON Canonicalization implementation.
  *
  * This file implements the JSON Canonicalization Scheme (JCS) as defined in

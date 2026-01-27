@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/core/src/types/budget.ts
  * @summary Budget configuration and storage interfaces for payment limits.
  *
  * This file defines the interfaces for managing payment budgets and caching

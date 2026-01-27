@@ -5,8 +5,8 @@
     "rootDir": "./src",
     "baseUrl": ".",
     "paths": {
-      "@poi-sdk/core": ["./src/index.ts"],
-      "@poi-sdk/core/*": ["./src/*"]
+      "@fluxpointstudios/poi-sdk-core": ["./src/index.ts"],
+      "@fluxpointstudios/poi-sdk-core/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts"],

@@ -3,8 +3,8 @@
 ## Overview
 
 This document summarizes the completed implementation of the EVM payers for poi-sdk:
-- `@poi-sdk/payer-evm-direct` - Direct ERC-20 transfers via viem
-- `@poi-sdk/payer-evm-x402` - EIP-3009 gasless signatures for x402 protocol
+- `@fluxpointstudios/poi-sdk-payer-evm-direct` - Direct ERC-20 transfers via viem
+- `@fluxpointstudios/poi-sdk-payer-evm-x402` - EIP-3009 gasless signatures for x402 protocol
 
 ## Implementation Status
 
@@ -15,7 +15,7 @@ Both packages have been implemented with:
 
 ---
 
-## @poi-sdk/payer-evm-direct
+## @fluxpointstudios/poi-sdk-payer-evm-direct
 
 ### Location
 `D:\fluxPoint\PoI\poi-sdk\packages\payer-evm-direct`
@@ -67,7 +67,7 @@ Both packages have been implemented with:
 
 ---
 
-## @poi-sdk/payer-evm-x402
+## @fluxpointstudios/poi-sdk-payer-evm-x402
 
 ### Location
 `D:\fluxPoint\PoI\poi-sdk\packages\payer-evm-x402`
@@ -154,12 +154,12 @@ Both packages have been implemented with:
 Both packages build successfully:
 
 ```
-@poi-sdk/payer-evm-direct:
+@fluxpointstudios/poi-sdk-payer-evm-direct:
   ESM: 11.89 KB
   CJS: 12.08 KB
   DTS: 15.37 KB
 
-@poi-sdk/payer-evm-x402:
+@fluxpointstudios/poi-sdk-payer-evm-x402:
   ESM: 42.06 KB
   CJS: 42.61 KB
   DTS: 33.65 KB

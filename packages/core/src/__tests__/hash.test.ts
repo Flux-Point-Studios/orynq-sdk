@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/core/src/__tests__/hash.test.ts
  * @summary Tests for SHA256 hashing and idempotency key generation.
  */
 

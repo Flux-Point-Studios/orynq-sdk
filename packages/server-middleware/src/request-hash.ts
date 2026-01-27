@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/server-middleware/src/request-hash.ts
  * @summary Request hashing utilities for idempotency and deduplication.
  *
  * This file provides functions to generate deterministic hashes of HTTP
@@ -19,7 +18,7 @@
  * - Invoice store for finding existing invoices
  */
 
-import { canonicalize, sha256StringHex } from "@poi-sdk/core";
+import { canonicalize, sha256StringHex } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Types

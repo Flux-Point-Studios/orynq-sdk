@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/core/src/__tests__/canonical-json.test.ts
  * @summary Tests for RFC 8785 (JCS) JSON Canonicalization implementation.
  */
 

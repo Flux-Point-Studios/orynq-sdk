@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/server-middleware/src/express.ts
  * @summary Express middleware factory for payment-required endpoints.
  *
  * This file provides Express middleware that implements HTTP 402 Payment Required
@@ -20,7 +19,7 @@ import {
   X402_HEADERS,
   type ChainId,
   type PaymentProof,
-} from "@poi-sdk/core";
+} from "@fluxpointstudios/poi-sdk-core";
 import type { InvoiceStore, Invoice, CreateInvoiceParams } from "./invoice-store.js";
 import type { ChainVerifier } from "./verifiers/interface.js";
 import { findVerifier } from "./verifiers/interface.js";
@@ -175,7 +174,7 @@ export interface RequirePaymentOptions {
  * @example
  * ```typescript
  * import express from "express";
- * import { requirePayment, MemoryInvoiceStore, CardanoVerifier } from "@poi-sdk/server-middleware";
+ * import { requirePayment, MemoryInvoiceStore, CardanoVerifier } from "@fluxpointstudios/poi-sdk-server-middleware";
  *
  * const app = express();
  * const store = new MemoryInvoiceStore();
@@ -550,7 +549,7 @@ function emit402Response(
  * @example
  * ```typescript
  * import cors from "cors";
- * import { cors402 } from "@poi-sdk/server-middleware";
+ * import { cors402 } from "@fluxpointstudios/poi-sdk-server-middleware";
  *
  * app.use(cors(cors402()));
  * ```

@@ -1,5 +1,8 @@
 # poi-sdk Python
 
+> **Note:** The Python SDK currently supports **Flux protocol only** (Cardano).
+> x402 protocol support for EVM chains is planned for a future release.
+
 Dual-protocol commerce layer for Cardano/EVM payments.
 
 ## Installation
@@ -83,6 +86,11 @@ class MyCardanoPayer(BasePayer):
 - **Streaming**: NDJSON streaming support for long-running requests
 - **Signers**: Memory (dev) and KMS (prod) signer implementations
 
-## Version
+## Version & Protocol Support
 
-v0.1.0 - Flux protocol only
+**v0.1.0**
+
+| Protocol | Status |
+|----------|--------|
+| Flux (Cardano) | Supported |
+| x402 (EVM) | Not yet supported |

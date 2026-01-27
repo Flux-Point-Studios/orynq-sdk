@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/server-middleware/src/verifiers/interface.ts
  * @summary Chain verifier interface for payment proof verification.
  *
  * This file defines the ChainVerifier interface that all blockchain-specific
@@ -14,7 +13,7 @@
  * - EvmVerifier for EVM chain verification
  */
 
-import type { ChainId, PaymentProof } from "@poi-sdk/core";
+import type { ChainId, PaymentProof } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Verification Result

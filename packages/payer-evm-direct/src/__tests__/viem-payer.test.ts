@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-direct/src/__tests__/viem-payer.test.ts
  * @summary Unit tests for ViemPayer implementation.
  *
  * Tests cover:
@@ -15,8 +14,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from "vitest";
 import { privateKeyToAccount } from "viem/accounts";
-import type { PaymentRequest } from "@poi-sdk/core";
-import { InsufficientBalanceError } from "@poi-sdk/core";
+import type { PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
+import { InsufficientBalanceError } from "@fluxpointstudios/poi-sdk-core";
 import { ViemPayer } from "../viem-payer.js";
 
 // Test private key (DO NOT USE IN PRODUCTION - this is a well-known test key)

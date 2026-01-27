@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-node/src/providers/interface.ts
  * @summary Cardano blockchain provider interface definitions.
  *
  * This file defines the abstract interfaces for interacting with Cardano blockchain

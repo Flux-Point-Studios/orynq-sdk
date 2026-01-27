@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/gateway/src/server.ts
  * @summary Express server implementation for the x402 gateway.
  *
  * This file creates an Express application that acts as an x402 gateway,
@@ -29,12 +28,20 @@
 
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
-import { X402_HEADERS, FLUX_HEADERS } from "@poi-sdk/core";
-import { MemoryInvoiceStore, cors402 } from "@poi-sdk/server-middleware";
+import { X402_HEADERS, FLUX_HEADERS } from "@fluxpointstudios/poi-sdk-core";
+import { MemoryInvoiceStore, cors402 } from "@fluxpointstudios/poi-sdk-server-middleware";
 import type { GatewayConfig } from "./config.js";
 import { mergeConfig, validateConfig } from "./config.js";
 import { createForwardMiddleware, type GatewayRequest } from "./forward.js";
-import { generateInvoiceId } from "./invoice-bridge.js";
+import { generateInvoiceId, generateInvoiceIdSync } from "./invoice-bridge.js";
+import { MemoryX402SettlementStore, type X402SettlementStore } from "./x402-settlement-store.js";
+import {
+  settleX402Payment,
+  validateTrustMode,
+  PaymentMismatchError,
+  SettlementError,
+  TrustModeError,
+} from "./x402-settler.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -50,9 +57,14 @@ export interface GatewayServer {
   app: Express;
 
   /**
-   * Invoice store used by the gateway.
+   * Invoice store used by the gateway (Flux protocol).
    */
   invoiceStore: MemoryInvoiceStore;
+
+  /**
+   * x402 settlement store for tracking payment state.
+   */
+  x402SettlementStore: X402SettlementStore;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +105,11 @@ export function createGatewayServer(config: GatewayConfig): GatewayServer {
   // Validate configuration
   validateConfig(config);
   const mergedConfig = mergeConfig(config);
+
+  // Validate trust mode safety (throws if trust mode is used incorrectly)
+  if (mergedConfig.x402?.mode) {
+    validateTrustMode(mergedConfig.x402.mode);
+  }
 
   const app = express();
   const debug = mergedConfig.debug;
@@ -143,6 +160,12 @@ export function createGatewayServer(config: GatewayConfig): GatewayServer {
   const invoiceStore = new MemoryInvoiceStore();
 
   // ---------------------------------------------------------------------------
+  // x402 Settlement Storage
+  // ---------------------------------------------------------------------------
+
+  const x402SettlementStore: X402SettlementStore = new MemoryX402SettlementStore();
+
+  // ---------------------------------------------------------------------------
   // Forward Middleware
   // ---------------------------------------------------------------------------
 
@@ -176,13 +199,144 @@ export function createGatewayServer(config: GatewayConfig): GatewayServer {
       const x402Signature = req.headers[X402_HEADERS.PAYMENT_SIGNATURE.toLowerCase()];
 
       if (x402Signature) {
-        // x402 payment provided - for x402 protocol, the facilitator has already
-        // verified the payment. We trust the signature and forward to backend.
+        // x402 payment provided - MUST verify and settle before granting access
+        const idempotencyKey = req.headers["x-idempotency-key"] as string | undefined;
+        const invoiceId = req.headers[FLUX_HEADERS.INVOICE_ID.toLowerCase()] as string | undefined;
+
         if (debug) {
-          console.log("[Gateway] x402 payment signature present, forwarding");
+          console.log("[Gateway] x402 payment signature received, verifying...");
         }
-        gatewayReq.paymentVerified = true;
-        return next();
+
+        // Find the invoice to settle against
+        let storedInvoice = null;
+
+        // First try by invoice ID
+        if (invoiceId) {
+          storedInvoice = await x402SettlementStore.get(invoiceId);
+        }
+
+        // Fall back to idempotency key
+        if (!storedInvoice && idempotencyKey) {
+          storedInvoice = await x402SettlementStore.findByIdempotencyKey(idempotencyKey);
+        }
+
+        // Fall back to request hash
+        if (!storedInvoice) {
+          const requestHash = generateInvoiceIdSync(req.method, req.originalUrl, idempotencyKey);
+          storedInvoice = await x402SettlementStore.findByRequestHash(requestHash);
+        }
+
+        if (!storedInvoice) {
+          // No invoice found - client must first receive a 402 to get an invoice
+          if (debug) {
+            console.log("[Gateway] No invoice found for x402 payment");
+          }
+          res.status(400).json({
+            error: "No invoice found",
+            message: "Request a resource first to receive an invoice before submitting payment",
+          });
+          return;
+        }
+
+        // Check if invoice was already consumed (replay protection)
+        if (storedInvoice.status === "consumed") {
+          if (debug) {
+            console.log(`[Gateway] Invoice ${storedInvoice.invoiceId} already consumed (replay attempt)`);
+          }
+          res.status(400).json({
+            error: "Payment already used",
+            message: "This payment signature has already been used. Request a new invoice.",
+            invoiceId: storedInvoice.invoiceId,
+          });
+          return;
+        }
+
+        // Check if invoice expired
+        if (storedInvoice.status === "expired") {
+          if (debug) {
+            console.log(`[Gateway] Invoice ${storedInvoice.invoiceId} expired`);
+          }
+          res.status(400).json({
+            error: "Invoice expired",
+            message: "This invoice has expired. Request a new one.",
+            invoiceId: storedInvoice.invoiceId,
+          });
+          return;
+        }
+
+        // Settle the payment
+        try {
+          const settlementResult = await settleX402Payment(
+            x402Signature as string,
+            storedInvoice,
+            mergedConfig.x402
+          );
+
+          if (!settlementResult.success) {
+            if (debug) {
+              console.log(`[Gateway] Settlement failed: ${settlementResult.error}`);
+            }
+            res.status(402).json({
+              error: "Payment settlement failed",
+              message: settlementResult.error,
+              details: settlementResult.details,
+            });
+            return;
+          }
+
+          // Mark invoice as settled and consumed
+          await x402SettlementStore.markSettled(storedInvoice.invoiceId, settlementResult.txHash!);
+          await x402SettlementStore.markConsumed(storedInvoice.invoiceId);
+
+          if (debug) {
+            console.log(`[Gateway] x402 payment settled: ${settlementResult.txHash}`);
+          }
+
+          // Payment verified - allow request through
+          gatewayReq.paymentVerified = true;
+          if (settlementResult.txHash) {
+            gatewayReq.paymentTxHash = settlementResult.txHash;
+          }
+          gatewayReq.gatewayInvoiceId = storedInvoice.invoiceId;
+          return next();
+
+        } catch (error) {
+          if (error instanceof PaymentMismatchError) {
+            if (debug) {
+              console.log(`[Gateway] Payment mismatch: ${error.message}`);
+            }
+            res.status(400).json({
+              error: "Payment mismatch",
+              message: error.message,
+              details: error.details,
+            });
+            return;
+          }
+
+          if (error instanceof SettlementError) {
+            if (debug) {
+              console.log(`[Gateway] Settlement error: ${error.message}`);
+            }
+            res.status(502).json({
+              error: "Settlement service error",
+              message: error.message,
+              details: error.details,
+            });
+            return;
+          }
+
+          if (error instanceof TrustModeError) {
+            // This should have been caught at startup, but just in case
+            console.error(`[Gateway] CRITICAL: ${error.message}`);
+            res.status(500).json({
+              error: "Gateway configuration error",
+              message: "Trust mode is not properly configured",
+            });
+            return;
+          }
+
+          throw error;
+        }
       }
 
       // Check for Flux payment (legacy/fallback)
@@ -209,7 +363,7 @@ export function createGatewayServer(config: GatewayConfig): GatewayServer {
       }
 
       // No valid payment - return 402 with payment requirements
-      await emit402Response(req, res, mergedConfig, invoiceStore);
+      await emit402Response(req, res, mergedConfig, invoiceStore, x402SettlementStore);
     } catch (error) {
       next(error);
     }
@@ -253,7 +407,7 @@ export function createGatewayServer(config: GatewayConfig): GatewayServer {
     });
   });
 
-  return { app, invoiceStore };
+  return { app, invoiceStore, x402SettlementStore };
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +421,8 @@ async function emit402Response(
   req: Request,
   res: Response,
   config: Required<GatewayConfig>,
-  invoiceStore: MemoryInvoiceStore
+  invoiceStore: MemoryInvoiceStore,
+  x402SettlementStore: X402SettlementStore
 ): Promise<void> {
   const idempotencyKey = req.headers["x-idempotency-key"] as string | undefined;
 
@@ -310,8 +465,32 @@ async function emit402Response(
     invoiceParams.idempotencyKey = idempotencyKey;
   }
 
-  // Create invoice
+  // Create invoice in Flux store
   const invoice = await invoiceStore.create(invoiceParams);
+
+  // Also create in x402 settlement store for payment verification
+  // Generate a request hash that binds this invoice to the specific request
+  const requestHash = generateInvoiceIdSync(req.method, req.originalUrl, idempotencyKey);
+
+  const x402InvoiceParams: Parameters<typeof x402SettlementStore.create>[0] = {
+    invoiceId: invoice.id,
+    requestHash,
+    requirements: {
+      amount: priceConfig.amountUnits,
+      payTo: config.payTo,
+      asset: priceConfig.asset,
+      chain: priceConfig.chain,
+      timeout: config.invoiceExpiresInSeconds,
+    },
+    resource: req.originalUrl,
+  };
+
+  // Only add idempotencyKey if it's defined
+  if (idempotencyKey !== undefined) {
+    x402InvoiceParams.idempotencyKey = idempotencyKey;
+  }
+
+  await x402SettlementStore.create(x402InvoiceParams);
 
   emitX402Headers(res, invoice, req.originalUrl, config);
 }
@@ -388,7 +567,7 @@ export function startGateway(config: GatewayConfig): Promise<GatewayServer> {
   return new Promise((resolve, reject) => {
     try {
       const merged = mergeConfig(config);
-      const { app, invoiceStore } = createGatewayServer(config);
+      const { app, invoiceStore, x402SettlementStore } = createGatewayServer(config);
       const port = merged.port;
       const host = merged.host;
 
@@ -397,7 +576,8 @@ export function startGateway(config: GatewayConfig): Promise<GatewayServer> {
         console.log(`[Gateway] Proxying to: ${merged.backendUrl}`);
         console.log(`[Gateway] Supported chains: ${merged.chains.join(", ")}`);
         console.log(`[Gateway] Pay to: ${merged.payTo}`);
-        resolve({ app, invoiceStore });
+        console.log(`[Gateway] x402 mode: ${merged.x402.mode}`);
+        resolve({ app, invoiceStore, x402SettlementStore });
       });
 
       server.on("error", (err) => {

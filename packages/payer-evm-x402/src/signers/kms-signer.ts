@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-x402/src/signers/kms-signer.ts
  * @summary AWS KMS signer for production server-side EVM signing.
  *
  * This signer uses AWS Key Management Service (KMS) to securely manage private
@@ -23,7 +22,7 @@
  * - kms:DescribeKey - (Optional) Verify key configuration
  */
 
-import type { Signer, ChainId } from "@poi-sdk/core";
+import type { Signer, ChainId } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Type Declarations for Optional AWS SDK
@@ -179,7 +178,7 @@ const SECP256K1_HALF_N = SECP256K1_N / BigInt(2);
  *
  * @example
  * ```typescript
- * import { EvmKmsSigner } from "@poi-sdk/payer-evm-x402";
+ * import { EvmKmsSigner } from "@fluxpointstudios/poi-sdk-payer-evm-x402";
  *
  * const signer = new EvmKmsSigner({
  *   keyId: "alias/my-eth-key",

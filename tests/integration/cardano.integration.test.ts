@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import type { PaymentRequest, PaymentProof } from "@poi-sdk/core";
+import type { PaymentRequest, PaymentProof } from "@fluxpointstudios/poi-sdk-core";
 import {
   loadTestEnvironment,
   canRunCardanoTests,
@@ -48,9 +48,9 @@ const shouldSkip = !canRunCardanoTests();
 
 describe.skipIf(shouldSkip)("Cardano Integration Tests", () => {
   // Lazy imports to avoid loading modules when tests are skipped
-  let CardanoNodePayer: typeof import("@poi-sdk/payer-cardano-node").CardanoNodePayer;
-  let BlockfrostProvider: typeof import("@poi-sdk/payer-cardano-node").BlockfrostProvider;
-  let MemorySigner: typeof import("@poi-sdk/payer-cardano-node").MemorySigner;
+  let CardanoNodePayer: typeof import("@fluxpointstudios/poi-sdk-payer-cardano-node").CardanoNodePayer;
+  let BlockfrostProvider: typeof import("@fluxpointstudios/poi-sdk-payer-cardano-node").BlockfrostProvider;
+  let MemorySigner: typeof import("@fluxpointstudios/poi-sdk-payer-cardano-node").MemorySigner;
 
   let payer: InstanceType<typeof CardanoNodePayer>;
   let provider: InstanceType<typeof BlockfrostProvider>;
@@ -67,7 +67,7 @@ describe.skipIf(shouldSkip)("Cardano Integration Tests", () => {
     }
 
     // Dynamic imports
-    const payerModule = await import("@poi-sdk/payer-cardano-node");
+    const payerModule = await import("@fluxpointstudios/poi-sdk-payer-cardano-node");
     CardanoNodePayer = payerModule.CardanoNodePayer;
     BlockfrostProvider = payerModule.BlockfrostProvider;
     MemorySigner = payerModule.MemorySigner;
@@ -291,9 +291,9 @@ describe.skipIf(shouldSkip)("Cardano Integration Tests", () => {
 // ---------------------------------------------------------------------------
 
 describe.skipIf(shouldSkip)("Cardano Native Token Tests", () => {
-  let CardanoNodePayer: typeof import("@poi-sdk/payer-cardano-node").CardanoNodePayer;
-  let BlockfrostProvider: typeof import("@poi-sdk/payer-cardano-node").BlockfrostProvider;
-  let MemorySigner: typeof import("@poi-sdk/payer-cardano-node").MemorySigner;
+  let CardanoNodePayer: typeof import("@fluxpointstudios/poi-sdk-payer-cardano-node").CardanoNodePayer;
+  let BlockfrostProvider: typeof import("@fluxpointstudios/poi-sdk-payer-cardano-node").BlockfrostProvider;
+  let MemorySigner: typeof import("@fluxpointstudios/poi-sdk-payer-cardano-node").MemorySigner;
 
   let payer: InstanceType<typeof CardanoNodePayer>;
   let walletAddress: string;
@@ -301,7 +301,7 @@ describe.skipIf(shouldSkip)("Cardano Native Token Tests", () => {
   beforeAll(async () => {
     if (shouldSkip) return;
 
-    const payerModule = await import("@poi-sdk/payer-cardano-node");
+    const payerModule = await import("@fluxpointstudios/poi-sdk-payer-cardano-node");
     CardanoNodePayer = payerModule.CardanoNodePayer;
     BlockfrostProvider = payerModule.BlockfrostProvider;
     MemorySigner = payerModule.MemorySigner;

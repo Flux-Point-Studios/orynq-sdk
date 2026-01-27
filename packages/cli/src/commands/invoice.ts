@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/cli/src/commands/invoice.ts
  * @summary CLI command to fetch and display payment invoices from 402-protected endpoints.
  *
  * This command makes a request to the specified URL and parses the 402 response
@@ -12,9 +11,9 @@
 
 import chalk from "chalk";
 import type { Command } from "commander";
-import type { PaymentRequest } from "@poi-sdk/core";
-import { createX402Transport } from "@poi-sdk/transport-x402";
-import { createFluxTransport } from "@poi-sdk/transport-flux";
+import type { PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
+import { createX402Transport } from "@fluxpointstudios/poi-sdk-transport-x402";
+import { createFluxTransport } from "@fluxpointstudios/poi-sdk-transport-flux";
 
 /**
  * Register the 'invoice' command with the CLI program.

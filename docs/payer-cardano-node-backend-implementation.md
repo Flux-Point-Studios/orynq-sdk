@@ -1,8 +1,8 @@
-# @poi-sdk/payer-cardano-node Backend Implementation Summary
+# @fluxpointstudios/poi-sdk-payer-cardano-node Backend Implementation Summary
 
 ## Overview
 
-This document summarizes the implementation work completed for the `@poi-sdk/payer-cardano-node` package, which provides server-side Cardano payment functionality with real Blockfrost/Koios integration and secure signer abstractions.
+This document summarizes the implementation work completed for the `@fluxpointstudios/poi-sdk-payer-cardano-node` package, which provides server-side Cardano payment functionality with real Blockfrost/Koios integration and secure signer abstractions.
 
 ## Implementation Date
 
@@ -110,7 +110,7 @@ AWS KMS does not support Ed25519 (native Cardano signature scheme). This signer 
 ## Dependencies
 
 **Runtime Dependencies:**
-- `@poi-sdk/core` - Core types and interfaces
+- `@fluxpointstudios/poi-sdk-core` - Core types and interfaces
 
 **Peer Dependencies (Optional):**
 - `@emurgo/cardano-serialization-lib-nodejs` v15.0.3 - For transaction building (installed)
@@ -136,7 +136,7 @@ import {
   CardanoNodePayer,
   BlockfrostProvider,
   MemorySigner,
-} from "@poi-sdk/payer-cardano-node";
+} from "@fluxpointstudios/poi-sdk-payer-cardano-node";
 
 // Create provider
 const provider = new BlockfrostProvider({

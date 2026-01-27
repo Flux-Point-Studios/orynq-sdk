@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/gateway/src/forward.ts
  * @summary Forward middleware for proxying verified requests to the backend.
  *
  * This file creates an HTTP proxy middleware that forwards requests to the
@@ -19,7 +18,7 @@
 import { createProxyMiddleware, type RequestHandler, type Options } from "http-proxy-middleware";
 import type { Request, Response, NextFunction } from "express";
 import type { IncomingMessage, ServerResponse } from "http";
-import { FLUX_HEADERS } from "@poi-sdk/core";
+import { FLUX_HEADERS } from "@fluxpointstudios/poi-sdk-core";
 import type { GatewayConfig } from "./config.js";
 import { generateInvoiceIdSync } from "./invoice-bridge.js";
 

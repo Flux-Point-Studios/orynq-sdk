@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-node/src/signers/memory-signer.ts
  * @summary In-memory signer for development and testing purposes.
  *
  * WARNING: This signer stores private keys in memory and is NOT suitable
@@ -16,7 +15,7 @@
  * - @emurgo/cardano-serialization-lib-nodejs for cryptographic operations
  */
 
-import type { Signer, ChainId } from "@poi-sdk/core";
+import type { Signer, ChainId } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // CSL Import Helper

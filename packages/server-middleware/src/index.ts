@@ -1,6 +1,5 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/server-middleware/src/index.ts
- * @summary Main entry point for @poi-sdk/server-middleware package.
+ * @summary Main entry point for @fluxpointstudios/poi-sdk-server-middleware package.
  *
  * This package provides server middleware for implementing HTTP 402 Payment
  * Required flows with dual-protocol support (Flux and x402). It includes:
@@ -27,7 +26,7 @@
  *   MemoryInvoiceStore,
  *   CardanoVerifier,
  *   cors402,
- * } from "@poi-sdk/server-middleware";
+ * } from "@fluxpointstudios/poi-sdk-server-middleware";
  *
  * const app = express();
  * const store = new MemoryInvoiceStore();
@@ -58,7 +57,7 @@
  *   fastifyPayment,
  *   MemoryInvoiceStore,
  *   EvmVerifier,
- * } from "@poi-sdk/server-middleware";
+ * } from "@fluxpointstudios/poi-sdk-server-middleware";
  *
  * const fastify = Fastify();
  * const store = new MemoryInvoiceStore();

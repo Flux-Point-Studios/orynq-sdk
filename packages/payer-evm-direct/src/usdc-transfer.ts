@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-direct/src/usdc-transfer.ts
  * @summary ERC-20 transfer and balance query utilities using viem.
  *
  * This file provides helper functions for executing ERC-20 token transfers
@@ -31,8 +30,8 @@ import {
 } from "viem";
 import { base, baseSepolia, mainnet, polygon, arbitrum } from "viem/chains";
 import { USDC_ADDRESSES, ERC20_ABI } from "./constants.js";
-import type { ChainId } from "@poi-sdk/core";
-import { PaymentFailedError } from "@poi-sdk/core";
+import type { ChainId } from "@fluxpointstudios/poi-sdk-core";
+import { PaymentFailedError } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Chain Configurations

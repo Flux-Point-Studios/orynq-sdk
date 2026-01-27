@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-node/src/signers/index.ts
  * @summary Signers module entry point for Cardano key management implementations.
  *
  * This module exports signer implementations and interfaces for
@@ -11,8 +10,8 @@
  *
  * Usage:
  * ```typescript
- * import { MemorySigner, KmsSigner } from "@poi-sdk/payer-cardano-node/signers";
- * import type { Signer } from "@poi-sdk/payer-cardano-node/signers";
+ * import { MemorySigner, KmsSigner } from "@fluxpointstudios/poi-sdk-payer-cardano-node/signers";
+ * import type { Signer } from "@fluxpointstudios/poi-sdk-payer-cardano-node/signers";
  *
  * // Development (WARNING: not for production!)
  * const devSigner = new MemorySigner("hex-private-key");

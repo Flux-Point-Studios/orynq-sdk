@@ -1,8 +1,7 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-x402/src/x402-payer.ts
  * @summary Main Payer implementation for x402 protocol with EIP-3009 gasless signatures.
  *
- * This file implements the Payer interface from @poi-sdk/core for creating x402
+ * This file implements the Payer interface from @fluxpointstudios/poi-sdk-core for creating x402
  * payment signatures using EIP-3009 "Transfer With Authorization". Unlike direct
  * transfer payers, this payer creates cryptographic signatures that authorize
  * token transfers - the actual on-chain transaction is submitted by a facilitator.
@@ -21,7 +20,7 @@
  * 4. Server/facilitator executes the on-chain transfer
  *
  * Used by:
- * - @poi-sdk/client for automatic x402 payment handling
+ * - @fluxpointstudios/poi-sdk-client for automatic x402 payment handling
  * - Browser applications with wallet integration
  * - Node.js servers for automated payments
  */
@@ -38,13 +37,13 @@ import type {
   PaymentProof,
   PaymentRequest,
   ChainId,
-} from "@poi-sdk/core";
+} from "@fluxpointstudios/poi-sdk-core";
 import {
   InsufficientBalanceError,
   PaymentFailedError,
   ChainNotSupportedError,
   AssetNotSupportedError,
-} from "@poi-sdk/core";
+} from "@fluxpointstudios/poi-sdk-core";
 import type { ViemSigner } from "./signers/viem-signer.js";
 import {
   buildTypedData,
@@ -156,7 +155,7 @@ export interface EvmX402PayerConfig {
  *
  * @example
  * ```typescript
- * import { EvmX402Payer, ViemSigner } from "@poi-sdk/payer-evm-x402";
+ * import { EvmX402Payer, ViemSigner } from "@fluxpointstudios/poi-sdk-payer-evm-x402";
  *
  * const signer = new ViemSigner({ privateKey: "0x..." });
  * const payer = new EvmX402Payer({

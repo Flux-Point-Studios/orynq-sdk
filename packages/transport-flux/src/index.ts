@@ -1,6 +1,5 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/transport-flux/src/index.ts
- * @summary Main entry point for @poi-sdk/transport-flux package.
+ * @summary Main entry point for @fluxpointstudios/poi-sdk-transport-flux package.
  *
  * This package provides the FluxTransport implementation for handling
  * T-Backend style wire format in the poi-sdk payment layer. The Flux
@@ -14,7 +13,7 @@
  *
  * Usage:
  * ```typescript
- * import { createFluxTransport } from "@poi-sdk/transport-flux";
+ * import { createFluxTransport } from "@fluxpointstudios/poi-sdk-transport-flux";
  *
  * const flux = createFluxTransport();
  *
@@ -28,11 +27,11 @@
  * ```
  *
  * Used by:
- * - @poi-sdk/client for automatic payment flow
+ * - @fluxpointstudios/poi-sdk-client for automatic payment flow
  * - Direct integration with Flux/T-Backend services
  */
 
-import { type PaymentRequest, type PaymentProof } from "@poi-sdk/core";
+import { type PaymentRequest, type PaymentProof } from "@fluxpointstudios/poi-sdk-core";
 import { parse402Response } from "./parse.js";
 import { applyPaymentToRequest } from "./apply.js";
 import type { FluxTransport, ApplyPaymentOptions } from "./types.js";

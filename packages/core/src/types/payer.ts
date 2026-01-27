@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/core/src/types/payer.ts
  * @summary Payer and Signer interface definitions for payment execution.
  *
  * This file defines the abstract interfaces that payer implementations must satisfy.

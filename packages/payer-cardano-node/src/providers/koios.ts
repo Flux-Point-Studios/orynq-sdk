@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-node/src/providers/koios.ts
  * @summary Koios API provider implementation for Cardano blockchain data.
  *
  * This file implements the CardanoProvider interface using the Koios API

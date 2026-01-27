@@ -1,9 +1,8 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-direct/src/index.ts
- * @summary Main entry point for @poi-sdk/payer-evm-direct package.
+ * @summary Main entry point for @fluxpointstudios/poi-sdk-payer-evm-direct package.
  *
  * This package provides a legacy EVM payer for direct ERC-20 transfers.
- * It implements the Payer interface from @poi-sdk/core and returns
+ * It implements the Payer interface from @fluxpointstudios/poi-sdk-core and returns
  * evm-txhash proof types for servers that verify payments on-chain.
  *
  * Key features:
@@ -15,7 +14,7 @@
  *
  * Usage:
  * ```typescript
- * import { createEvmPayer, ViemPayer } from "@poi-sdk/payer-evm-direct";
+ * import { createEvmPayer, ViemPayer } from "@fluxpointstudios/poi-sdk-payer-evm-direct";
  *
  * // Using factory function
  * const payer = createEvmPayer("0x...", {
@@ -86,7 +85,7 @@ import { ViemPayer, type ViemPayerConfig } from "./viem-payer.js";
  *
  * @example
  * ```typescript
- * import { createEvmPayer } from "@poi-sdk/payer-evm-direct";
+ * import { createEvmPayer } from "@fluxpointstudios/poi-sdk-payer-evm-direct";
  *
  * // Simple usage with defaults (Base mainnet + Sepolia)
  * const payer = createEvmPayer("0x...");

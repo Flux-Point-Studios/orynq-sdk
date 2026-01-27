@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/transport-x402/src/settlement.ts
  * @summary Parse x402 PAYMENT-RESPONSE headers for settlement information.
  *
  * This file handles the decoding and extraction of settlement data from
@@ -11,7 +10,7 @@
  * - Client code that needs to verify payment completion
  */
 
-import { X402_HEADERS } from "@poi-sdk/core";
+import { X402_HEADERS } from "@fluxpointstudios/poi-sdk-core";
 import type { X402Settlement } from "./types.js";
 import { isX402PaymentResponse } from "./types.js";
 

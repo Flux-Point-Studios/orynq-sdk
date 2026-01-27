@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-x402/src/__tests__/x402-payer.test.ts
  * @summary Unit tests for EvmX402Payer implementation.
  *
  * Tests cover:
@@ -13,12 +12,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from "vitest";
 import { privateKeyToAccount } from "viem/accounts";
-import type { PaymentRequest } from "@poi-sdk/core";
+import type { PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
 import {
   InsufficientBalanceError,
   ChainNotSupportedError,
   PaymentFailedError,
-} from "@poi-sdk/core";
+} from "@fluxpointstudios/poi-sdk-core";
 import { EvmX402Payer } from "../x402-payer.js";
 import { ViemSigner } from "../signers/viem-signer.js";
 

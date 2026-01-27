@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createX402Transport } from '../index';
-import { X402_HEADERS } from '@poi-sdk/core';
+import { X402_HEADERS } from '@fluxpointstudios/poi-sdk-core';
 
 describe('X402Transport', () => {
   const transport = createX402Transport();

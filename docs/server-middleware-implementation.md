@@ -1,8 +1,8 @@
-# @poi-sdk/server-middleware Implementation Summary
+# @fluxpointstudios/poi-sdk-server-middleware Implementation Summary
 
 ## Overview
 
-Successfully implemented the `@poi-sdk/server-middleware` package at `D:\fluxPoint\PoI\poi-sdk\packages\server-middleware`. This package provides server middleware that emits BOTH x402 and Flux protocols for HTTP 402 Payment Required flows.
+Successfully implemented the `@fluxpointstudios/poi-sdk-server-middleware` package at `D:\fluxPoint\PoI\poi-sdk\packages\server-middleware`. This package provides server middleware that emits BOTH x402 and Flux protocols for HTTP 402 Payment Required flows.
 
 ## Package Location
 
@@ -86,7 +86,7 @@ packages/server-middleware/
 ```json
 {
   "dependencies": {
-    "@poi-sdk/core": "workspace:*"
+    "@fluxpointstudios/poi-sdk-core": "workspace:*"
   },
   "peerDependencies": {
     "express": ">=4.0.0",
@@ -114,7 +114,7 @@ import {
   MemoryInvoiceStore,
   CardanoVerifier,
   cors402,
-} from "@poi-sdk/server-middleware";
+} from "@fluxpointstudios/poi-sdk-server-middleware";
 
 const app = express();
 const store = new MemoryInvoiceStore();
@@ -149,7 +149,7 @@ import {
   fastifyPayment,
   MemoryInvoiceStore,
   EvmVerifier,
-} from "@poi-sdk/server-middleware";
+} from "@fluxpointstudios/poi-sdk-server-middleware";
 
 const fastify = Fastify();
 const store = new MemoryInvoiceStore();

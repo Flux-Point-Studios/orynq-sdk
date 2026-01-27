@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parsePaymentRequired, parse402Response } from '../parse';
-import { X402_HEADERS } from '@poi-sdk/core';
+import { X402_HEADERS } from '@fluxpointstudios/poi-sdk-core';
 
 describe('parsePaymentRequired', () => {
   it('decodes base64 header and converts to PaymentRequest', () => {

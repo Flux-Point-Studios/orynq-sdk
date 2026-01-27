@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/cli/src/commands/status.ts
  * @summary CLI command to check the status of a payment by invoice ID.
  *
  * This command queries the payment status API to check whether a payment

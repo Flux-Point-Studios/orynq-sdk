@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-direct/src/constants.ts
  * @summary USDC contract addresses and ERC-20 ABI definitions for supported chains.
  *
  * This file contains the pre-configured USDC contract addresses for each supported

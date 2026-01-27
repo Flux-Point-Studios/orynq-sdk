@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/cli/src/commands/test-x402.ts
  * @summary CLI command to test x402 protocol compatibility of an endpoint.
  *
  * This command makes a request to an endpoint and analyzes the 402 response
@@ -13,7 +12,7 @@
 
 import chalk from "chalk";
 import type { Command } from "commander";
-import { X402_HEADERS } from "@poi-sdk/core";
+import { X402_HEADERS } from "@fluxpointstudios/poi-sdk-core";
 
 /**
  * Register the 'test-x402' command with the CLI program.

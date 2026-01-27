@@ -17,22 +17,22 @@ A dual-protocol commerce layer supporting **x402 v2** (Coinbase standard) for EV
 
 ```bash
 # Core package
-pnpm add @poi-sdk/core
+pnpm add @fluxpointstudios/poi-sdk-core
 
 # Client with auto-pay
-pnpm add @poi-sdk/client
+pnpm add @fluxpointstudios/poi-sdk-client
 
 # Payer adapters (choose based on your chain)
-pnpm add @poi-sdk/payer-cardano-cip30  # Browser wallets
-pnpm add @poi-sdk/payer-cardano-node   # Server-side Cardano
-pnpm add @poi-sdk/payer-evm-x402       # EIP-3009 gasless
-pnpm add @poi-sdk/payer-evm-direct     # Direct ERC-20 transfers
+pnpm add @fluxpointstudios/poi-sdk-payer-cardano-cip30  # Browser wallets
+pnpm add @fluxpointstudios/poi-sdk-payer-cardano-node   # Server-side Cardano
+pnpm add @fluxpointstudios/poi-sdk-payer-evm-x402       # EIP-3009 gasless
+pnpm add @fluxpointstudios/poi-sdk-payer-evm-direct     # Direct ERC-20 transfers
 
 # Server middleware
-pnpm add @poi-sdk/server-middleware
+pnpm add @fluxpointstudios/poi-sdk-server-middleware
 
 # Protocol gateway
-pnpm add @poi-sdk/gateway
+pnpm add @fluxpointstudios/poi-sdk-gateway
 ```
 
 ### Python
@@ -46,8 +46,8 @@ pip install poi-sdk
 ### Client (TypeScript)
 
 ```typescript
-import { PoiClient } from '@poi-sdk/client';
-import { createCip30Payer } from '@poi-sdk/payer-cardano-cip30';
+import { PoiClient } from '@fluxpointstudios/poi-sdk-client';
+import { createCip30Payer } from '@fluxpointstudios/poi-sdk-payer-cardano-cip30';
 
 // Create a payer from a CIP-30 wallet
 const payer = await createCip30Payer(window.cardano.nami);
@@ -89,7 +89,7 @@ data = response.json()
 
 ```typescript
 import express from 'express';
-import { createPaymentMiddleware } from '@poi-sdk/server-middleware';
+import { createPaymentMiddleware } from '@fluxpointstudios/poi-sdk-server-middleware';
 
 const app = express();
 
@@ -116,7 +116,7 @@ app.get('/premium', paymentMiddleware, (req, res) => {
 Bridge x402 clients to Flux backends:
 
 ```typescript
-import { createGateway } from '@poi-sdk/gateway';
+import { createGateway } from '@fluxpointstudios/poi-sdk-gateway';
 
 const gateway = createGateway({
   upstream: 'https://flux-backend.example.com',
@@ -132,17 +132,17 @@ app.use('/api', gateway);
 
 | Package | Description |
 |---------|-------------|
-| `@poi-sdk/core` | Protocol-neutral types, utilities, and chain definitions |
-| `@poi-sdk/transport-x402` | x402 v2 wire format (parse/apply headers) |
-| `@poi-sdk/transport-flux` | Flux wire format (parse/apply headers) |
-| `@poi-sdk/client` | Auto-pay HTTP client with budget tracking |
-| `@poi-sdk/payer-cardano-cip30` | CIP-30 browser wallet payer |
-| `@poi-sdk/payer-cardano-node` | Server-side Cardano payer (Blockfrost/Koios) |
-| `@poi-sdk/payer-evm-x402` | EIP-3009 gasless EVM payer |
-| `@poi-sdk/payer-evm-direct` | Direct ERC-20 transfer payer |
-| `@poi-sdk/server-middleware` | Express/Fastify payment middleware |
-| `@poi-sdk/gateway` | x402 ↔ Flux protocol bridge |
-| `@poi-sdk/cli` | Command-line interface |
+| `@fluxpointstudios/poi-sdk-core` | Protocol-neutral types, utilities, and chain definitions |
+| `@fluxpointstudios/poi-sdk-transport-x402` | x402 v2 wire format (parse/apply headers) |
+| `@fluxpointstudios/poi-sdk-transport-flux` | Flux wire format (parse/apply headers) |
+| `@fluxpointstudios/poi-sdk-client` | Auto-pay HTTP client with budget tracking |
+| `@fluxpointstudios/poi-sdk-payer-cardano-cip30` | CIP-30 browser wallet payer |
+| `@fluxpointstudios/poi-sdk-payer-cardano-node` | Server-side Cardano payer (Blockfrost/Koios) |
+| `@fluxpointstudios/poi-sdk-payer-evm-x402` | EIP-3009 gasless EVM payer |
+| `@fluxpointstudios/poi-sdk-payer-evm-direct` | Direct ERC-20 transfer payer |
+| `@fluxpointstudios/poi-sdk-server-middleware` | Express/Fastify payment middleware |
+| `@fluxpointstudios/poi-sdk-gateway` | x402 ↔ Flux protocol bridge |
+| `@fluxpointstudios/poi-sdk-cli` | Command-line interface |
 | `poi-sdk` (Python) | Python SDK with async support |
 
 ## Protocol Overview
@@ -162,19 +162,134 @@ PAYMENT-SIGNATURE: eyJ0eElkIjoiMHguLi4iLi4ufQ==
 
 ### Flux Protocol (Cardano)
 
-The Flux protocol returns payment requirements as JSON in the response body with `X-Payment-*` headers, and accepts payment proofs via `X-Paid-*` headers.
+The Flux protocol returns payment requirements via `X-*` headers in 402 responses, and accepts payment proofs via the `X-Payment` header.
+
+**Response Headers (402 Payment Required):**
+- `X-Invoice-Id` - Unique invoice identifier
+- `X-Pay-To` - Recipient address (addr1...)
+- `X-Amount` - Payment amount in atomic units (lovelace)
+- `X-Asset` - Asset identifier (e.g., "ADA", policy.assetHex)
+- `X-Chain` - Blockchain identifier (e.g., "cardano-mainnet")
+- `X-Timeout` - Payment timeout in seconds
+
+**Request Headers (Payment Proof):**
+- `X-Payment` - JSON payment proof (txHash, cborHex, etc.)
+- `X-Invoice-Id` - Invoice being paid
+- `X-Wallet-Address` - Payer's wallet address
+- `X-Chain` - Blockchain used for payment
+- `X-Partner` - Optional partner/referrer ID
+- `X-Idempotency-Key` - Request-level idempotency key
 
 ```
 HTTP/1.1 402 Payment Required
 Content-Type: application/json
-X-Payment-Address: addr1...
-X-Payment-Amount: 1000000
+X-Invoice-Id: inv_abc123
+X-Pay-To: addr1...
+X-Amount: 1000000
+X-Asset: ADA
+X-Chain: cardano-mainnet
+X-Timeout: 300
 
 # After payment:
 GET /resource
-X-Paid-TxId: abc123...
-X-Paid-Index: 0
+X-Payment: {"txHash":"abc123...","outputIndex":0}
+X-Invoice-Id: inv_abc123
+X-Wallet-Address: addr1...
+X-Chain: cardano-mainnet
 ```
+
+### CORS Configuration
+
+For browser-based clients to read payment headers, your server must expose them:
+
+```typescript
+// Express example
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Expose-Headers', [
+    'X-Invoice-Id',
+    'X-Pay-To',
+    'X-Amount',
+    'X-Asset',
+    'X-Chain',
+    'X-Timeout',
+    'X-Payment-Verified',
+    'PAYMENT-REQUIRED',   // x402
+    'PAYMENT-SIGNATURE',  // x402
+  ].join(', '));
+  next();
+});
+```
+
+## Protocol Comparison
+
+| Aspect | Flux (Cardano) | x402 (EVM) |
+|--------|----------------|------------|
+| **Payment Header** | `X-Payment` (JSON with txHash) | `PAYMENT-SIGNATURE` (EIP-3009) |
+| **Settlement** | On-chain tx already confirmed | Facilitator executes transfer |
+| **Verification** | Check tx on Blockfrost/Koios | Check signature + settlement |
+| **Replay Protection** | txHash + outputIndex uniqueness | Invoice binding + consumption |
+| **Assets** | ADA, native tokens | USDC, ETH, ERC-20 |
+
+### Flux Protocol Flow
+
+```
+Client                          Server                      Blockchain
+  |                               |                             |
+  |  GET /resource                |                             |
+  |------------------------------>|                             |
+  |                               |                             |
+  |  402 + X-Invoice-Id,          |                             |
+  |       X-Pay-To, X-Amount      |                             |
+  |<------------------------------|                             |
+  |                               |                             |
+  |  Build & submit tx            |                             |
+  |------------------------------------------------------>|    |
+  |                               |                             |
+  |  <tx confirmed>               |                             |
+  |<------------------------------------------------------|    |
+  |                               |                             |
+  |  GET /resource                |                             |
+  |  + X-Payment: {txHash}        |                             |
+  |------------------------------>|                             |
+  |                               |  Verify tx on-chain         |
+  |                               |---------------------------->|
+  |                               |<----------------------------|
+  |  200 OK + content             |                             |
+  |<------------------------------|                             |
+```
+
+### x402 Protocol Flow
+
+```
+Client                          Server                      Facilitator
+  |                               |                             |
+  |  GET /resource                |                             |
+  |------------------------------>|                             |
+  |                               |                             |
+  |  402 + PAYMENT-REQUIRED       |                             |
+  |  (base64 JSON)                |                             |
+  |<------------------------------|                             |
+  |                               |                             |
+  |  Sign EIP-3009 authorization  |                             |
+  |  (no on-chain tx yet)         |                             |
+  |                               |                             |
+  |  GET /resource                |                             |
+  |  + PAYMENT-SIGNATURE          |                             |
+  |------------------------------>|                             |
+  |                               |  Forward signature          |
+  |                               |---------------------------->|
+  |                               |  Execute transferWithAuth   |
+  |                               |<----------------------------|
+  |  200 OK + content             |                             |
+  |<------------------------------|                             |
+```
+
+## Protocol Support Matrix
+
+| SDK | Flux Protocol | x402 Protocol |
+|-----|---------------|---------------|
+| TypeScript | Full | Full |
+| Python | Full | Not yet |
 
 ## Chain Identifiers
 
@@ -222,7 +337,7 @@ const client = new PoiClient({
 For HSM/KMS integration:
 
 ```typescript
-import { Signer } from '@poi-sdk/core';
+import { Signer } from '@fluxpointstudios/poi-sdk-core';
 
 const kmsSigner: Signer = {
   sign: async (message: Uint8Array) => {
@@ -300,7 +415,7 @@ pytest --cov=poi_sdk
 
 ```bash
 # Install globally
-pnpm add -g @poi-sdk/cli
+pnpm add -g @fluxpointstudios/poi-sdk-cli
 
 # Generate an invoice
 poi invoice --amount 1000000 --currency ADA --recipient addr1...

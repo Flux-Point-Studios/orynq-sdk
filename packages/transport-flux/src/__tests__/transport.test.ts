@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createFluxTransport, createExtendedFluxTransport } from '../index';
-import { FLUX_HEADERS } from '@poi-sdk/core';
+import { FLUX_HEADERS } from '@fluxpointstudios/poi-sdk-core';
 
 describe('FluxTransport', () => {
   const transport = createFluxTransport();

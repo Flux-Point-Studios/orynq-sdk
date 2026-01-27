@@ -1,6 +1,5 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/gateway/src/index.ts
- * @summary Main entry point for @poi-sdk/gateway package.
+ * @summary Main entry point for @fluxpointstudios/poi-sdk-gateway package.
  *
  * This package provides an x402 gateway server that bridges x402 clients to
  * a backend service (T-Backend) without requiring modifications to the backend.
@@ -33,7 +32,7 @@
  *
  * Usage:
  * ```typescript
- * import { startGateway } from "@poi-sdk/gateway";
+ * import { startGateway } from "@fluxpointstudios/poi-sdk-gateway";
  *
  * await startGateway({
  *   backendUrl: "http://localhost:8000",
@@ -94,11 +93,41 @@ export {
 export {
   type GatewayConfig,
   type PricingResult,
+  type X402SettlementConfig,
   DEFAULT_CONFIG,
   ConfigurationError,
   validateConfig,
   mergeConfig,
 } from "./config.js";
+
+// ---------------------------------------------------------------------------
+// x402 Settlement Exports
+// ---------------------------------------------------------------------------
+
+export {
+  type StoredInvoice,
+  type PaymentRequirements,
+  type SplitOutput,
+  type InvoiceStatus,
+  type X402SettlementStore,
+  MemoryX402SettlementStore,
+} from "./x402-settlement-store.js";
+
+export {
+  type SettlementMode,
+  type SettlementResult,
+  type DecodedPaymentSignature,
+  type FacilitatorRequest,
+  type FacilitatorResponse,
+  settleX402Payment,
+  decodePaymentSignature,
+  verifySignatureMatchesInvoice,
+  callFacilitator,
+  validateTrustMode,
+  PaymentMismatchError,
+  SettlementError,
+  TrustModeError,
+} from "./x402-settler.js";
 
 // ---------------------------------------------------------------------------
 // Version

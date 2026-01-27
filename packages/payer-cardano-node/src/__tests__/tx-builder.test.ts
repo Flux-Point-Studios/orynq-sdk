@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-node/src/__tests__/tx-builder.test.ts
  * @summary Unit tests for transaction builder utilities.
  *
  * Tests the pure functions in tx-builder.ts without network calls.
@@ -14,7 +13,7 @@ import {
   calculateFee,
   isValidCardanoAddress,
 } from "../tx-builder.js";
-import type { PaymentRequest } from "@poi-sdk/core";
+import type { PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
 import type { UTxO } from "../providers/interface.js";
 
 // ---------------------------------------------------------------------------

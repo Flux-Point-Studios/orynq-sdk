@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/transport-x402/src/parse.ts
  * @summary Parse x402 PAYMENT-REQUIRED headers into protocol-neutral PaymentRequest.
  *
  * This file handles the decoding and transformation of x402 wire format data
@@ -11,8 +10,8 @@
  * - Client code that needs to manually parse x402 responses
  */
 
-import { X402_HEADERS } from "@poi-sdk/core";
-import type { PaymentRequest, PaymentFacilitator } from "@poi-sdk/core";
+import { X402_HEADERS } from "@fluxpointstudios/poi-sdk-core";
+import type { PaymentRequest, PaymentFacilitator } from "@fluxpointstudios/poi-sdk-core";
 import type { X402PaymentRequired } from "./types.js";
 import { isX402PaymentRequired } from "./types.js";
 

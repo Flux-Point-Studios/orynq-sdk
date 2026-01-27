@@ -1,6 +1,5 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/client/tsup.config.ts
- * @summary Build configuration for @poi-sdk/client package using tsup.
+ * @summary Build configuration for @fluxpointstudios/poi-sdk-client package using tsup.
  *
  * This configuration produces both ESM and CJS outputs with declaration files.
  * The client package provides the main PoiClient with auto-pay functionality.
@@ -20,8 +19,8 @@ export default defineConfig({
   target: "es2022",
   outDir: "dist",
   external: [
-    "@poi-sdk/core",
-    "@poi-sdk/transport-x402",
-    "@poi-sdk/transport-flux",
+    "@fluxpointstudios/poi-sdk-core",
+    "@fluxpointstudios/poi-sdk-transport-x402",
+    "@fluxpointstudios/poi-sdk-transport-flux",
   ],
 });

@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/server-middleware/src/verifiers/evm.ts
  * @summary EVM blockchain payment verifier using viem for transaction verification.
  *
  * This file implements the ChainVerifier interface for EVM-compatible chains
@@ -23,7 +22,7 @@
  * - Fastify plugin for verifying EVM payment proofs
  */
 
-import type { ChainId, PaymentProof } from "@poi-sdk/core";
+import type { ChainId, PaymentProof } from "@fluxpointstudios/poi-sdk-core";
 import type { ChainVerifier, VerificationResult } from "./interface.js";
 
 // ---------------------------------------------------------------------------

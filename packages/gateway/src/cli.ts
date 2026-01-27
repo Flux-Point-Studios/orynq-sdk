@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/gateway/src/cli.ts
  * @summary Command-line interface for the x402 gateway server.
  *
  * This file provides a CLI entry point for running the gateway server
@@ -37,7 +36,7 @@
  * ```
  */
 
-import type { ChainId } from "@poi-sdk/core";
+import type { ChainId } from "@fluxpointstudios/poi-sdk-core";
 import { startGateway } from "./server.js";
 import type { GatewayConfig, PricingResult } from "./config.js";
 

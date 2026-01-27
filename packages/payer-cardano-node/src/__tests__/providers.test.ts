@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-node/src/__tests__/providers.test.ts
  * @summary Unit tests for Blockfrost and Koios provider implementations.
  *
  * Tests provider construction and configuration. API calls are tested

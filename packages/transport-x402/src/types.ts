@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/transport-x402/src/types.ts
  * @summary x402 protocol-specific type definitions for the transport layer.
  *
  * This file defines types specific to the x402 v2 wire format as used by
@@ -12,7 +11,7 @@
  * - index.ts for the X402Transport interface implementation
  */
 
-import type { PaymentRequest, PaymentProof } from "@poi-sdk/core";
+import type { PaymentRequest, PaymentProof } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // x402 Raw Protocol Types

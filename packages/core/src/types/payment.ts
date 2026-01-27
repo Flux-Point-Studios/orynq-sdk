@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/core/src/types/payment.ts
  * @summary Protocol-neutral payment request and proof types for dual-protocol commerce.
  *
  * This file defines the core payment primitives used across both Flux and x402 protocols.

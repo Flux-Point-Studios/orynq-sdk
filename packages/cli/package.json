@@ -1,5 +1,5 @@
 {
-  "name": "@poi-sdk/cli",
+  "name": "@fluxpointstudios/poi-sdk-cli",
   "version": "0.0.1",
   "description": "CLI dev tool for testing x402 and Flux 402 payment flows",
   "type": "module",
@@ -34,22 +34,32 @@
     "clean": "rimraf dist"
   },
   "keywords": [
-    "poi",
-    "x402",
-    "flux",
     "payments",
-    "cli",
-    "testing",
-    "402"
+    "402",
+    "x402",
+    "cardano",
+    "evm",
+    "commerce"
   ],
-  "author": "",
+  "author": "Flux Point Studios",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
   "dependencies": {
-    "@poi-sdk/core": "workspace:*",
-    "@poi-sdk/client": "workspace:*",
-    "@poi-sdk/transport-x402": "workspace:*",
-    "@poi-sdk/transport-flux": "workspace:*",
-    "@poi-sdk/payer-evm-direct": "workspace:*",
+    "@fluxpointstudios/poi-sdk-core": "workspace:*",
+    "@fluxpointstudios/poi-sdk-client": "workspace:*",
+    "@fluxpointstudios/poi-sdk-transport-x402": "workspace:*",
+    "@fluxpointstudios/poi-sdk-transport-flux": "workspace:*",
+    "@fluxpointstudios/poi-sdk-payer-evm-direct": "workspace:*",
     "commander": "^11.1.0",
     "chalk": "^5.3.0",
     "viem": "^2.7.0"

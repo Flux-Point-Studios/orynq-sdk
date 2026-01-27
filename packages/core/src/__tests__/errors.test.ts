@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/core/src/__tests__/errors.test.ts
  * @summary Tests for custom payment error classes.
  */
 

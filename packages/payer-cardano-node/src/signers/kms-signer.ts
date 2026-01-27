@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-node/src/signers/kms-signer.ts
  * @summary AWS KMS-based signer for production Cardano deployments.
  *
  * This signer uses AWS Key Management Service (KMS) to manage private keys
@@ -35,7 +34,7 @@
  * - kms:DescribeKey - (Optional) Verify key configuration
  */
 
-import type { Signer, ChainId } from "@poi-sdk/core";
+import type { Signer, ChainId } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Type Declarations for Optional AWS SDK
@@ -218,7 +217,7 @@ const SECP256K1_HALF_N = SECP256K1_N / BigInt(2);
  *
  * @example
  * ```typescript
- * import { KmsSigner } from "@poi-sdk/payer-cardano-node/signers";
+ * import { KmsSigner } from "@fluxpointstudios/poi-sdk-payer-cardano-node/signers";
  *
  * const signer = new KmsSigner({
  *   keyId: "alias/my-cardano-payment-key",

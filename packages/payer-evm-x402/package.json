@@ -1,5 +1,5 @@
 {
-  "name": "@poi-sdk/payer-evm-x402",
+  "name": "@fluxpointstudios/poi-sdk-payer-evm-x402",
   "version": "0.0.0",
   "description": "EVM payer for x402 protocol with EIP-3009 gasless signatures using Coinbase's @x402/evm",
   "type": "module",
@@ -33,24 +33,29 @@
     "clean": "rimraf dist"
   },
   "keywords": [
-    "poi",
-    "evm",
-    "x402",
-    "usdc",
-    "viem",
-    "eip-3009",
-    "gasless",
     "payments",
-    "payer",
-    "coinbase",
-    "kms",
-    "aws"
+    "402",
+    "x402",
+    "cardano",
+    "evm",
+    "commerce"
   ],
-  "author": "",
+  "author": "Flux Point Studios",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "directory": "packages/payer-evm-x402"
+  },
+  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
   "dependencies": {
-    "@poi-sdk/core": "workspace:*",
-    "@poi-sdk/transport-x402": "workspace:*"
+    "@fluxpointstudios/poi-sdk-core": "workspace:*",
+    "@fluxpointstudios/poi-sdk-transport-x402": "workspace:*"
   },
   "peerDependencies": {
     "viem": ">=2.0.0",

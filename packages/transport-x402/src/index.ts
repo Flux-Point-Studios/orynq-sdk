@@ -1,6 +1,5 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/transport-x402/src/index.ts
- * @summary Main entry point for @poi-sdk/transport-x402 package.
+ * @summary Main entry point for @fluxpointstudios/poi-sdk-transport-x402 package.
  *
  * This package provides the x402 protocol transport layer implementation,
  * wrapping Coinbase's @x402/* packages for the x402 v2 wire format. It handles:
@@ -15,7 +14,7 @@
  *
  * Usage:
  * ```typescript
- * import { createX402Transport } from "@poi-sdk/transport-x402";
+ * import { createX402Transport } from "@fluxpointstudios/poi-sdk-transport-x402";
  *
  * const transport = createX402Transport();
  *
@@ -30,12 +29,12 @@
  * ```
  *
  * Used by:
- * - @poi-sdk/client for automatic payment handling
+ * - @fluxpointstudios/poi-sdk-client for automatic payment handling
  * - Custom client implementations needing x402 support
  */
 
-import { X402_HEADERS } from "@poi-sdk/core";
-import type { PaymentRequest, PaymentProof } from "@poi-sdk/core";
+import { X402_HEADERS } from "@fluxpointstudios/poi-sdk-core";
+import type { PaymentRequest, PaymentProof } from "@fluxpointstudios/poi-sdk-core";
 
 import { parse402Response, parsePaymentRequired, x402ToPaymentRequest } from "./parse.js";
 import {
@@ -75,7 +74,7 @@ import { isX402PaymentRequired, isX402PaymentResponse } from "./types.js";
  *
  * @example
  * ```typescript
- * import { createX402Transport } from "@poi-sdk/transport-x402";
+ * import { createX402Transport } from "@fluxpointstudios/poi-sdk-transport-x402";
  *
  * const transport = createX402Transport();
  *

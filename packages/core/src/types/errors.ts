@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/core/src/types/errors.ts
  * @summary Custom error classes for payment-related failures.
  *
  * This file defines a hierarchy of typed errors for precise error handling

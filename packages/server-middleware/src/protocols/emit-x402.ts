@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/server-middleware/src/protocols/emit-x402.ts
  * @summary x402 protocol 402 response emitter.
  *
  * This file provides functions to emit HTTP 402 Payment Required responses
@@ -17,7 +16,7 @@
  * - Fastify plugin when emitting 402 responses
  */
 
-import { X402_HEADERS } from "@poi-sdk/core";
+import { X402_HEADERS } from "@fluxpointstudios/poi-sdk-core";
 import type { Invoice } from "../invoice-store.js";
 
 // ---------------------------------------------------------------------------

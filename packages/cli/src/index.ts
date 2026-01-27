@@ -1,6 +1,5 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/cli/src/index.ts
- * @summary Main entry point for the @poi-sdk/cli package.
+ * @summary Main entry point for the @fluxpointstudios/poi-sdk-cli package.
  *
  * This is a developer tool CLI for testing x402 and Flux 402 payment flows.
  * It provides commands for inspecting invoices, executing payments, checking

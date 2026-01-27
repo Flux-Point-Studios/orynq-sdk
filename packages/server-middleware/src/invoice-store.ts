@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/server-middleware/src/invoice-store.ts
  * @summary Invoice storage interface and in-memory implementation.
  *
  * This file defines the InvoiceStore interface for persisting payment invoices
@@ -15,7 +14,7 @@
  * - Fastify plugin for creating and managing invoices
  */
 
-import type { PaymentStatusValue, ChainId } from "@poi-sdk/core";
+import type { PaymentStatusValue, ChainId } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Invoice Types

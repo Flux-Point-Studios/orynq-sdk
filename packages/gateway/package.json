@@ -1,5 +1,5 @@
 {
-  "name": "@poi-sdk/gateway",
+  "name": "@fluxpointstudios/poi-sdk-gateway",
   "version": "0.0.0",
   "description": "x402 gateway to bridge x402 clients to T-Backend without modifying T-Backend",
   "type": "module",
@@ -35,21 +35,30 @@
     "clean": "rimraf dist"
   },
   "keywords": [
-    "poi",
-    "x402",
-    "gateway",
-    "proxy",
     "payments",
     "402",
-    "http",
-    "express"
+    "x402",
+    "cardano",
+    "evm",
+    "commerce"
   ],
-  "author": "",
+  "author": "Flux Point Studios",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "directory": "packages/gateway"
+  },
+  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
   "dependencies": {
-    "@poi-sdk/core": "workspace:*",
-    "@poi-sdk/transport-x402": "workspace:*",
-    "@poi-sdk/server-middleware": "workspace:*",
+    "@fluxpointstudios/poi-sdk-core": "workspace:*",
+    "@fluxpointstudios/poi-sdk-transport-x402": "workspace:*",
+    "@fluxpointstudios/poi-sdk-server-middleware": "workspace:*",
     "express": "^4.18.2",
     "cors": "^2.8.5",
     "http-proxy-middleware": "^2.0.6"

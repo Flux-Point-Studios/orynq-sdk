@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-cip30/src/__tests__/wallet-connector.test.ts
  * @summary Unit tests for CIP-30 wallet connector utilities.
  *
  * Tests wallet discovery, connection, and error handling.

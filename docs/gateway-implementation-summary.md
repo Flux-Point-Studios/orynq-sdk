@@ -1,12 +1,12 @@
 # Gateway Package Implementation Summary
 
-**Package:** `@poi-sdk/gateway`
+**Package:** `@fluxpointstudios/poi-sdk-gateway`
 **Location:** `D:\fluxPoint\PoI\poi-sdk\packages\gateway`
 **Date:** 2026-01-26
 
 ## Overview
 
-The `@poi-sdk/gateway` package provides an x402 gateway server that bridges x402 clients to a backend service (T-Backend) without requiring modifications to the backend. The gateway handles x402 payment verification and sets trusted headers for the backend to consume.
+The `@fluxpointstudios/poi-sdk-gateway` package provides an x402 gateway server that bridges x402 clients to a backend service (T-Backend) without requiring modifications to the backend. The gateway handles x402 payment verification and sets trusted headers for the backend to consume.
 
 ## Architecture
 
@@ -58,9 +58,9 @@ Browser/Client
 ## Dependencies
 
 ### Production
-- `@poi-sdk/core`: Core types and utilities
-- `@poi-sdk/transport-x402`: x402 protocol handling
-- `@poi-sdk/server-middleware`: Invoice store and middleware utilities
+- `@fluxpointstudios/poi-sdk-core`: Core types and utilities
+- `@fluxpointstudios/poi-sdk-transport-x402`: x402 protocol handling
+- `@fluxpointstudios/poi-sdk-server-middleware`: Invoice store and middleware utilities
 - `express`: Web server framework
 - `cors`: CORS middleware
 - `http-proxy-middleware`: Request proxying
@@ -76,7 +76,7 @@ Browser/Client
 ### Programmatic
 
 ```typescript
-import { startGateway } from "@poi-sdk/gateway";
+import { startGateway } from "@fluxpointstudios/poi-sdk-gateway";
 
 await startGateway({
   backendUrl: "http://localhost:8000",

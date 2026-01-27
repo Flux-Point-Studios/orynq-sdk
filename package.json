@@ -16,6 +16,7 @@
     "changeset": "changeset",
     "version": "changeset version",
     "publish": "pnpm build && changeset publish",
+    "release": "changeset publish",
     "vectors:generate": "tsx scripts/generate-hash-vectors.ts",
     "vectors:verify": "tsx scripts/verify-hash-vectors.ts",
     "vectors:verify:python": "python scripts/verify-hash-vectors.py",

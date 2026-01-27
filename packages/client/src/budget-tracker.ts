@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/client/src/budget-tracker.ts
  * @summary Budget enforcement for payment limits per request and per day.
  *
  * This module provides the BudgetTracker class for enforcing payment budgets.
@@ -23,8 +22,8 @@ import type {
   BudgetStore,
   ChainId,
   BudgetThresholdInfo,
-} from "@poi-sdk/core";
-import { BudgetExceededError } from "@poi-sdk/core";
+} from "@fluxpointstudios/poi-sdk-core";
+import { BudgetExceededError } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Budget Tracker
@@ -38,8 +37,8 @@ import { BudgetExceededError } from "@poi-sdk/core";
  *
  * @example
  * ```typescript
- * import { BudgetTracker } from "@poi-sdk/client";
- * import { InMemoryBudgetStore } from "@poi-sdk/core";
+ * import { BudgetTracker } from "@fluxpointstudios/poi-sdk-client";
+ * import { InMemoryBudgetStore } from "@fluxpointstudios/poi-sdk-core";
  *
  * const tracker = new BudgetTracker(
  *   {

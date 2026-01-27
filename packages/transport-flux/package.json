@@ -1,5 +1,5 @@
 {
-  "name": "@poi-sdk/transport-flux",
+  "name": "@fluxpointstudios/poi-sdk-transport-flux",
   "version": "0.0.0",
   "description": "Flux (T-Backend) wire format transport for poi-sdk payment layer",
   "type": "module",
@@ -33,18 +33,28 @@
     "clean": "rimraf dist"
   },
   "keywords": [
-    "poi",
-    "flux",
-    "t-backend",
     "payments",
     "402",
+    "x402",
     "cardano",
-    "transport"
+    "evm",
+    "commerce"
   ],
-  "author": "",
+  "author": "Flux Point Studios",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "directory": "packages/transport-flux"
+  },
+  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
   "dependencies": {
-    "@poi-sdk/core": "workspace:*"
+    "@fluxpointstudios/poi-sdk-core": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.0.1",

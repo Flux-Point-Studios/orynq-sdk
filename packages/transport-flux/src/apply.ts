@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/transport-flux/src/apply.ts
  * @summary Apply Flux payment headers (X-Invoice-Id, X-Payment, etc.) to requests.
  *
  * This file handles applying payment proof and metadata headers to outgoing
@@ -19,7 +18,7 @@
  * - Client implementations for payment retry logic
  */
 
-import { FLUX_HEADERS, type PaymentProof } from "@poi-sdk/core";
+import { FLUX_HEADERS, type PaymentProof } from "@fluxpointstudios/poi-sdk-core";
 import type { ApplyPaymentOptions } from "./types.js";
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-direct/src/__tests__/constants.test.ts
  * @summary Unit tests for constants and ERC-20 ABI definitions.
  *
  * Tests cover:

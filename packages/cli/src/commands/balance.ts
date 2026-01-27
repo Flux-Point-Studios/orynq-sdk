@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/cli/src/commands/balance.ts
  * @summary CLI command to check wallet balances on supported chains.
  *
  * This command queries the blockchain to check ETH and USDC balances

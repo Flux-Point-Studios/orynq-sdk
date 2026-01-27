@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/gateway/src/invoice-bridge.ts
  * @summary Invoice ID generation and settlement info extraction for the gateway.
  *
  * This file provides utilities for bridging x402 payment settlements to
@@ -15,7 +14,7 @@
  * - server.ts for creating invoices on payment required responses
  */
 
-import { sha256StringHex } from "@poi-sdk/core";
+import { sha256StringHex } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Types

@@ -1,6 +1,5 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/core/src/index.ts
- * @summary Main entry point for @poi-sdk/core package.
+ * @summary Main entry point for @fluxpointstudios/poi-sdk-core package.
  *
  * This package provides the core types, interfaces, and utilities for the
  * poi-sdk dual-protocol commerce layer. It supports both Flux and x402
@@ -22,13 +21,13 @@
  *   CHAINS,
  *   canonicalize,
  *   generateIdempotencyKey,
- * } from "@poi-sdk/core";
+ * } from "@fluxpointstudios/poi-sdk-core";
  * ```
  *
  * Subpath exports:
- * - @poi-sdk/core/types - Type definitions only
- * - @poi-sdk/core/chains - Chain utilities only
- * - @poi-sdk/core/utils - Utility functions only
+ * - @fluxpointstudios/poi-sdk-core/types - Type definitions only
+ * - @fluxpointstudios/poi-sdk-core/chains - Chain utilities only
+ * - @fluxpointstudios/poi-sdk-core/utils - Utility functions only
  */
 
 // ---------------------------------------------------------------------------

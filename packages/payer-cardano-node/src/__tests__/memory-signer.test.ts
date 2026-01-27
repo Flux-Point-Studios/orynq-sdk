@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-node/src/__tests__/memory-signer.test.ts
  * @summary Unit tests for MemorySigner implementation.
  *
  * Tests the in-memory signer with cardano-serialization-lib.

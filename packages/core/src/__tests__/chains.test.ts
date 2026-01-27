@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/core/src/__tests__/chains.test.ts
  * @summary Tests for CAIP-2 chain identifier helpers and mappings.
  */
 

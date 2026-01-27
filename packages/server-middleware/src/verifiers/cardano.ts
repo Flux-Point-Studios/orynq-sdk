@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/server-middleware/src/verifiers/cardano.ts
  * @summary Cardano blockchain payment verifier using Blockfrost or Koios APIs.
  *
  * This file implements the ChainVerifier interface for Cardano networks.
@@ -21,7 +20,7 @@
  * - Fastify plugin for verifying Cardano payment proofs
  */
 
-import type { ChainId, PaymentProof } from "@poi-sdk/core";
+import type { ChainId, PaymentProof } from "@fluxpointstudios/poi-sdk-core";
 import type { ChainVerifier, VerificationResult } from "./interface.js";
 
 // ---------------------------------------------------------------------------

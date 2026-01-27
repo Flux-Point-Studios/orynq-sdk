@@ -1,5 +1,5 @@
 {
-  "name": "@poi-sdk/transport-x402",
+  "name": "@fluxpointstudios/poi-sdk-transport-x402",
   "version": "0.0.0",
   "description": "x402 protocol transport implementation for poi-sdk",
   "type": "module",
@@ -33,17 +33,28 @@
     "clean": "rimraf dist"
   },
   "keywords": [
-    "poi",
-    "x402",
     "payments",
-    "http-402",
+    "402",
+    "x402",
+    "cardano",
     "evm",
-    "coinbase"
+    "commerce"
   ],
-  "author": "",
+  "author": "Flux Point Studios",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "directory": "packages/transport-x402"
+  },
+  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
   "dependencies": {
-    "@poi-sdk/core": "workspace:*"
+    "@fluxpointstudios/poi-sdk-core": "workspace:*"
   },
   "peerDependencies": {
     "@x402/fetch": ">=0.1.0",

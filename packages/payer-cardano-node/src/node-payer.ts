@@ -1,8 +1,7 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-node/src/node-payer.ts
  * @summary Server-side Cardano Payer implementation for payment execution.
  *
- * This file implements the Payer interface from @poi-sdk/core for server-side
+ * This file implements the Payer interface from @fluxpointstudios/poi-sdk-core for server-side
  * Cardano payment processing. It uses a pluggable provider for blockchain data
  * and a signer abstraction for key management.
  *
@@ -11,7 +10,7 @@
  * - Backend services that need to execute payments
  *
  * Dependencies:
- * - @poi-sdk/core for types and interfaces
+ * - @fluxpointstudios/poi-sdk-core for types and interfaces
  * - CardanoProvider implementation for blockchain data
  * - Signer implementation for transaction signing
  */
@@ -22,13 +21,13 @@ import type {
   PaymentRequest,
   ChainId,
   Signer,
-} from "@poi-sdk/core";
+} from "@fluxpointstudios/poi-sdk-core";
 import {
   InsufficientBalanceError,
   PaymentFailedError,
   ChainNotSupportedError,
   AssetNotSupportedError,
-} from "@poi-sdk/core";
+} from "@fluxpointstudios/poi-sdk-core";
 import type { CardanoProvider, UTxO } from "./providers/interface.js";
 import { buildPaymentTx, calculateTotalAmount } from "./tx-builder.js";
 
@@ -80,9 +79,9 @@ export interface CardanoNodePayerConfig {
  *
  * @example
  * ```typescript
- * import { CardanoNodePayer } from "@poi-sdk/payer-cardano-node";
- * import { BlockfrostProvider } from "@poi-sdk/payer-cardano-node/providers";
- * import { KmsSigner } from "@poi-sdk/payer-cardano-node/signers";
+ * import { CardanoNodePayer } from "@fluxpointstudios/poi-sdk-payer-cardano-node";
+ * import { BlockfrostProvider } from "@fluxpointstudios/poi-sdk-payer-cardano-node/providers";
+ * import { KmsSigner } from "@fluxpointstudios/poi-sdk-payer-cardano-node/signers";
  *
  * const payer = new CardanoNodePayer({
  *   signer: new KmsSigner({ keyId: "alias/my-key" }),

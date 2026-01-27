@@ -1,8 +1,7 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-x402/src/signers/viem-signer.ts
  * @summary Viem-based signer implementation for browser and Node.js environments.
  *
- * This file implements the Signer interface from @poi-sdk/core using viem's Account
+ * This file implements the Signer interface from @fluxpointstudios/poi-sdk-core using viem's Account
  * abstraction. It supports both private key initialization and pre-configured accounts
  * from wallet connectors.
  *
@@ -17,7 +16,7 @@
 
 import type { Account } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import type { Signer, ChainId } from "@poi-sdk/core";
+import type { Signer, ChainId } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -66,7 +65,7 @@ export interface ViemSignerConfig {
  *
  * @example Private key initialization
  * ```typescript
- * import { ViemSigner } from "@poi-sdk/payer-evm-x402";
+ * import { ViemSigner } from "@fluxpointstudios/poi-sdk-payer-evm-x402";
  *
  * const signer = new ViemSigner({
  *   privateKey: "0x1234...abcd",
@@ -77,7 +76,7 @@ export interface ViemSignerConfig {
  *
  * @example Account initialization (browser)
  * ```typescript
- * import { ViemSigner } from "@poi-sdk/payer-evm-x402";
+ * import { ViemSigner } from "@fluxpointstudios/poi-sdk-payer-evm-x402";
  * import { privateKeyToAccount } from "viem/accounts";
  *
  * const account = privateKeyToAccount("0x...");

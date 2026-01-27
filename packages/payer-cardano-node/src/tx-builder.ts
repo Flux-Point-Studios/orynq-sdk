@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-node/src/tx-builder.ts
  * @summary Server-side Cardano transaction builder for payment flows.
  *
  * This file provides utilities for building Cardano transactions from
@@ -12,7 +11,7 @@
  * - @emurgo/cardano-serialization-lib-nodejs for transaction building
  */
 
-import type { PaymentRequest, Signer } from "@poi-sdk/core";
+import type { PaymentRequest, Signer } from "@fluxpointstudios/poi-sdk-core";
 import type { UTxO, ProtocolParameters } from "./providers/interface.js";
 
 // ---------------------------------------------------------------------------

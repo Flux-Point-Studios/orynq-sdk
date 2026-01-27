@@ -1,8 +1,8 @@
-# @poi-sdk/payer-cardano-node Implementation Summary
+# @fluxpointstudios/poi-sdk-payer-cardano-node Implementation Summary
 
 ## Overview
 
-The `@poi-sdk/payer-cardano-node` package provides server-side Cardano payment functionality with pluggable blockchain providers and secure signer abstractions. It implements the `Payer` interface from `@poi-sdk/core`.
+The `@fluxpointstudios/poi-sdk-payer-cardano-node` package provides server-side Cardano payment functionality with pluggable blockchain providers and secure signer abstractions. It implements the `Payer` interface from `@fluxpointstudios/poi-sdk-core`.
 
 ## Package Location
 
@@ -21,7 +21,7 @@ packages/payer-cardano-node/
 │   ├── tx-builder.ts         # Transaction building utilities (stub)
 │   ├── signers/
 │   │   ├── index.ts          # Signers module entry point
-│   │   ├── interface.ts      # Re-exports Signer from @poi-sdk/core
+│   │   ├── interface.ts      # Re-exports Signer from @fluxpointstudios/poi-sdk-core
 │   │   ├── memory-signer.ts  # Development-only in-memory signer
 │   │   └── kms-signer.ts     # AWS KMS signer stub
 │   └── providers/
@@ -37,7 +37,7 @@ packages/payer-cardano-node/
 
 Main payer implementation that orchestrates payment flows:
 
-- Implements `Payer` interface from `@poi-sdk/core`
+- Implements `Payer` interface from `@fluxpointstudios/poi-sdk-core`
 - Uses pluggable `CardanoProvider` for blockchain data
 - Uses `Signer` abstraction for key management
 - Supports split payments
@@ -118,7 +118,7 @@ Utilities for building payment transactions:
 ## Dependencies
 
 ### Runtime Dependencies
-- `@poi-sdk/core` - Core types and interfaces
+- `@fluxpointstudios/poi-sdk-core` - Core types and interfaces
 
 ### Peer Dependencies (Optional)
 - `@emurgo/cardano-serialization-lib-nodejs` - For actual transaction building
@@ -131,7 +131,7 @@ import {
   CardanoNodePayer,
   BlockfrostProvider,
   KmsSigner,
-} from "@poi-sdk/payer-cardano-node";
+} from "@fluxpointstudios/poi-sdk-payer-cardano-node";
 
 // Create provider
 const provider = new BlockfrostProvider({
@@ -171,13 +171,13 @@ The package supports subpath imports:
 
 ```typescript
 // Full package
-import { CardanoNodePayer, BlockfrostProvider } from "@poi-sdk/payer-cardano-node";
+import { CardanoNodePayer, BlockfrostProvider } from "@fluxpointstudios/poi-sdk-payer-cardano-node";
 
 // Signers only
-import { MemorySigner, KmsSigner } from "@poi-sdk/payer-cardano-node/signers";
+import { MemorySigner, KmsSigner } from "@fluxpointstudios/poi-sdk-payer-cardano-node/signers";
 
 // Providers only
-import { BlockfrostProvider, KoiosProvider } from "@poi-sdk/payer-cardano-node/providers";
+import { BlockfrostProvider, KoiosProvider } from "@fluxpointstudios/poi-sdk-payer-cardano-node/providers";
 ```
 
 ## Implementation Notes
@@ -204,7 +204,7 @@ To implement actual transaction building:
 
 ### Error Handling
 
-The payer uses error classes from `@poi-sdk/core`:
+The payer uses error classes from `@fluxpointstudios/poi-sdk-core`:
 - `ChainNotSupportedError` - Unsupported chain
 - `AssetNotSupportedError` - Unsupported asset
 - `InsufficientBalanceError` - Not enough funds

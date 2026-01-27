@@ -1,13 +1,12 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-x402/tsup.config.ts
- * @summary Build configuration for @poi-sdk/payer-evm-x402 package using tsup.
+ * @summary Build configuration for @fluxpointstudios/poi-sdk-payer-evm-x402 package using tsup.
  *
  * This configuration produces both ESM and CJS outputs with declaration files.
  * The package is built for ES2022 target with full tree-shaking support.
  *
  * External dependencies (not bundled):
- * - @poi-sdk/core: workspace dependency
- * - @poi-sdk/transport-x402: workspace dependency
+ * - @fluxpointstudios/poi-sdk-core: workspace dependency
+ * - @fluxpointstudios/poi-sdk-transport-x402: workspace dependency
  * - viem: peer dependency for EVM interactions
  * - @x402/evm: optional peer dependency for x402 protocol
  */
@@ -26,8 +25,8 @@ export default defineConfig({
   target: "es2022",
   outDir: "dist",
   external: [
-    "@poi-sdk/core",
-    "@poi-sdk/transport-x402",
+    "@fluxpointstudios/poi-sdk-core",
+    "@fluxpointstudios/poi-sdk-transport-x402",
     "viem",
     "@x402/evm",
   ],

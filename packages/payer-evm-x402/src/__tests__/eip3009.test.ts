@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-x402/src/__tests__/eip3009.test.ts
  * @summary Unit tests for EIP-3009 utilities.
  *
  * Tests cover:

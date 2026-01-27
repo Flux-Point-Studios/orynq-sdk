@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/core/src/types/headers.ts
  * @summary HTTP header constants for Flux and x402 payment protocols.
  *
  * This file defines the header names used in both payment protocols.

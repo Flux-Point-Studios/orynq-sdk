@@ -2,7 +2,7 @@
 
 ## Overview
 
-Implemented the `@poi-sdk/cli` package at `D:\fluxPoint\PoI\poi-sdk\packages\cli`. This is a developer tool CLI for testing x402 and Flux 402 payment flows.
+Implemented the `@fluxpointstudios/poi-sdk-cli` package at `D:\fluxPoint\PoI\poi-sdk\packages\cli`. This is a developer tool CLI for testing x402 and Flux 402 payment flows.
 
 ## Files Created
 
@@ -24,11 +24,11 @@ Implemented the `@poi-sdk/cli` package at `D:\fluxPoint\PoI\poi-sdk\packages\cli
 ## Dependencies
 
 Internal workspace packages:
-- `@poi-sdk/core` - Core types and utilities
-- `@poi-sdk/client` - PoiClient for auto-pay flows
-- `@poi-sdk/transport-x402` - x402 protocol transport
-- `@poi-sdk/transport-flux` - Flux protocol transport
-- `@poi-sdk/payer-evm-direct` - EVM direct payment execution
+- `@fluxpointstudios/poi-sdk-core` - Core types and utilities
+- `@fluxpointstudios/poi-sdk-client` - PoiClient for auto-pay flows
+- `@fluxpointstudios/poi-sdk-transport-x402` - x402 protocol transport
+- `@fluxpointstudios/poi-sdk-transport-flux` - Flux protocol transport
+- `@fluxpointstudios/poi-sdk-payer-evm-direct` - EVM direct payment execution
 
 External dependencies:
 - `commander` v11.1.0 - CLI framework
@@ -94,7 +94,7 @@ Please read this file and run the following tests:
 3. **CLI Help Test**
    ```bash
    cd D:\fluxPoint\PoI\poi-sdk
-   pnpm -F @poi-sdk/cli build && node packages/cli/dist/index.js --help
+   pnpm -F @fluxpointstudios/poi-sdk-cli build && node packages/cli/dist/index.js --help
    ```
    Expected: Shows all available commands with descriptions
 

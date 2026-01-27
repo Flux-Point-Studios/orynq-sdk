@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/core/src/chains.ts
  * @summary CAIP-2 chain identifier helpers and mappings.
  *
  * This file provides utilities for working with chain identifiers across

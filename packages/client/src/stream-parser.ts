@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/client/src/stream-parser.ts
  * @summary NDJSON streaming parser for handling streamed payment responses.
  *
  * This module provides an async generator for parsing newline-delimited JSON

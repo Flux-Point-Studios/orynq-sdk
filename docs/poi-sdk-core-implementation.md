@@ -1,8 +1,8 @@
-# @poi-sdk/core Implementation Summary
+# @fluxpointstudios/poi-sdk-core Implementation Summary
 
 ## Overview
 
-The `@poi-sdk/core` package has been implemented as the foundational layer for the poi-sdk dual-protocol commerce system. This package provides protocol-neutral types, interfaces, and utilities that support both Flux and x402 payment protocols.
+The `@fluxpointstudios/poi-sdk-core` package has been implemented as the foundational layer for the poi-sdk dual-protocol commerce system. This package provides protocol-neutral types, interfaces, and utilities that support both Flux and x402 payment protocols.
 
 ## Implementation Date
 2025-01-26
@@ -233,7 +233,7 @@ pnpm run typecheck
 
 ## Instructions for Test Engineer
 
-Please read this document and implement comprehensive tests for the @poi-sdk/core package. Focus on:
+Please read this document and implement comprehensive tests for the @fluxpointstudios/poi-sdk-core package. Focus on:
 
 1. **Correctness**: All functions should produce expected outputs
 2. **Edge cases**: Empty inputs, invalid data, boundary conditions

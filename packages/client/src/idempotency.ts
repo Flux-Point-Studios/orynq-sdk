@@ -1,10 +1,9 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/client/src/idempotency.ts
  * @summary Idempotency key management and duplicate payment prevention.
  *
  * This module provides the IdempotencyManager class for generating idempotency
  * keys and preventing duplicate payments. It uses the InvoiceCache from
- * @poi-sdk/core to track paid invoices.
+ * @fluxpointstudios/poi-sdk-core to track paid invoices.
  *
  * Features:
  * - Deterministic key generation from request parameters
@@ -20,7 +19,7 @@ import {
   generateIdempotencyKey as coreGenerateKey,
   type PaymentProof,
   type InvoiceCache,
-} from "@poi-sdk/core";
+} from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Idempotency Manager
@@ -40,8 +39,8 @@ import {
  *
  * @example
  * ```typescript
- * import { IdempotencyManager } from "@poi-sdk/client";
- * import { InMemoryInvoiceCache } from "@poi-sdk/core";
+ * import { IdempotencyManager } from "@fluxpointstudios/poi-sdk-client";
+ * import { InMemoryInvoiceCache } from "@fluxpointstudios/poi-sdk-core";
  *
  * const manager = new IdempotencyManager(new InMemoryInvoiceCache());
  *

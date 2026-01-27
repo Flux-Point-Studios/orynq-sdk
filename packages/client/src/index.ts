@@ -1,6 +1,5 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/client/src/index.ts
- * @summary Main entry point for @poi-sdk/client package.
+ * @summary Main entry point for @fluxpointstudios/poi-sdk-client package.
  *
  * This package provides the PoiClient for making requests to payment-protected
  * APIs with automatic payment handling. It supports both x402 and Flux protocols
@@ -15,7 +14,7 @@
  *
  * Usage:
  * ```typescript
- * import { createPoiClient, PoiClient } from "@poi-sdk/client";
+ * import { createPoiClient, PoiClient } from "@fluxpointstudios/poi-sdk-client";
  *
  * const client = createPoiClient({
  *   baseUrl: "https://api.example.com",

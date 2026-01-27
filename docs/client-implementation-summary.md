@@ -1,8 +1,8 @@
-# @poi-sdk/client Implementation Summary
+# @fluxpointstudios/poi-sdk-client Implementation Summary
 
 ## Overview
 
-This document summarizes the implementation of the `@poi-sdk/client` package, which provides the main "one-call" client with auto-pay functionality for the poi-sdk dual-protocol commerce layer.
+This document summarizes the implementation of the `@fluxpointstudios/poi-sdk-client` package, which provides the main "one-call" client with auto-pay functionality for the poi-sdk dual-protocol commerce layer.
 
 ## Package Location
 
@@ -13,9 +13,9 @@ This document summarizes the implementation of the `@poi-sdk/client` package, wh
 ### Configuration Files
 
 1. **package.json** - Package manifest with dependencies on:
-   - `@poi-sdk/core` (workspace:*)
-   - `@poi-sdk/transport-x402` (workspace:*)
-   - `@poi-sdk/transport-flux` (workspace:*)
+   - `@fluxpointstudios/poi-sdk-core` (workspace:*)
+   - `@fluxpointstudios/poi-sdk-transport-x402` (workspace:*)
+   - `@fluxpointstudios/poi-sdk-transport-flux` (workspace:*)
 
 2. **tsconfig.json** - TypeScript configuration extending the base config
 
@@ -88,9 +88,9 @@ This document summarizes the implementation of the `@poi-sdk/client` package, wh
 
 ## Dependencies
 
-- `@poi-sdk/core` - Types, errors, utilities, in-memory stores
-- `@poi-sdk/transport-x402` - x402 protocol transport
-- `@poi-sdk/transport-flux` - Flux protocol transport
+- `@fluxpointstudios/poi-sdk-core` - Types, errors, utilities, in-memory stores
+- `@fluxpointstudios/poi-sdk-transport-x402` - x402 protocol transport
+- `@fluxpointstudios/poi-sdk-transport-flux` - Flux protocol transport
 
 ## Recommended Tests
 
@@ -206,7 +206,7 @@ pnpm typecheck
 
 ## Notes for Test Engineer
 
-1. The package uses the `@poi-sdk/core` in-memory stores by default, which are suitable for testing.
+1. The package uses the `@fluxpointstudios/poi-sdk-core` in-memory stores by default, which are suitable for testing.
 
 2. Protocol detection priority: x402 (header-based) is checked before Flux (JSON body).
 
@@ -220,4 +220,4 @@ pnpm typecheck
 
 ---
 
-**Orchestrator:** Please have the Test Engineer read this document at `D:\fluxPoint\PoI\poi-sdk\docs\client-implementation-summary.md` and create comprehensive tests for the @poi-sdk/client package.
+**Orchestrator:** Please have the Test Engineer read this document at `D:\fluxPoint\PoI\poi-sdk\docs\client-implementation-summary.md` and create comprehensive tests for the @fluxpointstudios/poi-sdk-client package.

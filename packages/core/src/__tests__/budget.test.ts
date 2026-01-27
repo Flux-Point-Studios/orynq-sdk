@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/core/src/__tests__/budget.test.ts
  * @summary Tests for budget store implementations.
  */
 

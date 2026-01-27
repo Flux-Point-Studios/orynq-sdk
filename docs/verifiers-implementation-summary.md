@@ -2,7 +2,7 @@
 
 ## Overview
 
-Successfully implemented real on-chain verification logic for both Cardano and EVM chains in the `@poi-sdk/server-middleware` package. These verifiers replace stub verification logic with actual blockchain queries to verify payment proofs.
+Successfully implemented real on-chain verification logic for both Cardano and EVM chains in the `@fluxpointstudios/poi-sdk-server-middleware` package. These verifiers replace stub verification logic with actual blockchain queries to verify payment proofs.
 
 ## Package Location
 
@@ -142,7 +142,7 @@ pnpm build
 ### Cardano Verifier
 
 ```typescript
-import { CardanoVerifier } from "@poi-sdk/server-middleware/verifiers";
+import { CardanoVerifier } from "@fluxpointstudios/poi-sdk-server-middleware/verifiers";
 
 // Blockfrost provider (recommended for production)
 const verifier = new CardanoVerifier({
@@ -181,7 +181,7 @@ const tokenResult = await verifier.verify(
 ### EVM Verifier
 
 ```typescript
-import { EvmVerifier } from "@poi-sdk/server-middleware/verifiers";
+import { EvmVerifier } from "@fluxpointstudios/poi-sdk-server-middleware/verifiers";
 
 // Basic configuration
 const verifier = new EvmVerifier({

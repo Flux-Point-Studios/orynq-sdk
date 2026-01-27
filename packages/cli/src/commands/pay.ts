@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/cli/src/commands/pay.ts
  * @summary CLI command to manually pay an invoice using a configured payer.
  *
  * This command takes a JSON payment request (typically obtained from the
@@ -13,8 +12,8 @@
 
 import chalk from "chalk";
 import type { Command } from "commander";
-import type { PaymentRequest } from "@poi-sdk/core";
-import { createEvmPayer } from "@poi-sdk/payer-evm-direct";
+import type { PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
+import { createEvmPayer } from "@fluxpointstudios/poi-sdk-payer-evm-direct";
 import { readFileSync, existsSync } from "node:fs";
 
 /**

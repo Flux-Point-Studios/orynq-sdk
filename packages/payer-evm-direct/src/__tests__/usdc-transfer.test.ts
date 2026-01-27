@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-direct/src/__tests__/usdc-transfer.test.ts
  * @summary Unit tests for ERC-20 transfer utilities.
  *
  * Tests cover:
@@ -11,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from "vitest";
-import { PaymentFailedError } from "@poi-sdk/core";
+import { PaymentFailedError } from "@fluxpointstudios/poi-sdk-core";
 import {
   CHAIN_CONFIGS,
   getViemChain,

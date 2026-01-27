@@ -1,6 +1,5 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/core/src/utils/index.ts
- * @summary Central export point for utility functions in @poi-sdk/core.
+ * @summary Central export point for utility functions in @fluxpointstudios/poi-sdk-core.
  *
  * This file re-exports all utility functions from the utils subdirectory.
  * These utilities handle JSON canonicalization, hashing, and encoding
@@ -8,7 +7,7 @@
  *
  * Usage:
  * ```typescript
- * import { canonicalize, sha256Hex, generateIdempotencyKey } from "@poi-sdk/core/utils";
+ * import { canonicalize, sha256Hex, generateIdempotencyKey } from "@fluxpointstudios/poi-sdk-core/utils";
  * ```
  */
 

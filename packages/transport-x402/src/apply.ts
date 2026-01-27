@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/transport-x402/src/apply.ts
  * @summary Apply payment proofs to outgoing requests via PAYMENT-SIGNATURE header.
  *
  * This file handles attaching x402 payment authorization to HTTP requests.
@@ -11,8 +10,8 @@
  * - Client code that needs to manually attach payment headers
  */
 
-import { X402_HEADERS, isX402SignatureProof } from "@poi-sdk/core";
-import type { PaymentProof, X402SignatureProof } from "@poi-sdk/core";
+import { X402_HEADERS, isX402SignatureProof } from "@fluxpointstudios/poi-sdk-core";
+import type { PaymentProof, X402SignatureProof } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Public API

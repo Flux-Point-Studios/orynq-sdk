@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-cip30/src/wallet-connector.ts
  * @summary CIP-30 wallet connection utilities for Cardano browser wallets.
  *
  * This file provides type definitions and helper functions for connecting to

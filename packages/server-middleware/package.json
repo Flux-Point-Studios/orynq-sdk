@@ -1,5 +1,5 @@
 {
-  "name": "@poi-sdk/server-middleware",
+  "name": "@fluxpointstudios/poi-sdk-server-middleware",
   "version": "0.1.0",
   "description": "Server middleware for poi-sdk dual-protocol payment layer (Flux and x402)",
   "type": "module",
@@ -63,21 +63,28 @@
     "clean": "rimraf dist"
   },
   "keywords": [
-    "poi",
-    "x402",
-    "flux",
     "payments",
-    "middleware",
-    "express",
-    "fastify",
+    "402",
+    "x402",
     "cardano",
     "evm",
-    "402"
+    "commerce"
   ],
-  "author": "",
+  "author": "Flux Point Studios",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "directory": "packages/server-middleware"
+  },
+  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
   "dependencies": {
-    "@poi-sdk/core": "workspace:*"
+    "@fluxpointstudios/poi-sdk-core": "workspace:*"
   },
   "peerDependencies": {
     "express": ">=4.0.0",

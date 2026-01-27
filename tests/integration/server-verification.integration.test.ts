@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import type { PaymentProof } from "@poi-sdk/core";
+import type { PaymentProof } from "@fluxpointstudios/poi-sdk-core";
 import {
   loadTestEnvironment,
   canRunCardanoTests,
@@ -59,7 +59,7 @@ const KNOWN_TRANSACTIONS = {
 const shouldSkipCardano = !canRunCardanoTests();
 
 describe.skipIf(shouldSkipCardano)("Cardano Payment Verification", () => {
-  let CardanoVerifier: typeof import("@poi-sdk/server-middleware").CardanoVerifier;
+  let CardanoVerifier: typeof import("@fluxpointstudios/poi-sdk-server-middleware").CardanoVerifier;
   let verifier: InstanceType<typeof CardanoVerifier>;
 
   beforeAll(async () => {
@@ -68,7 +68,7 @@ describe.skipIf(shouldSkipCardano)("Cardano Payment Verification", () => {
       return;
     }
 
-    const middlewareModule = await import("@poi-sdk/server-middleware");
+    const middlewareModule = await import("@fluxpointstudios/poi-sdk-server-middleware");
     CardanoVerifier = middlewareModule.CardanoVerifier;
 
     const env = loadTestEnvironment();
@@ -218,11 +218,11 @@ describe.skipIf(shouldSkipCardano)("Cardano Payment Verification", () => {
 // ---------------------------------------------------------------------------
 
 describe("EVM Payment Verification", () => {
-  let EvmVerifier: typeof import("@poi-sdk/server-middleware").EvmVerifier;
+  let EvmVerifier: typeof import("@fluxpointstudios/poi-sdk-server-middleware").EvmVerifier;
   let verifier: InstanceType<typeof EvmVerifier>;
 
   beforeAll(async () => {
-    const middlewareModule = await import("@poi-sdk/server-middleware");
+    const middlewareModule = await import("@fluxpointstudios/poi-sdk-server-middleware");
     EvmVerifier = middlewareModule.EvmVerifier;
 
     const env = loadTestEnvironment();
@@ -369,7 +369,7 @@ describe("EVM Payment Verification", () => {
 
     it("should reject x402 signature when trust mode is disabled", async () => {
       // Create verifier without trust mode
-      const middlewareModule = await import("@poi-sdk/server-middleware");
+      const middlewareModule = await import("@fluxpointstudios/poi-sdk-server-middleware");
       const strictVerifier = new middlewareModule.EvmVerifier({
         chains: [BASE_SEPOLIA.chainId],
         trustFacilitator: false,
@@ -400,12 +400,12 @@ describe("EVM Payment Verification", () => {
 // ---------------------------------------------------------------------------
 
 describe("Express Middleware Integration", () => {
-  let requirePayment: typeof import("@poi-sdk/server-middleware").requirePayment;
-  let MemoryInvoiceStore: typeof import("@poi-sdk/server-middleware").MemoryInvoiceStore;
-  let EvmVerifier: typeof import("@poi-sdk/server-middleware").EvmVerifier;
+  let requirePayment: typeof import("@fluxpointstudios/poi-sdk-server-middleware").requirePayment;
+  let MemoryInvoiceStore: typeof import("@fluxpointstudios/poi-sdk-server-middleware").MemoryInvoiceStore;
+  let EvmVerifier: typeof import("@fluxpointstudios/poi-sdk-server-middleware").EvmVerifier;
 
   beforeAll(async () => {
-    const middlewareModule = await import("@poi-sdk/server-middleware");
+    const middlewareModule = await import("@fluxpointstudios/poi-sdk-server-middleware");
     requirePayment = middlewareModule.requirePayment;
     MemoryInvoiceStore = middlewareModule.MemoryInvoiceStore;
     EvmVerifier = middlewareModule.EvmVerifier;

@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-x402/src/eip3009.ts
  * @summary EIP-3009 "Transfer With Authorization" utilities for gasless token transfers.
  *
  * EIP-3009 enables gasless token transfers where:

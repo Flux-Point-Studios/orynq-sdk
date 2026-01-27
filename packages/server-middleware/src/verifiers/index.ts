@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/server-middleware/src/verifiers/index.ts
  * @summary Central export point for chain verifiers.
  *
  * This file re-exports all chain verifier implementations and the
@@ -12,7 +11,7 @@
  *   ChainVerifier,
  *   CardanoVerifier,
  *   EvmVerifier,
- * } from "@poi-sdk/server-middleware/verifiers";
+ * } from "@fluxpointstudios/poi-sdk-server-middleware/verifiers";
  * ```
  */
 

@@ -1,8 +1,7 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-direct/src/viem-payer.ts
  * @summary Main Payer implementation for direct ERC-20 transfers using viem.
  *
- * This file implements the Payer interface from @poi-sdk/core for executing
+ * This file implements the Payer interface from @fluxpointstudios/poi-sdk-core for executing
  * direct ERC-20 token transfers on EVM chains. It is the legacy payer for
  * servers that accept raw transaction hashes rather than x402 signatures.
  *
@@ -12,7 +11,7 @@
  * - Balance checking before payment execution
  * - Lazy client initialization for efficient resource usage
  *
- * NOT compatible with x402 protocol - use @poi-sdk/payer-evm-x402 for that.
+ * NOT compatible with x402 protocol - use @fluxpointstudios/poi-sdk-payer-evm-x402 for that.
  *
  * Used by:
  * - Application code that needs to pay servers accepting raw txHash proofs
@@ -35,8 +34,8 @@ import type {
   PaymentProof,
   PaymentRequest,
   ChainId,
-} from "@poi-sdk/core";
-import { InsufficientBalanceError } from "@poi-sdk/core";
+} from "@fluxpointstudios/poi-sdk-core";
+import { InsufficientBalanceError } from "@fluxpointstudios/poi-sdk-core";
 import { CHAIN_CONFIGS, transferErc20, getErc20Balance } from "./usdc-transfer.js";
 
 // ---------------------------------------------------------------------------
@@ -113,7 +112,7 @@ interface ClientPair {
  *
  * @example
  * ```typescript
- * import { ViemPayer } from "@poi-sdk/payer-evm-direct";
+ * import { ViemPayer } from "@fluxpointstudios/poi-sdk-payer-evm-direct";
  *
  * const payer = new ViemPayer({
  *   privateKey: "0x...",

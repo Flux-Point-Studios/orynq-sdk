@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/cli/src/commands/call.ts
  * @summary CLI command to make requests with automatic payment handling.
  *
  * This command provides a full end-to-end flow for making paid API requests.
@@ -13,8 +12,8 @@
 
 import chalk from "chalk";
 import type { Command } from "commander";
-import { createPoiClient } from "@poi-sdk/client";
-import { createEvmPayer } from "@poi-sdk/payer-evm-direct";
+import { createPoiClient } from "@fluxpointstudios/poi-sdk-client";
+import { createEvmPayer } from "@fluxpointstudios/poi-sdk-payer-evm-direct";
 import { readFileSync, existsSync } from "node:fs";
 
 /**

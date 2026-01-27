@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-cip30/src/__tests__/cip30-payer.test.ts
  * @summary Unit tests for CIP-30 Payer implementation.
  *
  * Tests the Cip30Payer class including supports(), getAddress(), getBalance(),
@@ -12,8 +11,8 @@ import {
   ChainNotSupportedError,
   InsufficientBalanceError,
   PaymentFailedError,
-} from "@poi-sdk/core";
-import type { PaymentRequest } from "@poi-sdk/core";
+} from "@fluxpointstudios/poi-sdk-core";
+import type { PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Mock Setup

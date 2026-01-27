@@ -1,5 +1,5 @@
 {
-  "name": "@poi-sdk/payer-cardano-cip30",
+  "name": "@fluxpointstudios/poi-sdk-payer-cardano-cip30",
   "version": "0.0.0",
   "description": "CIP-30 browser wallet adapter for Cardano payments in poi-sdk using MeshJS",
   "type": "module",
@@ -33,21 +33,28 @@
     "test:watch": "vitest"
   },
   "keywords": [
-    "poi",
+    "payments",
+    "402",
+    "x402",
     "cardano",
-    "cip30",
-    "wallet",
-    "meshjs",
-    "nami",
-    "eternl",
-    "lace",
-    "vespr",
-    "payments"
+    "evm",
+    "commerce"
   ],
-  "author": "",
+  "author": "Flux Point Studios",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "directory": "packages/payer-cardano-cip30"
+  },
+  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
   "dependencies": {
-    "@poi-sdk/core": "workspace:*"
+    "@fluxpointstudios/poi-sdk-core": "workspace:*"
   },
   "peerDependencies": {
     "@meshsdk/core": ">=1.5.0"

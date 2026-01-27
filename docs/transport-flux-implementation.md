@@ -1,8 +1,8 @@
-# @poi-sdk/transport-flux Implementation Summary
+# @fluxpointstudios/poi-sdk-transport-flux Implementation Summary
 
 ## Overview
 
-The `@poi-sdk/transport-flux` package implements the Flux (T-Backend style) wire format transport for the poi-sdk payment layer. This package handles detection, parsing, and header application for the Flux payment protocol.
+The `@fluxpointstudios/poi-sdk-transport-flux` package implements the Flux (T-Backend style) wire format transport for the poi-sdk payment layer. This package handles detection, parsing, and header application for the Flux payment protocol.
 
 ## Package Location
 
@@ -69,12 +69,12 @@ Main entry point with:
 
 ## Dependencies
 
-- `@poi-sdk/core` (workspace:*) - Core types, FLUX_HEADERS, CHAINS mapping
+- `@fluxpointstudios/poi-sdk-core` (workspace:*) - Core types, FLUX_HEADERS, CHAINS mapping
 
 ## Usage Example
 
 ```typescript
-import { createFluxTransport } from "@poi-sdk/transport-flux";
+import { createFluxTransport } from "@fluxpointstudios/poi-sdk-transport-flux";
 
 const flux = createFluxTransport();
 

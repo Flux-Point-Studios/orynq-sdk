@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/server-middleware/src/verifiers/__tests__/cardano.test.ts
  * @summary Unit tests for Cardano payment verifier.
  *
  * Tests cover:
@@ -14,7 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { CardanoVerifier } from "../cardano.js";
-import type { CardanoTxHashProof, CardanoSignedCborProof } from "@poi-sdk/core";
+import type { CardanoTxHashProof, CardanoSignedCborProof } from "@fluxpointstudios/poi-sdk-core";
 
 // Mock fetch globally
 const mockFetch = vi.fn();

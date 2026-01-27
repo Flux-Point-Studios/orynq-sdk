@@ -1,5 +1,5 @@
 {
-  "name": "@poi-sdk/core",
+  "name": "@fluxpointstudios/poi-sdk-core",
   "version": "0.1.0",
   "description": "Core types and utilities for poi-sdk dual-protocol commerce layer",
   "type": "module",
@@ -63,16 +63,26 @@
     "clean": "rimraf dist"
   },
   "keywords": [
-    "poi",
-    "x402",
-    "flux",
     "payments",
+    "402",
+    "x402",
     "cardano",
     "evm",
-    "caip-2"
+    "commerce"
   ],
-  "author": "",
+  "author": "Flux Point Studios",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
   "devDependencies": {
     "tsup": "^8.0.1",
     "typescript": "^5.3.3",

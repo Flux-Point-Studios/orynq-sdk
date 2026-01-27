@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/client/src/client.ts
  * @summary Main PoiClient class with auto-pay functionality.
  *
  * This module provides the PoiClient, the primary interface for making
@@ -35,12 +34,12 @@ import type {
   BudgetConfig,
   BudgetStore,
   InvoiceCache,
-} from "@poi-sdk/core";
+} from "@fluxpointstudios/poi-sdk-core";
 import {
   InMemoryBudgetStore,
   InMemoryInvoiceCache,
   FLUX_HEADERS,
-} from "@poi-sdk/core";
+} from "@fluxpointstudios/poi-sdk-core";
 
 import { HttpClient } from "./http-client.js";
 import { BudgetTracker } from "./budget-tracker.js";
@@ -169,8 +168,8 @@ export interface PoiRequestOptions extends Omit<RequestInit, "body"> {
  *
  * @example
  * ```typescript
- * import { PoiClient } from "@poi-sdk/client";
- * import { createCardanoPayer } from "@poi-sdk/payer-cardano";
+ * import { PoiClient } from "@fluxpointstudios/poi-sdk-client";
+ * import { createCardanoPayer } from "@fluxpointstudios/poi-sdk-payer-cardano";
  *
  * const client = new PoiClient({
  *   baseUrl: "https://api.example.com",
@@ -597,7 +596,7 @@ export class PoiClient {
  *
  * @example
  * ```typescript
- * import { createPoiClient } from "@poi-sdk/client";
+ * import { createPoiClient } from "@fluxpointstudios/poi-sdk-client";
  *
  * const client = createPoiClient({
  *   baseUrl: "https://api.example.com",

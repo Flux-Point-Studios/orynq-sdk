@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/cli/src/commands/index.ts
  * @summary Central export point for all CLI commands.
  *
  * This file re-exports all command registration functions to provide

@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/core/src/types/stream.ts
  * @summary NDJson event types for streaming responses.
  *
  * This file defines the event types used in newline-delimited JSON (NDJson)

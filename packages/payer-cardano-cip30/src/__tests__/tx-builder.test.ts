@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-cip30/src/__tests__/tx-builder.test.ts
  * @summary Unit tests for transaction builder utilities.
  *
  * Tests asset parsing, amount calculations, and payment output collection.
@@ -31,7 +30,7 @@ import {
   calculateRequiredAmounts,
   collectPaymentOutputs,
 } from "../tx-builder.js";
-import type { PaymentRequest } from "@poi-sdk/core";
+import type { PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Helper to create test payment requests

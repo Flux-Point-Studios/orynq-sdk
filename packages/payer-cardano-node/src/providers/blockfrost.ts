@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-node/src/providers/blockfrost.ts
  * @summary Blockfrost API provider implementation for Cardano blockchain data.
  *
  * This file implements the CardanoProvider interface using the Blockfrost API

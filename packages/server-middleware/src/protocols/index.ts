@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/server-middleware/src/protocols/index.ts
  * @summary Central export point for protocol emitters.
  *
  * This file re-exports the Flux and x402 protocol response emitters.
@@ -11,7 +10,7 @@
  * import {
  *   createFlux402Response,
  *   createX402_402Response,
- * } from "@poi-sdk/server-middleware";
+ * } from "@fluxpointstudios/poi-sdk-server-middleware";
  * ```
  */
 

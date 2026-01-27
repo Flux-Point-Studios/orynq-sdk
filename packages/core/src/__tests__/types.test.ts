@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/core/src/__tests__/types.test.ts
  * @summary Tests for type validation and type guards.
  */
 

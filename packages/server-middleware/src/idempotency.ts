@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/server-middleware/src/idempotency.ts
  * @summary Idempotency key handling for payment requests.
  *
  * This file provides utilities for handling idempotency keys in payment
@@ -16,7 +15,7 @@
  * - Fastify plugin for idempotency handling
  */
 
-import { FLUX_HEADERS } from "@poi-sdk/core";
+import { FLUX_HEADERS } from "@fluxpointstudios/poi-sdk-core";
 import { hashRequest, type RequestHashOptions } from "./request-hash.js";
 import type { Invoice, InvoiceStore } from "./invoice-store.js";
 

@@ -4,15 +4,15 @@ import { resolve } from 'path';
 export default defineConfig({
   resolve: {
     alias: {
-      '@poi-sdk/core': resolve(__dirname, 'packages/core/src/index.ts'),
-      '@poi-sdk/client': resolve(__dirname, 'packages/client/src/index.ts'),
-      '@poi-sdk/payer-cardano-node': resolve(__dirname, 'packages/payer-cardano-node/src/index.ts'),
-      '@poi-sdk/payer-cardano-cip30': resolve(__dirname, 'packages/payer-cardano-cip30/src/index.ts'),
-      '@poi-sdk/payer-evm-direct': resolve(__dirname, 'packages/payer-evm-direct/src/index.ts'),
-      '@poi-sdk/payer-evm-x402': resolve(__dirname, 'packages/payer-evm-x402/src/index.ts'),
-      '@poi-sdk/server-middleware': resolve(__dirname, 'packages/server-middleware/src/index.ts'),
-      '@poi-sdk/transport-flux': resolve(__dirname, 'packages/transport-flux/src/index.ts'),
-      '@poi-sdk/transport-x402': resolve(__dirname, 'packages/transport-x402/src/index.ts'),
+      '@fluxpointstudios/poi-sdk-core': resolve(__dirname, 'packages/core/src/index.ts'),
+      '@fluxpointstudios/poi-sdk-client': resolve(__dirname, 'packages/client/src/index.ts'),
+      '@fluxpointstudios/poi-sdk-payer-cardano-node': resolve(__dirname, 'packages/payer-cardano-node/src/index.ts'),
+      '@fluxpointstudios/poi-sdk-payer-cardano-cip30': resolve(__dirname, 'packages/payer-cardano-cip30/src/index.ts'),
+      '@fluxpointstudios/poi-sdk-payer-evm-direct': resolve(__dirname, 'packages/payer-evm-direct/src/index.ts'),
+      '@fluxpointstudios/poi-sdk-payer-evm-x402': resolve(__dirname, 'packages/payer-evm-x402/src/index.ts'),
+      '@fluxpointstudios/poi-sdk-server-middleware': resolve(__dirname, 'packages/server-middleware/src/index.ts'),
+      '@fluxpointstudios/poi-sdk-transport-flux': resolve(__dirname, 'packages/transport-flux/src/index.ts'),
+      '@fluxpointstudios/poi-sdk-transport-x402': resolve(__dirname, 'packages/transport-x402/src/index.ts'),
     },
   },
   test: {

@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-node/src/providers/index.ts
  * @summary Providers module entry point for Cardano blockchain data providers.
  *
  * This module exports all provider implementations and interfaces for
@@ -7,7 +6,7 @@
  *
  * Usage:
  * ```typescript
- * import { BlockfrostProvider, KoiosProvider } from "@poi-sdk/payer-cardano-node/providers";
+ * import { BlockfrostProvider, KoiosProvider } from "@fluxpointstudios/poi-sdk-payer-cardano-node/providers";
  *
  * // Using Blockfrost
  * const blockfrost = new BlockfrostProvider({

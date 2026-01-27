@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/client/src/http-client.ts
  * @summary Fetch wrapper with protocol detection and payment header handling.
  *
  * This module provides the HttpClient class that wraps fetch operations with
@@ -18,11 +17,11 @@
  * - Any component needing protocol-aware HTTP
  */
 
-import { createX402Transport } from "@poi-sdk/transport-x402";
-import { createFluxTransport } from "@poi-sdk/transport-flux";
-import type { X402Transport, X402Settlement } from "@poi-sdk/transport-x402";
-import type { FluxTransport } from "@poi-sdk/transport-flux";
-import type { PaymentRequest, PaymentProof } from "@poi-sdk/core";
+import { createX402Transport } from "@fluxpointstudios/poi-sdk-transport-x402";
+import { createFluxTransport } from "@fluxpointstudios/poi-sdk-transport-flux";
+import type { X402Transport, X402Settlement } from "@fluxpointstudios/poi-sdk-transport-x402";
+import type { FluxTransport } from "@fluxpointstudios/poi-sdk-transport-flux";
+import type { PaymentRequest, PaymentProof } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Types

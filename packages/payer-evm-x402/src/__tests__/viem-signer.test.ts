@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-x402/src/__tests__/viem-signer.test.ts
  * @summary Unit tests for ViemSigner implementation.
  *
  * Tests cover:

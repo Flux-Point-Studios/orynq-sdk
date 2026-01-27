@@ -38,19 +38,19 @@ importers:
 
   packages/cli:
     dependencies:
-      '@poi-sdk/client':
+      '@fluxpointstudios/poi-sdk-client':
         specifier: workspace:*
         version: link:../client
-      '@poi-sdk/core':
+      '@fluxpointstudios/poi-sdk-core':
         specifier: workspace:*
         version: link:../core
-      '@poi-sdk/payer-evm-direct':
+      '@fluxpointstudios/poi-sdk-payer-evm-direct':
         specifier: workspace:*
         version: link:../payer-evm-direct
-      '@poi-sdk/transport-flux':
+      '@fluxpointstudios/poi-sdk-transport-flux':
         specifier: workspace:*
         version: link:../transport-flux
-      '@poi-sdk/transport-x402':
+      '@fluxpointstudios/poi-sdk-transport-x402':
         specifier: workspace:*
         version: link:../transport-x402
       chalk:
@@ -72,13 +72,13 @@ importers:
 
   packages/client:
     dependencies:
-      '@poi-sdk/core':
+      '@fluxpointstudios/poi-sdk-core':
         specifier: workspace:*
         version: link:../core
-      '@poi-sdk/transport-flux':
+      '@fluxpointstudios/poi-sdk-transport-flux':
         specifier: workspace:*
         version: link:../transport-flux
-      '@poi-sdk/transport-x402':
+      '@fluxpointstudios/poi-sdk-transport-x402':
         specifier: workspace:*
         version: link:../transport-x402
     devDependencies:
@@ -106,13 +106,13 @@ importers:
 
   packages/gateway:
     dependencies:
-      '@poi-sdk/core':
+      '@fluxpointstudios/poi-sdk-core':
         specifier: workspace:*
         version: link:../core
-      '@poi-sdk/server-middleware':
+      '@fluxpointstudios/poi-sdk-server-middleware':
         specifier: workspace:*
         version: link:../server-middleware
-      '@poi-sdk/transport-x402':
+      '@fluxpointstudios/poi-sdk-transport-x402':
         specifier: workspace:*
         version: link:../transport-x402
       cors:
@@ -140,7 +140,7 @@ importers:
 
   packages/payer-cardano-cip30:
     dependencies:
-      '@poi-sdk/core':
+      '@fluxpointstudios/poi-sdk-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -165,7 +165,7 @@ importers:
       '@emurgo/cardano-serialization-lib-nodejs':
         specifier: '>=11.0.0'
         version: 15.0.3
-      '@poi-sdk/core':
+      '@fluxpointstudios/poi-sdk-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -184,7 +184,7 @@ importers:
       '@aws-sdk/client-kms':
         specifier: '>=3.0.0'
         version: 3.975.0
-      '@poi-sdk/core':
+      '@fluxpointstudios/poi-sdk-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -206,10 +206,10 @@ importers:
       '@aws-sdk/client-kms':
         specifier: '>=3.0.0'
         version: 3.975.0
-      '@poi-sdk/core':
+      '@fluxpointstudios/poi-sdk-core':
         specifier: workspace:*
         version: link:../core
-      '@poi-sdk/transport-x402':
+      '@fluxpointstudios/poi-sdk-transport-x402':
         specifier: workspace:*
         version: link:../transport-x402
       '@x402/evm':
@@ -231,7 +231,7 @@ importers:
 
   packages/server-middleware:
     dependencies:
-      '@poi-sdk/core':
+      '@fluxpointstudios/poi-sdk-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -259,7 +259,7 @@ importers:
 
   packages/transport-flux:
     dependencies:
-      '@poi-sdk/core':
+      '@fluxpointstudios/poi-sdk-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -275,7 +275,7 @@ importers:
 
   packages/transport-x402:
     dependencies:
-      '@poi-sdk/core':
+      '@fluxpointstudios/poi-sdk-core':
         specifier: workspace:*
         version: link:../core
       '@x402/evm':

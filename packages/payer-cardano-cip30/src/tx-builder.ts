@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-cip30/src/tx-builder.ts
  * @summary Transaction building utilities for Cardano payments using MeshJS.
  *
  * This file provides functions for constructing multi-output Cardano transactions
@@ -18,7 +17,7 @@
 
 import { Transaction, BrowserWallet } from "@meshsdk/core";
 import type { Asset, Recipient } from "@meshsdk/core";
-import type { PaymentRequest } from "@poi-sdk/core";
+import type { PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Configuration Types

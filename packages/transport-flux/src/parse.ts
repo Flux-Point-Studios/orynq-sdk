@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/transport-flux/src/parse.ts
  * @summary Parse Flux JSON invoice body into PaymentRequest format.
  *
  * This file handles the conversion from T-Backend wire format to the
@@ -16,7 +15,7 @@
  * - Server middleware parsing incoming payment requests
  */
 
-import { CHAINS, type PaymentRequest } from "@poi-sdk/core";
+import { CHAINS, type PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
 import type { FluxInvoice } from "./types.js";
 
 // ---------------------------------------------------------------------------

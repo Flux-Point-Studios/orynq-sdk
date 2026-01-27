@@ -1,6 +1,5 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-cip30/tsup.config.ts
- * @summary Build configuration for @poi-sdk/payer-cardano-cip30 package using tsup.
+ * @summary Build configuration for @fluxpointstudios/poi-sdk-payer-cardano-cip30 package using tsup.
  *
  * This configuration produces both ESM and CJS outputs with declaration files.
  * The package is designed for browser environments with CIP-30 wallet support.
@@ -20,5 +19,5 @@ export default defineConfig({
   minify: false,
   target: "es2022",
   outDir: "dist",
-  external: ["@meshsdk/core", "@poi-sdk/core"],
+  external: ["@meshsdk/core", "@fluxpointstudios/poi-sdk-core"],
 });

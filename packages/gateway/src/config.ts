@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/gateway/src/config.ts
  * @summary Configuration types and defaults for the x402 gateway.
  *
  * This file defines the configuration interface for the gateway server,
@@ -13,12 +12,62 @@
  * - cli.ts for command-line configuration
  */
 
-import type { ChainId } from "@poi-sdk/core";
+import type { ChainId } from "@fluxpointstudios/poi-sdk-core";
 import type { Request } from "express";
+import type { SettlementMode } from "./x402-settler.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+/**
+ * x402 settlement configuration.
+ *
+ * Controls how x402 payment signatures are verified and settled.
+ */
+export interface X402SettlementConfig {
+  /**
+   * Settlement verification mode.
+   *
+   * - `strict` (DEFAULT): Call facilitator to settle, get txHash, wait confirmations
+   * - `verify-precheck`: Crypto-verify signature as sanity check, but still require settlement
+   * - `trust`: DANGEROUS - dev only, accepts any signature without verification
+   *
+   * @default "strict"
+   */
+  mode: SettlementMode;
+
+  /**
+   * Facilitator URL for settlement.
+   * Required for strict and verify-precheck modes.
+   *
+   * The facilitator is responsible for executing the on-chain transfer
+   * using the EIP-3009 authorization signature.
+   *
+   * @example "https://facilitator.example.com"
+   */
+  facilitatorUrl?: string;
+
+  /**
+   * RPC URLs for EVM chains.
+   * Used for confirmation checking when confirmations > 0.
+   *
+   * @example { "eip155:8453": "https://mainnet.base.org" }
+   */
+  evmRpcUrls?: Record<string, string>;
+
+  /**
+   * Number of block confirmations to wait for after settlement.
+   * @default 1
+   */
+  confirmations?: number;
+
+  /**
+   * Timeout for settlement requests in milliseconds.
+   * @default 30000
+   */
+  timeout?: number;
+}
 
 /**
  * Pricing result returned by the pricing function.
@@ -141,6 +190,14 @@ export interface GatewayConfig {
    * @default false
    */
   debug?: boolean;
+
+  /**
+   * x402 settlement configuration.
+   *
+   * Controls how x402 payment signatures are verified and settled.
+   * If not provided, defaults to strict mode which requires a facilitatorUrl.
+   */
+  x402?: X402SettlementConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -161,6 +218,11 @@ export const DEFAULT_CONFIG: Partial<GatewayConfig> = {
   protocols: ["flux", "x402"],
   invoiceExpiresInSeconds: 300,
   debug: false,
+  x402: {
+    mode: "strict",
+    confirmations: 1,
+    timeout: 30000,
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -217,6 +279,56 @@ export function validateConfig(config: GatewayConfig): void {
       throw new ConfigurationError(`Invalid port: ${config.port}`);
     }
   }
+
+  // Validate x402 configuration
+  if (config.x402) {
+    const x402Config = config.x402;
+
+    // Validate mode
+    if (x402Config.mode && !["strict", "verify-precheck", "trust"].includes(x402Config.mode)) {
+      throw new ConfigurationError(
+        `Invalid x402 mode: ${x402Config.mode}. Must be 'strict', 'verify-precheck', or 'trust'`
+      );
+    }
+
+    // Facilitator URL required for strict and verify-precheck modes
+    const effectiveMode = x402Config.mode || "strict";
+    if (effectiveMode !== "trust" && !x402Config.facilitatorUrl) {
+      throw new ConfigurationError(
+        `x402.facilitatorUrl is required for '${effectiveMode}' mode. ` +
+        `Provide a facilitator URL or use 'trust' mode (dev only).`
+      );
+    }
+
+    // Validate facilitator URL if provided
+    if (x402Config.facilitatorUrl) {
+      try {
+        new URL(x402Config.facilitatorUrl);
+      } catch {
+        throw new ConfigurationError(
+          `Invalid x402.facilitatorUrl: ${x402Config.facilitatorUrl}`
+        );
+      }
+    }
+
+    // Validate confirmations
+    if (x402Config.confirmations !== undefined) {
+      if (!Number.isInteger(x402Config.confirmations) || x402Config.confirmations < 0) {
+        throw new ConfigurationError(
+          `Invalid x402.confirmations: ${x402Config.confirmations}. Must be a non-negative integer`
+        );
+      }
+    }
+
+    // Validate timeout
+    if (x402Config.timeout !== undefined) {
+      if (!Number.isInteger(x402Config.timeout) || x402Config.timeout < 1000) {
+        throw new ConfigurationError(
+          `Invalid x402.timeout: ${x402Config.timeout}. Must be at least 1000ms`
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -235,6 +347,12 @@ export function mergeConfig(config: GatewayConfig): Required<GatewayConfig> {
   if (config.corsOrigins === undefined) {
     merged.corsOrigins = [];
   }
+
+  // Merge x402 config with defaults
+  merged.x402 = {
+    ...DEFAULT_CONFIG.x402,
+    ...config.x402,
+  } as Required<X402SettlementConfig>;
 
   return merged;
 }

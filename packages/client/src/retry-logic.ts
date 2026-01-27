@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/client/src/retry-logic.ts
  * @summary Payment retry logic with polling and exponential backoff.
  *
  * This module provides utilities for retrying requests after payment,
@@ -22,8 +21,8 @@ import type {
   PaymentRequest,
   PaymentProof,
   PaymentStatus,
-} from "@poi-sdk/core";
-import { PaymentTimeoutError, PaymentFailedError } from "@poi-sdk/core";
+} from "@fluxpointstudios/poi-sdk-core";
+import { PaymentTimeoutError, PaymentFailedError } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Types

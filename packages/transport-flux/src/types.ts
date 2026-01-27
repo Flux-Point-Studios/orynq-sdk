@@ -1,5 +1,4 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/transport-flux/src/types.ts
  * @summary Flux-specific types matching T-Backend wire format.
  *
  * This file defines the TypeScript interfaces for the Flux payment protocol,
@@ -17,7 +16,7 @@
  * - index.ts for the FluxTransport factory
  */
 
-import type { PaymentRequest, PaymentProof } from "@poi-sdk/core";
+import type { PaymentRequest, PaymentProof } from "@fluxpointstudios/poi-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Flux Invoice Format (T-Backend wire format)
