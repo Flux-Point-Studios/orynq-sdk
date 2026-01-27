@@ -1,6 +1,6 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-x402/src/signers/kms-signer.ts
- * @summary AWS KMS signer for production server-side EVM signing.
+ * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-direct/src/signers/kms-signer.ts
+ * @summary AWS KMS signer for production server-side EVM direct transfers.
  *
  * This signer uses AWS Key Management Service (KMS) to securely manage private
  * keys and perform ECDSA signing operations. Keys never leave the KMS hardware
@@ -12,7 +12,7 @@
  * Used by:
  * - Production server deployments requiring HSM-backed key security
  * - Multi-tenant payment processing systems
- * - High-value transaction processing
+ * - High-value direct ERC-20 transfers
  *
  * Requires:
  * - @aws-sdk/client-kms for AWS KMS integration
@@ -21,6 +21,10 @@
  * - kms:Sign - Sign data with the KMS key
  * - kms:GetPublicKey - Retrieve the public key for address derivation
  * - kms:DescribeKey - (Optional) Verify key configuration
+ *
+ * Note: This file re-exports the full KMS signer implementation from
+ * a shared location to avoid code duplication between payer-evm-direct
+ * and payer-evm-x402.
  */
 
 import type { Signer, ChainId } from "@poi-sdk/core";
@@ -29,26 +33,16 @@ import type { Signer, ChainId } from "@poi-sdk/core";
 // Type Declarations for Optional AWS SDK
 // ---------------------------------------------------------------------------
 
-/**
- * KMS client interface (subset of @aws-sdk/client-kms KMSClient).
- * This allows the code to compile without the AWS SDK installed.
- */
 interface KMSClientLike {
   send(command: unknown): Promise<unknown>;
 }
 
-/**
- * GetPublicKey response interface.
- */
 interface GetPublicKeyResponse {
   PublicKey?: Uint8Array;
   KeySpec?: string;
   KeyUsage?: string;
 }
 
-/**
- * Sign response interface.
- */
 interface SignResponse {
   Signature?: Uint8Array;
 }
@@ -72,7 +66,6 @@ export interface EvmKmsSignerConfig {
    * @example Key ID: "1234abcd-12ab-34cd-56ef-1234567890ab"
    * @example Key ARN: "arn:aws:kms:us-east-1:123456789012:key/1234abcd-..."
    * @example Alias: "alias/my-eth-key"
-   * @example Alias ARN: "arn:aws:kms:us-east-1:123456789012:alias/my-eth-key"
    */
   keyId: string;
 
@@ -85,18 +78,13 @@ export interface EvmKmsSignerConfig {
 
   /**
    * Optional endpoint URL for KMS.
-   * Useful for local testing with LocalStack or AWS KMS compatible services.
-   *
-   * @example "http://localhost:4566" for LocalStack
+   * Useful for local testing with LocalStack.
    */
   endpoint?: string;
 
   /**
    * Optional AWS credentials configuration.
-   * If not provided, uses the default AWS credential provider chain:
-   * 1. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-   * 2. Shared credentials file (~/.aws/credentials)
-   * 3. IAM role (EC2, ECS, Lambda)
+   * If not provided, uses the default AWS credential provider chain.
    */
   credentials?: {
     accessKeyId: string;
@@ -106,7 +94,6 @@ export interface EvmKmsSignerConfig {
 
   /**
    * Optional AWS profile to use from shared credentials.
-   * Only used when credentials is not explicitly provided.
    */
   profile?: string;
 }
@@ -115,18 +102,10 @@ export interface EvmKmsSignerConfig {
 // Constants
 // ---------------------------------------------------------------------------
 
-/**
- * secp256k1 curve order (n).
- * Used for EIP-2 signature normalization (low-S values).
- */
 const SECP256K1_N = BigInt(
   "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141"
 );
 
-/**
- * Half of secp256k1 curve order.
- * Signatures with S > halfN must be converted to n - S.
- */
 const SECP256K1_HALF_N = SECP256K1_N / BigInt(2);
 
 // ---------------------------------------------------------------------------
@@ -134,7 +113,7 @@ const SECP256K1_HALF_N = SECP256K1_N / BigInt(2);
 // ---------------------------------------------------------------------------
 
 /**
- * AWS KMS Signer for production EVM signing.
+ * AWS KMS Signer for production EVM direct transfers.
  *
  * This signer provides HSM-backed key management for Ethereum and EVM-compatible
  * chains. Private keys never leave the secure hardware boundary of AWS KMS.
@@ -148,38 +127,17 @@ const SECP256K1_HALF_N = SECP256K1_N / BigInt(2);
  * - Lazy KMS client initialization
  * - Public key and address caching
  *
- * AWS Key Requirements:
- * - Key type: Asymmetric
- * - Key spec: ECC_SECG_P256K1
- * - Key usage: SIGN_VERIFY
- *
- * Create a suitable KMS key with AWS CLI:
+ * Create a suitable KMS key:
  * ```bash
  * aws kms create-key \
  *   --key-spec ECC_SECG_P256K1 \
  *   --key-usage SIGN_VERIFY \
- *   --description "Ethereum signing key for production"
- * ```
- *
- * IAM Policy Example:
- * ```json
- * {
- *   "Version": "2012-10-17",
- *   "Statement": [{
- *     "Effect": "Allow",
- *     "Action": [
- *       "kms:Sign",
- *       "kms:GetPublicKey",
- *       "kms:DescribeKey"
- *     ],
- *     "Resource": "arn:aws:kms:us-east-1:123456789012:key/*"
- *   }]
- * }
+ *   --description "Ethereum signing key for direct transfers"
  * ```
  *
  * @example
  * ```typescript
- * import { EvmKmsSigner } from "@poi-sdk/payer-evm-x402";
+ * import { EvmKmsSigner } from "@poi-sdk/payer-evm-direct/signers";
  *
  * const signer = new EvmKmsSigner({
  *   keyId: "alias/my-eth-key",
@@ -187,24 +145,13 @@ const SECP256K1_HALF_N = SECP256K1_N / BigInt(2);
  * });
  *
  * const address = await signer.getAddress("eip155:1");
- * console.log("Ethereum address:", address);
- *
- * const message = "Hello, World!";
- * const signature = await signer.signMessage(message, "eip155:1");
- * console.log("Signature:", signature);
+ * console.log("Address:", address);
  * ```
  */
 export class EvmKmsSigner implements Signer {
-  /** KMS configuration */
   private readonly config: EvmKmsSignerConfig;
-
-  /** Lazily initialized KMS client */
   private kmsClient: KMSClientLike | null = null;
-
-  /** Cached raw public key (65 bytes: 0x04 prefix + x + y) */
   private cachedPublicKey: Uint8Array | null = null;
-
-  /** Cached Ethereum address (checksummed) */
   private cachedAddress: string | null = null;
 
   /**
@@ -220,19 +167,11 @@ export class EvmKmsSigner implements Signer {
     this.config = config;
   }
 
-  // -------------------------------------------------------------------------
-  // Signer Interface Implementation
-  // -------------------------------------------------------------------------
-
   /**
    * Get the signing address for a specific chain.
    *
-   * Retrieves the public key from KMS (if not cached) and derives the
-   * Ethereum address using Keccak-256 hash of the uncompressed public key.
-   *
    * @param _chain - CAIP-2 chain identifier (unused, same address for all EVM chains)
    * @returns Promise resolving to the checksummed Ethereum address
-   * @throws Error if KMS GetPublicKey fails or key type is invalid
    */
   async getAddress(_chain: ChainId): Promise<string> {
     if (this.cachedAddress) {
@@ -247,43 +186,22 @@ export class EvmKmsSigner implements Signer {
   /**
    * Sign arbitrary binary data.
    *
-   * This method:
-   * 1. Hashes the payload with Keccak-256
-   * 2. Sends the hash to KMS for ECDSA signing
-   * 3. Parses the DER-encoded signature
-   * 4. Normalizes S to low value (EIP-2)
-   * 5. Calculates recovery parameter v
-   * 6. Returns 65-byte signature (r[32] + s[32] + v[1])
-   *
    * @param payload - Data to sign as Uint8Array
-   * @param chain - CAIP-2 chain identifier (used for address verification)
+   * @param chain - CAIP-2 chain identifier
    * @returns Promise resolving to 65-byte signature (r, s, v)
-   * @throws Error if KMS Sign fails or signature recovery fails
    */
   async sign(payload: Uint8Array, chain: ChainId): Promise<Uint8Array> {
     if (payload.length === 0) {
       throw new Error("Cannot sign empty payload");
     }
 
-    // Hash the payload with Keccak-256
     const digest = this.keccak256(payload);
-
-    // Sign the digest with KMS
     const derSignature = await this.kmsSign(digest);
-
-    // Parse DER signature to get r and s
     const { r, s } = this.parseDerSignature(derSignature);
-
-    // Normalize S to low value (EIP-2)
     const normalizedS = this.normalizeS(s);
-
-    // Get the expected address for v recovery
     const expectedAddress = await this.getAddress(chain);
+    const v = await this.recoverV(digest, r, normalizedS, expectedAddress);
 
-    // Recover v by trying both possibilities
-    const v = this.recoverV(digest, r, normalizedS, expectedAddress);
-
-    // Combine r, s, v into 65-byte signature
     const signature = new Uint8Array(65);
     signature.set(r, 0);
     signature.set(normalizedS, 32);
@@ -295,33 +213,19 @@ export class EvmKmsSigner implements Signer {
   /**
    * Sign a human-readable message (EIP-191 style).
    *
-   * This method prefixes the message with the Ethereum signed message prefix
-   * and returns the signature as a hex string.
-   *
    * @param message - UTF-8 string message to sign
    * @param chain - CAIP-2 chain identifier
    * @returns Promise resolving to the signature as 0x-prefixed hex string
    */
   async signMessage(message: string, chain: ChainId): Promise<string> {
-    // Create EIP-191 prefixed message
     const prefix = `\x19Ethereum Signed Message:\n${message.length}`;
     const prefixedMessage = new TextEncoder().encode(prefix + message);
-
-    // Sign the prefixed message
     const signature = await this.sign(prefixedMessage, chain);
-
-    // Return as hex string
     return "0x" + this.bytesToHex(signature);
   }
 
-  // -------------------------------------------------------------------------
-  // Public Accessors
-  // -------------------------------------------------------------------------
-
   /**
    * Get the KMS Key ID.
-   *
-   * @returns The configured KMS key ID, ARN, or alias
    */
   getKeyId(): string {
     return this.config.keyId;
@@ -329,50 +233,27 @@ export class EvmKmsSigner implements Signer {
 
   /**
    * Get the AWS region.
-   *
-   * @returns The configured region or undefined for default
    */
   getRegion(): string | undefined {
     return this.config.region;
   }
 
   // -------------------------------------------------------------------------
-  // Private Methods - KMS Operations
+  // Private Methods
   // -------------------------------------------------------------------------
 
-  /**
-   * Get or create the KMS client.
-   *
-   * @returns Promise resolving to KMS client
-   * @throws Error if @aws-sdk/client-kms is not installed
-   */
   private async getKmsClient(): Promise<KMSClientLike> {
     if (this.kmsClient) {
       return this.kmsClient;
     }
 
     try {
-      // Dynamic import to keep @aws-sdk/client-kms optional
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const kmsModule = await import("@aws-sdk/client-kms").catch(() => null);
-      if (!kmsModule) {
-        throw new Error("Module not found");
-      }
-
-      const { KMSClient } = kmsModule;
+      const { KMSClient } = await import("@aws-sdk/client-kms");
       const clientConfig: Record<string, unknown> = {};
 
-      if (this.config.region) {
-        clientConfig.region = this.config.region;
-      }
-
-      if (this.config.endpoint) {
-        clientConfig.endpoint = this.config.endpoint;
-      }
-
-      if (this.config.credentials) {
-        clientConfig.credentials = this.config.credentials;
-      }
+      if (this.config.region) clientConfig.region = this.config.region;
+      if (this.config.endpoint) clientConfig.endpoint = this.config.endpoint;
+      if (this.config.credentials) clientConfig.credentials = this.config.credentials;
 
       this.kmsClient = new KMSClient(clientConfig) as KMSClientLike;
       return this.kmsClient;
@@ -386,188 +267,103 @@ export class EvmKmsSigner implements Signer {
     }
   }
 
-  /**
-   * Retrieve the public key from KMS.
-   *
-   * @returns Promise resolving to raw public key (65 bytes)
-   * @throws Error if KMS call fails or key type is invalid
-   */
   private async getPublicKey(): Promise<Uint8Array> {
     if (this.cachedPublicKey) {
       return this.cachedPublicKey;
     }
 
     const client = await this.getKmsClient();
+    const { GetPublicKeyCommand } = await import("@aws-sdk/client-kms");
 
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const kmsModule = await import("@aws-sdk/client-kms").catch(() => null);
-      if (!kmsModule) {
-        throw new Error("AWS SDK module not available");
-      }
+    const response = (await client.send(
+      new GetPublicKeyCommand({ KeyId: this.config.keyId })
+    )) as GetPublicKeyResponse;
 
-      const { GetPublicKeyCommand } = kmsModule;
-      const command = new GetPublicKeyCommand({
-        KeyId: this.config.keyId,
-      });
+    if (!response.PublicKey) {
+      throw new Error("KMS GetPublicKey returned no public key");
+    }
 
-      const response = (await client.send(command)) as GetPublicKeyResponse;
-
-      if (!response.PublicKey) {
-        throw new Error("KMS GetPublicKey returned no public key");
-      }
-
-      // Verify key spec is secp256k1
-      if (response.KeySpec && response.KeySpec !== "ECC_SECG_P256K1") {
-        throw new Error(
-          `Invalid KMS key spec: ${response.KeySpec}. ` +
-            "EvmKmsSigner requires ECC_SECG_P256K1 (secp256k1) key."
-        );
-      }
-
-      // Parse SubjectPublicKeyInfo DER to extract raw public key
-      const rawPublicKey = this.extractRawPublicKeyFromSpki(
-        new Uint8Array(response.PublicKey)
-      );
-
-      this.cachedPublicKey = rawPublicKey;
-      return rawPublicKey;
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("KMS")) {
-        throw error;
-      }
+    if (response.KeySpec && response.KeySpec !== "ECC_SECG_P256K1") {
       throw new Error(
-        "Failed to retrieve public key from KMS: " +
-          (error instanceof Error ? error.message : String(error))
+        `Invalid KMS key spec: ${response.KeySpec}. EvmKmsSigner requires ECC_SECG_P256K1.`
       );
     }
+
+    const rawPublicKey = this.extractRawPublicKeyFromSpki(
+      new Uint8Array(response.PublicKey)
+    );
+
+    this.cachedPublicKey = rawPublicKey;
+    return rawPublicKey;
   }
 
-  /**
-   * Sign a digest using KMS.
-   *
-   * @param digest - 32-byte hash to sign
-   * @returns Promise resolving to DER-encoded signature
-   * @throws Error if KMS Sign call fails
-   */
   private async kmsSign(digest: Uint8Array): Promise<Uint8Array> {
     const client = await this.getKmsClient();
+    const { SignCommand } = await import("@aws-sdk/client-kms");
 
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const kmsModule = await import("@aws-sdk/client-kms").catch(() => null);
-      if (!kmsModule) {
-        throw new Error("AWS SDK module not available");
-      }
-
-      const { SignCommand } = kmsModule;
-      const command = new SignCommand({
+    const response = (await client.send(
+      new SignCommand({
         KeyId: this.config.keyId,
         Message: digest,
         MessageType: "DIGEST",
         SigningAlgorithm: "ECDSA_SHA_256",
-      });
+      })
+    )) as SignResponse;
 
-      const response = (await client.send(command)) as SignResponse;
-
-      if (!response.Signature) {
-        throw new Error("KMS Sign returned no signature");
-      }
-
-      return new Uint8Array(response.Signature);
-    } catch (error) {
-      throw new Error(
-        "KMS signing failed: " +
-          (error instanceof Error ? error.message : String(error))
-      );
+    if (!response.Signature) {
+      throw new Error("KMS Sign returned no signature");
     }
+
+    return new Uint8Array(response.Signature);
   }
 
-  // -------------------------------------------------------------------------
-  // Private Methods - Cryptographic Utilities
-  // -------------------------------------------------------------------------
-
-  /**
-   * Extract raw public key from SubjectPublicKeyInfo DER encoding.
-   */
   private extractRawPublicKeyFromSpki(spki: Uint8Array): Uint8Array {
     let offset = 0;
 
-    // Skip outer SEQUENCE
-    const outerTag = spki[offset];
-    if (outerTag !== 0x30) {
-      throw new Error("Invalid SPKI: expected SEQUENCE");
-    }
+    const seqTag = spki[offset];
+    if (seqTag !== 0x30) throw new Error("Invalid SPKI: expected SEQUENCE");
     offset++;
 
-    // Skip length bytes
     const lengthByte1 = spki[offset];
-    if (lengthByte1 === undefined) {
-      throw new Error("Invalid SPKI: truncated");
-    }
-    if ((lengthByte1 & 0x80) !== 0) {
-      const lengthBytes = lengthByte1 & 0x7f;
-      offset += 1 + lengthBytes;
+    if (lengthByte1 !== undefined && (lengthByte1 & 0x80) !== 0) {
+      offset += 1 + (lengthByte1 & 0x7f);
     } else {
       offset++;
     }
 
-    // Skip algorithm identifier SEQUENCE
-    const algTag = spki[offset];
-    if (algTag !== 0x30) {
-      throw new Error("Invalid SPKI: expected algorithm SEQUENCE");
-    }
+    const algSeqTag = spki[offset];
+    if (algSeqTag !== 0x30) throw new Error("Invalid SPKI: expected algorithm SEQUENCE");
     offset++;
 
     const algLength = spki[offset];
-    if (algLength === undefined) {
-      throw new Error("Invalid SPKI: algorithm length missing");
-    }
+    if (algLength === undefined) throw new Error("Invalid SPKI: missing algorithm length");
     offset++;
     offset += algLength;
 
-    // Now we should be at the BIT STRING
     const bitStringTag = spki[offset];
-    if (bitStringTag !== 0x03) {
-      throw new Error("Invalid SPKI: expected BIT STRING");
-    }
+    if (bitStringTag !== 0x03) throw new Error("Invalid SPKI: expected BIT STRING");
     offset++;
 
-    // Get BIT STRING length
     const bitStringLengthByte = spki[offset];
-    if (bitStringLengthByte === undefined) {
-      throw new Error("Invalid SPKI: BIT STRING length missing");
-    }
-    if ((bitStringLengthByte & 0x80) !== 0) {
-      const lengthBytes = bitStringLengthByte & 0x7f;
-      offset += 1 + lengthBytes;
+    if (bitStringLengthByte !== undefined && (bitStringLengthByte & 0x80) !== 0) {
+      offset += 1 + (bitStringLengthByte & 0x7f);
     } else {
       offset++;
     }
 
-    // Skip unused bits byte
     const unusedBits = spki[offset];
-    if (unusedBits !== 0x00) {
-      throw new Error("Invalid SPKI: BIT STRING unused bits should be 0");
-    }
+    if (unusedBits !== 0x00) throw new Error("Invalid SPKI: BIT STRING unused bits should be 0");
     offset++;
 
-    // Extract the raw public key (65 bytes for uncompressed)
-    const rawPublicKey = spki.slice(offset, offset + 65);
+    const rawPublicKey = new Uint8Array(spki.buffer, spki.byteOffset + offset, 65);
 
-    const firstByte = rawPublicKey[0];
-    if (rawPublicKey.length !== 65 || firstByte !== 0x04) {
-      throw new Error(
-        "Invalid public key format: expected uncompressed point (65 bytes starting with 0x04)"
-      );
+    if (rawPublicKey.length !== 65 || rawPublicKey[0] !== 0x04) {
+      throw new Error("Invalid public key format");
     }
 
     return rawPublicKey;
   }
 
-  /**
-   * Derive Ethereum address from raw public key.
-   */
   private publicKeyToAddress(publicKey: Uint8Array): string {
     const keyWithoutPrefix = publicKey.slice(1);
     const hash = this.keccak256(keyWithoutPrefix);
@@ -576,74 +372,47 @@ export class EvmKmsSigner implements Signer {
     return this.toChecksumAddress("0x" + address);
   }
 
-  /**
-   * Parse DER-encoded ECDSA signature to extract r and s values.
-   */
-  private parseDerSignature(der: Uint8Array): {
-    r: Uint8Array;
-    s: Uint8Array;
-  } {
+  private parseDerSignature(der: Uint8Array): { r: Uint8Array; s: Uint8Array } {
     let offset = 0;
 
-    // SEQUENCE tag
     const seqTag = der[offset];
-    if (seqTag !== 0x30) {
-      throw new Error("Invalid DER signature: expected SEQUENCE");
-    }
+    if (seqTag !== 0x30) throw new Error("Invalid DER signature: expected SEQUENCE");
     offset++;
 
-    // Skip sequence length
     const seqLengthByte = der[offset];
-    if (seqLengthByte === undefined) {
-      throw new Error("Invalid DER signature: truncated");
-    }
-    if ((seqLengthByte & 0x80) !== 0) {
+    if (seqLengthByte !== undefined && (seqLengthByte & 0x80) !== 0) {
       offset += 1 + (seqLengthByte & 0x7f);
     } else {
       offset++;
     }
 
-    // INTEGER r
     const rTag = der[offset];
-    if (rTag !== 0x02) {
-      throw new Error("Invalid DER signature: expected INTEGER for r");
-    }
+    if (rTag !== 0x02) throw new Error("Invalid DER signature: expected INTEGER for r");
     offset++;
 
     const rLength = der[offset];
-    if (rLength === undefined) {
-      throw new Error("Invalid DER signature: r length missing");
-    }
+    if (rLength === undefined) throw new Error("Invalid DER signature: r length missing");
     offset++;
 
-    const rBytes = der.slice(offset, offset + rLength);
+    const rBytes = new Uint8Array(der.buffer, der.byteOffset + offset, rLength);
     offset += rLength;
 
-    // INTEGER s
     const sTag = der[offset];
-    if (sTag !== 0x02) {
-      throw new Error("Invalid DER signature: expected INTEGER for s");
-    }
+    if (sTag !== 0x02) throw new Error("Invalid DER signature: expected INTEGER for s");
     offset++;
 
     const sLength = der[offset];
-    if (sLength === undefined) {
-      throw new Error("Invalid DER signature: s length missing");
-    }
+    if (sLength === undefined) throw new Error("Invalid DER signature: s length missing");
     offset++;
 
-    const sBytes = der.slice(offset, offset + sLength);
+    const sBytes = new Uint8Array(der.buffer, der.byteOffset + offset, sLength);
 
-    // Normalize r and s to 32 bytes
     const r = this.normalizeInteger(rBytes, 32);
     const s = this.normalizeInteger(sBytes, 32);
 
     return { r, s };
   }
 
-  /**
-   * Normalize an ASN.1 INTEGER to a fixed-length byte array.
-   */
   private normalizeInteger(int: Uint8Array, targetLength: number): Uint8Array {
     let start = 0;
     while (start < int.length - 1 && int[start] === 0x00) {
@@ -653,9 +422,7 @@ export class EvmKmsSigner implements Signer {
     const trimmed = int.slice(start);
 
     if (trimmed.length > targetLength) {
-      throw new Error(
-        `Integer too large: ${trimmed.length} > ${targetLength}`
-      );
+      throw new Error(`Integer too large: ${trimmed.length} > ${targetLength}`);
     }
 
     const result = new Uint8Array(targetLength);
@@ -663,9 +430,6 @@ export class EvmKmsSigner implements Signer {
     return result;
   }
 
-  /**
-   * Normalize S value to be in the lower half of the curve order (EIP-2).
-   */
   private normalizeS(s: Uint8Array): Uint8Array {
     const sValue = BigInt("0x" + this.bytesToHex(s));
 
@@ -678,15 +442,12 @@ export class EvmKmsSigner implements Signer {
     return s;
   }
 
-  /**
-   * Recover the v value by trying both possibilities.
-   */
-  private recoverV(
+  private async recoverV(
     digest: Uint8Array,
     r: Uint8Array,
     s: Uint8Array,
     expectedAddress: string
-  ): number {
+  ): Promise<number> {
     for (const v of [27, 28]) {
       try {
         const recoveredAddress = this.ecRecover(digest, r, s, v);
@@ -698,14 +459,9 @@ export class EvmKmsSigner implements Signer {
       }
     }
 
-    throw new Error(
-      "Failed to recover v value: signature does not match expected address"
-    );
+    throw new Error("Failed to recover v value");
   }
 
-  /**
-   * Recover address from ECDSA signature.
-   */
   private ecRecover(
     digest: Uint8Array,
     r: Uint8Array,
@@ -732,9 +488,7 @@ export class EvmKmsSigner implements Signer {
     const e = BigInt("0x" + this.bytesToHex(digest));
 
     const x = rInt + BigInt(recovery >> 1) * n;
-    if (x >= p) {
-      throw new Error("Invalid x coordinate");
-    }
+    if (x >= p) throw new Error("Invalid x coordinate");
 
     const ySquared = (this.modPow(x, BigInt(3), p) + b) % p;
     let y = this.modPow(ySquared, (p + BigInt(1)) / BigInt(4), p);
@@ -758,10 +512,6 @@ export class EvmKmsSigner implements Signer {
 
     return this.toChecksumAddress(address);
   }
-
-  // -------------------------------------------------------------------------
-  // Private Methods - Elliptic Curve Operations
-  // -------------------------------------------------------------------------
 
   private modPow(base: bigint, exp: bigint, mod: bigint): bigint {
     let result = BigInt(1);
@@ -835,13 +585,6 @@ export class EvmKmsSigner implements Signer {
     return result;
   }
 
-  // -------------------------------------------------------------------------
-  // Private Methods - Hashing and Encoding
-  // -------------------------------------------------------------------------
-
-  /**
-   * Keccak-256 hash implementation.
-   */
   private keccak256(data: Uint8Array): Uint8Array {
     const RC = [
       BigInt("0x0000000000000001"), BigInt("0x0000000000008082"),
@@ -983,28 +726,16 @@ export class EvmKmsSigner implements Signer {
 
     let checksummed = "0x";
     for (let i = 0; i < addr.length; i++) {
-      const char = addr[i];
-      const hashChar = hashHex[i];
-      if (char !== undefined && hashChar !== undefined) {
-        const hashNibble = parseInt(hashChar, 16);
-        checksummed += hashNibble >= 8 ? char.toUpperCase() : char;
-      }
+      const char = addr[i] ?? "";
+      const hashChar = hashHex[i] ?? "0";
+      const hashNibble = parseInt(hashChar, 16);
+      checksummed += hashNibble >= 8 ? char.toUpperCase() : char;
     }
 
     return checksummed;
   }
 }
 
-// ---------------------------------------------------------------------------
-// Legacy Export (Backward Compatibility)
-// ---------------------------------------------------------------------------
-
-/**
- * @deprecated Use EvmKmsSigner instead. This alias is kept for backward compatibility.
- */
+// Legacy exports for backward compatibility
 export { EvmKmsSigner as KmsSigner };
-
-/**
- * @deprecated Use EvmKmsSignerConfig instead.
- */
 export type { EvmKmsSignerConfig as KmsSignerConfig };

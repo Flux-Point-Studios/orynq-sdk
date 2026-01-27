@@ -4,6 +4,7 @@
  *
  * This configuration produces both ESM and CJS outputs with declaration files.
  * The package is designed for browser environments with CIP-30 wallet support.
+ * Uses @meshsdk/core for Cardano transaction building and wallet integration.
  */
 
 import { defineConfig } from "tsup";
@@ -19,5 +20,5 @@ export default defineConfig({
   minify: false,
   target: "es2022",
   outDir: "dist",
-  external: ["lucid-cardano", "@poi-sdk/core"],
+  external: ["@meshsdk/core", "@poi-sdk/core"],
 });

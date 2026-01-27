@@ -1,6 +1,6 @@
 /**
  * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-cardano-cip30/src/tx-builder.ts
- * @summary Transaction building utilities for Cardano payments using Lucid.
+ * @summary Transaction building utilities for Cardano payments using MeshJS.
  *
  * This file provides functions for constructing multi-output Cardano transactions
  * that support split payments (multiple recipients in a single transaction).
@@ -13,10 +13,11 @@
  * - cip30-payer.ts for building payment transactions
  *
  * Dependencies:
- * - lucid-cardano (peer dependency) for transaction construction
+ * - @meshsdk/core (peer dependency) for transaction construction
  */
 
-import type { Lucid, Tx, TxComplete } from "lucid-cardano";
+import { Transaction, BrowserWallet } from "@meshsdk/core";
+import type { Asset, Recipient } from "@meshsdk/core";
 import type { PaymentRequest } from "@poi-sdk/core";
 
 // ---------------------------------------------------------------------------
@@ -27,18 +28,32 @@ import type { PaymentRequest } from "@poi-sdk/core";
  * Configuration for the transaction builder.
  */
 export interface TxBuilderConfig {
-  /** Lucid instance configured with wallet and network */
-  lucid: Lucid;
+  /** BrowserWallet instance for UTxO fetching and signing */
+  wallet: BrowserWallet;
 }
 
 /**
  * Options for building a payment transaction.
  */
 export interface BuildPaymentOptions {
-  /** Optional metadata to attach to the transaction */
+  /** Optional metadata to attach to the transaction (key: label number, value: metadata content) */
   metadata?: Record<number, unknown>;
   /** Optional TTL (time to live) in slots from current slot */
   ttlSlots?: number;
+  /** Change address override (defaults to wallet change address) */
+  changeAddress?: string;
+}
+
+/**
+ * Represents a payment output for transaction building.
+ */
+export interface PaymentOutput {
+  /** Recipient address (bech32) */
+  address: string;
+  /** Asset identifier (ADA or policyId.assetName) */
+  asset: string;
+  /** Amount in atomic units */
+  amount: bigint;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,19 +103,20 @@ export function parseAssetId(asset: string): { policyId: string; assetName: stri
     };
   }
 
-  // Assume it's already in the correct Lucid format (policyId + assetName)
+  // Assume it's already in the correct format (policyId + assetName)
   return { policyId: asset.slice(0, 56), assetName: asset.slice(56) };
 }
 
 /**
- * Convert asset identifier to Lucid unit format.
+ * Convert asset identifier to MeshJS unit format.
  *
- * Lucid uses the format: policyId + assetNameHex (concatenated, no separator).
+ * MeshJS uses the format: policyId + assetNameHex (concatenated, no separator).
+ * For ADA, use "lovelace".
  *
  * @param asset - Asset identifier in any supported format
- * @returns Lucid unit string, or "lovelace" for ADA
+ * @returns MeshJS unit string, or "lovelace" for ADA
  */
-export function toLucidUnit(asset: string): string {
+export function toMeshUnit(asset: string): string {
   if (isAdaAsset(asset)) {
     return "lovelace";
   }
@@ -113,35 +129,27 @@ export function toLucidUnit(asset: string): string {
   return parsed.policyId + parsed.assetName;
 }
 
+/**
+ * Convert asset identifier to MeshJS Asset format.
+ *
+ * @param asset - Asset identifier
+ * @param amount - Amount in atomic units
+ * @returns MeshJS Asset object
+ */
+export function toMeshAsset(asset: string, amount: bigint): Asset {
+  const unit = toMeshUnit(asset);
+  return {
+    unit,
+    quantity: amount.toString(),
+  };
+}
+
+// Alias for backward compatibility
+export const toLucidUnit = toMeshUnit;
+
 // ---------------------------------------------------------------------------
 // Transaction Building
 // ---------------------------------------------------------------------------
-
-/**
- * Add a payment output to a transaction.
- *
- * @param tx - Lucid transaction builder
- * @param to - Recipient address (bech32)
- * @param amount - Amount in atomic units
- * @param asset - Asset identifier
- * @returns Updated transaction builder
- */
-function addPaymentOutput(tx: Tx, to: string, amount: bigint, asset: string): Tx {
-  if (amount <= 0n) {
-    // Skip zero or negative amounts
-    return tx;
-  }
-
-  const unit = toLucidUnit(asset);
-
-  if (unit === "lovelace") {
-    return tx.payToAddress(to, { lovelace: amount });
-  } else {
-    // For native tokens, we need to include minimum ADA
-    // Lucid handles this automatically with payToAddress
-    return tx.payToAddress(to, { [unit]: amount });
-  }
-}
 
 /**
  * Calculate the total amount including all split outputs.
@@ -168,6 +176,39 @@ export function calculateTotalAmount(request: PaymentRequest): bigint {
     // mode === "additional" - splits are added on top
     return primaryAmount + splitTotal;
   }
+}
+
+/**
+ * Calculate required amounts per asset from a payment request.
+ * Returns a map of asset -> total required amount.
+ *
+ * @param request - Payment request
+ * @returns Map of asset identifier to required amount
+ */
+export function calculateRequiredAmounts(request: PaymentRequest): Map<string, bigint> {
+  const amounts = new Map<string, bigint>();
+  const primaryAsset = toMeshUnit(request.asset);
+  const primaryAmount = BigInt(request.amountUnits);
+
+  // Start with primary amount
+  amounts.set(primaryAsset, primaryAmount);
+
+  // Add split amounts
+  if (request.splits && request.splits.outputs.length > 0) {
+    for (const split of request.splits.outputs) {
+      const splitAsset = toMeshUnit(split.asset ?? request.asset);
+      const splitAmount = BigInt(split.amountUnits);
+      const existing = amounts.get(splitAsset) ?? 0n;
+
+      if (request.splits.mode === "additional") {
+        // Additional mode: add split amounts on top
+        amounts.set(splitAsset, existing + splitAmount);
+      }
+      // Inclusive mode: splits are already part of primary, no need to add
+    }
+  }
+
+  return amounts;
 }
 
 /**
@@ -225,17 +266,75 @@ function validatePaymentRequest(request: PaymentRequest): void {
 }
 
 /**
- * Build a payment transaction from a PaymentRequest.
+ * Collect all payment outputs from a payment request.
+ *
+ * @param request - Payment request
+ * @returns Array of payment outputs
+ */
+export function collectPaymentOutputs(request: PaymentRequest): PaymentOutput[] {
+  const outputs: PaymentOutput[] = [];
+  const primaryAmount = BigInt(request.amountUnits);
+  const primaryAsset = request.asset;
+
+  // Handle splits
+  if (request.splits && request.splits.outputs.length > 0) {
+    const splitTotal = request.splits.outputs.reduce(
+      (sum, split) => sum + BigInt(split.amountUnits),
+      0n
+    );
+
+    if (request.splits.mode === "inclusive") {
+      // Inclusive mode: primary recipient gets amountUnits minus splits
+      const primaryNet = primaryAmount - splitTotal;
+
+      if (primaryNet > 0n) {
+        outputs.push({
+          address: request.payTo,
+          asset: primaryAsset,
+          amount: primaryNet,
+        });
+      }
+    } else {
+      // Additional mode: primary recipient gets full amountUnits
+      outputs.push({
+        address: request.payTo,
+        asset: primaryAsset,
+        amount: primaryAmount,
+      });
+    }
+
+    // Add split outputs
+    for (const split of request.splits.outputs) {
+      outputs.push({
+        address: split.to,
+        asset: split.asset ?? primaryAsset,
+        amount: BigInt(split.amountUnits),
+      });
+    }
+  } else {
+    // No splits - simple single-output payment
+    outputs.push({
+      address: request.payTo,
+      asset: primaryAsset,
+      amount: primaryAmount,
+    });
+  }
+
+  return outputs;
+}
+
+/**
+ * Build a payment transaction from a PaymentRequest using MeshJS.
  *
  * This function constructs a Cardano transaction that:
  * 1. Sends the primary amount to the primary recipient (payTo)
  * 2. Optionally includes split outputs to additional recipients
  * 3. Handles both inclusive and additional split modes
  *
- * @param lucid - Lucid instance with wallet selected
+ * @param wallet - MeshJS BrowserWallet instance
  * @param request - Payment request specifying recipients and amounts
  * @param options - Optional build parameters
- * @returns Promise resolving to a complete transaction ready for signing
+ * @returns Promise resolving to hex-encoded unsigned transaction
  * @throws Error if request is invalid or transaction cannot be built
  *
  * @example
@@ -247,9 +346,9 @@ function validatePaymentRequest(request: PaymentRequest): void {
  *   amountUnits: "5000000", // 5 ADA
  *   payTo: "addr1...",
  * };
- * const tx = await buildPaymentTx(lucid, request);
- * const signed = await tx.sign().complete();
- * const txHash = await signed.submit();
+ * const unsignedTx = await buildPaymentTx(wallet, request);
+ * const signedTx = await wallet.signTx(unsignedTx);
+ * const txHash = await wallet.submitTx(signedTx);
  *
  * @example
  * // Payment with inclusive splits
@@ -269,63 +368,30 @@ function validatePaymentRequest(request: PaymentRequest): void {
  * // Merchant receives 9.5 ADA, platform receives 0.5 ADA
  */
 export async function buildPaymentTx(
-  lucid: Lucid,
+  wallet: BrowserWallet,
   request: PaymentRequest,
-  options?: BuildPaymentOptions
-): Promise<TxComplete> {
+  _options?: BuildPaymentOptions
+): Promise<string> {
   // Validate the request
   validatePaymentRequest(request);
 
-  // Start building the transaction
-  let tx = lucid.newTx();
+  // Collect all payment outputs
+  const outputs = collectPaymentOutputs(request);
 
-  const primaryAmount = BigInt(request.amountUnits);
-  const primaryAsset = request.asset;
+  // Create a Transaction instance with the wallet as initiator
+  const tx = new Transaction({ initiator: wallet });
 
-  // Handle splits
-  if (request.splits && request.splits.outputs.length > 0) {
-    const splitTotal = request.splits.outputs.reduce(
-      (sum, split) => sum + BigInt(split.amountUnits),
-      0n
-    );
-
-    if (request.splits.mode === "inclusive") {
-      // Inclusive mode: primary recipient gets amountUnits minus splits
-      const primaryNet = primaryAmount - splitTotal;
-
-      if (primaryNet > 0n) {
-        tx = addPaymentOutput(tx, request.payTo, primaryNet, primaryAsset);
-      }
-    } else {
-      // Additional mode: primary recipient gets full amountUnits
-      tx = addPaymentOutput(tx, request.payTo, primaryAmount, primaryAsset);
-    }
-
-    // Add split outputs
-    for (const split of request.splits.outputs) {
-      const splitAsset = split.asset ?? primaryAsset;
-      tx = addPaymentOutput(tx, split.to, BigInt(split.amountUnits), splitAsset);
-    }
-  } else {
-    // No splits - simple single-output payment
-    tx = addPaymentOutput(tx, request.payTo, primaryAmount, primaryAsset);
+  // Add outputs to the transaction
+  for (const output of outputs) {
+    const recipient: Recipient = { address: output.address };
+    const assets: Asset[] = [toMeshAsset(output.asset, output.amount)];
+    tx.sendAssets(recipient, assets);
   }
 
-  // Add metadata if provided
-  if (options?.metadata) {
-    for (const [label, data] of Object.entries(options.metadata)) {
-      tx = tx.attachMetadata(parseInt(label, 10), data);
-    }
-  }
+  // Build the transaction (handles coin selection and fee calculation)
+  const unsignedTx = await tx.build();
 
-  // Set TTL if provided
-  if (options?.ttlSlots) {
-    const currentSlot = lucid.currentSlot();
-    tx = tx.validTo(currentSlot + options.ttlSlots);
-  }
-
-  // Complete the transaction (coin selection, fee calculation)
-  return tx.complete();
+  return unsignedTx;
 }
 
 /**
@@ -334,36 +400,39 @@ export async function buildPaymentTx(
  * This is useful when you need to send to multiple recipients
  * in a single transaction without the split semantics.
  *
- * @param lucid - Lucid instance with wallet selected
+ * @param wallet - MeshJS BrowserWallet instance
  * @param outputs - Array of payment outputs
- * @param options - Optional build parameters
- * @returns Promise resolving to a complete transaction
+ * @param _options - Optional build parameters
+ * @returns Promise resolving to hex-encoded unsigned transaction
  */
 export async function buildBatchPaymentTx(
-  lucid: Lucid,
+  wallet: BrowserWallet,
   outputs: Array<{ to: string; asset: string; amount: bigint }>,
-  options?: BuildPaymentOptions
-): Promise<TxComplete> {
+  _options?: BuildPaymentOptions
+): Promise<string> {
   if (outputs.length === 0) {
     throw new Error("At least one output is required");
   }
 
-  let tx = lucid.newTx();
+  // Filter out zero or negative amounts
+  const validOutputs = outputs.filter((o) => o.amount > 0n);
 
-  for (const output of outputs) {
-    tx = addPaymentOutput(tx, output.to, output.amount, output.asset);
+  if (validOutputs.length === 0) {
+    throw new Error("At least one output with positive amount is required");
   }
 
-  if (options?.metadata) {
-    for (const [label, data] of Object.entries(options.metadata)) {
-      tx = tx.attachMetadata(parseInt(label, 10), data);
-    }
+  // Create a Transaction instance with the wallet as initiator
+  const tx = new Transaction({ initiator: wallet });
+
+  // Add outputs to the transaction
+  for (const output of validOutputs) {
+    const recipient: Recipient = { address: output.to };
+    const assets: Asset[] = [toMeshAsset(output.asset, output.amount)];
+    tx.sendAssets(recipient, assets);
   }
 
-  if (options?.ttlSlots) {
-    const currentSlot = lucid.currentSlot();
-    tx = tx.validTo(currentSlot + options.ttlSlots);
-  }
+  // Build the transaction
+  const unsignedTx = await tx.build();
 
-  return tx.complete();
+  return unsignedTx;
 }

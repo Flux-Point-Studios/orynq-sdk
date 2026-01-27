@@ -13,10 +13,30 @@
  * - Local integration testing
  *
  * Requires:
- * - @emurgo/cardano-serialization-lib-nodejs for full functionality
+ * - @emurgo/cardano-serialization-lib-nodejs for cryptographic operations
  */
 
 import type { Signer, ChainId } from "@poi-sdk/core";
+
+// ---------------------------------------------------------------------------
+// CSL Import Helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Dynamically import cardano-serialization-lib-nodejs.
+ * This allows the package to be used without CSL for basic provider operations.
+ */
+async function loadCSL(): Promise<typeof import("@emurgo/cardano-serialization-lib-nodejs")> {
+  try {
+    const CSL = await import("@emurgo/cardano-serialization-lib-nodejs");
+    return CSL;
+  } catch {
+    throw new Error(
+      "MemorySigner requires @emurgo/cardano-serialization-lib-nodejs.\n" +
+        "Install it with: pnpm add @emurgo/cardano-serialization-lib-nodejs"
+    );
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Memory Signer Implementation
@@ -30,17 +50,13 @@ import type { Signer, ChainId } from "@poi-sdk/core";
  * - NEVER commit private keys to source control
  * - Use only for local development and testing
  *
- * The current implementation provides stub methods that throw errors
- * instructing users to install @emurgo/cardano-serialization-lib-nodejs
- * for full functionality.
- *
  * @example
  * ```typescript
  * // Development only - use hex private key
  * const signer = new MemorySigner("your-hex-private-key");
  *
- * // This will throw until cardano-serialization-lib is installed
  * const address = await signer.getAddress("cardano:mainnet");
+ * const signature = await signer.sign(txBodyHash, "cardano:mainnet");
  * ```
  */
 export class MemorySigner implements Signer {
@@ -95,7 +111,6 @@ export class MemorySigner implements Signer {
    *
    * @param chain - CAIP-2 chain identifier (e.g., "cardano:mainnet")
    * @returns Promise resolving to bech32 address
-   * @throws Until cardano-serialization-lib-nodejs is installed
    */
   async getAddress(chain: ChainId): Promise<string> {
     // Validate chain is Cardano
@@ -105,19 +120,27 @@ export class MemorySigner implements Signer {
       );
     }
 
-    // This is a stub - requires cardano-serialization-lib-nodejs
-    // The implementation would:
-    // 1. Import cardano-serialization-lib-nodejs
-    // 2. Create PrivateKey from hex
-    // 3. Derive public key
-    // 4. Create enterprise or base address
-    // 5. Return bech32 encoded address
+    const CSL = await loadCSL();
 
-    throw new Error(
-      "MemorySigner.getAddress requires @emurgo/cardano-serialization-lib-nodejs.\n" +
-        "Install it with: pnpm add @emurgo/cardano-serialization-lib-nodejs\n" +
-        "Then implement the address derivation logic for your use case."
-    );
+    // Determine network ID from chain
+    const network = chain.replace("cardano:", "");
+    const networkId = network === "mainnet" ? 1 : 0;
+
+    // Create private key from hex
+    // Note: CSL.PrivateKey has a private constructor, so we use factory methods
+    const privateKey = this.privateKeyHex.length === 128
+      ? CSL.PrivateKey.from_extended_bytes(Buffer.from(this.privateKeyHex, "hex"))
+      : CSL.PrivateKey.from_normal_bytes(Buffer.from(this.privateKeyHex, "hex"));
+
+    // Get public key
+    const publicKey = privateKey.to_public();
+
+    // Create enterprise address (payment key only, no staking)
+    // This is the simplest address type for payment purposes
+    const credential = CSL.Credential.from_keyhash(publicKey.hash());
+    const address = CSL.EnterpriseAddress.new(networkId, credential);
+
+    return address.to_address().to_bech32();
   }
 
   /**
@@ -128,7 +151,6 @@ export class MemorySigner implements Signer {
    * @param payload - Data to sign as Uint8Array
    * @param chain - CAIP-2 chain identifier
    * @returns Promise resolving to signature as Uint8Array
-   * @throws Until cardano-serialization-lib-nodejs is installed
    */
   async sign(payload: Uint8Array, chain: ChainId): Promise<Uint8Array> {
     // Validate chain is Cardano
@@ -143,18 +165,92 @@ export class MemorySigner implements Signer {
       throw new Error("Cannot sign empty payload");
     }
 
-    // This is a stub - requires cardano-serialization-lib-nodejs
-    // The implementation would:
-    // 1. Import cardano-serialization-lib-nodejs
-    // 2. Create PrivateKey from hex
-    // 3. Sign the payload
-    // 4. Return signature bytes
+    const CSL = await loadCSL();
 
-    throw new Error(
-      "MemorySigner.sign requires @emurgo/cardano-serialization-lib-nodejs.\n" +
-        "Install it with: pnpm add @emurgo/cardano-serialization-lib-nodejs\n" +
-        "Then implement the signing logic."
+    // Create private key from hex
+    const privateKey = this.privateKeyHex.length === 128
+      ? CSL.PrivateKey.from_extended_bytes(Buffer.from(this.privateKeyHex, "hex"))
+      : CSL.PrivateKey.from_normal_bytes(Buffer.from(this.privateKeyHex, "hex"));
+
+    // Sign the payload
+    const signature = privateKey.sign(payload);
+
+    return signature.to_bytes();
+  }
+
+  /**
+   * Sign a transaction body and return the witness.
+   *
+   * This is a convenience method for transaction signing that creates
+   * the witness set directly.
+   *
+   * @param txBodyHash - Transaction body hash as Uint8Array (32 bytes)
+   * @param chain - CAIP-2 chain identifier
+   * @returns Promise resolving to vkey witness CBOR hex
+   */
+  async signTx(txBodyHash: Uint8Array, chain: ChainId): Promise<string> {
+    // Validate chain is Cardano
+    if (!chain.startsWith("cardano:")) {
+      throw new Error(
+        `MemorySigner only supports Cardano chains. Got: ${chain}`
+      );
+    }
+
+    // Validate hash length (should be 32 bytes)
+    if (txBodyHash.length !== 32) {
+      throw new Error(
+        `Invalid transaction body hash length: expected 32 bytes, got ${txBodyHash.length}`
+      );
+    }
+
+    const CSL = await loadCSL();
+
+    // Create private key from hex
+    const privateKey = this.privateKeyHex.length === 128
+      ? CSL.PrivateKey.from_extended_bytes(Buffer.from(this.privateKeyHex, "hex"))
+      : CSL.PrivateKey.from_normal_bytes(Buffer.from(this.privateKeyHex, "hex"));
+
+    // Get public key for witness
+    const publicKey = privateKey.to_public();
+
+    // Sign the transaction body hash
+    const signature = privateKey.sign(txBodyHash);
+
+    // Create vkey witness
+    const vkeyWitness = CSL.Vkeywitness.new(
+      CSL.Vkey.new(publicKey),
+      signature
     );
+
+    return Buffer.from(vkeyWitness.to_bytes()).toString("hex");
+  }
+
+  /**
+   * Get the public key hash (verification key hash).
+   *
+   * @param chain - CAIP-2 chain identifier
+   * @returns Promise resolving to public key hash as hex
+   */
+  async getPublicKeyHash(chain: ChainId): Promise<string> {
+    // Validate chain is Cardano
+    if (!chain.startsWith("cardano:")) {
+      throw new Error(
+        `MemorySigner only supports Cardano chains. Got: ${chain}`
+      );
+    }
+
+    const CSL = await loadCSL();
+
+    // Create private key from hex
+    const privateKey = this.privateKeyHex.length === 128
+      ? CSL.PrivateKey.from_extended_bytes(Buffer.from(this.privateKeyHex, "hex"))
+      : CSL.PrivateKey.from_normal_bytes(Buffer.from(this.privateKeyHex, "hex"));
+
+    // Get public key and hash
+    const publicKey = privateKey.to_public();
+    const keyHash = publicKey.hash();
+
+    return Buffer.from(keyHash.to_bytes()).toString("hex");
   }
 
   /**
@@ -192,5 +288,13 @@ export class MemorySigner implements Signer {
    */
   getPrivateKeyHex(): string {
     return this.privateKeyHex;
+  }
+
+  /**
+   * Reset the warning flag (for testing).
+   * This is only used in tests to ensure warnings appear.
+   */
+  static resetWarning(): void {
+    MemorySigner.warningShown = false;
   }
 }

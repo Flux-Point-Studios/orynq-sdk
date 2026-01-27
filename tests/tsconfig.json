@@ -1,0 +1,25 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["vitest/globals", "node"],
+    "paths": {
+      "@poi-sdk/core": ["../packages/core/src/index.ts"],
+      "@poi-sdk/client": ["../packages/client/src/index.ts"],
+      "@poi-sdk/payer-cardano-node": ["../packages/payer-cardano-node/src/index.ts"],
+      "@poi-sdk/payer-evm-direct": ["../packages/payer-evm-direct/src/index.ts"],
+      "@poi-sdk/payer-evm-x402": ["../packages/payer-evm-x402/src/index.ts"],
+      "@poi-sdk/server-middleware": ["../packages/server-middleware/src/index.ts"],
+      "@poi-sdk/transport-flux": ["../packages/transport-flux/src/index.ts"],
+      "@poi-sdk/transport-x402": ["../packages/transport-x402/src/index.ts"]
+    }
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules"]
+}

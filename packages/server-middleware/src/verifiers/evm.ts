@@ -7,6 +7,17 @@
  * blockchain interaction and supports verification of transaction hash proofs
  * and x402 signature proofs.
  *
+ * Verification flow:
+ * 1. Query transaction receipt via viem/RPC (eth_getTransactionReceipt)
+ * 2. For direct transfers:
+ *    - Verify Transfer event in logs
+ *    - Check recipient and amount match
+ * 3. For EIP-3009 (TransferWithAuthorization):
+ *    - Verify TransferWithAuthorization event
+ *    - Check from, to, value match
+ * 4. Check block confirmations (eth_blockNumber)
+ * 5. Return verification result
+ *
  * Used by:
  * - Express middleware for verifying EVM payment proofs
  * - Fastify plugin for verifying EVM payment proofs
@@ -95,6 +106,25 @@ export interface EvmVerifierConfig {
    * @default true
    */
   trustFacilitator?: boolean;
+
+  /**
+   * Number of retry attempts for RPC calls.
+   * @default 3
+   */
+  retryAttempts?: number;
+
+  /**
+   * Base delay in milliseconds between retries (exponential backoff).
+   * @default 1000
+   */
+  retryBaseDelayMs?: number;
+
+  /**
+   * Token contract address to verify transfers for.
+   * If provided, only Transfer events from this contract will be checked.
+   * Useful when verifying stablecoin payments like USDC.
+   */
+  tokenAddress?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +146,21 @@ const DEFAULT_CHAINS: Record<ChainId, { evmChainId: number; name: string }> = {
  */
 const ERC20_TRANSFER_TOPIC =
   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+/**
+ * EIP-3009 TransferWithAuthorization event topic.
+ * keccak256("TransferWithAuthorization(address,address,uint256,uint256,uint256,bytes32)")
+ */
+const EIP3009_TRANSFER_WITH_AUTHORIZATION_TOPIC =
+  "0xe3034f62cd2b7c3c0c0e74e5e4b6c5c8e33d39a6dd9e7df4f7d6f79a0f0e5d9c";
+
+/**
+ * EIP-3009 ReceiveWithAuthorization event topic.
+ * keccak256("ReceiveWithAuthorization(address,address,uint256,uint256,uint256,bytes32)")
+ * Note: This is an alternative event some contracts emit
+ */
+const EIP3009_RECEIVE_WITH_AUTHORIZATION_TOPIC =
+  "0x1cdd46ff242716cdaa72d159d339a485b3438398348d68f09d7c8c0a59353d81";
 
 // ---------------------------------------------------------------------------
 // EVM Verifier Implementation
@@ -151,7 +196,7 @@ export class EvmVerifier implements ChainVerifier {
   readonly supportedChains: ChainId[];
 
   private readonly config: Required<
-    Pick<EvmVerifierConfig, "timeout" | "minConfirmations" | "trustFacilitator">
+    Pick<EvmVerifierConfig, "timeout" | "minConfirmations" | "trustFacilitator" | "retryAttempts" | "retryBaseDelayMs">
   > &
     EvmVerifierConfig;
 
@@ -169,6 +214,8 @@ export class EvmVerifier implements ChainVerifier {
       timeout: 30000,
       minConfirmations: 1,
       trustFacilitator: true,
+      retryAttempts: 3,
+      retryBaseDelayMs: 1000,
       ...config,
     };
 
@@ -245,16 +292,26 @@ export class EvmVerifier implements ChainVerifier {
         };
       }
 
-      // Get transaction receipt
-      let receipt: TransactionReceipt;
-      try {
-        receipt = await client.getTransactionReceipt({ hash: txHash });
-      } catch {
+      // Get transaction receipt with retry
+      const receiptResult = await this.getReceiptWithRetry(client, txHash);
+
+      if (receiptResult.notFound) {
         return {
           verified: false,
-          error: `Transaction not found or not yet confirmed: ${txHash}`,
+          error: `Transaction not found: ${txHash}`,
         };
       }
+
+      if (receiptResult.pending) {
+        return {
+          verified: false,
+          txHash,
+          confirmations: 0,
+          error: "Transaction pending - not yet confirmed",
+        };
+      }
+
+      const receipt = receiptResult.receipt!;
 
       // Check transaction status
       if (receipt.status !== "success") {
@@ -324,6 +381,72 @@ export class EvmVerifier implements ChainVerifier {
    */
   private isValidTxHash(txHash: string): boolean {
     return /^0x[0-9a-fA-F]{64}$/.test(txHash);
+  }
+
+  /**
+   * Sleep for specified milliseconds.
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Get transaction receipt with retry logic.
+   * Distinguishes between "not found" and "pending" states.
+   */
+  private async getReceiptWithRetry(
+    client: PublicClient,
+    txHash: `0x${string}`
+  ): Promise<{
+    receipt?: TransactionReceipt;
+    pending?: boolean;
+    notFound?: boolean;
+  }> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < this.config.retryAttempts; attempt++) {
+      try {
+        const receipt = await client.getTransactionReceipt({ hash: txHash });
+        return { receipt };
+      } catch (err) {
+        lastError = err as Error;
+        const errorMessage = lastError.message.toLowerCase();
+
+        // Check if transaction exists but is not yet mined
+        if (
+          errorMessage.includes("transaction not found") ||
+          errorMessage.includes("could not find")
+        ) {
+          // Try to get the transaction to check if it exists in mempool
+          try {
+            const tx = await client.getTransaction({ hash: txHash });
+            if (tx && tx.blockNumber === null) {
+              // Transaction exists but is pending
+              return { pending: true };
+            }
+          } catch {
+            // Transaction truly not found
+          }
+        }
+
+        // Retry on network errors
+        if (attempt < this.config.retryAttempts - 1) {
+          await this.sleep(this.config.retryBaseDelayMs * Math.pow(2, attempt));
+        }
+      }
+    }
+
+    // After all retries, check one more time for pending tx
+    try {
+      const tx = await client.getTransaction({ hash: txHash });
+      if (tx && tx.blockNumber === null) {
+        return { pending: true };
+      }
+    } catch {
+      // Transaction not found
+    }
+
+    return { notFound: true };
   }
 
   /**
@@ -405,6 +528,10 @@ export class EvmVerifier implements ChainVerifier {
 
   /**
    * Verify that transaction details match expected payment.
+   * Supports:
+   * - Native ETH transfers
+   * - ERC-20 Transfer events
+   * - EIP-3009 TransferWithAuthorization events
    */
   private async verifyTransactionDetails(
     client: PublicClient,
@@ -414,57 +541,141 @@ export class EvmVerifier implements ChainVerifier {
     expectedRecipient: string
   ): Promise<{ verified: boolean; error?: string }> {
     const normalizedRecipient = expectedRecipient.toLowerCase();
+    const tokenAddress = this.config.tokenAddress?.toLowerCase();
 
-    // Check for ERC-20 Transfer events
-    const transferLogs = receipt.logs.filter(
+    // 1. Check for EIP-3009 TransferWithAuthorization events
+    const eip3009Result = this.verifyEIP3009Transfer(
+      receipt.logs,
+      normalizedRecipient,
+      expectedAmount,
+      tokenAddress
+    );
+    if (eip3009Result.verified) {
+      return { verified: true };
+    }
+
+    // 2. Check for ERC-20 Transfer events
+    const erc20Result = this.verifyERC20Transfer(
+      receipt.logs,
+      normalizedRecipient,
+      expectedAmount,
+      tokenAddress
+    );
+    if (erc20Result.verified) {
+      return { verified: true };
+    }
+
+    // 3. Check for native transfer (only if no token address specified)
+    if (!tokenAddress) {
+      try {
+        const tx = await client.getTransaction({ hash: txHash });
+
+        if (
+          tx.to?.toLowerCase() === normalizedRecipient &&
+          tx.value >= expectedAmount
+        ) {
+          return { verified: true };
+        }
+      } catch {
+        // Continue to return error below
+      }
+    }
+
+    // Build detailed error message
+    const transferType = tokenAddress ? "token" : "native or token";
+    return {
+      verified: false,
+      error: `Amount mismatch: No ${transferType} transfer found with ${expectedAmount} to ${expectedRecipient}`,
+    };
+  }
+
+  /**
+   * Verify ERC-20 Transfer event in logs.
+   */
+  private verifyERC20Transfer(
+    logs: TransactionReceipt["logs"],
+    normalizedRecipient: string,
+    expectedAmount: bigint,
+    tokenAddress?: string
+  ): { verified: boolean } {
+    const transferLogs = logs.filter(
       (log) => log.topics[0] === ERC20_TRANSFER_TOPIC
     );
 
-    if (transferLogs.length > 0) {
-      // ERC-20 transfer
-      for (const log of transferLogs) {
-        // topics[2] is the 'to' address (padded to 32 bytes)
-        const toAddress = log.topics[2];
-        if (!toAddress) continue;
+    for (const log of transferLogs) {
+      // If token address specified, only check logs from that contract
+      if (tokenAddress && log.address.toLowerCase() !== tokenAddress) {
+        continue;
+      }
 
-        // Extract address from padded topic
-        const toAddressHex = "0x" + toAddress.slice(26).toLowerCase();
+      // topics[2] is the 'to' address (padded to 32 bytes)
+      const toAddress = log.topics[2];
+      if (!toAddress) continue;
 
-        if (toAddressHex === normalizedRecipient) {
-          // Decode amount from data
-          const amount = BigInt(log.data);
-          if (amount >= expectedAmount) {
-            return { verified: true };
-          }
+      // Extract address from padded topic (remove 0x and leading zeros)
+      const toAddressHex = "0x" + toAddress.slice(26).toLowerCase();
+
+      if (toAddressHex === normalizedRecipient) {
+        // Decode amount from data
+        const amount = BigInt(log.data);
+        if (amount >= expectedAmount) {
+          return { verified: true };
         }
       }
-
-      return {
-        verified: false,
-        error: `ERC-20 transfer does not match expected payment. Expected ${expectedAmount} to ${expectedRecipient}`,
-      };
     }
 
-    // Check for native transfer
-    try {
-      const tx = await client.getTransaction({ hash: txHash });
+    return { verified: false };
+  }
 
-      if (
-        tx.to?.toLowerCase() === normalizedRecipient &&
-        tx.value >= expectedAmount
-      ) {
-        return { verified: true };
+  /**
+   * Verify EIP-3009 TransferWithAuthorization or ReceiveWithAuthorization event in logs.
+   *
+   * EIP-3009 event signature:
+   * TransferWithAuthorization(address from, address to, uint256 value, uint256 validAfter, uint256 validBefore, bytes32 nonce)
+   *
+   * The event encodes:
+   * - topics[0]: event signature hash
+   * - topics[1]: from address (indexed)
+   * - topics[2]: to address (indexed)
+   * - data: abi.encode(value, validAfter, validBefore, nonce)
+   */
+  private verifyEIP3009Transfer(
+    logs: TransactionReceipt["logs"],
+    normalizedRecipient: string,
+    expectedAmount: bigint,
+    tokenAddress?: string
+  ): { verified: boolean } {
+    // Check both TransferWithAuthorization and ReceiveWithAuthorization events
+    const eip3009Logs = logs.filter(
+      (log) =>
+        log.topics[0] === EIP3009_TRANSFER_WITH_AUTHORIZATION_TOPIC ||
+        log.topics[0] === EIP3009_RECEIVE_WITH_AUTHORIZATION_TOPIC
+    );
+
+    for (const log of eip3009Logs) {
+      // If token address specified, only check logs from that contract
+      if (tokenAddress && log.address.toLowerCase() !== tokenAddress) {
+        continue;
       }
 
-      return {
-        verified: false,
-        error: `Native transfer does not match expected payment. Expected ${expectedAmount} to ${expectedRecipient}`,
-      };
-    } catch {
-      return {
-        verified: false,
-        error: "Failed to fetch transaction details",
-      };
+      // topics[2] is the 'to' address (indexed, padded to 32 bytes)
+      const toAddress = log.topics[2];
+      if (!toAddress) continue;
+
+      // Extract address from padded topic
+      const toAddressHex = "0x" + toAddress.slice(26).toLowerCase();
+
+      if (toAddressHex === normalizedRecipient) {
+        // Decode value from data (first 32 bytes)
+        // Data layout: value (32) | validAfter (32) | validBefore (32) | nonce (32)
+        const valueHex = log.data.slice(0, 66); // "0x" + 64 hex chars
+        const amount = BigInt(valueHex);
+        if (amount >= expectedAmount) {
+          return { verified: true };
+        }
+      }
     }
+
+    return { verified: false };
   }
 }

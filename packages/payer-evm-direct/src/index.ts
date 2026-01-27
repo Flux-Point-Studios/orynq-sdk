@@ -53,6 +53,7 @@ export {
   getSupportedChains,
   CHAIN_CONFIGS,
   type TransferParams,
+  type GasEstimationOptions,
 } from "./usdc-transfer.js";
 
 // ---------------------------------------------------------------------------

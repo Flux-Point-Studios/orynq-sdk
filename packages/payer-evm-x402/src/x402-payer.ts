@@ -10,8 +10,9 @@
  * Key features:
  * - EIP-3009 "transferWithAuthorization" for gasless UX (buyer pays no gas)
  * - EIP-712 typed data signing for secure authorization
- * - Supports Base mainnet and Base Sepolia USDC
+ * - Supports Base mainnet, Base Sepolia, Ethereum, and Polygon USDC
  * - Returns x402-signature proof type for facilitator submission
+ * - Comprehensive error handling with PaymentError types
  *
  * Payment flow:
  * 1. Client receives 402 Payment Required with x402 headers
@@ -31,15 +32,28 @@ import {
   type Chain,
   type PublicClient,
 } from "viem";
-import { base, baseSepolia } from "viem/chains";
+import { base, baseSepolia, mainnet, polygon } from "viem/chains";
 import type {
   Payer,
   PaymentProof,
   PaymentRequest,
   ChainId,
 } from "@poi-sdk/core";
-import { InsufficientBalanceError } from "@poi-sdk/core";
+import {
+  InsufficientBalanceError,
+  PaymentFailedError,
+  ChainNotSupportedError,
+  AssetNotSupportedError,
+} from "@poi-sdk/core";
 import type { ViemSigner } from "./signers/viem-signer.js";
+import {
+  buildTypedData,
+  generateNonce,
+  calculateValidity,
+  serializeAuthorization,
+  getUsdcDomainConfig,
+  type Eip3009Authorization,
+} from "./eip3009.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -52,18 +66,24 @@ import type { ViemSigner } from "./signers/viem-signer.js";
  * EIP-3009 "transferWithAuthorization".
  */
 const USDC_ADDRESSES: Record<ChainId, `0x${string}`> = {
+  /** Ethereum Mainnet USDC */
+  "eip155:1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
   /** Base Mainnet USDC */
   "eip155:8453": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   /** Base Sepolia Testnet USDC */
   "eip155:84532": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+  /** Polygon Mainnet USDC */
+  "eip155:137": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
 };
 
 /**
  * Viem chain configurations indexed by CAIP-2 chain identifier.
  */
 const CHAIN_CONFIGS: Record<ChainId, Chain> = {
+  "eip155:1": mainnet,
   "eip155:8453": base,
   "eip155:84532": baseSepolia,
+  "eip155:137": polygon,
 };
 
 /**
@@ -227,39 +247,67 @@ export class EvmX402Payer implements Payer {
    * @param chain - CAIP-2 chain identifier
    * @param asset - Asset identifier
    * @returns Promise resolving to balance in atomic units as bigint
-   * @throws Error if chain is not supported
+   * @throws ChainNotSupportedError if chain is not supported
+   * @throws AssetNotSupportedError if asset is not supported on chain
+   * @throws PaymentFailedError if RPC call fails
    */
   async getBalance(chain: ChainId, asset: string): Promise<bigint> {
     const viemChain = CHAIN_CONFIGS[chain];
     if (!viemChain) {
-      throw new Error(`Unsupported chain: ${chain}`);
+      throw new ChainNotSupportedError(chain, Object.keys(CHAIN_CONFIGS));
     }
 
     const publicClient = this.getPublicClient(chain);
     const address = (await this.getAddress(chain)) as `0x${string}`;
 
-    // Handle native asset (ETH)
-    if (asset === "ETH" || asset === "native") {
-      return publicClient.getBalance({ address });
+    try {
+      // Handle native asset (ETH)
+      if (asset === "ETH" || asset === "native") {
+        return publicClient.getBalance({ address });
+      }
+
+      // Resolve USDC to chain-specific address
+      const contractAddress =
+        asset === "USDC" ? USDC_ADDRESSES[chain] : (asset as `0x${string}`);
+
+      if (!contractAddress) {
+        throw new AssetNotSupportedError(asset, chain);
+      }
+
+      // Query ERC-20 balance
+      const balance = await publicClient.readContract({
+        address: contractAddress,
+        abi: ERC20_BALANCE_ABI,
+        functionName: "balanceOf",
+        args: [address],
+      });
+
+      return balance as bigint;
+    } catch (error) {
+      // Rethrow our custom errors
+      if (
+        error instanceof ChainNotSupportedError ||
+        error instanceof AssetNotSupportedError
+      ) {
+        throw error;
+      }
+
+      // Wrap RPC errors
+      throw new PaymentFailedError(
+        {
+          protocol: "x402",
+          chain,
+          asset,
+          amountUnits: "0",
+          payTo: "",
+        },
+        `Failed to query balance: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+        undefined,
+        error instanceof Error ? error : undefined
+      );
     }
-
-    // Resolve USDC to chain-specific address
-    const contractAddress =
-      asset === "USDC" ? USDC_ADDRESSES[chain] : (asset as `0x${string}`);
-
-    if (!contractAddress) {
-      throw new Error(`No address for asset ${asset} on ${chain}`);
-    }
-
-    // Query ERC-20 balance
-    const balance = await publicClient.readContract({
-      address: contractAddress,
-      abi: ERC20_BALANCE_ABI,
-      functionName: "balanceOf",
-      args: [address],
-    });
-
-    return balance as bigint;
   }
 
   /**
@@ -279,23 +327,49 @@ export class EvmX402Payer implements Payer {
    *
    * @param request - Payment request to execute
    * @returns Promise resolving to x402-signature proof
-   * @throws Error if protocol is not "x402"
+   * @throws PaymentFailedError if protocol is not "x402"
+   * @throws ChainNotSupportedError if chain is not supported
    * @throws InsufficientBalanceError if balance is too low
    */
   async pay(request: PaymentRequest): Promise<PaymentProof> {
     if (request.protocol !== "x402") {
-      throw new Error(
+      throw new PaymentFailedError(
+        request,
         `EvmX402Payer only supports x402 protocol, got: ${request.protocol}`
       );
     }
 
     // Validate chain support
     if (!CHAIN_CONFIGS[request.chain]) {
-      throw new Error(`Unsupported chain: ${request.chain}`);
+      throw new ChainNotSupportedError(
+        request.chain,
+        Object.keys(CHAIN_CONFIGS)
+      );
     }
 
     // Check balance before creating signature
-    const balance = await this.getBalance(request.chain, request.asset);
+    let balance: bigint;
+    try {
+      balance = await this.getBalance(request.chain, request.asset);
+    } catch (error) {
+      // If balance check fails, wrap in PaymentFailedError
+      if (
+        error instanceof InsufficientBalanceError ||
+        error instanceof ChainNotSupportedError ||
+        error instanceof AssetNotSupportedError
+      ) {
+        throw error;
+      }
+      throw new PaymentFailedError(
+        request,
+        `Failed to check balance: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+        undefined,
+        error instanceof Error ? error : undefined
+      );
+    }
+
     const amount = BigInt(request.amountUnits);
 
     if (balance < amount) {
@@ -367,39 +441,20 @@ export class EvmX402Payer implements Payer {
    *
    * @param request - Payment request containing transfer details
    * @returns Base64-encoded JSON string containing signature and parameters
+   * @throws PaymentFailedError if signing fails
+   * @throws ChainNotSupportedError if chain is not supported
+   * @throws AssetNotSupportedError if asset is not supported on chain
    */
   private async createX402Signature(request: PaymentRequest): Promise<string> {
     const viemChain = CHAIN_CONFIGS[request.chain];
     if (!viemChain) {
-      throw new Error(`Unsupported chain: ${request.chain}`);
+      throw new ChainNotSupportedError(
+        request.chain,
+        Object.keys(CHAIN_CONFIGS)
+      );
     }
 
     const account = this.signer.getAccount();
-
-    // EIP-3009 transferWithAuthorization parameters
-    const from = account.address;
-    const to = request.payTo as `0x${string}`;
-    const value = BigInt(request.amountUnits);
-
-    // Valid immediately
-    const validAfter = 0n;
-
-    // Valid for the specified timeout (default 1 hour)
-    const validBefore = BigInt(
-      Math.floor(Date.now() / 1000) + (request.timeoutSeconds ?? 3600)
-    );
-
-    // Generate random nonce for replay protection
-    const nonceBytes = new Uint8Array(32);
-    if (typeof crypto !== "undefined" && crypto.getRandomValues) {
-      crypto.getRandomValues(nonceBytes);
-    } else {
-      // Fallback for environments without Web Crypto API
-      for (let i = 0; i < 32; i++) {
-        nonceBytes[i] = Math.floor(Math.random() * 256);
-      }
-    }
-    const nonce = BigInt("0x" + bytesToHex(nonceBytes));
 
     // Resolve contract address
     const contractAddress =
@@ -408,88 +463,81 @@ export class EvmX402Payer implements Payer {
         : (request.asset as `0x${string}`);
 
     if (!contractAddress) {
-      throw new Error(`No contract for ${request.asset} on ${request.chain}`);
+      throw new AssetNotSupportedError(request.asset, request.chain);
     }
 
-    // EIP-712 domain for USDC (version 2)
-    const domain = {
-      name: "USD Coin",
-      version: "2",
-      chainId: BigInt(viemChain.id),
-      verifyingContract: contractAddress,
-    };
+    // Get USDC domain configuration for this chain
+    const domainConfig = getUsdcDomainConfig(viemChain.id);
 
-    // EIP-3009 TransferWithAuthorization type definition
-    const types = {
-      TransferWithAuthorization: [
-        { name: "from", type: "address" },
-        { name: "to", type: "address" },
-        { name: "value", type: "uint256" },
-        { name: "validAfter", type: "uint256" },
-        { name: "validBefore", type: "uint256" },
-        { name: "nonce", type: "bytes32" },
-      ],
-    };
+    // Calculate validity period
+    const { validAfter, validBefore } = calculateValidity(
+      request.timeoutSeconds ?? 3600
+    );
 
-    // Message to sign
-    const message = {
-      from,
-      to,
-      value,
+    // Generate secure random nonce
+    const nonce = generateNonce();
+
+    // Build EIP-712 typed data
+    const typedData = buildTypedData({
+      tokenName: domainConfig.name,
+      version: domainConfig.version,
+      chainId: viemChain.id,
+      tokenAddress: contractAddress,
+      from: account.address,
+      to: request.payTo as `0x${string}`,
+      value: BigInt(request.amountUnits),
       validAfter,
       validBefore,
-      nonce: ("0x" + nonce.toString(16).padStart(64, "0")) as `0x${string}`,
-    };
+      nonce,
+    });
 
     // Sign the typed data using EIP-712
     if (!account.signTypedData) {
-      throw new Error(
+      throw new PaymentFailedError(
+        request,
         "Account does not support signTypedData. " +
           "EIP-712 typed data signing is required for x402 payments."
       );
     }
 
-    const signature = await account.signTypedData({
-      domain,
-      types,
-      primaryType: "TransferWithAuthorization",
-      message,
-    });
+    let signature: `0x${string}`;
+    try {
+      signature = await account.signTypedData({
+        domain: typedData.domain,
+        types: typedData.types,
+        primaryType: typedData.primaryType,
+        message: typedData.message,
+      });
+    } catch (error) {
+      throw new PaymentFailedError(
+        request,
+        `Failed to sign EIP-712 typed data: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+        undefined,
+        error instanceof Error ? error : undefined
+      );
+    }
 
-    // Return combined payload that includes signature + parameters
-    // This is what the facilitator needs to execute the transfer
-    const payload = {
+    // Create authorization object
+    const authorization: Eip3009Authorization = {
+      domain: typedData.domain,
+      message: typedData.message,
       signature,
-      from,
-      to,
-      value: value.toString(),
-      validAfter: validAfter.toString(),
-      validBefore: validBefore.toString(),
-      nonce: "0x" + nonce.toString(16).padStart(64, "0"),
-      chainId: viemChain.id,
-      contract: contractAddress,
     };
 
+    // Serialize for HTTP transport
+    const serialized = serializeAuthorization(authorization);
+    const json = JSON.stringify(serialized);
+
     // Encode as base64 for transport in HTTP header
-    return stringToBase64(JSON.stringify(payload));
+    return stringToBase64(json);
   }
 }
 
 // ---------------------------------------------------------------------------
 // Utility Functions
 // ---------------------------------------------------------------------------
-
-/**
- * Convert Uint8Array to hex string (without 0x prefix).
- *
- * @param bytes - Bytes to convert
- * @returns Hex string
- */
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 /**
  * Convert string to base64 encoding.

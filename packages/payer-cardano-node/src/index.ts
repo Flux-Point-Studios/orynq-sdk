@@ -65,6 +65,8 @@ export {
   selectUtxos,
   estimateMinAda,
   calculateFee,
+  isValidCardanoAddress,
+  validateCardanoAddress,
   type BuildTxParams,
   type BuiltTx,
   type TxOutput,

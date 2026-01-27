@@ -6,6 +6,13 @@
  * and querying balances. It handles the mapping from CAIP-2 chain identifiers
  * to viem Chain objects and includes contract simulation before execution.
  *
+ * Key features:
+ * - Real ERC-20 transfer transactions via viem
+ * - Proper gas estimation with retry logic for higher gas limits
+ * - Transaction confirmation waiting (waitForTransactionReceipt)
+ * - Support for multiple chains: Base, Base Sepolia, Ethereum, Polygon, Arbitrum
+ * - Comprehensive error handling with PaymentError wrapping
+ *
  * Used by:
  * - viem-payer.ts for executing USDC/ERC-20 payments
  * - External code that needs direct ERC-20 transfer capabilities
@@ -17,10 +24,15 @@ import {
   type PublicClient,
   type WalletClient,
   type Transport,
+  encodeFunctionData,
+  BaseError,
+  ContractFunctionRevertedError,
+  InsufficientFundsError as ViemInsufficientFundsError,
 } from "viem";
 import { base, baseSepolia, mainnet, polygon, arbitrum } from "viem/chains";
 import { USDC_ADDRESSES, ERC20_ABI } from "./constants.js";
 import type { ChainId } from "@poi-sdk/core";
+import { PaymentFailedError } from "@poi-sdk/core";
 
 // ---------------------------------------------------------------------------
 // Chain Configurations
@@ -80,6 +92,31 @@ export interface TransferParams {
    * @default "USDC"
    */
   asset?: string;
+
+  /**
+   * Gas limit multiplier for retry attempts.
+   * When gas estimation fails, the estimated gas is multiplied by this value.
+   *
+   * @default 1.2 (20% buffer)
+   */
+  gasMultiplier?: number;
+
+  /**
+   * Maximum number of retry attempts for gas estimation failures.
+   *
+   * @default 3
+   */
+  maxRetries?: number;
+}
+
+/**
+ * Options for gas estimation with retry logic.
+ */
+export interface GasEstimationOptions {
+  /** Gas limit multiplier for retries */
+  gasMultiplier?: number;
+  /** Maximum retry attempts */
+  maxRetries?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,19 +124,23 @@ export interface TransferParams {
 // ---------------------------------------------------------------------------
 
 /**
- * Execute an ERC-20 token transfer.
+ * Execute an ERC-20 token transfer with proper gas estimation and retry logic.
  *
  * This function:
  * 1. Resolves the contract address (USDC or custom)
- * 2. Simulates the transfer to check for errors
- * 3. Executes the transfer transaction
- * 4. Waits for transaction confirmation
+ * 2. Estimates gas with retry logic for failures
+ * 3. Simulates the transfer to check for errors
+ * 4. Executes the transfer transaction
+ * 5. Waits for transaction confirmation
+ *
+ * Gas estimation failures trigger retries with progressively higher gas limits.
+ * RPC errors are wrapped in PaymentFailedError for consistent error handling.
  *
  * @param params - Transfer parameters
  * @returns Transaction hash as hex string
- * @throws Error if no USDC address configured for chain
- * @throws Error if transfer simulation fails (insufficient balance, allowance, etc.)
- * @throws Error if transaction reverts
+ * @throws PaymentFailedError if no USDC address configured for chain
+ * @throws PaymentFailedError if transfer simulation fails (insufficient balance, allowance, etc.)
+ * @throws PaymentFailedError if transaction reverts or RPC errors occur
  *
  * @example
  * ```typescript
@@ -123,6 +164,8 @@ export async function transferErc20(
     to,
     amount,
     asset = "USDC",
+    gasMultiplier = 1.2,
+    maxRetries = 3,
   } = params;
 
   // Resolve contract address
@@ -130,30 +173,200 @@ export async function transferErc20(
     asset === "USDC" ? USDC_ADDRESSES[chain] : (asset as `0x${string}`);
 
   if (!contractAddress) {
-    throw new Error(
+    throw new PaymentFailedError(
+      {
+        protocol: "flux",
+        chain,
+        asset,
+        amountUnits: amount.toString(),
+        payTo: to,
+      },
       `No USDC address configured for chain ${chain}. ` +
         `Supported chains: ${Object.keys(USDC_ADDRESSES).join(", ")}`
     );
   }
 
-  // Simulate the transfer to catch errors before execution
-  // This validates balance, allowance, and other contract requirements
-  const { request } = await publicClient.simulateContract({
-    address: contractAddress,
+  // Encode the transfer function call
+  const data = encodeFunctionData({
     abi: ERC20_ABI,
     functionName: "transfer",
     args: [to, amount],
-    account: walletClient.account,
   });
 
-  // Execute the transfer
-  const hash = await walletClient.writeContract(request);
+  // Estimate gas with retry logic
+  let estimatedGas: bigint;
+  try {
+    estimatedGas = await estimateGasWithRetry(
+      publicClient,
+      walletClient.account.address,
+      contractAddress,
+      data,
+      { gasMultiplier, maxRetries }
+    );
+  } catch (error) {
+    throw wrapRpcError(error, chain, asset, amount.toString(), to);
+  }
 
-  // Wait for transaction confirmation
-  // This ensures the transaction is included in a block
-  await publicClient.waitForTransactionReceipt({ hash });
+  // Simulate the transfer to catch errors before execution
+  // This validates balance, allowance, and other contract requirements
+  try {
+    const { request } = await publicClient.simulateContract({
+      address: contractAddress,
+      abi: ERC20_ABI,
+      functionName: "transfer",
+      args: [to, amount],
+      account: walletClient.account,
+      gas: estimatedGas,
+    });
 
-  return hash;
+    // Execute the transfer
+    const hash = await walletClient.writeContract(request);
+
+    // Wait for transaction confirmation
+    // This ensures the transaction is included in a block
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+    // Check if transaction was successful
+    if (receipt.status === "reverted") {
+      throw new PaymentFailedError(
+        {
+          protocol: "flux",
+          chain,
+          asset,
+          amountUnits: amount.toString(),
+          payTo: to,
+        },
+        "Transaction reverted on-chain",
+        hash
+      );
+    }
+
+    return hash;
+  } catch (error) {
+    // If already a PaymentFailedError, rethrow
+    if (error instanceof PaymentFailedError) {
+      throw error;
+    }
+    throw wrapRpcError(error, chain, asset, amount.toString(), to);
+  }
+}
+
+/**
+ * Estimate gas with retry logic for failures.
+ *
+ * When gas estimation fails, retries with a higher gas limit using the multiplier.
+ * This handles cases where the initial estimation is too conservative.
+ *
+ * @param publicClient - Viem public client
+ * @param from - Sender address
+ * @param to - Contract address
+ * @param data - Encoded function call
+ * @param options - Gas estimation options
+ * @returns Estimated gas as bigint
+ * @throws Original error after all retries exhausted
+ */
+async function estimateGasWithRetry(
+  publicClient: PublicClient,
+  from: `0x${string}`,
+  to: `0x${string}`,
+  data: `0x${string}`,
+  options: GasEstimationOptions = {}
+): Promise<bigint> {
+  const { gasMultiplier = 1.2, maxRetries = 3 } = options;
+
+  let lastError: Error | undefined;
+  let gasLimit: bigint | undefined;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const estimated = await publicClient.estimateGas({
+        account: from,
+        to,
+        data,
+        gas: gasLimit,
+      });
+
+      // Apply multiplier for buffer
+      return BigInt(Math.ceil(Number(estimated) * gasMultiplier));
+    } catch (error) {
+      lastError = error as Error;
+
+      // If we have a previous estimate, try with higher gas
+      if (gasLimit) {
+        gasLimit = BigInt(Math.ceil(Number(gasLimit) * gasMultiplier));
+      } else {
+        // Start with a reasonable default for ERC-20 transfers
+        gasLimit = BigInt(100000);
+      }
+    }
+  }
+
+  throw lastError ?? new Error("Gas estimation failed after retries");
+}
+
+/**
+ * Wrap RPC errors in PaymentFailedError for consistent error handling.
+ *
+ * Maps viem error types to meaningful error messages:
+ * - InsufficientFundsError: Not enough ETH for gas
+ * - ContractFunctionRevertedError: Contract rejected the call
+ * - BaseError: Generic viem errors
+ *
+ * @param error - Original error
+ * @param chain - CAIP-2 chain identifier
+ * @param asset - Asset identifier
+ * @param amount - Amount in atomic units
+ * @param to - Recipient address
+ * @returns PaymentFailedError with appropriate message
+ */
+function wrapRpcError(
+  error: unknown,
+  chain: ChainId,
+  asset: string,
+  amount: string,
+  to: string
+): PaymentFailedError {
+  const request = {
+    protocol: "flux" as const,
+    chain,
+    asset,
+    amountUnits: amount,
+    payTo: to,
+  };
+
+  // Handle viem-specific errors
+  if (error instanceof ViemInsufficientFundsError) {
+    return new PaymentFailedError(
+      request,
+      "Insufficient ETH for gas fees",
+      undefined,
+      error
+    );
+  }
+
+  if (error instanceof ContractFunctionRevertedError) {
+    const reason = error.reason ?? "Contract function reverted";
+    return new PaymentFailedError(request, reason, undefined, error);
+  }
+
+  if (error instanceof BaseError) {
+    return new PaymentFailedError(
+      request,
+      `RPC error: ${error.shortMessage ?? error.message}`,
+      undefined,
+      error
+    );
+  }
+
+  // Generic error wrapping
+  const message =
+    error instanceof Error ? error.message : "Unknown transfer error";
+  return new PaymentFailedError(
+    request,
+    message,
+    undefined,
+    error instanceof Error ? error : undefined
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -70,6 +70,30 @@ export { KmsSigner, type KmsSignerConfig } from "./signers/kms-signer.js";
 export * from "./signers/index.js";
 
 // ---------------------------------------------------------------------------
+// EIP-3009 Exports
+// ---------------------------------------------------------------------------
+
+export {
+  TRANSFER_WITH_AUTHORIZATION_TYPES,
+  USDC_DOMAIN_CONFIG,
+  buildTypedData,
+  generateNonce,
+  calculateValidity,
+  signAuthorization,
+  serializeAuthorization,
+  deserializeAuthorization,
+  encodeAuthorizationToBase64,
+  decodeAuthorizationFromBase64,
+  isAuthorizationValid,
+  getUsdcDomainConfig,
+  type Eip712Domain,
+  type TransferWithAuthorizationMessage,
+  type Eip3009Authorization,
+  type BuildTypedDataParams,
+  type SerializedAuthorization,
+} from "./eip3009.js";
+
+// ---------------------------------------------------------------------------
 // Factory Functions
 // ---------------------------------------------------------------------------
 

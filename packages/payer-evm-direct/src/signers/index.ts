@@ -1,6 +1,6 @@
 /**
- * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-x402/src/signers/index.ts
- * @summary Signer implementations re-exports for @poi-sdk/payer-evm-x402.
+ * @file D:/fluxPoint/PoI/poi-sdk/packages/payer-evm-direct/src/signers/index.ts
+ * @summary Signer implementations re-exports for @poi-sdk/payer-evm-direct.
  *
  * This file re-exports all signer implementations for convenient access.
  * Choose the appropriate signer based on your environment:
@@ -10,7 +10,7 @@
  *
  * Used by:
  * - Application code importing signers from the package
- * - EvmX402Payer for payment signing
+ * - ViemPayer for transaction signing
  */
 
 // Viem-based signer for browser and Node.js
@@ -20,7 +20,7 @@ export { ViemSigner, type ViemSignerConfig } from "./viem-signer.js";
 export {
   EvmKmsSigner,
   type EvmKmsSignerConfig,
-  // Legacy exports for backward compatibility
+  // Legacy exports
   KmsSigner,
   type KmsSignerConfig,
 } from "./kms-signer.js";

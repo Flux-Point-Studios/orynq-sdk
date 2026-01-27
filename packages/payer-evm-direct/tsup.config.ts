@@ -4,6 +4,9 @@
  *
  * This configuration produces both ESM and CJS outputs with declaration files.
  * The package is built for ES2022 target with full tree-shaking support.
+ *
+ * Entry points:
+ * - src/index.ts: Main package exports (ViemPayer, utilities)
  */
 
 import { defineConfig } from "tsup";

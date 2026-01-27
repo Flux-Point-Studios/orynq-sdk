@@ -1,7 +1,7 @@
 {
   "name": "@poi-sdk/payer-cardano-cip30",
   "version": "0.0.0",
-  "description": "CIP-30 browser wallet adapter for Cardano payments in poi-sdk",
+  "description": "CIP-30 browser wallet adapter for Cardano payments in poi-sdk using MeshJS",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -28,13 +28,16 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
-    "clean": "rimraf dist"
+    "clean": "rimraf dist",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [
     "poi",
     "cardano",
     "cip30",
     "wallet",
+    "meshjs",
     "nami",
     "eternl",
     "lace",
@@ -47,12 +50,13 @@
     "@poi-sdk/core": "workspace:*"
   },
   "peerDependencies": {
-    "lucid-cardano": ">=0.10.0"
+    "@meshsdk/core": ">=1.5.0"
   },
   "devDependencies": {
-    "lucid-cardano": "^0.10.7",
+    "@meshsdk/core": "^1.7.15",
     "tsup": "^8.0.1",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
   },
   "engines": {
     "node": ">=18.0.0"

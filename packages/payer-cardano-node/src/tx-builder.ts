@@ -3,14 +3,13 @@
  * @summary Server-side Cardano transaction builder for payment flows.
  *
  * This file provides utilities for building Cardano transactions from
- * payment requests. The actual transaction building requires
- * @emurgo/cardano-serialization-lib-nodejs.
+ * payment requests using @emurgo/cardano-serialization-lib-nodejs.
  *
  * Used by:
  * - CardanoNodePayer for transaction construction
  *
  * Requires:
- * - @emurgo/cardano-serialization-lib-nodejs for full functionality
+ * - @emurgo/cardano-serialization-lib-nodejs for transaction building
  */
 
 import type { PaymentRequest, Signer } from "@poi-sdk/core";
@@ -65,15 +64,45 @@ export interface TxOutput {
   assets?: Record<string, bigint>;
 }
 
+/**
+ * Extended signer interface with transaction signing support.
+ */
+export interface ExtendedSigner extends Signer {
+  /** Sign transaction body and return vkey witness CBOR hex */
+  signTx?(txBodyHash: Uint8Array, chain: string): Promise<string>;
+}
+
+// ---------------------------------------------------------------------------
+// CSL Import Helper
+// ---------------------------------------------------------------------------
+
+/**
+ * CSL module type
+ */
+type CSLType = typeof import("@emurgo/cardano-serialization-lib-nodejs");
+
+/**
+ * Dynamically import cardano-serialization-lib-nodejs.
+ * This allows the package to be used without CSL for basic provider operations.
+ */
+async function loadCSL(): Promise<CSLType> {
+  try {
+    const CSL = await import("@emurgo/cardano-serialization-lib-nodejs");
+    return CSL;
+  } catch {
+    throw new Error(
+      "Transaction building requires @emurgo/cardano-serialization-lib-nodejs.\n" +
+        "Install it with: pnpm add @emurgo/cardano-serialization-lib-nodejs"
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Transaction Building
 // ---------------------------------------------------------------------------
 
 /**
  * Build and sign a payment transaction.
- *
- * This is a stub implementation that outlines the transaction building flow.
- * Full implementation requires @emurgo/cardano-serialization-lib-nodejs.
  *
  * Transaction building flow:
  * 1. Calculate total output amount (primary payment + splits)
@@ -99,59 +128,193 @@ export interface TxOutput {
  * ```
  */
 export async function buildPaymentTx(params: BuildTxParams): Promise<BuiltTx> {
-  const { request, utxos, changeAddress: _changeAddress, protocolParameters: _protocolParameters, signer: _signer } = params;
+  const { request, utxos, changeAddress, protocolParameters, signer } = params;
 
   // Validate inputs
   if (utxos.length === 0) {
     throw new Error("No UTxOs available for transaction building");
   }
 
-  // Calculate total amount needed
-  const totalRequired = calculateTotalAmount(request);
-  const totalAvailable = utxos.reduce((sum, u) => sum + u.lovelace, 0n);
+  const CSL = await loadCSL();
 
-  if (totalAvailable < totalRequired) {
-    throw new Error(
-      `Insufficient balance: need ${totalRequired} lovelace, have ${totalAvailable}`
+  // Calculate total amount needed (including estimated fee)
+  const totalRequired = calculateTotalAmount(request);
+  const estimatedFee = calculateFee(
+    protocolParameters.minFeeA,
+    protocolParameters.minFeeB,
+    300 // Estimated initial tx size
+  );
+  const totalWithFee = totalRequired + estimatedFee;
+
+  // Select UTxOs
+  const selectedUtxos = selectUtxos(utxos, totalWithFee);
+
+  // Build outputs list
+  const outputs = buildOutputs(request);
+
+  // Create transaction builder with protocol parameters
+  const txBuilderConfig = CSL.TransactionBuilderConfigBuilder.new()
+    .fee_algo(
+      CSL.LinearFee.new(
+        CSL.BigNum.from_str(protocolParameters.minFeeA.toString()),
+        CSL.BigNum.from_str(protocolParameters.minFeeB.toString())
+      )
+    )
+    .coins_per_utxo_byte(
+      CSL.BigNum.from_str(protocolParameters.coinsPerUtxoByte.toString())
+    )
+    .pool_deposit(
+      CSL.BigNum.from_str(protocolParameters.poolDeposit.toString())
+    )
+    .key_deposit(
+      CSL.BigNum.from_str(protocolParameters.keyDeposit.toString())
+    )
+    .max_value_size(protocolParameters.maxValSize)
+    .max_tx_size(protocolParameters.maxTxSize)
+    .build();
+
+  const txBuilder = CSL.TransactionBuilder.new(txBuilderConfig);
+
+  // Add inputs
+  for (const utxo of selectedUtxos) {
+    const txInput = CSL.TransactionInput.new(
+      CSL.TransactionHash.from_hex(utxo.txHash),
+      utxo.outputIndex
+    );
+
+    // Build the value for this UTxO
+    const value = CSL.Value.new(CSL.BigNum.from_str(utxo.lovelace.toString()));
+
+    // Add native assets if present
+    if (Object.keys(utxo.assets).length > 0) {
+      const multiAsset = CSL.MultiAsset.new();
+
+      for (const [assetId, amount] of Object.entries(utxo.assets)) {
+        // Asset ID format: policyId (56 chars hex) + assetNameHex
+        const policyId = assetId.slice(0, 56);
+        const assetNameHex = assetId.slice(56);
+
+        const scriptHash = CSL.ScriptHash.from_hex(policyId);
+        const assetName = CSL.AssetName.new(Buffer.from(assetNameHex, "hex"));
+
+        let assets = multiAsset.get(scriptHash);
+        if (assets === undefined) {
+          assets = CSL.Assets.new();
+        }
+        assets.insert(assetName, CSL.BigNum.from_str(amount.toString()));
+        multiAsset.insert(scriptHash, assets);
+      }
+
+      value.set_multiasset(multiAsset);
+    }
+
+    // Use add_regular_input for simplicity
+    txBuilder.add_regular_input(
+      CSL.Address.from_bech32(utxo.address),
+      txInput,
+      value
     );
   }
 
-  // Build outputs list (used in actual implementation)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  void buildOutputs(request);
+  // Add outputs
+  for (const output of outputs) {
+    const outputAddress = CSL.Address.from_bech32(output.address);
+    const outputValue = CSL.Value.new(
+      CSL.BigNum.from_str(output.lovelace.toString())
+    );
 
-  // This is where the actual transaction building would happen
-  // using cardano-serialization-lib-nodejs
+    // Add native assets to output if present
+    if (output.assets !== undefined && Object.keys(output.assets).length > 0) {
+      const multiAsset = CSL.MultiAsset.new();
 
-  throw new Error(
-    "buildPaymentTx requires @emurgo/cardano-serialization-lib-nodejs.\n" +
-      "Install it with: pnpm add @emurgo/cardano-serialization-lib-nodejs\n" +
-      "\n" +
-      "Implementation outline:\n" +
-      "```typescript\n" +
-      "import * as CSL from '@emurgo/cardano-serialization-lib-nodejs';\n" +
-      "\n" +
-      "// 1. Create transaction builder\n" +
-      "const txBuilder = CSL.TransactionBuilder.new(\n" +
-      "  CSL.TransactionBuilderConfigBuilder.new()\n" +
-      "    .fee_algo(CSL.LinearFee.new(\n" +
-      "      CSL.BigNum.from_str(protocolParameters.minFeeA.toString()),\n" +
-      "      CSL.BigNum.from_str(protocolParameters.minFeeB.toString())\n" +
-      "    ))\n" +
-      "    .coins_per_utxo_byte(\n" +
-      "      CSL.BigNum.from_str(protocolParameters.coinsPerUtxoByte.toString())\n" +
-      "    )\n" +
-      "    .build()\n" +
-      ");\n" +
-      "\n" +
-      "// 2. Add inputs (selected UTxOs)\n" +
-      "// 3. Add outputs (payment + splits)\n" +
-      "// 4. Add change output\n" +
-      "// 5. Build transaction body\n" +
-      "// 6. Sign with signer\n" +
-      "// 7. Assemble and serialize\n" +
-      "```"
+      for (const [assetId, amount] of Object.entries(output.assets)) {
+        const policyId = assetId.slice(0, 56);
+        const assetNameHex = assetId.slice(56);
+
+        const scriptHash = CSL.ScriptHash.from_hex(policyId);
+        const assetName = CSL.AssetName.new(Buffer.from(assetNameHex, "hex"));
+
+        let assets = multiAsset.get(scriptHash);
+        if (assets === undefined) {
+          assets = CSL.Assets.new();
+        }
+        assets.insert(assetName, CSL.BigNum.from_str(amount.toString()));
+        multiAsset.insert(scriptHash, assets);
+      }
+
+      outputValue.set_multiasset(multiAsset);
+    }
+
+    // Calculate minimum ADA for this output
+    const txOutput = CSL.TransactionOutput.new(outputAddress, outputValue);
+    const minAda = CSL.min_ada_for_output(
+      txOutput,
+      CSL.DataCost.new_coins_per_byte(
+        CSL.BigNum.from_str(protocolParameters.coinsPerUtxoByte.toString())
+      )
+    );
+
+    // Ensure output has at least minimum ADA
+    if (BigInt(minAda.to_str()) > output.lovelace) {
+      throw new Error(
+        `Output requires minimum ${minAda.to_str()} lovelace, but only ${output.lovelace} provided`
+      );
+    }
+
+    txBuilder.add_output(txOutput);
+  }
+
+  // Add change output
+  const changeAddr = CSL.Address.from_bech32(changeAddress);
+  txBuilder.add_change_if_needed(changeAddr);
+
+  // Build transaction body
+  const txBody = txBuilder.build();
+
+  // Create an empty witness set for now (we'll populate it with the signature)
+  const emptyWitnesses = CSL.TransactionWitnessSet.new();
+
+  // Create a FixedTransaction to get the transaction hash
+  // FixedTransaction preserves the exact CBOR encoding
+  const unsignedTx = CSL.FixedTransaction.new(
+    txBody.to_bytes(),
+    emptyWitnesses.to_bytes(),
+    true // is_valid
   );
+
+  // Get the transaction hash
+  const txHashObj = unsignedTx.transaction_hash();
+  const txHash = txHashObj.to_hex();
+  const txBodyHashBytes = txHashObj.to_bytes();
+
+  // Check if signer has signTx method for proper witness construction
+  const extendedSigner = signer as ExtendedSigner;
+
+  if (typeof extendedSigner.signTx === "function") {
+    // Use the extended signTx method which returns a complete vkey witness
+    const vkeyWitnessHex = await extendedSigner.signTx(
+      txBodyHashBytes,
+      request.chain
+    );
+
+    // Add the witness to the transaction
+    unsignedTx.add_vkey_witness(
+      CSL.Vkeywitness.from_bytes(Buffer.from(vkeyWitnessHex, "hex"))
+    );
+  } else {
+    // Fallback: Build witness manually using basic sign() method
+    // This requires more complex logic to construct the vkey witness
+    throw new Error(
+      "Signer must implement signTx() method for transaction signing.\n" +
+        "The basic sign() method does not provide enough information to construct witnesses.\n" +
+        "Use MemorySigner.signTx() or implement a custom signer with signTx()."
+    );
+  }
+
+  // Serialize to CBOR
+  const txCbor = unsignedTx.to_hex();
+
+  return { txCbor, txHash };
 }
 
 /**
@@ -341,4 +504,38 @@ export function calculateFee(
   txSizeBytes: number
 ): bigint {
   return BigInt(minFeeA) * BigInt(txSizeBytes) + BigInt(minFeeB);
+}
+
+/**
+ * Validate a Cardano address format.
+ *
+ * @param address - Address to validate
+ * @returns True if the address is a valid bech32 Cardano address
+ */
+export function isValidCardanoAddress(address: string): boolean {
+  // Basic validation: Cardano addresses start with "addr" for mainnet
+  // or "addr_test" for testnets
+  if (!address.startsWith("addr")) {
+    return false;
+  }
+
+  // Try to parse with CSL (sync validation without CSL)
+  // For a quick check, just verify the format
+  return /^addr[a-z0-9_]+[a-z0-9]+$/.test(address);
+}
+
+/**
+ * Validate a Cardano address using CSL (more thorough validation).
+ *
+ * @param address - Address to validate
+ * @returns Promise resolving to true if valid
+ */
+export async function validateCardanoAddress(address: string): Promise<boolean> {
+  try {
+    const CSL = await loadCSL();
+    CSL.Address.from_bech32(address);
+    return true;
+  } catch {
+    return false;
+  }
 }

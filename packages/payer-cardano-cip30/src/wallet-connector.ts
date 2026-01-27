@@ -248,11 +248,9 @@ export interface CardanoWindow {
   [key: string]: Cip30WalletApi | undefined;
 }
 
-declare global {
-  interface Window {
-    cardano?: CardanoWindow;
-  }
-}
+// Note: MeshJS already provides global type declarations for window.cardano.
+// We use CardanoWindow as a more specific typing for our use case, but
+// access window.cardano through runtime checks rather than augmenting Window.
 
 // ---------------------------------------------------------------------------
 // Wallet Discovery
@@ -358,13 +356,17 @@ export async function isWalletConnected(name: WalletName): Promise<boolean> {
     return false;
   }
 
-  const wallet = window.cardano[name];
+  const wallet = window.cardano[name] as Cip30WalletApi | undefined;
   if (!wallet) {
     return false;
   }
 
   try {
-    return await wallet.isEnabled();
+    // MeshJS types don't include isEnabled but CIP-30 does
+    if (typeof wallet.isEnabled === "function") {
+      return await wallet.isEnabled();
+    }
+    return false;
   } catch {
     return false;
   }
@@ -430,8 +432,8 @@ export async function connectWallet(name: WalletName): Promise<Cip30EnabledWalle
     );
   }
 
-  // Check for specific wallet
-  const wallet = window.cardano[name];
+  // Check for specific wallet - cast to our interface since MeshJS types differ slightly
+  const wallet = window.cardano[name] as Cip30WalletApi | undefined;
   if (!wallet) {
     const available = await getAvailableWallets();
     const availableStr = available.length > 0 ? available.join(", ") : "none";
@@ -445,7 +447,7 @@ export async function connectWallet(name: WalletName): Promise<Cip30EnabledWalle
   // Attempt to enable
   try {
     const enabledApi = await wallet.enable();
-    return enabledApi;
+    return enabledApi as Cip30EnabledWalletApi;
   } catch (error) {
     // Handle user rejection or other errors
     const message =

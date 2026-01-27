@@ -7,6 +7,15 @@
  * transaction proofs. The verifier can use either Blockfrost or Koios as
  * the blockchain data provider.
  *
+ * Verification flow:
+ * 1. Query transaction by hash via Blockfrost/Koios API
+ * 2. Parse transaction outputs to verify:
+ *    - Recipient address received the payment
+ *    - Correct amount (ADA or native tokens)
+ *    - Output index matches proof (if specified)
+ * 3. Check transaction confirmation depth
+ * 4. Return verification result
+ *
  * Used by:
  * - Express middleware for verifying Cardano payment proofs
  * - Fastify plugin for verifying Cardano payment proofs
@@ -65,6 +74,18 @@ export interface CardanoVerifierConfig {
    * @default 1
    */
   minConfirmations?: number;
+
+  /**
+   * Number of retry attempts for API calls.
+   * @default 3
+   */
+  retryAttempts?: number;
+
+  /**
+   * Base delay in milliseconds between retries (exponential backoff).
+   * @default 1000
+   */
+  retryBaseDelayMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -196,7 +217,7 @@ export class CardanoVerifier implements ChainVerifier {
   readonly supportedChains: ChainId[];
 
   private readonly config: Required<
-    Pick<CardanoVerifierConfig, "provider" | "network" | "timeout" | "minConfirmations">
+    Pick<CardanoVerifierConfig, "provider" | "network" | "timeout" | "minConfirmations" | "retryAttempts" | "retryBaseDelayMs">
   > &
     CardanoVerifierConfig;
 
@@ -211,6 +232,8 @@ export class CardanoVerifier implements ChainVerifier {
       network: "mainnet",
       timeout: 30000,
       minConfirmations: 1,
+      retryAttempts: 3,
+      retryBaseDelayMs: 1000,
       ...config,
     };
 
@@ -229,16 +252,20 @@ export class CardanoVerifier implements ChainVerifier {
    * Verify a Cardano payment proof.
    *
    * @param proof - Payment proof (txHash or signed CBOR)
-   * @param expectedAmount - Expected amount in lovelace
+   * @param expectedAmount - Expected amount in lovelace (for ADA) or quantity (for native tokens)
    * @param expectedRecipient - Expected recipient bech32 address
    * @param chain - Chain to verify on
+   * @param asset - Optional asset identifier ("ADA" for native, or "policyId.assetNameHex" for tokens)
+   * @param outputIndex - Optional specific output index to verify
    * @returns Verification result
    */
   async verify(
     proof: PaymentProof,
     expectedAmount: bigint,
     expectedRecipient: string,
-    chain: ChainId
+    chain: ChainId,
+    asset?: string,
+    outputIndex?: number
   ): Promise<VerificationResult> {
     // Validate proof kind
     if (proof.kind !== "cardano-txhash" && proof.kind !== "cardano-signed-cbor") {
@@ -281,8 +308,8 @@ export class CardanoVerifier implements ChainVerifier {
         };
       }
 
-      // Query transaction data
-      const txData = await this.getTxData(txHash);
+      // Query transaction data with retry
+      const txData = await this.getTxDataWithRetry(txHash);
       if (!txData) {
         return {
           verified: false,
@@ -290,9 +317,19 @@ export class CardanoVerifier implements ChainVerifier {
         };
       }
 
+      // Check if transaction is pending (no block height)
+      if (txData.blockHeight === undefined) {
+        return {
+          verified: false,
+          txHash,
+          confirmations: 0,
+          error: "Transaction pending - not yet confirmed",
+        };
+      }
+
       // Get current tip for confirmation count
       const tip = await this.getTip();
-      const confirmations = tip && txData.blockHeight
+      const confirmations = tip
         ? Math.max(0, tip.height - txData.blockHeight + 1)
         : 0;
 
@@ -306,19 +343,26 @@ export class CardanoVerifier implements ChainVerifier {
         };
       }
 
+      // Determine if we're checking ADA or native tokens
+      const isNativeToken = asset && asset !== "ADA" && asset !== "lovelace";
+
       // Verify outputs match expected payment
-      const hasExpectedOutput = this.checkOutput(
+      const verificationResult = this.verifyOutput(
         txData.outputs,
         expectedRecipient,
-        expectedAmount
+        expectedAmount,
+        isNativeToken ? asset : undefined,
+        outputIndex
       );
 
-      if (!hasExpectedOutput) {
+      if (!verificationResult.found) {
+        const assetLabel = isNativeToken ? asset : "lovelace";
         return {
           verified: false,
           txHash,
           confirmations,
-          error: `Transaction outputs do not match expected payment. Expected ${expectedAmount} lovelace to ${expectedRecipient}`,
+          error: verificationResult.error ||
+            `Amount mismatch: Expected ${expectedAmount} ${assetLabel} to ${expectedRecipient}`,
         };
       }
 
@@ -354,6 +398,48 @@ export class CardanoVerifier implements ChainVerifier {
    */
   private isValidTxHash(txHash: string): boolean {
     return /^[0-9a-fA-F]{64}$/.test(txHash);
+  }
+
+  /**
+   * Sleep for specified milliseconds.
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Get transaction data with retry logic.
+   */
+  private async getTxDataWithRetry(
+    txHash: string
+  ): Promise<{ outputs: TransactionOutput[]; blockHeight?: number; timestamp?: number } | null> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < this.config.retryAttempts; attempt++) {
+      try {
+        const result = await this.getTxData(txHash);
+        if (result !== null) {
+          return result;
+        }
+        // Transaction not found - might be pending propagation
+        if (attempt < this.config.retryAttempts - 1) {
+          await this.sleep(this.config.retryBaseDelayMs * Math.pow(2, attempt));
+        }
+      } catch (err) {
+        lastError = err as Error;
+        // Retry on network errors
+        if (attempt < this.config.retryAttempts - 1) {
+          await this.sleep(this.config.retryBaseDelayMs * Math.pow(2, attempt));
+        }
+      }
+    }
+
+    // If we had an error on the last attempt, throw it
+    if (lastError) {
+      throw lastError;
+    }
+
+    return null;
   }
 
   /**
@@ -586,28 +672,85 @@ export class CardanoVerifier implements ChainVerifier {
   }
 
   /**
-   * Check if transaction outputs contain the expected payment.
+   * Verify that transaction outputs contain the expected payment.
+   * Supports both ADA and native token verification.
+   *
+   * @param outputs - Transaction outputs to check
+   * @param expectedRecipient - Expected recipient address
+   * @param expectedAmount - Expected amount (lovelace for ADA, quantity for tokens)
+   * @param assetUnit - For native tokens: "policyId.assetNameHex" or "policyIdAssetNameHex"
+   * @param outputIndex - Optional specific output index to check
+   * @returns Verification result with found flag and optional error
    */
-  private checkOutput(
+  private verifyOutput(
     outputs: TransactionOutput[],
     expectedRecipient: string,
-    expectedAmount: bigint
-  ): boolean {
+    expectedAmount: bigint,
+    assetUnit?: string,
+    outputIndex?: number
+  ): { found: boolean; error?: string } {
     // Normalize recipient address for comparison
     const normalizedRecipient = expectedRecipient.toLowerCase();
 
-    return outputs.some((output) => {
+    // If outputIndex specified, only check that output
+    const outputsToCheck = outputIndex !== undefined
+      ? outputs.filter((_, idx) => idx === outputIndex)
+      : outputs;
+
+    if (outputIndex !== undefined && outputsToCheck.length === 0) {
+      return {
+        found: false,
+        error: `Output index ${outputIndex} not found in transaction`,
+      };
+    }
+
+    // Parse asset unit if provided (supports "policyId.assetNameHex" or "policyIdAssetNameHex")
+    let parsedAssetUnit: string | undefined;
+    if (assetUnit) {
+      // Remove the dot separator if present (normalize to concatenated format)
+      parsedAssetUnit = assetUnit.replace(".", "").toLowerCase();
+    }
+
+    for (const output of outputsToCheck) {
       const normalizedOutputAddress = output.address.toLowerCase();
 
       // Check address matches
       if (normalizedOutputAddress !== normalizedRecipient) {
-        return false;
+        continue;
       }
 
-      // Check amount is >= expected (allows for overpayment)
-      return output.lovelace >= expectedAmount;
-    });
+      // Check amount based on asset type
+      if (parsedAssetUnit) {
+        // Native token verification
+        const matchingAsset = output.assets.find(
+          (a) => a.unit.toLowerCase() === parsedAssetUnit
+        );
+
+        if (matchingAsset && matchingAsset.quantity >= expectedAmount) {
+          return { found: true };
+        }
+      } else {
+        // ADA (lovelace) verification
+        if (output.lovelace >= expectedAmount) {
+          return { found: true };
+        }
+      }
+    }
+
+    // Build detailed error message
+    if (parsedAssetUnit) {
+      return {
+        found: false,
+        error: `No output found with ${expectedAmount} of asset ${assetUnit} to ${expectedRecipient}`,
+      };
+    }
+
+    return {
+      found: false,
+      error: `No output found with ${expectedAmount} lovelace to ${expectedRecipient}`,
+    };
   }
+
 
   /**
    * Get Blockfrost API base URL for configured network.

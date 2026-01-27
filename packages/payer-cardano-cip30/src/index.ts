@@ -3,33 +3,32 @@
  * @summary Main entry point for @poi-sdk/payer-cardano-cip30 package.
  *
  * This package provides a CIP-30 browser wallet adapter for Cardano payments
- * in the poi-sdk ecosystem. It allows dApps to accept payments via popular
- * Cardano wallets like Nami, Eternl, Lace, Vespr, Flint, and Typhon.
+ * in the poi-sdk ecosystem using MeshJS. It allows dApps to accept payments
+ * via popular Cardano wallets like Nami, Eternl, Lace, Vespr, Flint, and Typhon.
  *
  * Key features:
  * - CIP-30 wallet connection (getAvailableWallets, connectWallet)
  * - Payer interface implementation for payment execution
  * - Multi-output transaction building with split payments
  * - Support for both ADA and native token payments
+ * - MeshJS-based transaction building and wallet integration
  *
  * Usage:
  * ```typescript
  * import {
  *   createCip30Payer,
  *   getAvailableWallets,
- *   connectWallet,
  *   Cip30Payer,
  * } from "@poi-sdk/payer-cardano-cip30";
+ * import { BrowserWallet } from "@meshsdk/core";
  *
  * // Quick start with convenience factory
  * const payer = await createCip30Payer("nami", "mainnet");
  * const proof = await payer.pay(paymentRequest);
  *
  * // Or manual setup for more control
- * const walletApi = await connectWallet("eternl");
- * const lucid = await Lucid.new(provider, "Mainnet");
- * lucid.selectWallet(walletApi);
- * const payer = new Cip30Payer({ walletApi, lucid, network: "mainnet" });
+ * const wallet = await BrowserWallet.enable("eternl");
+ * const payer = new Cip30Payer({ wallet, network: "mainnet" });
  * ```
  */
 
@@ -37,7 +36,12 @@
 // Payer Implementation
 // ---------------------------------------------------------------------------
 
-export { Cip30Payer, type Cip30PayerConfig } from "./cip30-payer.js";
+export {
+  Cip30Payer,
+  createCip30PayerFromWallet,
+  type Cip30PayerConfig,
+  type CardanoNetwork,
+} from "./cip30-payer.js";
 
 // Import type for use in factory function return type
 import type { Cip30Payer as Cip30PayerType } from "./cip30-payer.js";
@@ -77,11 +81,16 @@ export {
   buildPaymentTx,
   buildBatchPaymentTx,
   calculateTotalAmount,
+  calculateRequiredAmounts,
+  collectPaymentOutputs,
   isAdaAsset,
   parseAssetId,
-  toLucidUnit,
+  toMeshUnit,
+  toMeshAsset,
+  toLucidUnit, // Alias for backward compatibility
   type TxBuilderConfig,
   type BuildPaymentOptions,
+  type PaymentOutput,
 } from "./tx-builder.js";
 
 // ---------------------------------------------------------------------------
@@ -93,19 +102,6 @@ export {
  */
 export interface CreateCip30PayerOptions {
   /**
-   * Blockfrost project ID for blockchain data access.
-   * If not provided, Lucid will be initialized without a provider
-   * (suitable for offline signing scenarios).
-   */
-  blockfrostProjectId?: string;
-
-  /**
-   * Custom Blockfrost API URL (optional).
-   * Useful for self-hosted Blockfrost instances.
-   */
-  blockfrostUrl?: string;
-
-  /**
    * Whether to validate that wallet network matches configured network.
    * @default true
    */
@@ -113,24 +109,19 @@ export interface CreateCip30PayerOptions {
 }
 
 /**
- * Create a CIP-30 payer with automatic Lucid initialization.
+ * Create a CIP-30 payer with automatic MeshJS wallet connection.
  *
- * This is a convenience factory that handles Lucid setup automatically.
- * For more control over Lucid configuration, use the Cip30Payer class directly.
- *
- * NOTE: This factory dynamically imports lucid-cardano to support tree-shaking
- * when using manual setup. Ensure lucid-cardano is installed as a peer dependency.
+ * This is a convenience factory that handles wallet setup automatically.
+ * For more control over wallet configuration, use the Cip30Payer class directly.
  *
  * @param walletName - Name of the CIP-30 wallet to connect to
- * @param network - Cardano network to use
+ * @param network - Cardano network to use (mainnet, preprod, or preview)
  * @param options - Optional configuration
  * @returns Promise resolving to configured Cip30Payer instance
  *
  * @example
- * // Basic usage (requires Blockfrost for full functionality)
- * const payer = await createCip30Payer("nami", "mainnet", {
- *   blockfrostProjectId: "your-project-id",
- * });
+ * // Basic usage
+ * const payer = await createCip30Payer("nami", "mainnet");
  *
  * // Check if request is supported
  * if (payer.supports(paymentRequest)) {
@@ -140,56 +131,38 @@ export interface CreateCip30PayerOptions {
  *
  * @example
  * // Testnet usage
- * const payer = await createCip30Payer("eternl", "preprod", {
- *   blockfrostProjectId: "preprodABCDEF123456",
- * });
+ * const payer = await createCip30Payer("eternl", "preprod");
  */
 export async function createCip30Payer(
   walletName: import("./wallet-connector.js").WalletName,
-  network: "mainnet" | "preprod" = "mainnet",
+  network: "mainnet" | "preprod" | "preview" = "mainnet",
   options?: CreateCip30PayerOptions
 ): Promise<Cip30PayerType> {
   // Dynamic import to support tree-shaking
-  const { Lucid, Blockfrost } = await import("lucid-cardano");
-  const { connectWallet: connect } = await import("./wallet-connector.js");
+  const { BrowserWallet } = await import("@meshsdk/core");
   const { Cip30Payer: PayerClass } = await import("./cip30-payer.js");
 
-  // Connect to wallet
-  const walletApi = await connect(walletName);
-
-  // Initialize Lucid
-  let lucid: import("lucid-cardano").Lucid;
-
-  if (options?.blockfrostProjectId) {
-    // Full provider setup with Blockfrost
-    const lucidNetwork = network === "mainnet" ? "Mainnet" : "Preprod";
-    const blockfrostUrl =
-      options.blockfrostUrl ??
-      (network === "mainnet"
-        ? "https://cardano-mainnet.blockfrost.io/api"
-        : "https://cardano-preprod.blockfrost.io/api");
-
-    const provider = new Blockfrost(blockfrostUrl, options.blockfrostProjectId);
-    lucid = await Lucid.new(provider, lucidNetwork);
-  } else {
-    // Minimal setup without provider
-    // Wallet-based UTxO fetching will be used
-    const lucidNetwork = network === "mainnet" ? "Mainnet" : "Preprod";
-    lucid = await Lucid.new(undefined, lucidNetwork);
-  }
-
-  // Select the connected wallet
-  lucid.selectWallet(walletApi as Parameters<typeof lucid.selectWallet>[0]);
+  // Connect to wallet using MeshJS
+  const wallet = await BrowserWallet.enable(walletName);
 
   // Create and return the payer
-  // Note: We cast to Cip30PayerType since PayerClass is the same type from dynamic import
   return new PayerClass({
-    walletApi,
-    lucid,
+    wallet,
     network,
     validateNetwork: options?.validateNetwork ?? true,
   }) as Cip30PayerType;
 }
+
+// ---------------------------------------------------------------------------
+// MeshJS Re-exports (for convenience)
+// ---------------------------------------------------------------------------
+
+/**
+ * Re-export BrowserWallet from MeshJS for convenience.
+ * This allows users to access MeshJS wallet functionality without
+ * importing @meshsdk/core directly.
+ */
+export { BrowserWallet } from "@meshsdk/core";
 
 // ---------------------------------------------------------------------------
 // Version
