@@ -208,9 +208,9 @@ class TestCrossLanguageVectors:
         if not simple_vector:
             pytest.skip("simple_object vector not found")
 
-        input_obj = simple_vector["value"]
-        expected_canonical = simple_vector["expected_canonical"]
-        expected_hash = simple_vector["expected_sha256"]
+        input_obj = simple_vector["input"]
+        expected_canonical = simple_vector["canonical"]
+        expected_hash = simple_vector["sha256"]
 
         actual_canonical = canonical_json(input_obj)
         actual_hash = sha256_hash(actual_canonical)
@@ -239,9 +239,9 @@ class TestCrossLanguageVectors:
         if not nested_vector:
             pytest.skip("nested_mixed vector not found")
 
-        input_obj = nested_vector["value"]
-        expected_canonical = nested_vector["expected_canonical"]
-        expected_hash = nested_vector["expected_sha256"]
+        input_obj = nested_vector["input"]
+        expected_canonical = nested_vector["canonical"]
+        expected_hash = nested_vector["sha256"]
 
         actual_canonical = canonical_json(input_obj)
         actual_hash = sha256_hash(actual_canonical)
@@ -264,9 +264,9 @@ class TestCrossLanguageVectors:
 
         for vector in hash_vectors:
             name = vector["name"]
-            input_obj = vector["value"]
-            expected_canonical = vector["expected_canonical"]
-            expected_hash = vector["expected_sha256"]
+            input_obj = vector["input"]
+            expected_canonical = vector["canonical"]
+            expected_hash = vector["sha256"]
 
             actual_canonical = canonical_json(input_obj)
             actual_hash = sha256_hash(actual_canonical)
