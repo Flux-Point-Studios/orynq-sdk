@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `@fluxpointstudios/poi-sdk-transport-x402` package has been implemented as an x402 protocol transport layer for the poi-sdk. It wraps Coinbase's @x402/* packages and provides utilities for handling the x402 v2 wire format.
+The `@fluxpointstudios/poi-sdk-transport-x402` package has been implemented as an x402 protocol transport layer for the poi-sdk. It wraps Coinbase's @x402/* packages and provides utilities for handling the x402 wire format (version "1").
 
 ## Files Created
 
@@ -198,7 +198,7 @@ npm run build       # Verify build succeeds
 ```typescript
 // Sample base64-encoded PAYMENT-REQUIRED header
 const samplePaymentRequired = Buffer.from(JSON.stringify({
-  version: "2",
+  version: "1",
   scheme: "exact",
   network: "eip155:8453",
   maxAmountRequired: "1000000",

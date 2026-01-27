@@ -13,6 +13,7 @@ export default defineConfig({
       '@fluxpointstudios/poi-sdk-server-middleware': resolve(__dirname, 'packages/server-middleware/src/index.ts'),
       '@fluxpointstudios/poi-sdk-transport-flux': resolve(__dirname, 'packages/transport-flux/src/index.ts'),
       '@fluxpointstudios/poi-sdk-transport-x402': resolve(__dirname, 'packages/transport-x402/src/index.ts'),
+      '@fluxpointstudios/poi-sdk-gateway': resolve(__dirname, 'packages/gateway/src/index.ts'),
     },
   },
   test: {

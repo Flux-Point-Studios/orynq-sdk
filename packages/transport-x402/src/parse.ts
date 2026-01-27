@@ -51,9 +51,9 @@ const KNOWN_DECIMALS: Record<string, number> = {
 /**
  * Parse a base64-encoded x402 PAYMENT-REQUIRED header value into a PaymentRequest.
  *
- * The header value is expected to be base64-encoded JSON following the x402 v2
- * specification. This function decodes and validates the data, then converts
- * it to the protocol-neutral PaymentRequest format.
+ * The header value is expected to be base64-encoded JSON following the x402
+ * specification (version "1"). This function decodes and validates the data,
+ * then converts it to the protocol-neutral PaymentRequest format.
  *
  * @param header - Base64-encoded JSON string from PAYMENT-REQUIRED header
  * @returns Protocol-neutral PaymentRequest with protocol: "x402"

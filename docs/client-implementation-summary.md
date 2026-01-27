@@ -163,7 +163,7 @@ const x402Response = new Response(null, {
   status: 402,
   headers: {
     "PAYMENT-REQUIRED": btoa(JSON.stringify({
-      version: "2",
+      version: "1",
       scheme: "exact",
       network: "cardano:mainnet",
       maxAmountRequired: "1000000",

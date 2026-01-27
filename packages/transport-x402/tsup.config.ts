@@ -2,7 +2,7 @@
  * @summary Build configuration for @fluxpointstudios/poi-sdk-transport-x402 package using tsup.
  *
  * This configuration produces both ESM and CJS outputs with declaration files.
- * The package wraps Coinbase's @x402/* packages for the x402 v2 wire format.
+ * The package wraps Coinbase's @x402/* packages for the x402 wire format.
  */
 
 import { defineConfig } from "tsup";

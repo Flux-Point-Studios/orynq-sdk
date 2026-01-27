@@ -182,6 +182,30 @@ export interface FacilitatorResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Helper Functions
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a CAIP-2 chain identifier to a numeric chain ID.
+ *
+ * CAIP-2 format: "eip155:<chainId>"
+ * - "eip155:8453" -> 8453 (Base)
+ * - "eip155:1" -> 1 (Ethereum mainnet)
+ * - "eip155:137" -> 137 (Polygon)
+ *
+ * @param caip2 - CAIP-2 chain identifier (e.g., "eip155:8453")
+ * @returns Numeric chain ID
+ * @throws Error if the format is not a valid EIP-155 chain identifier
+ */
+export function caip2ToChainId(caip2: string): number {
+  const match = caip2.match(/^eip155:(\d+)$/);
+  if (!match || !match[1]) {
+    throw new Error(`Unsupported chain format: ${caip2}`);
+  }
+  return parseInt(match[1], 10);
+}
+
+// ---------------------------------------------------------------------------
 // Error Classes
 // ---------------------------------------------------------------------------
 
@@ -315,6 +339,15 @@ export function verifySignatureMatchesInvoice(
     throw new PaymentMismatchError(
       `Recipient mismatch: signature pays to ${decoded.to}, invoice requires ${requirements.payTo}`,
       { signatureTo: decoded.to, invoiceTo: requirements.payTo }
+    );
+  }
+
+  // Verify chain matches (prevents cross-chain replay attacks)
+  const requiredChainId = caip2ToChainId(requirements.chain);
+  if (decoded.chainId !== requiredChainId) {
+    throw new PaymentMismatchError(
+      `Chain mismatch: signature is for chain ${decoded.chainId}, invoice requires ${requirements.chain} (${requiredChainId})`,
+      { signatureChainId: decoded.chainId, invoiceChain: requirements.chain, invoiceChainId: requiredChainId }
     );
   }
 

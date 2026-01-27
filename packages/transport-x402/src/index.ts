@@ -2,7 +2,7 @@
  * @summary Main entry point for @fluxpointstudios/poi-sdk-transport-x402 package.
  *
  * This package provides the x402 protocol transport layer implementation,
- * wrapping Coinbase's @x402/* packages for the x402 v2 wire format. It handles:
+ * wrapping Coinbase's @x402/* packages for the x402 wire format. It handles:
  *
  * - Detection of 402 responses with x402 headers
  * - Parsing PAYMENT-REQUIRED headers into protocol-neutral PaymentRequest

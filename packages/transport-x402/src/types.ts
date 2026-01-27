@@ -1,9 +1,11 @@
 /**
  * @summary x402 protocol-specific type definitions for the transport layer.
  *
- * This file defines types specific to the x402 v2 wire format as used by
+ * This file defines types specific to the x402 wire format as used by
  * Coinbase's @x402/* packages. These types represent the raw protocol data
  * before conversion to poi-sdk's protocol-neutral PaymentRequest format.
+ *
+ * The x402 protocol uses version "1" in the wire format payload.
  *
  * Used by:
  * - parse.ts for decoding PAYMENT-REQUIRED headers
@@ -21,10 +23,10 @@ import type { PaymentRequest, PaymentProof } from "@fluxpointstudios/poi-sdk-cor
  * Raw x402 payment requirement as received in the PAYMENT-REQUIRED header.
  * This is the decoded JSON structure from the base64-encoded header value.
  *
- * Fields follow the x402 v2 specification.
+ * Fields follow the x402 specification (Coinbase standard).
  */
 export interface X402PaymentRequired {
-  /** x402 protocol version (e.g., "2") */
+  /** x402 protocol version (currently "1") */
   version: string;
 
   /** Payment scheme identifier (e.g., "exact") */

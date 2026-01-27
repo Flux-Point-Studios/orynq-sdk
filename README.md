@@ -1,10 +1,10 @@
 # poi-sdk
 
-A dual-protocol commerce layer supporting **x402 v2** (Coinbase standard) for EVM chains and **Flux protocol** (T-Backend style) for Cardano.
+A dual-protocol commerce layer supporting **x402** (Coinbase standard) for EVM chains and **Flux protocol** (T-Backend style) for Cardano.
 
 ## Features
 
-- **Dual Protocol Support** - Seamlessly handle both x402 v2 and Flux payment protocols
+- **Dual Protocol Support** - Seamlessly handle both x402 and Flux payment protocols
 - **Multi-Chain** - EVM chains (Ethereum, Base, Polygon, etc.) and Cardano
 - **Auto-Pay Client** - Automatic 402 detection, payment, and retry
 - **Budget Controls** - Per-request and daily spending limits
@@ -116,16 +116,45 @@ app.get('/premium', paymentMiddleware, (req, res) => {
 Bridge x402 clients to Flux backends:
 
 ```typescript
-import { createGateway } from '@fluxpointstudios/poi-sdk-gateway';
+import { startGateway } from '@fluxpointstudios/poi-sdk-gateway';
 
-const gateway = createGateway({
-  upstream: 'https://flux-backend.example.com',
-  payer: serverSidePayer,
-  addVerifiedHeader: true,  // Adds X-Paid-Verified for upstream
+// Start a standalone gateway server
+await startGateway({
+  backendUrl: 'https://flux-backend.example.com',
+  payTo: '0x742d35Cc6634C0532925a3b844Bc9e7595f9fEDb',
+  chains: ['eip155:8453'],
+  pricing: async (req) => ({
+    chain: 'eip155:8453',
+    asset: 'USDC',
+    amountUnits: '1000000',  // 1 USDC
+  }),
+  x402: {
+    mode: 'strict',
+    facilitatorUrl: 'https://facilitator.example.com',
+  },
+});
+// Gateway is now running and proxying /api/* routes to the backend
+```
+
+Or for more control over the Express app:
+
+```typescript
+import { createGatewayServer } from '@fluxpointstudios/poi-sdk-gateway';
+
+const { app } = createGatewayServer({
+  backendUrl: 'https://flux-backend.example.com',
+  payTo: '0x742d35Cc6634C0532925a3b844Bc9e7595f9fEDb',
+  chains: ['eip155:8453'],
+  pricing: async (req) => ({
+    chain: 'eip155:8453',
+    asset: 'USDC',
+    amountUnits: '1000000',
+  }),
+  x402: { mode: 'strict', facilitatorUrl: 'https://facilitator.example.com' },
 });
 
-// x402 clients can now access Flux-only backends
-app.use('/api', gateway);
+// Gateway protects /api/* routes with payment verification
+app.listen(3402);
 ```
 
 ## Packages
@@ -133,7 +162,7 @@ app.use('/api', gateway);
 | Package | Description |
 |---------|-------------|
 | `@fluxpointstudios/poi-sdk-core` | Protocol-neutral types, utilities, and chain definitions |
-| `@fluxpointstudios/poi-sdk-transport-x402` | x402 v2 wire format (parse/apply headers) |
+| `@fluxpointstudios/poi-sdk-transport-x402` | x402 wire format (parse/apply headers) |
 | `@fluxpointstudios/poi-sdk-transport-flux` | Flux wire format (parse/apply headers) |
 | `@fluxpointstudios/poi-sdk-client` | Auto-pay HTTP client with budget tracking |
 | `@fluxpointstudios/poi-sdk-payer-cardano-cip30` | CIP-30 browser wallet payer |
@@ -147,7 +176,7 @@ app.use('/api', gateway);
 
 ## Protocol Overview
 
-### x402 v2 (EVM)
+### x402 (EVM)
 
 The [x402 protocol](https://github.com/coinbase/x402) uses HTTP 402 responses with payment requirements in the `PAYMENT-REQUIRED` header (base64-encoded JSON) and payment proofs in the `PAYMENT-SIGNATURE` header.
 
