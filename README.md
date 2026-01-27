@@ -157,6 +157,16 @@ const { app } = createGatewayServer({
 app.listen(3402);
 ```
 
+#### Gateway x402 Settlement Modes
+
+The gateway supports the following `x402.mode` values:
+
+| Mode | Behavior |
+|------|----------|
+| `strict` (default) | Decodes signature, validates against stored invoice (amount/payTo/chain), calls facilitator to settle, marks invoice consumed |
+| `verify-precheck` | Currently behaves the same as `strict` (reserved for future crypto pre-verification) |
+| `trust` | **Dev only** - Accepts any signature without verification. Blocked in production; requires `ALLOW_INSECURE_TRUST_MODE=true` |
+
 ## Packages
 
 | Package | Description |
@@ -180,13 +190,23 @@ app.listen(3402);
 
 The [x402 protocol](https://github.com/coinbase/x402) uses HTTP 402 responses with payment requirements in the `PAYMENT-REQUIRED` header (base64-encoded JSON) and payment proofs in the `PAYMENT-SIGNATURE` header.
 
+> **Important (poi-sdk invoice binding):** poi-sdk binds x402 payments to an issued invoice to prevent replay/cross-endpoint abuse. The paid retry **must include**:
+> - `X-Invoice-Id` from the initial 402 response body, **or**
+> - `X-Idempotency-Key` that was used to generate the invoice
+>
+> If you send only `PAYMENT-SIGNATURE` without an invoice reference, the gateway will reject it as "No invoice found".
+
 ```
 HTTP/1.1 402 Payment Required
 PAYMENT-REQUIRED: eyJhbW91bnQiOiIxMDAwMDAwIi4uLn0=
+Content-Type: application/json
+
+{"error":"Payment Required","invoiceId":"inv_abc123","protocol":"x402"}
 
 # After payment:
 GET /resource
 PAYMENT-SIGNATURE: eyJ0eElkIjoiMHguLi4iLi4ufQ==
+X-Invoice-Id: inv_abc123
 ```
 
 ### Flux Protocol (Cardano)
