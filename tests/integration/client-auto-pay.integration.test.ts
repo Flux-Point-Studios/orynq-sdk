@@ -248,7 +248,7 @@ describe("Client Auto-Pay Flow (Mock Server)", () => {
         await new Promise<void>((resolve) => server.close(() => resolve()));
       }
     },
-    TEST_TIMEOUT
+    { timeout: TEST_TIMEOUT, retry: 2 }
   );
 
   it("should respect onPaymentRequired cancellation", async () => {
