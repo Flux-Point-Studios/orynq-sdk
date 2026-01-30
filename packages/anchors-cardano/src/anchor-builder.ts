@@ -31,7 +31,7 @@ import type {
   CreateAnchorEntryOptions,
 } from "./types.js";
 import { POI_METADATA_LABEL, isAnchorType } from "./types.js";
-import type { TraceBundle } from "@fluxpointstudios/poi-sdk-process-trace";
+import type { TraceBundle, TraceManifest } from "@fluxpointstudios/poi-sdk-process-trace";
 
 // =============================================================================
 // CONSTANTS
@@ -255,6 +255,75 @@ export function createAnchorEntryFromBundle(
   // Include storageUri from options
   if (options?.storageUri) {
     entry.storageUri = options.storageUri;
+  }
+
+  return entry;
+}
+
+/**
+ * Create an anchor entry from a trace manifest.
+ *
+ * This is useful when you have already created a manifest for off-chain storage
+ * and want to create an anchor entry for on-chain commitment. The manifest
+ * already contains all the necessary cryptographic hashes.
+ *
+ * @param manifest - The trace manifest to create an anchor entry from.
+ * @param opts - Optional configuration for entry creation.
+ * @param opts.storageUri - URI where the manifest and chunks are stored.
+ * @returns AnchorEntry ready to be anchored.
+ * @throws Error if manifest is missing required manifestHash.
+ *
+ * @example
+ * ```typescript
+ * import { createManifest } from "@fluxpointstudios/poi-sdk-process-trace";
+ *
+ * const { manifest, chunks } = await createManifest(bundle);
+ * // Store manifest and chunks to IPFS/Arweave...
+ *
+ * const entry = createAnchorEntryFromManifest(manifest, {
+ *   storageUri: "ipfs://QmXyz...",
+ * });
+ * const result = buildAnchorMetadata(entry);
+ * ```
+ */
+export function createAnchorEntryFromManifest(
+  manifest: TraceManifest,
+  opts?: { storageUri?: string }
+): AnchorEntry {
+  // Validate manifest has required manifestHash
+  if (!manifest.manifestHash) {
+    throw new Error(
+      "Manifest is missing required manifestHash. Ensure the manifest has been finalized before anchoring."
+    );
+  }
+
+  // Build the anchor entry with required fields
+  const entry: AnchorEntry = {
+    type: "process-trace",
+    version: "1.0",
+    rootHash: manifest.rootHash,
+    manifestHash: manifest.manifestHash,
+    timestamp: new Date().toISOString(),
+  };
+
+  // Include merkleRoot if available
+  if (manifest.merkleRoot) {
+    entry.merkleRoot = manifest.merkleRoot;
+  }
+
+  // Include item count
+  if (manifest.totalEvents !== undefined) {
+    entry.itemCount = manifest.totalEvents;
+  }
+
+  // Include agentId if available
+  if (manifest.agentId) {
+    entry.agentId = manifest.agentId;
+  }
+
+  // Include storageUri from options
+  if (opts?.storageUri) {
+    entry.storageUri = opts.storageUri;
   }
 
   return entry;

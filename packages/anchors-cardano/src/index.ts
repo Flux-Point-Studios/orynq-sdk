@@ -99,6 +99,7 @@ export {
   buildAnchorMetadata,
   buildBatchAnchorMetadata,
   createAnchorEntryFromBundle,
+  createAnchorEntryFromManifest,
   validateAnchorEntry,
   serializeForCardanoCli,
   serializeForCbor,
