@@ -65,4 +65,4 @@ out-mainnet-trace/
 
 # Claude Code hooks state
 .claude/hooks/*.lock
-nul
+.claude/settings.local.json
