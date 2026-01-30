@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "express": "^4.18.2",
-    "@fluxpointstudios/poi-sdk-anchors-cardano": "workspace:*",
+    "@fluxpointstudios/poi-sdk-anchors-cardano": "^0.1.0",
     "lucid-cardano": "^0.10.7"
   },
   "devDependencies": {
