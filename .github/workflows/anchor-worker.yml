@@ -1,0 +1,64 @@
+name: Deploy anchor-worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/anchor-worker/**'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/flux-point-studios/anchor-worker
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        working-directory: services/anchor-worker
+        run: |
+          docker build -t ${{ env.IMAGE }}:${{ github.sha }} -t ${{ env.IMAGE }}:latest .
+          docker push ${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.IMAGE }}:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to K8s via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.GPU_NODE_HOST }}
+          username: ${{ secrets.GPU_NODE_USER }}
+          key: ${{ secrets.GPU_NODE_SSH_KEY }}
+          command_timeout: 5m
+          script: |
+            set -e
+            TAG_IMAGE="${{ env.IMAGE }}:${{ github.sha }}"
+
+            # Pull and import image
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u Flux-Point-Studios --password-stdin
+            docker pull "$TAG_IMAGE"
+            docker save "$TAG_IMAGE" | sudo ctr -n k8s.io images import --all-platforms -
+
+            # Update deployment
+            kubectl -n t-backend set image deployment/anchor-worker anchor-worker="$TAG_IMAGE" || \
+              echo "Deployment not found - apply manifests first"
+
+            kubectl -n t-backend rollout status deployment/anchor-worker --timeout=3m || true
+            kubectl -n t-backend get pods -l app=anchor-worker
