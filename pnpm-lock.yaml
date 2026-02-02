@@ -153,6 +153,25 @@ importers:
         specifier: ^1.2.0
         version: 1.6.1(@types/node@20.19.30)
 
+  packages/flight-recorder:
+    dependencies:
+      '@fluxpointstudios/poi-sdk-core':
+        specifier: workspace:*
+        version: link:../core
+      '@fluxpointstudios/poi-sdk-process-trace':
+        specifier: workspace:*
+        version: link:../process-trace
+      fflate:
+        specifier: ^0.8.2
+        version: 0.8.2
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+    devDependencies:
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.1(@types/node@20.19.30)
+
   packages/gateway:
     dependencies:
       '@fluxpointstudios/poi-sdk-core':
@@ -359,6 +378,31 @@ importers:
       vitest:
         specifier: ^1.2.0
         version: 1.6.1(@types/node@20.19.30)
+
+  services/anchor-worker:
+    dependencies:
+      '@fluxpointstudios/poi-sdk-anchors-cardano':
+        specifier: ^0.1.0
+        version: 0.1.0
+      express:
+        specifier: ^4.18.2
+        version: 4.22.1
+      lucid-cardano:
+        specifier: ^0.10.7
+        version: 0.10.11(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+    devDependencies:
+      '@types/express':
+        specifier: ^4.17.21
+        version: 4.17.25
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.30
+      tsx:
+        specifier: ^4.7.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.3
 
 packages:
 
@@ -1148,6 +1192,18 @@ packages:
 
   '@floating-ui/utils@0.2.10':
     resolution: {integrity: sha512-aGTxbpbg8/b5JfU1HXSrbH3wXZuLPJcNEcZQFMxLs3oSzgtVu6nFPkbbGGUvBcUjKV2YyB9Wxxabo+HEH9tcRQ==}
+
+  '@fluxpointstudios/poi-sdk-anchors-cardano@0.1.0':
+    resolution: {integrity: sha512-egFluntx9I7UdXfUm0pzgWAIwDkm7HiL1fnx2xXdHCY1dNkjNs/tMrEATkKYp0FtDlO3NklFSb7Xr6zuENfR8g==}
+    engines: {node: '>=18.0.0'}
+
+  '@fluxpointstudios/poi-sdk-core@0.1.0':
+    resolution: {integrity: sha512-9L+S0b8sHbBJAKm9EHxtxcz8iejJ4dFbnGyTVBHwDfOGozbXUvQTfwIyCgwSY6njYuBywRwXStnHwYfOqu3e4Q==}
+    engines: {node: '>=18.0.0'}
+
+  '@fluxpointstudios/poi-sdk-process-trace@0.1.0':
+    resolution: {integrity: sha512-Ya14gAT6AW8xtHlXfyTn7r6IjGI5+KFvSwHFX+yWCamnjhuWegadDiQxjOSG9ppd+Thr3QpBjSQFVeePsYe/6w==}
+    engines: {node: '>=18.0.0'}
 
   '@foxglove/crc@0.0.3':
     resolution: {integrity: sha512-DjIZsnL3CyP/yQ/vUYA9cjrD0a/8YXejI5ZmsaOiT16cLfZcTwaCxIN01/ys4jsy+dZCQ/9DnWFn7AEFbiMDaA==}
@@ -3047,6 +3103,9 @@ packages:
   fetch-blob@3.2.0:
     resolution: {integrity: sha512-7yAQpD2UMJzLi1Dqv7qFYnPbaPx7ZfFK6PiIxQ4PfkGPyNyl2Ugx+a/umUonmKqjhM4DnfbMvdX6otXq83soQQ==}
     engines: {node: ^12.20 || >= 14.13}
+
+  fflate@0.8.2:
+    resolution: {integrity: sha512-cPJU47OaAoCbg0pBvzsgpTPhmhqI5eJjh/JIu8tPj5q+T7iLvW/JAYUqmE7KOB4R1ZyEhzBaIQpQpardBF5z8A==}
 
   file-entry-cache@6.0.1:
     resolution: {integrity: sha512-7Gps/XWymbLk2QLYK4NzpMOrYjMhdIxXuIvy2QBsLE6ljuodKvdkWs/cpyJJ3CVIVpH0Oi1Hvg1ovbMzLdFBBg==}
@@ -6286,6 +6345,17 @@ snapshots:
 
   '@floating-ui/utils@0.2.10': {}
 
+  '@fluxpointstudios/poi-sdk-anchors-cardano@0.1.0':
+    dependencies:
+      '@fluxpointstudios/poi-sdk-core': 0.1.0
+      '@fluxpointstudios/poi-sdk-process-trace': 0.1.0
+
+  '@fluxpointstudios/poi-sdk-core@0.1.0': {}
+
+  '@fluxpointstudios/poi-sdk-process-trace@0.1.0':
+    dependencies:
+      '@fluxpointstudios/poi-sdk-core': 0.1.0
+
   '@foxglove/crc@0.0.3': {}
 
   '@harmoniclabs/bigint-utils@1.0.0':
@@ -8634,6 +8704,8 @@ snapshots:
     dependencies:
       node-domexception: 1.0.0
       web-streams-polyfill: 3.3.3
+
+  fflate@0.8.2: {}
 
   file-entry-cache@6.0.1:
     dependencies:

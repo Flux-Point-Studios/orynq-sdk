@@ -1,0 +1,43 @@
+{
+  "name": "@fluxpointstudios/poi-sdk-flight-recorder",
+  "version": "0.1.0",
+  "description": "Streaming flight recorder for PoI with chunking, compression, and encryption",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@fluxpointstudios/poi-sdk-core": "workspace:*",
+    "@fluxpointstudios/poi-sdk-process-trace": "workspace:*",
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "keywords": [
+    "poi",
+    "proof-of-inference",
+    "flight-recorder",
+    "cardano",
+    "audit"
+  ],
+  "license": "MIT"
+}
