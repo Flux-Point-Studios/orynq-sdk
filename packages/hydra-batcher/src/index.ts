@@ -79,3 +79,25 @@ export {
   type LatencyBucket,
   type HealthStatus,
 } from "./monitor/index.js";
+
+// Transaction building (L2)
+export {
+  L2TransactionBuilder,
+  computeBatchMerkleRoot,
+  buildCommitmentTransaction,
+  buildInitialCommitmentTransaction,
+  type L2TransactionBuildResult,
+  type CommitmentTxOptions,
+} from "./tx/index.js";
+
+// L1 Settlement
+export {
+  L1SettlementService,
+  createMockAnchorProvider,
+  settleAndConfirm,
+  type L1SettlementConfig,
+  type AnchorProvider,
+  type SettlementMetadata,
+  type MockAnchorProviderOptions,
+  type WaitOptions,
+} from "./tx/index.js";

@@ -242,6 +242,34 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
 
+  packages/midnight-prover:
+    dependencies:
+      '@fluxpointstudios/poi-sdk-anchors-cardano':
+        specifier: workspace:*
+        version: link:../anchors-cardano
+      '@fluxpointstudios/poi-sdk-attestor':
+        specifier: workspace:*
+        version: link:../attestor
+      '@fluxpointstudios/poi-sdk-core':
+        specifier: workspace:*
+        version: link:../core
+      '@fluxpointstudios/poi-sdk-process-trace':
+        specifier: workspace:*
+        version: link:../process-trace
+      '@midnight-ntwrk/compact-runtime':
+        specifier: ^0.14.0
+        version: 0.14.0
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.30
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@20.19.30)
+
   packages/payer-cardano-cip30:
     dependencies:
       '@fluxpointstudios/poi-sdk-core':
@@ -1541,6 +1569,12 @@ packages:
   '@meshsdk/wallet@1.8.14':
     resolution: {integrity: sha512-w8FmLm82IuQZxrN999y23eY3M1+wbj6yJ4ZuzjdEetaha4h3FxmUlqEznq9B77mnPD8Iair1pZrIelt0Gx2TEw==}
 
+  '@midnight-ntwrk/compact-runtime@0.14.0':
+    resolution: {integrity: sha512-VfZmfPDedRUPAYIhKAgS5y+KtxOkSSOCS24PAsGMjhMpzJaaWVSd5SajF6HtNZsciL54sqru4EpWvmCAqsbmYQ==}
+
+  '@midnight-ntwrk/onchain-runtime-v2@2.0.0':
+    resolution: {integrity: sha512-9LfU3xJDI4aWcElE4ZxsGLKKAjj/7+O6nepvqMngojc+YLmlpR29ju4C+/isDbBk/4m/9m9fq89d8qIvX8Y4/Q==}
+
   '@multiformats/dns@1.0.13':
     resolution: {integrity: sha512-yr4bxtA3MbvJ+2461kYIYMsiiZj/FIqKI64hE4SdvWJUdWF9EtZLar38juf20Sf5tguXKFUruluswAO6JsjS2w==}
 
@@ -2405,6 +2439,9 @@ packages:
 
   '@types/node@8.10.66':
     resolution: {integrity: sha512-tktOkFUA4kXx2hhhrB8bIFb5TbwzS4uOhKEmwiD+NoiL0qtP2OQ9mFldbgD4dV1djrlBYP6eBuQZiWjuHUpqFw==}
+
+  '@types/object-inspect@1.13.0':
+    resolution: {integrity: sha512-lwGTVESDDV+XsQ1pH4UifpJ1f7OtXzQ6QBOX2Afq2bM/T3oOt8hF6exJMjjIjtEWeAN2YAo25J7HxWh97CCz9w==}
 
   '@types/qs@6.14.0':
     resolution: {integrity: sha512-eOunJqu0K1923aExK6y8p6fsihYEn/BYuQ4g0CxAAgFc4b/ZLN4CrsRZ55srTdqoiLzU2B2evC+apEIxprEzkQ==}
@@ -7536,6 +7573,14 @@ snapshots:
       - supports-color
       - utf-8-validate
 
+  '@midnight-ntwrk/compact-runtime@0.14.0':
+    dependencies:
+      '@midnight-ntwrk/onchain-runtime-v2': 2.0.0
+      '@types/object-inspect': 1.13.0
+      object-inspect: 1.13.4
+
+  '@midnight-ntwrk/onchain-runtime-v2@2.0.0': {}
+
   '@multiformats/dns@1.0.13':
     dependencies:
       '@dnsquery/dns-packet': 6.1.1
@@ -8495,6 +8540,8 @@ snapshots:
       undici-types: 6.21.0
 
   '@types/node@8.10.66': {}
+
+  '@types/object-inspect@1.13.0': {}
 
   '@types/qs@6.14.0': {}
 
