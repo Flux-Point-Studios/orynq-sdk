@@ -1,0 +1,56 @@
+{
+  "name": "@fluxpointstudios/poi-sdk-hydra-batcher",
+  "version": "0.1.0",
+  "description": "High-frequency L2 commitment lane using Cardano Hydra for PoI",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rimraf dist",
+    "test": "vitest run",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fluxpointstudios/poi-sdk-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.4.0"
+  },
+  "peerDependencies": {
+    "ws": "^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ws": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "poi",
+    "proof-of-inference",
+    "hydra",
+    "cardano",
+    "l2",
+    "batching"
+  ],
+  "author": "Flux Point Studios",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/poi-sdk.git",
+    "directory": "packages/hydra-batcher"
+  }
+}

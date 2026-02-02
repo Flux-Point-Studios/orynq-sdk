@@ -13,6 +13,7 @@ export default defineConfig({
       '@fluxpointstudios/poi-sdk-client': resolve(__dirname, 'packages/client/src/index.ts'),
       '@fluxpointstudios/poi-sdk-core': resolve(__dirname, 'packages/core/src/index.ts'),
       '@fluxpointstudios/poi-sdk-flight-recorder': resolve(__dirname, 'packages/flight-recorder/src/index.ts'),
+      '@fluxpointstudios/poi-sdk-hydra-batcher': resolve(__dirname, 'packages/hydra-batcher/src/index.ts'),
       '@fluxpointstudios/poi-sdk-gateway': resolve(__dirname, 'packages/gateway/src/index.ts'),
       '@fluxpointstudios/poi-sdk-payer-cardano-cip30': resolve(__dirname, 'packages/payer-cardano-cip30/src/index.ts'),
       '@fluxpointstudios/poi-sdk-payer-cardano-node': resolve(__dirname, 'packages/payer-cardano-node/src/index.ts'),
