@@ -1,7 +1,7 @@
 # Location: .github/workflows/release.yml
 # Summary: Automated release workflow using Changesets
 # Description: Triggers on push to main branch. Uses changesets/action to either
-#              create a Release Pull Request or publish packages to npm.
+#              create a Release Pull Request or publish packages to npm and GitHub Packages.
 # Related: Requires .changeset/config.json and NPM_TOKEN secret for publishing
 
 name: Release
@@ -14,6 +14,7 @@ concurrency: ${{ github.workflow }}-${{ github.ref }}
 permissions:
   contents: write
   pull-requests: write
+  packages: write
 
 jobs:
   release:
@@ -28,11 +29,12 @@ jobs:
         with:
           node-version: '20'
           cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
 
       - run: pnpm install
       - run: pnpm build
 
-      - name: Create Release Pull Request or Publish
+      - name: Create Release Pull Request or Publish to npm
         id: changesets
         uses: changesets/action@v1
         with:
@@ -43,3 +45,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
