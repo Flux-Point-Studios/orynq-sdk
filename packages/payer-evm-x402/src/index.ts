@@ -1,5 +1,5 @@
 /**
- * @summary Main entry point for @fluxpointstudios/poi-sdk-payer-evm-x402 package.
+ * @summary Main entry point for @fluxpointstudios/orynq-sdk-payer-evm-x402 package.
  *
  * This package provides an EVM Payer implementation for the x402 payment protocol
  * using EIP-3009 "Transfer With Authorization" for gasless token transfers.
@@ -13,7 +13,7 @@
  *
  * Usage:
  * ```typescript
- * import { createEvmX402Payer } from "@fluxpointstudios/poi-sdk-payer-evm-x402";
+ * import { createEvmX402Payer } from "@fluxpointstudios/orynq-sdk-payer-evm-x402";
  *
  * // Quick setup with private key
  * const payer = createEvmX402Payer("0x...", {
@@ -34,7 +34,7 @@
  *
  * For custom signer configurations:
  * ```typescript
- * import { EvmX402Payer, ViemSigner } from "@fluxpointstudios/poi-sdk-payer-evm-x402";
+ * import { EvmX402Payer, ViemSigner } from "@fluxpointstudios/orynq-sdk-payer-evm-x402";
  *
  * const signer = new ViemSigner({ privateKey: "0x..." });
  * const payer = new EvmX402Payer({
@@ -47,7 +47,7 @@
  * ```
  *
  * Used by:
- * - @fluxpointstudios/poi-sdk-client for automatic x402 payment handling
+ * - @fluxpointstudios/orynq-sdk-client for automatic x402 payment handling
  * - Browser applications with wallet integration
  * - Node.js servers for automated payments
  */
@@ -111,7 +111,7 @@ import { EvmX402Payer, type EvmX402PayerConfig } from "./x402-payer.js";
  *
  * @example
  * ```typescript
- * import { createEvmX402Payer } from "@fluxpointstudios/poi-sdk-payer-evm-x402";
+ * import { createEvmX402Payer } from "@fluxpointstudios/orynq-sdk-payer-evm-x402";
  *
  * const payer = createEvmX402Payer("0x...", {
  *   chains: ["eip155:8453"],
@@ -143,7 +143,7 @@ export function createEvmX402Payer(
  *
  * @example
  * ```typescript
- * import { createEvmX402PayerWithSigner, ViemSigner } from "@fluxpointstudios/poi-sdk-payer-evm-x402";
+ * import { createEvmX402PayerWithSigner, ViemSigner } from "@fluxpointstudios/orynq-sdk-payer-evm-x402";
  * import { privateKeyToAccount } from "viem/accounts";
  *
  * const account = privateKeyToAccount("0x...");

@@ -1,7 +1,7 @@
 {
-  "name": "@fluxpointstudios/poi-sdk-transport-flux",
+  "name": "@fluxpointstudios/orynq-sdk-transport-flux",
   "version": "0.0.0",
-  "description": "Flux (T-Backend) wire format transport for poi-sdk payment layer",
+  "description": "Flux (T-Backend) wire format transport for orynq-sdk payment layer",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -48,13 +48,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
     "directory": "packages/transport-flux"
   },
-  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
-  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
+  "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.0.1",

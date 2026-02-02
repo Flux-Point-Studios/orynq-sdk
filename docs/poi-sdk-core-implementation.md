@@ -1,14 +1,14 @@
-# @fluxpointstudios/poi-sdk-core Implementation Summary
+# @fluxpointstudios/orynq-sdk-core Implementation Summary
 
 ## Overview
 
-The `@fluxpointstudios/poi-sdk-core` package has been implemented as the foundational layer for the poi-sdk dual-protocol commerce system. This package provides protocol-neutral types, interfaces, and utilities that support both Flux and x402 payment protocols.
+The `@fluxpointstudios/orynq-sdk-core` package has been implemented as the foundational layer for the orynq-sdk dual-protocol commerce system. This package provides protocol-neutral types, interfaces, and utilities that support both Flux and x402 payment protocols.
 
 ## Implementation Date
 2025-01-26
 
 ## Package Location
-`D:\fluxPoint\PoI\poi-sdk\packages\core`
+`D:\fluxPoint\PoI\orynq-sdk\packages\core`
 
 ## Key Features Implemented
 
@@ -221,7 +221,7 @@ The Test Engineer should create tests for the following:
 
 ```bash
 # Run all tests
-cd D:\fluxPoint\PoI\poi-sdk\packages\core
+cd D:\fluxPoint\PoI\orynq-sdk\packages\core
 pnpm run test
 
 # Run tests in watch mode
@@ -233,7 +233,7 @@ pnpm run typecheck
 
 ## Instructions for Test Engineer
 
-Please read this document and implement comprehensive tests for the @fluxpointstudios/poi-sdk-core package. Focus on:
+Please read this document and implement comprehensive tests for the @fluxpointstudios/orynq-sdk-core package. Focus on:
 
 1. **Correctness**: All functions should produce expected outputs
 2. **Edge cases**: Empty inputs, invalid data, boundary conditions

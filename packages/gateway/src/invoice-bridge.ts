@@ -14,7 +14,7 @@
  * - server.ts for creating invoices on payment required responses
  */
 
-import { sha256StringHex } from "@fluxpointstudios/poi-sdk-core";
+import { sha256StringHex } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Types

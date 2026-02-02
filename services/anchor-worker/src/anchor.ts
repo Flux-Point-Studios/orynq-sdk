@@ -8,7 +8,7 @@ import { Lucid, Blockfrost } from "lucid-cardano";
 import {
   buildAnchorMetadata,
   type AnchorEntry,
-} from "@fluxpointstudios/poi-sdk-anchors-cardano";
+} from "@fluxpointstudios/orynq-sdk-anchors-cardano";
 import {
   BLOCKFROST_PROJECT_ID,
   CARDANO_NETWORK,
@@ -81,7 +81,7 @@ export interface ManifestData {
 }
 
 /**
- * Notify t-backend that the anchor transaction has been submitted.
+ * Notify orynq-backend that the anchor transaction has been submitted.
  */
 async function notifySubmitted(
   requestId: string,
@@ -101,12 +101,12 @@ async function notifySubmitted(
 
     if (!response.ok) {
       console.error(
-        `[anchor] Callback to t-backend failed: ${response.status} ${response.statusText}`
+        `[anchor] Callback to orynq-backend failed: ${response.status} ${response.statusText}`
       );
     }
   } catch (error) {
     // Best-effort callback - log but don't fail the anchor operation
-    console.error("[anchor] Callback to t-backend error:", error);
+    console.error("[anchor] Callback to orynq-backend error:", error);
   }
 }
 
@@ -166,7 +166,7 @@ export async function anchorProcessTrace(
 
   console.log(`[anchor] Transaction submitted: ${txHash}`);
 
-  // Callback to t-backend immediately after submit
+  // Callback to orynq-backend immediately after submit
   await notifySubmitted(requestId, txHash, CARDANO_NETWORK);
 
   // Best-effort awaitTx with short timeout - don't fail on slow mempool

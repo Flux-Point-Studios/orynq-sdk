@@ -15,7 +15,7 @@
  * - @emurgo/cardano-serialization-lib-nodejs for cryptographic operations
  */
 
-import type { Signer, ChainId } from "@fluxpointstudios/poi-sdk-core";
+import type { Signer, ChainId } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // CSL Import Helper

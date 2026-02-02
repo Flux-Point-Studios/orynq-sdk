@@ -1,5 +1,5 @@
 {
-  "name": "@fluxpointstudios/poi-sdk-gateway",
+  "name": "@fluxpointstudios/orynq-sdk-gateway",
   "version": "0.0.0",
   "description": "x402 gateway to bridge x402 clients to T-Backend without modifying T-Backend",
   "type": "module",
@@ -50,15 +50,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
     "directory": "packages/gateway"
   },
-  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
-  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
+  "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*",
-    "@fluxpointstudios/poi-sdk-transport-x402": "workspace:*",
-    "@fluxpointstudios/poi-sdk-server-middleware": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-transport-x402": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-server-middleware": "workspace:*",
     "express": "^4.18.2",
     "cors": "^2.8.5",
     "http-proxy-middleware": "^2.0.6"

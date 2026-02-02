@@ -1,8 +1,8 @@
 {
-  "name": "poi-sdk",
+  "name": "orynq-sdk",
   "private": true,
   "version": "0.0.0",
-  "description": "Dual-protocol commerce layer supporting x402 and Flux payment protocols",
+  "description": "Orynq SDK - Dual-protocol commerce layer supporting x402 and Flux payment protocols",
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm -r --parallel dev",

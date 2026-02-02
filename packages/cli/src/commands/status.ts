@@ -30,7 +30,7 @@ export function registerStatusCommand(program: Command): void {
   program
     .command("status <invoice-id>")
     .description("Check payment status for an invoice")
-    .option("-u, --url <url>", "API base URL", "https://api-v2.fluxpointstudios.com")
+    .option("-u, --url <url>", "API base URL", "https://api.orynq.io")
     .action(async (invoiceId: string, options: StatusOptions) => {
       console.log(chalk.blue("Checking status for:"), invoiceId);
       console.log(chalk.gray("  API:"), options.url);

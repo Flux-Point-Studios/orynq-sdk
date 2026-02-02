@@ -19,7 +19,7 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import type { PaymentRequest, PaymentProof } from "@fluxpointstudios/poi-sdk-core";
+import type { PaymentRequest, PaymentProof } from "@fluxpointstudios/orynq-sdk-core";
 import {
   loadTestEnvironment,
   canRunEvmTests,
@@ -48,7 +48,7 @@ const shouldSkip = !canRunEvmTests();
 
 describe.skipIf(shouldSkip)("EVM Direct Transfer Tests", () => {
   // Lazy imports
-  let ViemPayer: typeof import("@fluxpointstudios/poi-sdk-payer-evm-direct").ViemPayer;
+  let ViemPayer: typeof import("@fluxpointstudios/orynq-sdk-payer-evm-direct").ViemPayer;
 
   let payer: InstanceType<typeof ViemPayer>;
   let walletAddress: string;
@@ -59,7 +59,7 @@ describe.skipIf(shouldSkip)("EVM Direct Transfer Tests", () => {
       return;
     }
 
-    const payerModule = await import("@fluxpointstudios/poi-sdk-payer-evm-direct");
+    const payerModule = await import("@fluxpointstudios/orynq-sdk-payer-evm-direct");
     ViemPayer = payerModule.ViemPayer;
 
     const env = loadTestEnvironment();
@@ -247,10 +247,10 @@ describe.skipIf(shouldSkip)("EVM Direct Transfer Tests", () => {
 // ---------------------------------------------------------------------------
 
 describe.skipIf(shouldSkip)("EVM x402 Gasless Signature Tests", () => {
-  let EvmX402Payer: typeof import("@fluxpointstudios/poi-sdk-payer-evm-x402").EvmX402Payer;
-  let ViemSigner: typeof import("@fluxpointstudios/poi-sdk-payer-evm-x402").ViemSigner;
-  let decodeAuthorizationFromBase64: typeof import("@fluxpointstudios/poi-sdk-payer-evm-x402").decodeAuthorizationFromBase64;
-  let isAuthorizationValid: typeof import("@fluxpointstudios/poi-sdk-payer-evm-x402").isAuthorizationValid;
+  let EvmX402Payer: typeof import("@fluxpointstudios/orynq-sdk-payer-evm-x402").EvmX402Payer;
+  let ViemSigner: typeof import("@fluxpointstudios/orynq-sdk-payer-evm-x402").ViemSigner;
+  let decodeAuthorizationFromBase64: typeof import("@fluxpointstudios/orynq-sdk-payer-evm-x402").decodeAuthorizationFromBase64;
+  let isAuthorizationValid: typeof import("@fluxpointstudios/orynq-sdk-payer-evm-x402").isAuthorizationValid;
 
   let payer: InstanceType<typeof EvmX402Payer>;
   let walletAddress: string;
@@ -261,7 +261,7 @@ describe.skipIf(shouldSkip)("EVM x402 Gasless Signature Tests", () => {
       return;
     }
 
-    const x402Module = await import("@fluxpointstudios/poi-sdk-payer-evm-x402");
+    const x402Module = await import("@fluxpointstudios/orynq-sdk-payer-evm-x402");
     EvmX402Payer = x402Module.EvmX402Payer;
     ViemSigner = x402Module.ViemSigner;
     decodeAuthorizationFromBase64 = x402Module.decodeAuthorizationFromBase64;

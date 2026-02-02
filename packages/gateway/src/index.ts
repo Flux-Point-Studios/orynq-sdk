@@ -1,5 +1,5 @@
 /**
- * @summary Main entry point for @fluxpointstudios/poi-sdk-gateway package.
+ * @summary Main entry point for @fluxpointstudios/orynq-sdk-gateway package.
  *
  * This package provides an x402 gateway server that bridges x402 clients to
  * a backend service (T-Backend) without requiring modifications to the backend.
@@ -32,7 +32,7 @@
  *
  * Usage:
  * ```typescript
- * import { startGateway } from "@fluxpointstudios/poi-sdk-gateway";
+ * import { startGateway } from "@fluxpointstudios/orynq-sdk-gateway";
  *
  * await startGateway({
  *   backendUrl: "http://localhost:8000",

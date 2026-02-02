@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document summarizes the completion of Phase 5 of the poi-sdk release plan: updating NPM publishing configuration by renaming all 11 packages from the `@poi-sdk/*` scope to the `@fluxpointstudios/*` scope.
+This document summarizes the completion of Phase 5 of the orynq-sdk release plan: updating NPM publishing configuration by renaming all 11 packages from the `@orynq-sdk/*` scope to the `@fluxpointstudios/*` scope.
 
 ## Implementation Date
 
@@ -14,17 +14,17 @@ All packages have been renamed using the following pattern:
 
 | Old Name | New Name |
 |----------|----------|
-| `@poi-sdk/core` | `@fluxpointstudios/poi-sdk-core` |
-| `@poi-sdk/client` | `@fluxpointstudios/poi-sdk-client` |
-| `@poi-sdk/transport-flux` | `@fluxpointstudios/poi-sdk-transport-flux` |
-| `@poi-sdk/transport-x402` | `@fluxpointstudios/poi-sdk-transport-x402` |
-| `@poi-sdk/server-middleware` | `@fluxpointstudios/poi-sdk-server-middleware` |
-| `@poi-sdk/gateway` | `@fluxpointstudios/poi-sdk-gateway` |
-| `@poi-sdk/cli` | `@fluxpointstudios/poi-sdk-cli` |
-| `@poi-sdk/payer-evm-direct` | `@fluxpointstudios/poi-sdk-payer-evm-direct` |
-| `@poi-sdk/payer-evm-x402` | `@fluxpointstudios/poi-sdk-payer-evm-x402` |
-| `@poi-sdk/payer-cardano-node` | `@fluxpointstudios/poi-sdk-payer-cardano-node` |
-| `@poi-sdk/payer-cardano-cip30` | `@fluxpointstudios/poi-sdk-payer-cardano-cip30` |
+| `@orynq-sdk/core` | `@fluxpointstudios/orynq-sdk-core` |
+| `@orynq-sdk/client` | `@fluxpointstudios/orynq-sdk-client` |
+| `@orynq-sdk/transport-flux` | `@fluxpointstudios/orynq-sdk-transport-flux` |
+| `@orynq-sdk/transport-x402` | `@fluxpointstudios/orynq-sdk-transport-x402` |
+| `@orynq-sdk/server-middleware` | `@fluxpointstudios/orynq-sdk-server-middleware` |
+| `@orynq-sdk/gateway` | `@fluxpointstudios/orynq-sdk-gateway` |
+| `@orynq-sdk/cli` | `@fluxpointstudios/orynq-sdk-cli` |
+| `@orynq-sdk/payer-evm-direct` | `@fluxpointstudios/orynq-sdk-payer-evm-direct` |
+| `@orynq-sdk/payer-evm-x402` | `@fluxpointstudios/orynq-sdk-payer-evm-x402` |
+| `@orynq-sdk/payer-cardano-node` | `@fluxpointstudios/orynq-sdk-payer-cardano-node` |
+| `@orynq-sdk/payer-cardano-cip30` | `@fluxpointstudios/orynq-sdk-payer-cardano-cip30` |
 
 ## Files Updated
 
@@ -49,7 +49,7 @@ All TypeScript source files were updated:
 ### Documentation Files (16 files)
 
 All documentation files in `docs/` folder were updated:
-- `poi-sdk-core-implementation.md`
+- `orynq-sdk-core-implementation.md`
 - `aws-kms-signer-implementation.md`
 - `evm-payers-implementation-complete.md`
 - `payer-cardano-cip30-meshjs-implementation.md`
@@ -144,18 +144,18 @@ pnpm test
 The test engineer should verify:
 
 1. **Package Resolution**
-   - Import `@fluxpointstudios/poi-sdk-core` and verify types resolve
-   - Import `@fluxpointstudios/poi-sdk-client` and verify types resolve
+   - Import `@fluxpointstudios/orynq-sdk-core` and verify types resolve
+   - Import `@fluxpointstudios/orynq-sdk-client` and verify types resolve
    - Test all 11 packages can be imported
 
 2. **Cross-Package Dependencies**
-   - Verify `@fluxpointstudios/poi-sdk-client` correctly imports from `@fluxpointstudios/poi-sdk-core`
+   - Verify `@fluxpointstudios/orynq-sdk-client` correctly imports from `@fluxpointstudios/orynq-sdk-core`
    - Verify payer packages correctly import from core
    - Verify middleware correctly imports from core and transport packages
 
 3. **Build Artifacts**
-   - Verify ESM imports work: `import { PaymentRequest } from '@fluxpointstudios/poi-sdk-core'`
-   - Verify CJS requires work: `const { PaymentRequest } = require('@fluxpointstudios/poi-sdk-core')`
+   - Verify ESM imports work: `import { PaymentRequest } from '@fluxpointstudios/orynq-sdk-core'`
+   - Verify CJS requires work: `const { PaymentRequest } = require('@fluxpointstudios/orynq-sdk-core')`
    - Verify TypeScript declarations are accessible
 
 4. **Integration Tests**

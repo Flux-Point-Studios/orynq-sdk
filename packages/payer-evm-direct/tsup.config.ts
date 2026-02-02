@@ -1,5 +1,5 @@
 /**
- * @summary Build configuration for @fluxpointstudios/poi-sdk-payer-evm-direct package using tsup.
+ * @summary Build configuration for @fluxpointstudios/orynq-sdk-payer-evm-direct package using tsup.
  *
  * This configuration produces both ESM and CJS outputs with declaration files.
  * The package is built for ES2022 target with full tree-shaking support.
@@ -21,5 +21,5 @@ export default defineConfig({
   minify: false,
   target: "es2022",
   outDir: "dist",
-  external: ["@fluxpointstudios/poi-sdk-core", "viem"],
+  external: ["@fluxpointstudios/orynq-sdk-core", "viem"],
 });

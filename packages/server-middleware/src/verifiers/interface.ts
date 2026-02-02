@@ -13,7 +13,7 @@
  * - EvmVerifier for EVM chain verification
  */
 
-import type { ChainId, PaymentProof } from "@fluxpointstudios/poi-sdk-core";
+import type { ChainId, PaymentProof } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Verification Result

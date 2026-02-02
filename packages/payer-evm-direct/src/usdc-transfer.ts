@@ -30,8 +30,8 @@ import {
 } from "viem";
 import { base, baseSepolia, mainnet, polygon, arbitrum } from "viem/chains";
 import { USDC_ADDRESSES, ERC20_ABI } from "./constants.js";
-import type { ChainId } from "@fluxpointstudios/poi-sdk-core";
-import { PaymentFailedError } from "@fluxpointstudios/poi-sdk-core";
+import type { ChainId } from "@fluxpointstudios/orynq-sdk-core";
+import { PaymentFailedError } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Chain Configurations

@@ -1,7 +1,7 @@
 {
-  "name": "@fluxpointstudios/poi-sdk-anchors-cardano",
+  "name": "@fluxpointstudios/orynq-sdk-anchors-cardano",
   "version": "0.1.0",
-  "description": "Cardano blockchain anchor support for Proof-of-Intent SDK - transaction metadata builder and verifier for PoI anchors (label 2222)",
+  "description": "Cardano blockchain anchor support for Orynq SDK - transaction metadata builder and verifier for PoI anchors (label 2222)",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -48,14 +48,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
     "directory": "packages/anchors-cardano"
   },
-  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
-  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
+  "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*",
-    "@fluxpointstudios/poi-sdk-process-trace": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.0.1",

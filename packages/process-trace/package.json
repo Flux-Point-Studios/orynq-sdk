@@ -1,7 +1,7 @@
 {
-  "name": "@fluxpointstudios/poi-sdk-process-trace",
+  "name": "@fluxpointstudios/orynq-sdk-process-trace",
   "version": "0.1.0",
-  "description": "Cryptographic process trace library for Proof-of-Intent SDK - schemas, hashing, Merkle trees, bundles, and selective disclosure",
+  "description": "Cryptographic process trace library for Orynq SDK - schemas, hashing, Merkle trees, bundles, and selective disclosure",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -38,13 +38,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
     "directory": "packages/process-trace"
   },
-  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
-  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
+  "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.0.1",

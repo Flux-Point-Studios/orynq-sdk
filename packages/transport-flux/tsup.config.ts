@@ -1,5 +1,5 @@
 /**
- * @summary Build configuration for @fluxpointstudios/poi-sdk-transport-flux package using tsup.
+ * @summary Build configuration for @fluxpointstudios/orynq-sdk-transport-flux package using tsup.
  *
  * This configuration produces both ESM and CJS outputs with declaration files.
  * The package has a single entry point (index.ts) that re-exports all functionality.
@@ -18,5 +18,5 @@ export default defineConfig({
   minify: false,
   target: "es2022",
   outDir: "dist",
-  external: ["@fluxpointstudios/poi-sdk-core"],
+  external: ["@fluxpointstudios/orynq-sdk-core"],
 });

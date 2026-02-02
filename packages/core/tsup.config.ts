@@ -1,5 +1,5 @@
 /**
- * @summary Build configuration for @fluxpointstudios/poi-sdk-core package using tsup.
+ * @summary Build configuration for @fluxpointstudios/orynq-sdk-core package using tsup.
  *
  * This configuration produces both ESM and CJS outputs with declaration files.
  * Entry points include the main index, types, chains, and utils modules.

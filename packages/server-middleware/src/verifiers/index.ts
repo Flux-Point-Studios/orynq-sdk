@@ -11,7 +11,7 @@
  *   ChainVerifier,
  *   CardanoVerifier,
  *   EvmVerifier,
- * } from "@fluxpointstudios/poi-sdk-server-middleware/verifiers";
+ * } from "@fluxpointstudios/orynq-sdk-server-middleware/verifiers";
  * ```
  */
 

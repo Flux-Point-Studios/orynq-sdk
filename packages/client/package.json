@@ -1,7 +1,7 @@
 {
-  "name": "@fluxpointstudios/poi-sdk-client",
+  "name": "@fluxpointstudios/orynq-sdk-client",
   "version": "0.1.0",
-  "description": "Main PoI client with auto-pay functionality for dual-protocol commerce",
+  "description": "Main Orynq client with auto-pay functionality for dual-protocol commerce",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -48,15 +48,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
     "directory": "packages/client"
   },
-  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
-  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
+  "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*",
-    "@fluxpointstudios/poi-sdk-transport-x402": "workspace:*",
-    "@fluxpointstudios/poi-sdk-transport-flux": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-transport-x402": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-transport-flux": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.0.1",

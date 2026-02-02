@@ -7,7 +7,7 @@ import {
   extractPaymentFromRequest,
   stripPaymentHeaders,
 } from '../apply';
-import { FLUX_HEADERS, type PaymentProof } from '@fluxpointstudios/poi-sdk-core';
+import { FLUX_HEADERS, type PaymentProof } from '@fluxpointstudios/orynq-sdk-core';
 
 describe('createPaymentHeader', () => {
   it('extracts txHash from cardano-txhash proof', () => {

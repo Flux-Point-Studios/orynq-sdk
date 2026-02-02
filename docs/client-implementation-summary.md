@@ -1,21 +1,21 @@
-# @fluxpointstudios/poi-sdk-client Implementation Summary
+# @fluxpointstudios/orynq-sdk-client Implementation Summary
 
 ## Overview
 
-This document summarizes the implementation of the `@fluxpointstudios/poi-sdk-client` package, which provides the main "one-call" client with auto-pay functionality for the poi-sdk dual-protocol commerce layer.
+This document summarizes the implementation of the `@fluxpointstudios/orynq-sdk-client` package, which provides the main "one-call" client with auto-pay functionality for the orynq-sdk dual-protocol commerce layer.
 
 ## Package Location
 
-`D:\fluxPoint\PoI\poi-sdk\packages\client`
+`D:\fluxPoint\PoI\orynq-sdk\packages\client`
 
 ## Files Created
 
 ### Configuration Files
 
 1. **package.json** - Package manifest with dependencies on:
-   - `@fluxpointstudios/poi-sdk-core` (workspace:*)
-   - `@fluxpointstudios/poi-sdk-transport-x402` (workspace:*)
-   - `@fluxpointstudios/poi-sdk-transport-flux` (workspace:*)
+   - `@fluxpointstudios/orynq-sdk-core` (workspace:*)
+   - `@fluxpointstudios/orynq-sdk-transport-x402` (workspace:*)
+   - `@fluxpointstudios/orynq-sdk-transport-flux` (workspace:*)
 
 2. **tsconfig.json** - TypeScript configuration extending the base config
 
@@ -88,9 +88,9 @@ This document summarizes the implementation of the `@fluxpointstudios/poi-sdk-cl
 
 ## Dependencies
 
-- `@fluxpointstudios/poi-sdk-core` - Types, errors, utilities, in-memory stores
-- `@fluxpointstudios/poi-sdk-transport-x402` - x402 protocol transport
-- `@fluxpointstudios/poi-sdk-transport-flux` - Flux protocol transport
+- `@fluxpointstudios/orynq-sdk-core` - Types, errors, utilities, in-memory stores
+- `@fluxpointstudios/orynq-sdk-transport-x402` - x402 protocol transport
+- `@fluxpointstudios/orynq-sdk-transport-flux` - Flux protocol transport
 
 ## Recommended Tests
 
@@ -190,7 +190,7 @@ const fluxResponse = new Response(JSON.stringify({
 
 ```bash
 # Install dependencies
-cd D:\fluxPoint\PoI\poi-sdk
+cd D:\fluxPoint\PoI\orynq-sdk
 pnpm install
 
 # Build the client package
@@ -206,7 +206,7 @@ pnpm typecheck
 
 ## Notes for Test Engineer
 
-1. The package uses the `@fluxpointstudios/poi-sdk-core` in-memory stores by default, which are suitable for testing.
+1. The package uses the `@fluxpointstudios/orynq-sdk-core` in-memory stores by default, which are suitable for testing.
 
 2. Protocol detection priority: x402 (header-based) is checked before Flux (JSON body).
 
@@ -220,4 +220,4 @@ pnpm typecheck
 
 ---
 
-**Orchestrator:** Please have the Test Engineer read this document at `D:\fluxPoint\PoI\poi-sdk\docs\client-implementation-summary.md` and create comprehensive tests for the @fluxpointstudios/poi-sdk-client package.
+**Orchestrator:** Please have the Test Engineer read this document at `D:\fluxPoint\PoI\orynq-sdk\docs\client-implementation-summary.md` and create comprehensive tests for the @fluxpointstudios/orynq-sdk-client package.

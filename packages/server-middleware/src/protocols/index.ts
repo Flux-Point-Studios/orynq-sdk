@@ -10,7 +10,7 @@
  * import {
  *   createFlux402Response,
  *   createX402_402Response,
- * } from "@fluxpointstudios/poi-sdk-server-middleware";
+ * } from "@fluxpointstudios/orynq-sdk-server-middleware";
  * ```
  */
 

@@ -63,7 +63,7 @@ import {
   computeSpanHash,
 } from "./merkle.js";
 import { HASH_DOMAIN_PREFIXES } from "./types.js";
-import { sha256StringHex } from "@fluxpointstudios/poi-sdk-core/utils";
+import { sha256StringHex } from "@fluxpointstudios/orynq-sdk-core/utils";
 
 // =============================================================================
 // DISCLOSURE REQUEST

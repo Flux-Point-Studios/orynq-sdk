@@ -1,4 +1,4 @@
-# poi-sdk
+# orynq-sdk
 
 A dual-protocol commerce layer supporting **x402** (Coinbase standard) for EVM chains and **Flux protocol** (T-Backend style) for Cardano.
 
@@ -17,28 +17,28 @@ A dual-protocol commerce layer supporting **x402** (Coinbase standard) for EVM c
 
 ```bash
 # Core package
-pnpm add @fluxpointstudios/poi-sdk-core
+pnpm add @fluxpointstudios/orynq-sdk-core
 
 # Client with auto-pay
-pnpm add @fluxpointstudios/poi-sdk-client
+pnpm add @fluxpointstudios/orynq-sdk-client
 
 # Payer adapters (choose based on your chain)
-pnpm add @fluxpointstudios/poi-sdk-payer-cardano-cip30  # Browser wallets
-pnpm add @fluxpointstudios/poi-sdk-payer-cardano-node   # Server-side Cardano
-pnpm add @fluxpointstudios/poi-sdk-payer-evm-x402       # EIP-3009 gasless
-pnpm add @fluxpointstudios/poi-sdk-payer-evm-direct     # Direct ERC-20 transfers
+pnpm add @fluxpointstudios/orynq-sdk-payer-cardano-cip30  # Browser wallets
+pnpm add @fluxpointstudios/orynq-sdk-payer-cardano-node   # Server-side Cardano
+pnpm add @fluxpointstudios/orynq-sdk-payer-evm-x402       # EIP-3009 gasless
+pnpm add @fluxpointstudios/orynq-sdk-payer-evm-direct     # Direct ERC-20 transfers
 
 # Server middleware
-pnpm add @fluxpointstudios/poi-sdk-server-middleware
+pnpm add @fluxpointstudios/orynq-sdk-server-middleware
 
 # Protocol gateway
-pnpm add @fluxpointstudios/poi-sdk-gateway
+pnpm add @fluxpointstudios/orynq-sdk-gateway
 ```
 
 ### Python
 
 ```bash
-pip install poi-sdk
+pip install orynq-sdk
 ```
 
 ## Quick Start
@@ -46,8 +46,8 @@ pip install poi-sdk
 ### Client (TypeScript)
 
 ```typescript
-import { PoiClient } from '@fluxpointstudios/poi-sdk-client';
-import { createCip30Payer } from '@fluxpointstudios/poi-sdk-payer-cardano-cip30';
+import { PoiClient } from '@fluxpointstudios/orynq-sdk-client';
+import { createCip30Payer } from '@fluxpointstudios/orynq-sdk-payer-cardano-cip30';
 
 // Create a payer from a CIP-30 wallet
 const payer = await createCip30Payer(window.cardano.nami);
@@ -94,7 +94,7 @@ import {
   MemoryInvoiceStore,
   CardanoVerifier,
   cors402,
-} from '@fluxpointstudios/poi-sdk-server-middleware';
+} from '@fluxpointstudios/orynq-sdk-server-middleware';
 
 const app = express();
 app.use(express.json());
@@ -129,7 +129,7 @@ app.get(
 Bridge x402 clients to Flux backends:
 
 ```typescript
-import { startGateway } from '@fluxpointstudios/poi-sdk-gateway';
+import { startGateway } from '@fluxpointstudios/orynq-sdk-gateway';
 
 // Start a standalone gateway server
 await startGateway({
@@ -152,7 +152,7 @@ await startGateway({
 Or for more control over the Express app:
 
 ```typescript
-import { createGatewayServer } from '@fluxpointstudios/poi-sdk-gateway';
+import { createGatewayServer } from '@fluxpointstudios/orynq-sdk-gateway';
 
 const { app } = createGatewayServer({
   backendUrl: 'https://flux-backend.example.com',
@@ -184,18 +184,18 @@ The gateway supports the following `x402.mode` values:
 
 | Package | Description |
 |---------|-------------|
-| `@fluxpointstudios/poi-sdk-core` | Protocol-neutral types, utilities, and chain definitions |
-| `@fluxpointstudios/poi-sdk-transport-x402` | x402 wire format (parse/apply headers) |
-| `@fluxpointstudios/poi-sdk-transport-flux` | Flux wire format (parse/apply headers) |
-| `@fluxpointstudios/poi-sdk-client` | Auto-pay HTTP client with budget tracking |
-| `@fluxpointstudios/poi-sdk-payer-cardano-cip30` | CIP-30 browser wallet payer |
-| `@fluxpointstudios/poi-sdk-payer-cardano-node` | Server-side Cardano payer (Blockfrost/Koios) |
-| `@fluxpointstudios/poi-sdk-payer-evm-x402` | EIP-3009 gasless EVM payer |
-| `@fluxpointstudios/poi-sdk-payer-evm-direct` | Direct ERC-20 transfer payer |
-| `@fluxpointstudios/poi-sdk-server-middleware` | Express/Fastify payment middleware |
-| `@fluxpointstudios/poi-sdk-gateway` | x402 ↔ Flux protocol bridge |
-| `@fluxpointstudios/poi-sdk-cli` | Command-line interface |
-| `poi-sdk` (Python) | Python SDK with async support |
+| `@fluxpointstudios/orynq-sdk-core` | Protocol-neutral types, utilities, and chain definitions |
+| `@fluxpointstudios/orynq-sdk-transport-x402` | x402 wire format (parse/apply headers) |
+| `@fluxpointstudios/orynq-sdk-transport-flux` | Flux wire format (parse/apply headers) |
+| `@fluxpointstudios/orynq-sdk-client` | Auto-pay HTTP client with budget tracking |
+| `@fluxpointstudios/orynq-sdk-payer-cardano-cip30` | CIP-30 browser wallet payer |
+| `@fluxpointstudios/orynq-sdk-payer-cardano-node` | Server-side Cardano payer (Blockfrost/Koios) |
+| `@fluxpointstudios/orynq-sdk-payer-evm-x402` | EIP-3009 gasless EVM payer |
+| `@fluxpointstudios/orynq-sdk-payer-evm-direct` | Direct ERC-20 transfer payer |
+| `@fluxpointstudios/orynq-sdk-server-middleware` | Express/Fastify payment middleware |
+| `@fluxpointstudios/orynq-sdk-gateway` | x402 ↔ Flux protocol bridge |
+| `@fluxpointstudios/orynq-sdk-cli` | Command-line interface |
+| `orynq-sdk` (Python) | Python SDK with async support |
 
 ## Protocol Overview
 
@@ -203,7 +203,7 @@ The gateway supports the following `x402.mode` values:
 
 The [x402 protocol](https://github.com/coinbase/x402) uses HTTP 402 responses with payment requirements in the `PAYMENT-REQUIRED` header (base64-encoded JSON) and payment proofs in the `PAYMENT-SIGNATURE` header.
 
-> **Important (poi-sdk invoice binding):** poi-sdk binds x402 payments to an issued invoice to prevent replay/cross-endpoint abuse. The paid retry **must include**:
+> **Important (orynq-sdk invoice binding):** orynq-sdk binds x402 payments to an issued invoice to prevent replay/cross-endpoint abuse. The paid retry **must include**:
 > - `X-Invoice-Id` from the initial 402 response body, **or**
 > - `X-Idempotency-Key` that was used to generate the invoice
 >
@@ -399,7 +399,7 @@ const client = new PoiClient({
 For HSM/KMS integration:
 
 ```typescript
-import { Signer } from '@fluxpointstudios/poi-sdk-core';
+import { Signer } from '@fluxpointstudios/orynq-sdk-core';
 
 const kmsSigner: Signer = {
   sign: async (message: Uint8Array) => {
@@ -477,7 +477,7 @@ pytest --cov=poi_sdk
 
 ```bash
 # Install globally
-pnpm add -g @fluxpointstudios/poi-sdk-cli
+pnpm add -g @fluxpointstudios/orynq-sdk-cli
 
 # Generate an invoice
 poi invoice --amount 1000000 --currency ADA --recipient addr1...

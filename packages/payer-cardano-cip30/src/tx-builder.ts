@@ -17,7 +17,7 @@
 
 import { Transaction, BrowserWallet } from "@meshsdk/core";
 import type { Asset, Recipient } from "@meshsdk/core";
-import type { PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
+import type { PaymentRequest } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Configuration Types

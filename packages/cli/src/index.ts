@@ -1,5 +1,5 @@
 /**
- * @summary Main entry point for the @fluxpointstudios/poi-sdk-cli package.
+ * @summary Main entry point for the @fluxpointstudios/orynq-sdk-cli package.
  *
  * This is a developer tool CLI for testing x402 and Flux 402 payment flows.
  * It provides commands for inspecting invoices, executing payments, checking
@@ -43,7 +43,7 @@ function createProgram(): Command {
 
   program
     .name("poi")
-    .description("poi-sdk CLI - Testing tool for 402 payment flows")
+    .description("orynq-sdk CLI - Testing tool for 402 payment flows")
     .version(VERSION);
 
   // Register all commands
@@ -68,7 +68,7 @@ async function main(): Promise<void> {
 
   // Show help if no command provided
   if (!process.argv.slice(2).length) {
-    console.log(chalk.cyan("\npoi-sdk CLI"));
+    console.log(chalk.cyan("\norynq-sdk CLI"));
     console.log(chalk.gray("Testing tool for x402 and Flux payment flows\n"));
     program.outputHelp();
   }

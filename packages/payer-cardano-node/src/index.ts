@@ -1,11 +1,11 @@
 /**
- * @summary Main entry point for @fluxpointstudios/poi-sdk-payer-cardano-node package.
+ * @summary Main entry point for @fluxpointstudios/orynq-sdk-payer-cardano-node package.
  *
  * This package provides server-side Cardano payment functionality with
  * pluggable blockchain providers and secure signer abstractions.
  *
  * Key features:
- * - Implements Payer interface from @fluxpointstudios/poi-sdk-core
+ * - Implements Payer interface from @fluxpointstudios/orynq-sdk-core
  * - Multiple provider support (Blockfrost, Koios)
  * - Flexible signer abstraction (MemorySigner for dev, KmsSigner for prod)
  * - Split payment support
@@ -17,7 +17,7 @@
  *   CardanoNodePayer,
  *   BlockfrostProvider,
  *   KmsSigner,
- * } from "@fluxpointstudios/poi-sdk-payer-cardano-node";
+ * } from "@fluxpointstudios/orynq-sdk-payer-cardano-node";
  *
  * // Create provider
  * const provider = new BlockfrostProvider({
@@ -42,8 +42,8 @@
  * ```
  *
  * Subpath exports:
- * - @fluxpointstudios/poi-sdk-payer-cardano-node/signers - Signer implementations
- * - @fluxpointstudios/poi-sdk-payer-cardano-node/providers - Provider implementations
+ * - @fluxpointstudios/orynq-sdk-payer-cardano-node/signers - Signer implementations
+ * - @fluxpointstudios/orynq-sdk-payer-cardano-node/providers - Provider implementations
  */
 
 // ---------------------------------------------------------------------------

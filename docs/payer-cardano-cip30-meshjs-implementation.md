@@ -1,12 +1,12 @@
-# @fluxpointstudios/poi-sdk-payer-cardano-cip30 MeshJS Implementation Summary
+# @fluxpointstudios/orynq-sdk-payer-cardano-cip30 MeshJS Implementation Summary
 
 ## Overview
 
-This document summarizes the implementation of the `@fluxpointstudios/poi-sdk-payer-cardano-cip30` package using MeshJS for Cardano browser wallet integration. The implementation replaces the previous `lucid-cardano` dependency with `@meshsdk/core`.
+This document summarizes the implementation of the `@fluxpointstudios/orynq-sdk-payer-cardano-cip30` package using MeshJS for Cardano browser wallet integration. The implementation replaces the previous `lucid-cardano` dependency with `@meshsdk/core`.
 
 ## Package Location
 
-`D:\fluxPoint\PoI\poi-sdk\packages\payer-cardano-cip30`
+`D:\fluxPoint\PoI\orynq-sdk\packages\payer-cardano-cip30`
 
 ## Changes Made
 
@@ -91,7 +91,7 @@ export { BrowserWallet } from "@meshsdk/core";
 
 #### Quick Start with Factory
 ```typescript
-import { createCip30Payer } from "@fluxpointstudios/poi-sdk-payer-cardano-cip30";
+import { createCip30Payer } from "@fluxpointstudios/orynq-sdk-payer-cardano-cip30";
 
 const payer = await createCip30Payer("nami", "mainnet");
 const proof = await payer.pay(paymentRequest);
@@ -100,7 +100,7 @@ console.log("Transaction hash:", proof.txHash);
 
 #### Manual Setup with BrowserWallet
 ```typescript
-import { Cip30Payer, BrowserWallet } from "@fluxpointstudios/poi-sdk-payer-cardano-cip30";
+import { Cip30Payer, BrowserWallet } from "@fluxpointstudios/orynq-sdk-payer-cardano-cip30";
 
 const wallet = await BrowserWallet.enable("eternl");
 const payer = new Cip30Payer({
@@ -116,7 +116,7 @@ if (payer.supports(paymentRequest)) {
 
 #### Using Wallet Name for Lazy Connection
 ```typescript
-import { Cip30Payer } from "@fluxpointstudios/poi-sdk-payer-cardano-cip30";
+import { Cip30Payer } from "@fluxpointstudios/orynq-sdk-payer-cardano-cip30";
 
 // Wallet connects on first use
 const payer = new Cip30Payer({
@@ -178,7 +178,7 @@ pnpm test packages/payer-cardano-cip30
 ## Dependencies
 
 ### Production
-- `@fluxpointstudios/poi-sdk-core`: workspace:*
+- `@fluxpointstudios/orynq-sdk-core`: workspace:*
 
 ### Peer Dependencies
 - `@meshsdk/core`: >=1.5.0

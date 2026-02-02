@@ -21,8 +21,8 @@ import type {
   PaymentRequest,
   PaymentProof,
   PaymentStatus,
-} from "@fluxpointstudios/poi-sdk-core";
-import { PaymentTimeoutError, PaymentFailedError } from "@fluxpointstudios/poi-sdk-core";
+} from "@fluxpointstudios/orynq-sdk-core";
+import { PaymentTimeoutError, PaymentFailedError } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Types

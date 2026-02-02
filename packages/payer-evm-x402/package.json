@@ -1,5 +1,5 @@
 {
-  "name": "@fluxpointstudios/poi-sdk-payer-evm-x402",
+  "name": "@fluxpointstudios/orynq-sdk-payer-evm-x402",
   "version": "0.0.0",
   "description": "EVM payer for x402 protocol with EIP-3009 gasless signatures using Coinbase's @x402/evm",
   "type": "module",
@@ -48,14 +48,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
     "directory": "packages/payer-evm-x402"
   },
-  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
-  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
+  "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*",
-    "@fluxpointstudios/poi-sdk-transport-x402": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-transport-x402": "workspace:*"
   },
   "peerDependencies": {
     "viem": ">=2.0.0",

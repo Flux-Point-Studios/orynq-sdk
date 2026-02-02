@@ -1,5 +1,5 @@
 /**
- * @summary Build configuration for @fluxpointstudios/poi-sdk-payer-cardano-node package using tsup.
+ * @summary Build configuration for @fluxpointstudios/orynq-sdk-payer-cardano-node package using tsup.
  *
  * This configuration produces both ESM and CJS outputs with declaration files.
  * Entry points include the main index, signers, and providers modules.

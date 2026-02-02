@@ -115,10 +115,10 @@ The Test Engineer should verify the following test scenarios for the x402 settle
 
 ```bash
 # Run gateway package tests
-pnpm --filter @fluxpointstudios/poi-sdk-gateway test
+pnpm --filter @fluxpointstudios/orynq-sdk-gateway test
 
 # Run specific test file (if exists)
-pnpm --filter @fluxpointstudios/poi-sdk-gateway test -- x402-settler
+pnpm --filter @fluxpointstudios/orynq-sdk-gateway test -- x402-settler
 ```
 
 ---

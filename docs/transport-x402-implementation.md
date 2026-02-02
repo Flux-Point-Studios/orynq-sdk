@@ -1,8 +1,8 @@
-# @fluxpointstudios/poi-sdk-transport-x402 Implementation Summary
+# @fluxpointstudios/orynq-sdk-transport-x402 Implementation Summary
 
 ## Overview
 
-The `@fluxpointstudios/poi-sdk-transport-x402` package has been implemented as an x402 protocol transport layer for the poi-sdk. It wraps Coinbase's @x402/* packages and provides utilities for handling the x402 wire format (version "1").
+The `@fluxpointstudios/orynq-sdk-transport-x402` package has been implemented as an x402 protocol transport layer for the orynq-sdk. It wraps Coinbase's @x402/* packages and provides utilities for handling the x402 wire format (version "1").
 
 ## Files Created
 
@@ -39,7 +39,7 @@ The main transport interface provides:
 - **PAYMENT-RESPONSE**: Base64-encoded JSON parsed to X402Settlement
 
 ### 3. Protocol Conversion
-- Converts x402 wire format to poi-sdk's protocol-neutral PaymentRequest
+- Converts x402 wire format to orynq-sdk's protocol-neutral PaymentRequest
 - Maps x402 fields: `network` -> `chain`, `maxAmountRequired` -> `amountUnits`
 - Preserves raw x402 data in `PaymentRequest.raw` for advanced use cases
 
@@ -50,7 +50,7 @@ The main transport interface provides:
 ## Dependencies
 
 ### Runtime Dependencies
-- `@fluxpointstudios/poi-sdk-core`: workspace:* (protocol-neutral types and utilities)
+- `@fluxpointstudios/orynq-sdk-core`: workspace:* (protocol-neutral types and utilities)
 
 ### Peer Dependencies (Optional)
 - `@x402/fetch`: >=0.1.0
@@ -65,7 +65,7 @@ The main transport interface provides:
 
 ```typescript
 // Factory function
-export { createX402Transport } from "@fluxpointstudios/poi-sdk-transport-x402";
+export { createX402Transport } from "@fluxpointstudios/orynq-sdk-transport-x402";
 
 // Types
 export type {
@@ -74,13 +74,13 @@ export type {
   X402PaymentRequired,
   X402PaymentResponse,
   X402Facilitator
-} from "@fluxpointstudios/poi-sdk-transport-x402";
+} from "@fluxpointstudios/orynq-sdk-transport-x402";
 
 // Type guards
-export { isX402PaymentRequired, isX402PaymentResponse } from "@fluxpointstudios/poi-sdk-transport-x402";
+export { isX402PaymentRequired, isX402PaymentResponse } from "@fluxpointstudios/orynq-sdk-transport-x402";
 
 // Parse utilities
-export { parse402Response, parsePaymentRequired, x402ToPaymentRequest } from "@fluxpointstudios/poi-sdk-transport-x402";
+export { parse402Response, parsePaymentRequired, x402ToPaymentRequest } from "@fluxpointstudios/orynq-sdk-transport-x402";
 
 // Apply utilities
 export {
@@ -88,7 +88,7 @@ export {
   applyPaymentToRequest,
   createPaymentHeaders,
   createPaymentSignatureHeader
-} from "@fluxpointstudios/poi-sdk-transport-x402";
+} from "@fluxpointstudios/orynq-sdk-transport-x402";
 
 // Settlement utilities
 export {
@@ -96,14 +96,14 @@ export {
   parsePaymentResponse,
   isPaymentSettled,
   getSettlementTxHash
-} from "@fluxpointstudios/poi-sdk-transport-x402";
+} from "@fluxpointstudios/orynq-sdk-transport-x402";
 ```
 
 ## Usage Example
 
 ```typescript
-import { createX402Transport } from "@fluxpointstudios/poi-sdk-transport-x402";
-import type { X402SignatureProof } from "@fluxpointstudios/poi-sdk-core";
+import { createX402Transport } from "@fluxpointstudios/orynq-sdk-transport-x402";
+import type { X402SignatureProof } from "@fluxpointstudios/orynq-sdk-core";
 
 const transport = createX402Transport();
 

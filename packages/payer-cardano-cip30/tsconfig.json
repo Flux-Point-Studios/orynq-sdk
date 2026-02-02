@@ -5,8 +5,8 @@
     "rootDir": "./src",
     "baseUrl": ".",
     "paths": {
-      "@fluxpointstudios/poi-sdk-payer-cardano-cip30": ["./src/index.ts"],
-      "@fluxpointstudios/poi-sdk-payer-cardano-cip30/*": ["./src/*"]
+      "@fluxpointstudios/orynq-sdk-payer-cardano-cip30": ["./src/index.ts"],
+      "@fluxpointstudios/orynq-sdk-payer-cardano-cip30/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts"],

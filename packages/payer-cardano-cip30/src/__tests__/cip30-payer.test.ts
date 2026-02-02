@@ -11,8 +11,8 @@ import {
   ChainNotSupportedError,
   InsufficientBalanceError,
   PaymentFailedError,
-} from "@fluxpointstudios/poi-sdk-core";
-import type { PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
+} from "@fluxpointstudios/orynq-sdk-core";
+import type { PaymentRequest } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Mock Setup

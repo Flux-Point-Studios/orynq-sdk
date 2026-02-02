@@ -1,7 +1,7 @@
 {
-  "name": "@fluxpointstudios/poi-sdk-server-middleware",
+  "name": "@fluxpointstudios/orynq-sdk-server-middleware",
   "version": "0.1.0",
-  "description": "Server middleware for poi-sdk dual-protocol payment layer (Flux and x402)",
+  "description": "Server middleware for orynq-sdk dual-protocol payment layer (Flux and x402)",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -78,13 +78,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
     "directory": "packages/server-middleware"
   },
-  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
-  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
+  "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*"
   },
   "peerDependencies": {
     "express": ">=4.0.0",

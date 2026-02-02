@@ -49,7 +49,7 @@ import {
   canonicalize,
   bytesToHex,
   hexToBytes,
-} from "@fluxpointstudios/poi-sdk-core/utils";
+} from "@fluxpointstudios/orynq-sdk-core/utils";
 
 import type {
   TraceBundle,

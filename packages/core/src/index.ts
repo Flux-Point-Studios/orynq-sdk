@@ -1,8 +1,8 @@
 /**
- * @summary Main entry point for @fluxpointstudios/poi-sdk-core package.
+ * @summary Main entry point for @fluxpointstudios/orynq-sdk-core package.
  *
  * This package provides the core types, interfaces, and utilities for the
- * poi-sdk dual-protocol commerce layer. It supports both Flux and x402
+ * orynq-sdk dual-protocol commerce layer. It supports both Flux and x402
  * payment protocols with zero external dependencies.
  *
  * Key features:
@@ -21,13 +21,13 @@
  *   CHAINS,
  *   canonicalize,
  *   generateIdempotencyKey,
- * } from "@fluxpointstudios/poi-sdk-core";
+ * } from "@fluxpointstudios/orynq-sdk-core";
  * ```
  *
  * Subpath exports:
- * - @fluxpointstudios/poi-sdk-core/types - Type definitions only
- * - @fluxpointstudios/poi-sdk-core/chains - Chain utilities only
- * - @fluxpointstudios/poi-sdk-core/utils - Utility functions only
+ * - @fluxpointstudios/orynq-sdk-core/types - Type definitions only
+ * - @fluxpointstudios/orynq-sdk-core/chains - Chain utilities only
+ * - @fluxpointstudios/orynq-sdk-core/utils - Utility functions only
  */
 
 // ---------------------------------------------------------------------------

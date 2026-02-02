@@ -20,7 +20,7 @@
  * - Integration with Mesh, Lucid, or cardano-serialization-lib
  * - CLI tools for batch anchoring operations
  *
- * @see https://github.com/Flux-Point-Studios/poi-sdk for specification
+ * @see https://github.com/Flux-Point-Studios/orynq-sdk for specification
  */
 
 import type {
@@ -31,7 +31,7 @@ import type {
   CreateAnchorEntryOptions,
 } from "./types.js";
 import { POI_METADATA_LABEL, isAnchorType } from "./types.js";
-import type { TraceBundle, TraceManifest } from "@fluxpointstudios/poi-sdk-process-trace";
+import type { TraceBundle, TraceManifest } from "@fluxpointstudios/orynq-sdk-process-trace";
 
 // =============================================================================
 // CONSTANTS
@@ -196,7 +196,7 @@ export function buildBatchAnchorMetadata(entries: AnchorEntry[]): AnchorTxResult
  *
  * @example
  * ```typescript
- * import { finalizeBundle } from "@fluxpointstudios/poi-sdk-process-trace";
+ * import { finalizeBundle } from "@fluxpointstudios/orynq-sdk-process-trace";
  *
  * const bundle = await finalizeBundle(traceRun);
  * const entry = createAnchorEntryFromBundle(bundle, {
@@ -275,7 +275,7 @@ export function createAnchorEntryFromBundle(
  *
  * @example
  * ```typescript
- * import { createManifest } from "@fluxpointstudios/poi-sdk-process-trace";
+ * import { createManifest } from "@fluxpointstudios/orynq-sdk-process-trace";
  *
  * const { manifest, chunks } = await createManifest(bundle);
  * // Store manifest and chunks to IPFS/Arweave...

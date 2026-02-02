@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http";
-import type { PaymentRequest, PaymentProof, Payer } from "@fluxpointstudios/poi-sdk-core";
+import type { PaymentRequest, PaymentProof, Payer } from "@fluxpointstudios/orynq-sdk-core";
 import {
   loadTestEnvironment,
   canRunEvmTests,
@@ -140,13 +140,13 @@ function createMockPayer(): Payer {
 // ---------------------------------------------------------------------------
 
 describe("Client Auto-Pay Flow (Mock Server)", () => {
-  let PoiClient: typeof import("@fluxpointstudios/poi-sdk-client").PoiClient;
+  let PoiClient: typeof import("@fluxpointstudios/orynq-sdk-client").PoiClient;
 
   let server: Server;
   let serverState: MockServerState;
 
   beforeAll(async () => {
-    const clientModule = await import("@fluxpointstudios/poi-sdk-client");
+    const clientModule = await import("@fluxpointstudios/orynq-sdk-client");
     PoiClient = clientModule.PoiClient;
   });
 
@@ -305,8 +305,8 @@ describe("Client Auto-Pay Flow (Mock Server)", () => {
 const shouldSkipRealTests = !canRunEvmTests();
 
 describe.skipIf(shouldSkipRealTests)("Client Auto-Pay Flow (Real EVM Payer)", () => {
-  let PoiClient: typeof import("@fluxpointstudios/poi-sdk-client").PoiClient;
-  let ViemPayer: typeof import("@fluxpointstudios/poi-sdk-payer-evm-direct").ViemPayer;
+  let PoiClient: typeof import("@fluxpointstudios/orynq-sdk-client").PoiClient;
+  let ViemPayer: typeof import("@fluxpointstudios/orynq-sdk-payer-evm-direct").ViemPayer;
 
   let server: Server;
   let serverState: MockServerState;
@@ -319,8 +319,8 @@ describe.skipIf(shouldSkipRealTests)("Client Auto-Pay Flow (Real EVM Payer)", ()
     }
 
     const [clientModule, payerModule] = await Promise.all([
-      import("@fluxpointstudios/poi-sdk-client"),
-      import("@fluxpointstudios/poi-sdk-payer-evm-direct"),
+      import("@fluxpointstudios/orynq-sdk-client"),
+      import("@fluxpointstudios/orynq-sdk-payer-evm-direct"),
     ]);
 
     PoiClient = clientModule.PoiClient;
@@ -395,13 +395,13 @@ describe.skipIf(shouldSkipRealTests)("Client Auto-Pay Flow (Real EVM Payer)", ()
 // ---------------------------------------------------------------------------
 
 describe("Client Budget Enforcement", () => {
-  let PoiClient: typeof import("@fluxpointstudios/poi-sdk-client").PoiClient;
+  let PoiClient: typeof import("@fluxpointstudios/orynq-sdk-client").PoiClient;
 
   let server: Server;
   let serverState: MockServerState;
 
   beforeAll(async () => {
-    const clientModule = await import("@fluxpointstudios/poi-sdk-client");
+    const clientModule = await import("@fluxpointstudios/orynq-sdk-client");
     PoiClient = clientModule.PoiClient;
   });
 

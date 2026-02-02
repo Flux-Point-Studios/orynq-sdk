@@ -1,8 +1,8 @@
-# Python poi-sdk Implementation Summary
+# Python orynq-sdk Implementation Summary
 
 ## Overview
 
-This document summarizes the implementation of the Python poi-sdk v1 (Flux protocol only) and provides test recommendations for the test engineer.
+This document summarizes the implementation of the Python orynq-sdk v1 (Flux protocol only) and provides test recommendations for the test engineer.
 
 ## Implementation Details
 
@@ -345,7 +345,7 @@ class TestPoiClient:
 ### Setup
 
 ```bash
-cd D:\fluxPoint\PoI\poi-sdk\python
+cd D:\fluxPoint\PoI\orynq-sdk\python
 
 # Create virtual environment
 python -m venv venv

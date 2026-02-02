@@ -5,7 +5,7 @@ hash implementations match across TypeScript and Python.
 
 ## Purpose
 
-The poi-sdk is a dual-language project (TypeScript + Python). To ensure
+The orynq-sdk is a dual-language project (TypeScript + Python). To ensure
 consistent behavior, especially for:
 - Idempotency key generation
 - Request hashing

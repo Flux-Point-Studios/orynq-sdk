@@ -1,6 +1,6 @@
 # Integration Tests
 
-This directory contains end-to-end integration tests for the poi-sdk packages against real testnets.
+This directory contains end-to-end integration tests for the orynq-sdk packages against real testnets.
 
 ## Overview
 

@@ -12,9 +12,9 @@ export default defineConfig({
   target: "es2022",
   outDir: "dist",
   external: [
-    "@fluxpointstudios/poi-sdk-core",
-    "@fluxpointstudios/poi-sdk-core/utils",
-    "@fluxpointstudios/poi-sdk-core/types",
-    "@fluxpointstudios/poi-sdk-core/chains",
+    "@fluxpointstudios/orynq-sdk-core",
+    "@fluxpointstudios/orynq-sdk-core/utils",
+    "@fluxpointstudios/orynq-sdk-core/types",
+    "@fluxpointstudios/orynq-sdk-core/chains",
   ],
 });

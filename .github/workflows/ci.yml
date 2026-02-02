@@ -1,5 +1,5 @@
 # Location: .github/workflows/ci.yml
-# Summary: Continuous Integration workflow for poi-sdk
+# Summary: Continuous Integration workflow for orynq-sdk
 # Description: Runs on push to main and pull requests. Executes build, test, lint,
 #              typecheck for TypeScript, Python tests, path validation, and security audits.
 # Related: Works with package.json scripts and python/tests/ for comprehensive CI

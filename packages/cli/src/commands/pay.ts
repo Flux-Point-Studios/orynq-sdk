@@ -12,8 +12,8 @@
 
 import chalk from "chalk";
 import type { Command } from "commander";
-import type { PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
-import { createEvmPayer } from "@fluxpointstudios/poi-sdk-payer-evm-direct";
+import type { PaymentRequest } from "@fluxpointstudios/orynq-sdk-core";
+import { createEvmPayer } from "@fluxpointstudios/orynq-sdk-payer-evm-direct";
 import { readFileSync, existsSync } from "node:fs";
 
 /**

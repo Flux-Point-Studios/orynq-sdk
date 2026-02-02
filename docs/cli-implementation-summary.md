@@ -2,7 +2,7 @@
 
 ## Overview
 
-Implemented the `@fluxpointstudios/poi-sdk-cli` package at `D:\fluxPoint\PoI\poi-sdk\packages\cli`. This is a developer tool CLI for testing x402 and Flux 402 payment flows.
+Implemented the `@fluxpointstudios/orynq-sdk-cli` package at `D:\fluxPoint\PoI\orynq-sdk\packages\cli`. This is a developer tool CLI for testing x402 and Flux 402 payment flows.
 
 ## Files Created
 
@@ -24,11 +24,11 @@ Implemented the `@fluxpointstudios/poi-sdk-cli` package at `D:\fluxPoint\PoI\poi
 ## Dependencies
 
 Internal workspace packages:
-- `@fluxpointstudios/poi-sdk-core` - Core types and utilities
-- `@fluxpointstudios/poi-sdk-client` - PoiClient for auto-pay flows
-- `@fluxpointstudios/poi-sdk-transport-x402` - x402 protocol transport
-- `@fluxpointstudios/poi-sdk-transport-flux` - Flux protocol transport
-- `@fluxpointstudios/poi-sdk-payer-evm-direct` - EVM direct payment execution
+- `@fluxpointstudios/orynq-sdk-core` - Core types and utilities
+- `@fluxpointstudios/orynq-sdk-client` - PoiClient for auto-pay flows
+- `@fluxpointstudios/orynq-sdk-transport-x402` - x402 protocol transport
+- `@fluxpointstudios/orynq-sdk-transport-flux` - Flux protocol transport
+- `@fluxpointstudios/orynq-sdk-payer-evm-direct` - EVM direct payment execution
 
 External dependencies:
 - `commander` v11.1.0 - CLI framework
@@ -79,22 +79,22 @@ Please read this file and run the following tests:
 
 1. **Build Test**
    ```bash
-   cd D:\fluxPoint\PoI\poi-sdk\packages\cli
+   cd D:\fluxPoint\PoI\orynq-sdk\packages\cli
    pnpm build
    ```
    Expected: Build succeeds with ESM and CJS outputs
 
 2. **Type Check Test**
    ```bash
-   cd D:\fluxPoint\PoI\poi-sdk\packages\cli
+   cd D:\fluxPoint\PoI\orynq-sdk\packages\cli
    pnpm typecheck
    ```
    Expected: No type errors
 
 3. **CLI Help Test**
    ```bash
-   cd D:\fluxPoint\PoI\poi-sdk
-   pnpm -F @fluxpointstudios/poi-sdk-cli build && node packages/cli/dist/index.js --help
+   cd D:\fluxPoint\PoI\orynq-sdk
+   pnpm -F @fluxpointstudios/orynq-sdk-cli build && node packages/cli/dist/index.js --help
    ```
    Expected: Shows all available commands with descriptions
 

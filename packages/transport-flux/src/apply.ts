@@ -18,7 +18,7 @@
  * - Client implementations for payment retry logic
  */
 
-import { FLUX_HEADERS, type PaymentProof } from "@fluxpointstudios/poi-sdk-core";
+import { FLUX_HEADERS, type PaymentProof } from "@fluxpointstudios/orynq-sdk-core";
 import type { ApplyPaymentOptions } from "./types.js";
 
 // ---------------------------------------------------------------------------

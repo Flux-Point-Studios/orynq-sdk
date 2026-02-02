@@ -1,5 +1,5 @@
 /**
- * @summary Central export point for all type definitions in @fluxpointstudios/poi-sdk-core.
+ * @summary Central export point for all type definitions in @fluxpointstudios/orynq-sdk-core.
  *
  * This file re-exports all types, interfaces, and type guards from the types
  * subdirectory. It provides a single import point for consumers who need
@@ -7,8 +7,8 @@
  *
  * Usage:
  * ```typescript
- * import type { PaymentRequest, Payer, BudgetConfig } from "@fluxpointstudios/poi-sdk-core/types";
- * import { PaymentRequiredError, isPaymentError } from "@fluxpointstudios/poi-sdk-core/types";
+ * import type { PaymentRequest, Payer, BudgetConfig } from "@fluxpointstudios/orynq-sdk-core/types";
+ * import { PaymentRequiredError, isPaymentError } from "@fluxpointstudios/orynq-sdk-core/types";
  * ```
  */
 

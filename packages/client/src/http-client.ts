@@ -17,11 +17,11 @@
  * - Any component needing protocol-aware HTTP
  */
 
-import { createX402Transport } from "@fluxpointstudios/poi-sdk-transport-x402";
-import { createFluxTransport } from "@fluxpointstudios/poi-sdk-transport-flux";
-import type { X402Transport, X402Settlement } from "@fluxpointstudios/poi-sdk-transport-x402";
-import type { FluxTransport } from "@fluxpointstudios/poi-sdk-transport-flux";
-import type { PaymentRequest, PaymentProof } from "@fluxpointstudios/poi-sdk-core";
+import { createX402Transport } from "@fluxpointstudios/orynq-sdk-transport-x402";
+import { createFluxTransport } from "@fluxpointstudios/orynq-sdk-transport-flux";
+import type { X402Transport, X402Settlement } from "@fluxpointstudios/orynq-sdk-transport-x402";
+import type { FluxTransport } from "@fluxpointstudios/orynq-sdk-transport-flux";
+import type { PaymentRequest, PaymentProof } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Types

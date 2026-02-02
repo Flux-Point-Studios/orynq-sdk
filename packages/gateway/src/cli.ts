@@ -36,7 +36,7 @@
  * ```
  */
 
-import type { ChainId } from "@fluxpointstudios/poi-sdk-core";
+import type { ChainId } from "@fluxpointstudios/orynq-sdk-core";
 import { startGateway } from "./server.js";
 import type { GatewayConfig, PricingResult } from "./config.js";
 

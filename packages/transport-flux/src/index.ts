@@ -1,8 +1,8 @@
 /**
- * @summary Main entry point for @fluxpointstudios/poi-sdk-transport-flux package.
+ * @summary Main entry point for @fluxpointstudios/orynq-sdk-transport-flux package.
  *
  * This package provides the FluxTransport implementation for handling
- * T-Backend style wire format in the poi-sdk payment layer. The Flux
+ * T-Backend style wire format in the orynq-sdk payment layer. The Flux
  * protocol uses JSON invoice bodies and X-* prefixed headers.
  *
  * Key features:
@@ -13,7 +13,7 @@
  *
  * Usage:
  * ```typescript
- * import { createFluxTransport } from "@fluxpointstudios/poi-sdk-transport-flux";
+ * import { createFluxTransport } from "@fluxpointstudios/orynq-sdk-transport-flux";
  *
  * const flux = createFluxTransport();
  *
@@ -27,11 +27,11 @@
  * ```
  *
  * Used by:
- * - @fluxpointstudios/poi-sdk-client for automatic payment flow
+ * - @fluxpointstudios/orynq-sdk-client for automatic payment flow
  * - Direct integration with Flux/T-Backend services
  */
 
-import { type PaymentRequest, type PaymentProof } from "@fluxpointstudios/poi-sdk-core";
+import { type PaymentRequest, type PaymentProof } from "@fluxpointstudios/orynq-sdk-core";
 import { parse402Response } from "./parse.js";
 import { applyPaymentToRequest } from "./apply.js";
 import type { FluxTransport, ApplyPaymentOptions } from "./types.js";

@@ -38,11 +38,11 @@ export const CARDANO_NETWORK = (process.env.CARDANO_NETWORK ?? "preprod") as
 export const WALLET_SEED_PHRASE = process.env.WALLET_SEED_PHRASE;
 
 /**
- * Internal URL for t-backend service callbacks.
- * @default "http://t-backend:8000"
+ * Internal URL for orynq-backend service callbacks.
+ * @default "http://orynq-backend:8000"
  */
 export const T_BACKEND_INTERNAL_URL =
-  process.env.T_BACKEND_INTERNAL_URL ?? "http://t-backend:8000";
+  process.env.T_BACKEND_INTERNAL_URL ?? "http://orynq-backend:8000";
 
 /**
  * Timeout for awaitTx in milliseconds.

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document summarizes the implementation of AWS KMS signing support for poi-sdk, providing production-grade HSM-backed key management for both EVM and Cardano chains.
+This document summarizes the implementation of AWS KMS signing support for orynq-sdk, providing production-grade HSM-backed key management for both EVM and Cardano chains.
 
 ## Files Created/Modified
 
@@ -108,7 +108,7 @@ aws kms create-alias \
 ### EVM KMS Signer
 
 ```typescript
-import { EvmKmsSigner } from "@fluxpointstudios/poi-sdk-payer-evm-x402";
+import { EvmKmsSigner } from "@fluxpointstudios/orynq-sdk-payer-evm-x402";
 
 const signer = new EvmKmsSigner({
   keyId: "alias/my-eth-key",
@@ -125,7 +125,7 @@ const signature = await signer.signMessage("Hello", "eip155:8453");
 ### Cardano KMS Signer (with limitations)
 
 ```typescript
-import { KmsSigner } from "@fluxpointstudios/poi-sdk-payer-cardano-node/signers";
+import { KmsSigner } from "@fluxpointstudios/orynq-sdk-payer-cardano-node/signers";
 
 const signer = new KmsSigner({
   keyId: "alias/my-cardano-key",

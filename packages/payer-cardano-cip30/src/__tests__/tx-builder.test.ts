@@ -30,7 +30,7 @@ import {
   calculateRequiredAmounts,
   collectPaymentOutputs,
 } from "../tx-builder.js";
-import type { PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
+import type { PaymentRequest } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Helper to create test payment requests

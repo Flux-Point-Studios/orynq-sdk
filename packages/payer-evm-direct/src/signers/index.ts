@@ -1,5 +1,5 @@
 /**
- * @summary Signer implementations re-exports for @fluxpointstudios/poi-sdk-payer-evm-direct.
+ * @summary Signer implementations re-exports for @fluxpointstudios/orynq-sdk-payer-evm-direct.
  *
  * This file re-exports all signer implementations for convenient access.
  * Choose the appropriate signer based on your environment:

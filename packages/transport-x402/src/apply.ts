@@ -10,8 +10,8 @@
  * - Client code that needs to manually attach payment headers
  */
 
-import { X402_HEADERS, isX402SignatureProof } from "@fluxpointstudios/poi-sdk-core";
-import type { PaymentProof, X402SignatureProof } from "@fluxpointstudios/poi-sdk-core";
+import { X402_HEADERS, isX402SignatureProof } from "@fluxpointstudios/orynq-sdk-core";
+import type { PaymentProof, X402SignatureProof } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Public API

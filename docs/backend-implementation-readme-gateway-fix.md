@@ -2,7 +2,7 @@
 
 ## Summary
 
-Fixed the Protocol Gateway example in `README.md` to use the correct API exported from `@fluxpointstudios/poi-sdk-gateway`.
+Fixed the Protocol Gateway example in `README.md` to use the correct API exported from `@fluxpointstudios/orynq-sdk-gateway`.
 
 ## Changes Made
 
@@ -11,7 +11,7 @@ Fixed the Protocol Gateway example in `README.md` to use the correct API exporte
 **Problem:**
 The README showed an incorrect API that does not exist:
 ```typescript
-import { createGateway } from '@fluxpointstudios/poi-sdk-gateway';
+import { createGateway } from '@fluxpointstudios/orynq-sdk-gateway';
 
 const gateway = createGateway({
   upstream: 'https://flux-backend.example.com',
@@ -37,7 +37,7 @@ The corrected examples now show:
 ### Verification Performed
 
 - Confirmed no remaining occurrences of the non-existent `createGateway` function
-- Confirmed all package names use `@fluxpointstudios/poi-sdk-*` format (no `@poi-sdk/`)
+- Confirmed all package names use `@fluxpointstudios/orynq-sdk-*` format (no `@orynq-sdk/`)
 - Verified the documented API matches `packages/gateway/src/index.ts` and `packages/gateway/src/server.ts`
 
 ## Files Modified
@@ -56,7 +56,7 @@ The corrected examples now show:
 ### TypeScript Compilation Check
 
 ```bash
-cd D:\fluxPoint\PoI\poi-sdk
+cd D:\fluxPoint\PoI\orynq-sdk
 pnpm build
 ```
 

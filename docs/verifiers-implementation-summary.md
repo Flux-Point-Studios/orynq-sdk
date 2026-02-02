@@ -2,17 +2,17 @@
 
 ## Overview
 
-Successfully implemented real on-chain verification logic for both Cardano and EVM chains in the `@fluxpointstudios/poi-sdk-server-middleware` package. These verifiers replace stub verification logic with actual blockchain queries to verify payment proofs.
+Successfully implemented real on-chain verification logic for both Cardano and EVM chains in the `@fluxpointstudios/orynq-sdk-server-middleware` package. These verifiers replace stub verification logic with actual blockchain queries to verify payment proofs.
 
 ## Package Location
 
-`D:\fluxPoint\PoI\poi-sdk\packages\server-middleware\src\verifiers\`
+`D:\fluxPoint\PoI\orynq-sdk\packages\server-middleware\src\verifiers\`
 
 ## Files Modified
 
 ### 1. cardano.ts
 
-**Location:** `D:\fluxPoint\PoI\poi-sdk\packages\server-middleware\src\verifiers\cardano.ts`
+**Location:** `D:\fluxPoint\PoI\orynq-sdk\packages\server-middleware\src\verifiers\cardano.ts`
 
 **Enhancements:**
 - Added retry logic with exponential backoff for API calls
@@ -37,7 +37,7 @@ Successfully implemented real on-chain verification logic for both Cardano and E
 
 ### 2. evm.ts
 
-**Location:** `D:\fluxPoint\PoI\poi-sdk\packages\server-middleware\src\verifiers\evm.ts`
+**Location:** `D:\fluxPoint\PoI\orynq-sdk\packages\server-middleware\src\verifiers\evm.ts`
 
 **Enhancements:**
 - Added EIP-3009 TransferWithAuthorization event verification
@@ -80,7 +80,7 @@ Both verifiers now return specific error messages for different failure scenario
 
 ### Cardano Verifier Tests
 
-**Location:** `D:\fluxPoint\PoI\poi-sdk\packages\server-middleware\src\verifiers\__tests__\cardano.test.ts`
+**Location:** `D:\fluxPoint\PoI\orynq-sdk\packages\server-middleware\src\verifiers\__tests__\cardano.test.ts`
 
 **Test Coverage (22 tests):**
 - Constructor configuration
@@ -97,7 +97,7 @@ Both verifiers now return specific error messages for different failure scenario
 
 ### EVM Verifier Tests
 
-**Location:** `D:\fluxPoint\PoI\poi-sdk\packages\server-middleware\src\verifiers\__tests__\evm.test.ts`
+**Location:** `D:\fluxPoint\PoI\orynq-sdk\packages\server-middleware\src\verifiers\__tests__\evm.test.ts`
 
 **Test Coverage (23 tests):**
 - Constructor configuration
@@ -118,7 +118,7 @@ Both verifiers now return specific error messages for different failure scenario
 
 ```bash
 # From repository root
-cd D:\fluxPoint\PoI\poi-sdk
+cd D:\fluxPoint\PoI\orynq-sdk
 
 # Run all tests
 pnpm test
@@ -133,7 +133,7 @@ pnpm test:watch
 ## Build
 
 ```bash
-cd D:\fluxPoint\PoI\poi-sdk\packages\server-middleware
+cd D:\fluxPoint\PoI\orynq-sdk\packages\server-middleware
 pnpm build
 ```
 
@@ -142,7 +142,7 @@ pnpm build
 ### Cardano Verifier
 
 ```typescript
-import { CardanoVerifier } from "@fluxpointstudios/poi-sdk-server-middleware/verifiers";
+import { CardanoVerifier } from "@fluxpointstudios/orynq-sdk-server-middleware/verifiers";
 
 // Blockfrost provider (recommended for production)
 const verifier = new CardanoVerifier({
@@ -181,7 +181,7 @@ const tokenResult = await verifier.verify(
 ### EVM Verifier
 
 ```typescript
-import { EvmVerifier } from "@fluxpointstudios/poi-sdk-server-middleware/verifiers";
+import { EvmVerifier } from "@fluxpointstudios/orynq-sdk-server-middleware/verifiers";
 
 // Basic configuration
 const verifier = new EvmVerifier({

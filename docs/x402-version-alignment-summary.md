@@ -56,15 +56,15 @@ The "v2" terminology was informal project naming that conflicted with the actual
 ### packages/payer-evm-x402/src/eip3009.ts
 The `version: "2"` references in this file are **correct** and unchanged because they refer to the **USDC EIP-712 domain version**, not the x402 protocol version. Circle's USDC contract uses domain version "2" for EIP-712 typed data signing.
 
-### t-backend/
-The `api_version` references in t-backend are for a separate internal API versioning system and are unrelated to x402.
+### orynq-backend/
+The `api_version` references in orynq-backend are for a separate internal API versioning system and are unrelated to x402.
 
 ## Verification
 
 Both affected packages build successfully:
 ```bash
-pnpm --filter @fluxpointstudios/poi-sdk-transport-x402 build  # PASSED
-pnpm --filter @fluxpointstudios/poi-sdk-gateway build          # PASSED
+pnpm --filter @fluxpointstudios/orynq-sdk-transport-x402 build  # PASSED
+pnpm --filter @fluxpointstudios/orynq-sdk-gateway build          # PASSED
 ```
 
 ## Test Engineer Instructions
@@ -83,10 +83,10 @@ Please verify the following:
 ### Test Commands
 ```bash
 # Run transport-x402 tests
-pnpm --filter @fluxpointstudios/poi-sdk-transport-x402 test
+pnpm --filter @fluxpointstudios/orynq-sdk-transport-x402 test
 
 # Run gateway tests
-pnpm --filter @fluxpointstudios/poi-sdk-gateway test
+pnpm --filter @fluxpointstudios/orynq-sdk-gateway test
 
 # Full test suite
 pnpm test

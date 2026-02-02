@@ -72,7 +72,7 @@ def hash_vectors():
     """Load cross-language hash vectors from fixtures."""
     # Try multiple possible paths
     possible_paths = [
-        Path(__file__).parent.parent.parent / "t-backend" / "contracts" / "fixtures" / "hash" / "hash_vectors.json",
+        Path(__file__).parent.parent.parent / "orynq-backend" / "contracts" / "fixtures" / "hash" / "hash_vectors.json",
         Path(__file__).parent.parent.parent / "fixtures" / "hash-vectors.json",
     ]
 

@@ -5,8 +5,8 @@
     "rootDir": "./src",
     "baseUrl": ".",
     "paths": {
-      "@fluxpointstudios/poi-sdk-core": ["./src/index.ts"],
-      "@fluxpointstudios/poi-sdk-core/*": ["./src/*"]
+      "@fluxpointstudios/orynq-sdk-core": ["./src/index.ts"],
+      "@fluxpointstudios/orynq-sdk-core/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts"],

@@ -16,7 +16,7 @@
  * - index.ts for the FluxTransport factory
  */
 
-import type { PaymentRequest, PaymentProof } from "@fluxpointstudios/poi-sdk-core";
+import type { PaymentRequest, PaymentProof } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Flux Invoice Format (T-Backend wire format)

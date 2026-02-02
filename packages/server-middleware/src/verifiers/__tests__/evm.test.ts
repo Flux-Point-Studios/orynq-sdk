@@ -13,7 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EvmVerifier } from "../evm.js";
-import type { EvmTxHashProof, X402SignatureProof } from "@fluxpointstudios/poi-sdk-core";
+import type { EvmTxHashProof, X402SignatureProof } from "@fluxpointstudios/orynq-sdk-core";
 
 // Mock viem module
 vi.mock("viem", () => ({

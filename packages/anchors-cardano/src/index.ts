@@ -26,7 +26,7 @@
  *   verifyAnchor,
  *   createBlockfrostProvider,
  *   POI_METADATA_LABEL,
- * } from "@fluxpointstudios/poi-sdk-anchors-cardano";
+ * } from "@fluxpointstudios/orynq-sdk-anchors-cardano";
  *
  * // Create anchor from trace bundle
  * const entry = createAnchorEntryFromBundle(bundle, {

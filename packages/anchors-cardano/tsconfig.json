@@ -5,8 +5,8 @@
     "rootDir": "./src",
     "baseUrl": ".",
     "paths": {
-      "@fluxpointstudios/poi-sdk-anchors-cardano": ["./src/index.ts"],
-      "@fluxpointstudios/poi-sdk-anchors-cardano/*": ["./src/*"]
+      "@fluxpointstudios/orynq-sdk-anchors-cardano": ["./src/index.ts"],
+      "@fluxpointstudios/orynq-sdk-anchors-cardano/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts"],
