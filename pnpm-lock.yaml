@@ -85,6 +85,23 @@ importers:
         specifier: ^1.2.0
         version: 1.6.1(@types/node@20.19.30)
 
+  packages/attestor:
+    dependencies:
+      '@fluxpointstudios/poi-sdk-core':
+        specifier: workspace:*
+        version: link:../core
+    optionalDependencies:
+      '@aws-sdk/client-kms':
+        specifier: ^3.0.0
+        version: 3.975.0
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.30
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+
   packages/cli:
     dependencies:
       '@fluxpointstudios/poi-sdk-client':

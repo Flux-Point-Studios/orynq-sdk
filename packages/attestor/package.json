@@ -1,0 +1,60 @@
+{
+  "name": "@fluxpointstudios/poi-sdk-attestor",
+  "version": "0.1.0",
+  "description": "TEE attestation backends for PoI - providing hardware-rooted trust",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./nitro": {
+      "types": "./dist/backends/nitro/index.d.ts",
+      "import": "./dist/backends/nitro/index.js"
+    },
+    "./sev-snp": {
+      "types": "./dist/backends/sev-snp/index.d.ts",
+      "import": "./dist/backends/sev-snp/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rimraf dist",
+    "test": "vitest run",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fluxpointstudios/poi-sdk-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  },
+  "optionalDependencies": {
+    "@aws-sdk/client-kms": "^3.0.0"
+  },
+  "keywords": [
+    "poi",
+    "proof-of-inference",
+    "attestation",
+    "tee",
+    "nitro",
+    "sev-snp",
+    "tdx",
+    "sgx"
+  ],
+  "author": "Flux Point Studios",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/poi-sdk.git",
+    "directory": "packages/attestor"
+  }
+}
