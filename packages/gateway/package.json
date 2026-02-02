@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-gateway",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "x402 gateway to bridge x402 clients to T-Backend without modifying T-Backend",
   "type": "module",
   "main": "./dist/index.cjs",

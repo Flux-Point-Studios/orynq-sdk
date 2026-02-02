@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Main Orynq client with auto-pay functionality for dual-protocol commerce",
   "type": "module",
   "main": "./dist/index.cjs",

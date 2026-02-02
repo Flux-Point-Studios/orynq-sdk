@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-payer-evm-direct",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Legacy EVM payer for direct ERC-20 transfers using viem",
   "type": "module",
   "main": "./dist/index.cjs",

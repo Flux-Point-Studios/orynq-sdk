@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-payer-cardano-node",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Server-side Cardano payer implementation with Signer abstraction for orynq-sdk",
   "type": "module",
   "main": "./dist/index.cjs",

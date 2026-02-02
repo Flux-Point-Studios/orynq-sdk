@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-anchors-cardano",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Cardano blockchain anchor support for Orynq SDK - transaction metadata builder and verifier for PoI anchors (label 2222)",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -28,7 +28,10 @@
       }
     }
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -39,7 +42,15 @@
     "lint:fix": "eslint src --ext .ts --fix",
     "clean": "rimraf dist"
   },
-  "keywords": ["poi", "proof-of-intent", "cardano", "anchor", "blockchain", "metadata", "verification"],
+  "keywords": [
+    "poi",
+    "proof-of-intent",
+    "cardano",
+    "anchor",
+    "blockchain",
+    "metadata",
+    "verification"
+  ],
   "author": "Flux Point Studios",
   "license": "MIT",
   "publishConfig": {

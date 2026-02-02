@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-transport-flux",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Flux (T-Backend) wire format transport for orynq-sdk payment layer",
   "type": "module",
   "main": "./dist/index.cjs",

@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-transport-x402",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "x402 protocol transport implementation for orynq-sdk",
   "type": "module",
   "main": "./dist/index.cjs",

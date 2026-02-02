@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-payer-evm-x402",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "EVM payer for x402 protocol with EIP-3009 gasless signatures using Coinbase's @x402/evm",
   "type": "module",
   "main": "./dist/index.cjs",

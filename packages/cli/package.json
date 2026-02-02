@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-cli",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "CLI dev tool for testing x402 and Flux 402 payment flows",
   "type": "module",
   "bin": {
