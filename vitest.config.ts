@@ -15,6 +15,7 @@ export default defineConfig({
       '@fluxpointstudios/poi-sdk-flight-recorder': resolve(__dirname, 'packages/flight-recorder/src/index.ts'),
       '@fluxpointstudios/poi-sdk-hydra-batcher': resolve(__dirname, 'packages/hydra-batcher/src/index.ts'),
       '@fluxpointstudios/poi-sdk-attestor': resolve(__dirname, 'packages/attestor/src/index.ts'),
+      '@fluxpointstudios/poi-sdk-storage-adapters': resolve(__dirname, 'packages/storage-adapters/src/index.ts'),
       '@fluxpointstudios/poi-sdk-gateway': resolve(__dirname, 'packages/gateway/src/index.ts'),
       '@fluxpointstudios/poi-sdk-payer-cardano-cip30': resolve(__dirname, 'packages/payer-cardano-cip30/src/index.ts'),
       '@fluxpointstudios/poi-sdk-payer-cardano-node': resolve(__dirname, 'packages/payer-cardano-node/src/index.ts'),

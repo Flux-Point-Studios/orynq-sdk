@@ -1,0 +1,68 @@
+{
+  "name": "@fluxpointstudios/poi-sdk-storage-adapters",
+  "version": "0.0.0",
+  "description": "Storage adapters for PoI SDK - IPFS, S3, and Arweave backends",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./ipfs": {
+      "types": "./dist/adapters/ipfs/index.d.ts",
+      "import": "./dist/adapters/ipfs/index.js"
+    },
+    "./s3": {
+      "types": "./dist/adapters/s3/index.d.ts",
+      "import": "./dist/adapters/s3/index.js"
+    },
+    "./arweave": {
+      "types": "./dist/adapters/arweave/index.d.ts",
+      "import": "./dist/adapters/arweave/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rimraf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest watch"
+  },
+  "keywords": [
+    "poi",
+    "proof-of-inference",
+    "storage",
+    "ipfs",
+    "s3",
+    "arweave",
+    "content-addressed"
+  ],
+  "author": "Flux Point Studios",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/poi-sdk.git",
+    "directory": "packages/storage-adapters"
+  },
+  "dependencies": {
+    "@fluxpointstudios/poi-sdk-core": "workspace:*"
+  },
+  "optionalDependencies": {
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@aws-sdk/s3-request-presigner": "^3.0.0",
+    "arweave": "^1.14.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
