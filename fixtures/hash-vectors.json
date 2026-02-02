@@ -1,0 +1,136 @@
+{
+  "description": "Cross-language test vectors for canonical JSON and SHA256",
+  "version": "1.0.0",
+  "generated": "2026-01-27T00:16:29.467Z",
+  "vectors": [
+    {
+      "name": "simple_object",
+      "input": {
+        "a": 1,
+        "b": 2
+      },
+      "canonical": "{\"a\":1,\"b\":2}",
+      "sha256": "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+    },
+    {
+      "name": "unsorted_keys",
+      "input": {
+        "z": 3,
+        "a": 1,
+        "m": 2
+      },
+      "canonical": "{\"a\":1,\"m\":2,\"z\":3}",
+      "sha256": "70d1ebc7a727a476f15f7b4436d65b0bca07718c03a0843fa008659badad79c7"
+    },
+    {
+      "name": "nested_object",
+      "input": {
+        "outer": {
+          "z": 1,
+          "a": 2
+        },
+        "top": 0
+      },
+      "canonical": "{\"outer\":{\"a\":2,\"z\":1},\"top\":0}",
+      "sha256": "f49cdca66635926cde8b0c50e82a15b0190e8ddb1a44be3f777a174b41269887"
+    },
+    {
+      "name": "with_null_values",
+      "input": {
+        "a": 1,
+        "b": null,
+        "c": 3
+      },
+      "canonical": "{\"a\":1,\"c\":3}",
+      "sha256": "ea89132f027adb270741ddeea16f07ee9921176fcef0ca74c33493f321b98620"
+    },
+    {
+      "name": "array_values",
+      "input": {
+        "items": [
+          3,
+          1,
+          2
+        ],
+        "name": "test"
+      },
+      "canonical": "{\"items\":[3,1,2],\"name\":\"test\"}",
+      "sha256": "ae3aeab3c9f0de514741f910807c1787273166b9d8d8b10b5bebad83dfbe8386"
+    },
+    {
+      "name": "payment_request",
+      "input": {
+        "method": "POST",
+        "url": "/v1/infer",
+        "body": {
+          "model": "gpt-4",
+          "input": "hello world"
+        }
+      },
+      "canonical": "{\"body\":{\"input\":\"hello world\",\"model\":\"gpt-4\"},\"method\":\"POST\",\"url\":\"/v1/infer\"}",
+      "sha256": "0d5c3cfdbdd2abbb8ed4f08d29bf6d4a980f8a17a3a75643a89ebad56cf7be6e"
+    },
+    {
+      "name": "empty_object",
+      "input": {},
+      "canonical": "{}",
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "name": "special_characters",
+      "input": {
+        "text": "hello\nworld\ttab"
+      },
+      "canonical": "{\"text\":\"hello\\nworld\\ttab\"}",
+      "sha256": "ddfd67d3602872d4fc12ad0fcd01a21ae23f68f71c2be2d46f857df56874ddae"
+    },
+    {
+      "name": "unicode",
+      "input": {
+        "emoji": "🎉",
+        "chinese": "你好"
+      },
+      "canonical": "{\"chinese\":\"你好\",\"emoji\":\"🎉\"}",
+      "sha256": "8c26d544577ee1e6d80d0670502d8d70dd40463dd5a938c528298e19d75b1f52"
+    },
+    {
+      "name": "numbers",
+      "input": {
+        "int": 42,
+        "float": 3.14159,
+        "negative": -100,
+        "zero": 0
+      },
+      "canonical": "{\"float\":3.14159,\"int\":42,\"negative\":-100,\"zero\":0}",
+      "sha256": "2f193297e63acdc5a8bad4a6912b8e56e68fb6d511af9ecf20764b404b0d27ec"
+    },
+    {
+      "name": "boolean_values",
+      "input": {
+        "true": true,
+        "false": false
+      },
+      "canonical": "{\"false\":false,\"true\":true}",
+      "sha256": "f666b107781ba633213b7021b9e29fa35b075c6aa362d5989071194cde91cd43"
+    },
+    {
+      "name": "idempotency_key_generation",
+      "description": "Tests the full idempotency key generation flow",
+      "input": {
+        "method": "POST",
+        "url": "https://api.example.com/v1/infer",
+        "body": {
+          "model": "claude-3",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        }
+      },
+      "canonical": "{\"body\":{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"claude-3\"},\"method\":\"POST\",\"url\":\"https://api.example.com/v1/infer\"}",
+      "sha256": "d1715e787c12c734cedfe3e4c05e6f4ed6771ddca7ffab5b1577dc1d76803b0f"
+    }
+  ]
+}
