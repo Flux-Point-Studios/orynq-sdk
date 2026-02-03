@@ -1,0 +1,43 @@
+{
+  "name": "@fluxpointstudios/orynq-openclaw",
+  "version": "0.1.0",
+  "description": "Install OpenClaw + attach Orynq process-trace anchoring recorder (local-first).",
+  "type": "module",
+  "bin": {
+    "orynq-openclaw": "./dist/main.cjs"
+  },
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "clean": "rimraf dist"
+  },
+  "author": "Flux Point Studios",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
+    "directory": "packages/orynq-openclaw"
+  },
+  "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
+  "dependencies": {
+    "@fluxpointstudios/orynq-sdk-recorder-openclaw": "workspace:*",
+    "commander": "^11.1.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "sideEffects": false
+}
