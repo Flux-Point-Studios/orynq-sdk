@@ -1,12 +1,15 @@
 {
   "name": "@fluxpointstudios/orynq-openclaw",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Install OpenClaw + attach Orynq process-trace anchoring recorder (local-first).",
   "type": "module",
   "bin": {
     "orynq-openclaw": "./dist/main.cjs"
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
