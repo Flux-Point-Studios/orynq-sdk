@@ -6,10 +6,9 @@ import { installService, writeRunnerScripts, writeServiceEnvIfMissing } from "..
 
 export async function install(opts: { openclawRoot?: string; outDir?: string; service?: boolean }) {
   const openclawRoot = path.resolve(opts.openclawRoot || guessOpenClawRoot());
-  const cfg = defaultConfig({
-    openclawRoot,
-    outDir: opts.outDir ? path.resolve(opts.outDir) : undefined
-  });
+  const partial: { openclawRoot: string; outDir?: string } = { openclawRoot };
+  if (opts.outDir) partial.outDir = path.resolve(opts.outDir);
+  const cfg = defaultConfig(partial);
 
   await fs.mkdir(configDir(), { recursive: true });
   await fs.writeFile(configPath(), JSON.stringify(cfg, null, 2), "utf-8");
