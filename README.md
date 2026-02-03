@@ -1,5 +1,11 @@
 # orynq-sdk
 
+[![npm version](https://img.shields.io/npm/v/@fluxpointstudios/orynq-sdk-core?label=core)](https://www.npmjs.com/package/@fluxpointstudios/orynq-sdk-core)
+[![npm version](https://img.shields.io/npm/v/@fluxpointstudios/orynq-sdk-client?label=client)](https://www.npmjs.com/package/@fluxpointstudios/orynq-sdk-client)
+[![npm version](https://img.shields.io/npm/v/@fluxpointstudios/orynq-sdk-server-middleware?label=server-middleware)](https://www.npmjs.com/package/@fluxpointstudios/orynq-sdk-server-middleware)
+[![npm version](https://img.shields.io/npm/v/@fluxpointstudios/orynq-sdk-gateway?label=gateway)](https://www.npmjs.com/package/@fluxpointstudios/orynq-sdk-gateway)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A dual-protocol commerce layer supporting **x402** (Coinbase standard) for EVM chains and **Flux protocol** (T-Backend style) for Cardano.
 
 ## Features
