@@ -4,9 +4,12 @@ import {
   addEvent,
   closeSpan,
   finalizeTrace,
-  createManifest
+  createManifest,
+  type CustomEvent
 } from "@fluxpointstudios/orynq-sdk-process-trace";
 import type { SpoolEvent } from "./spool.js";
+
+type CustomEventInput = Omit<CustomEvent, "id" | "seq" | "timestamp" | "hash">;
 
 export async function buildTraceFromSpool(params: {
   agentId: string;
@@ -20,20 +23,22 @@ export async function buildTraceFromSpool(params: {
 
   // We store only hashes by default, so represent each event as an observation/custom.
   for (const e of spoolEvents) {
-    const data = {
+    const data: Record<string, unknown> = {
       kind: e.kind,
-      sessionId: e.sessionId,
       contentHash: e.contentHash,
-      ...(e.content ? { content: e.content } : {}),
       meta: e.meta ?? {}
     };
+    if (e.sessionId !== undefined) data.sessionId = e.sessionId;
+    if (e.content !== undefined && e.content !== null) data.content = e.content;
 
-    await addEvent(run, root.id, {
+    const customEvent: CustomEventInput = {
       kind: "custom",
       eventType: "openclaw_event",
       data,
       visibility: "private"
-    });
+    };
+
+    await addEvent(run, root.id, customEvent);
   }
 
   await closeSpan(run, root.id, "completed");
@@ -45,7 +50,7 @@ export async function buildTraceFromSpool(params: {
   });
 
   // keep bundle.manifestHash aligned for downstream usage
-  bundle.manifestHash = manifest.manifestHash;
+  (bundle as { manifestHash?: string | undefined }).manifestHash = manifest.manifestHash;
 
   return { bundle, manifest, chunks };
 }
