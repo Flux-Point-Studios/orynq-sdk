@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-recorder-openclaw",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local-first OpenClaw recorder: tails JSONL sessions, emits process-trace bundles/manifests, optionally anchors manifests via Orynq.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -18,7 +18,10 @@
       }
     }
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
