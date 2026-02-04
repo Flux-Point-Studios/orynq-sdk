@@ -4,6 +4,7 @@
 [![npm version](https://img.shields.io/npm/v/@fluxpointstudios/orynq-sdk-client?label=client)](https://www.npmjs.com/package/@fluxpointstudios/orynq-sdk-client)
 [![npm version](https://img.shields.io/npm/v/@fluxpointstudios/orynq-sdk-server-middleware?label=server-middleware)](https://www.npmjs.com/package/@fluxpointstudios/orynq-sdk-server-middleware)
 [![npm version](https://img.shields.io/npm/v/@fluxpointstudios/orynq-sdk-gateway?label=gateway)](https://www.npmjs.com/package/@fluxpointstudios/orynq-sdk-gateway)
+[![npm version](https://img.shields.io/npm/v/@fluxpointstudios/orynq-openclaw?label=openclaw)](https://www.npmjs.com/package/@fluxpointstudios/orynq-openclaw)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 A dual-protocol commerce layer supporting **x402** (Coinbase standard) for EVM chains and **Flux protocol** (T-Backend style) for Cardano.
@@ -201,6 +202,9 @@ The gateway supports the following `x402.mode` values:
 | `@fluxpointstudios/orynq-sdk-server-middleware` | Express/Fastify payment middleware |
 | `@fluxpointstudios/orynq-sdk-gateway` | x402 ↔ Flux protocol bridge |
 | `@fluxpointstudios/orynq-sdk-cli` | Command-line interface |
+| `@fluxpointstudios/orynq-sdk-process-trace` | Cryptographic process trace builder |
+| `@fluxpointstudios/orynq-openclaw` | OpenClaw integration CLI with daemon support |
+| `@fluxpointstudios/orynq-sdk-recorder-openclaw` | OpenClaw session recorder library |
 | `orynq-sdk` (Python) | Python SDK with async support |
 
 ## Protocol Overview
@@ -478,6 +482,79 @@ pytest
 # Run tests with coverage
 pytest --cov=poi_sdk
 ```
+
+## OpenClaw Integration
+
+Automatically anchor your [OpenClaw](https://openclaw.ai) AI coding sessions to the blockchain with zero configuration.
+
+### One-Line Install
+
+```bash
+# Linux/macOS
+curl -fsSL https://raw.githubusercontent.com/Flux-Point-Studios/orynq-sdk/main/scripts/install-openclaw.sh | bash
+
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/Flux-Point-Studios/orynq-sdk/main/scripts/install-openclaw.ps1 | iex
+```
+
+This installs:
+1. OpenClaw (official installer)
+2. Orynq OpenClaw recorder as a background daemon
+
+### Manual Install
+
+```bash
+npx @fluxpointstudios/orynq-openclaw install --service
+```
+
+### Configuration
+
+After installation, add your Orynq partner key:
+
+```bash
+# Linux/macOS
+echo "ORYNQ_PARTNER_KEY=your_key_here" >> ~/.config/orynq-openclaw/service.env
+
+# Windows
+echo ORYNQ_PARTNER_KEY=your_key_here >> %APPDATA%\orynq-openclaw\service.env
+```
+
+### Commands
+
+```bash
+# Check status
+orynq-openclaw status
+
+# View logs
+orynq-openclaw logs -f
+
+# Run in foreground (instead of daemon)
+orynq-openclaw start
+
+# Restart the daemon
+orynq-openclaw restart-service
+
+# Uninstall
+orynq-openclaw uninstall --service --purge
+```
+
+### How It Works
+
+The recorder:
+1. **Tails** OpenClaw JSONL session logs in real-time
+2. **Builds** cryptographic process traces (rolling hashes, Merkle trees)
+3. **Anchors** manifests to Cardano via the Orynq API (if partner key configured)
+4. **Stores** local bundles, manifests, and receipts for offline verification
+
+All data is local-first. Only cryptographic hashes are sent to the blockchain—never raw prompts or code.
+
+### Daemon Support
+
+| Platform | Daemon Type |
+|----------|-------------|
+| Linux | systemd user service |
+| macOS | launchd LaunchAgent |
+| Windows | Task Scheduler |
 
 ## CLI
 
