@@ -46,7 +46,10 @@ spec:
               name: anchor-worker-secrets
               key: WALLET_SEED_PHRASE
         - name: T_BACKEND_INTERNAL_URL
-          value: "http://t-backend-api-service.t-backend.svc.cluster.local:8000"
+          valueFrom:
+            configMapKeyRef:
+              name: anchor-worker-config
+              key: T_BACKEND_INTERNAL_URL
         - name: AWAIT_TX_TIMEOUT
           value: "10000"
         resources:
