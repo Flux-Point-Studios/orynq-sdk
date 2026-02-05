@@ -1,19 +1,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: anchor-worker
+  name: anchor-worker-preprod
   namespace: t-backend
   labels:
-    app: anchor-worker
+    app: anchor-worker-preprod
 spec:
   replicas: 1  # Single instance to avoid UTxO contention
   selector:
     matchLabels:
-      app: anchor-worker
+      app: anchor-worker-preprod
   template:
     metadata:
       labels:
-        app: anchor-worker
+        app: anchor-worker-preprod
     spec:
       containers:
       - name: anchor-worker
@@ -26,14 +26,11 @@ spec:
         - name: PORT
           value: "3333"
         - name: CARDANO_NETWORK
-          valueFrom:
-            configMapKeyRef:
-              name: t-backend-config
-              key: CARDANO_NETWORK
+          value: "preprod"
         - name: BLOCKFROST_PROJECT_ID
           valueFrom:
             secretKeyRef:
-              name: t-backend-secrets
+              name: anchor-worker-preprod-secrets
               key: BLOCKFROST_PROJECT_ID
         - name: ANCHOR_WORKER_TOKEN
           valueFrom:
@@ -43,7 +40,7 @@ spec:
         - name: WALLET_SEED_PHRASE
           valueFrom:
             secretKeyRef:
-              name: anchor-worker-secrets
+              name: anchor-worker-preprod-secrets
               key: WALLET_SEED_PHRASE
         - name: T_BACKEND_INTERNAL_URL
           value: "http://t-backend-api-service.t-backend.svc.cluster.local:8000"
@@ -74,11 +71,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: anchor-worker
+  name: anchor-worker-preprod
   namespace: t-backend
 spec:
   selector:
-    app: anchor-worker
+    app: anchor-worker-preprod
   ports:
   - port: 3333
     targetPort: 3333
