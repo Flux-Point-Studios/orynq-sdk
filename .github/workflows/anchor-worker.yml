@@ -51,14 +51,8 @@ jobs:
             set -e
             TAG_IMAGE="${{ env.IMAGE }}:${{ github.sha }}"
 
-            # Pull and import image
-            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u Flux-Point-Studios --password-stdin
-            docker pull "$TAG_IMAGE"
-            docker save "$TAG_IMAGE" | sudo ctr -n k8s.io images import --all-platforms -
-
-            # Update deployment
-            kubectl -n t-backend set image deployment/anchor-worker anchor-worker="$TAG_IMAGE" || \
-              echo "Deployment not found - apply manifests first"
-
-            kubectl -n t-backend rollout status deployment/anchor-worker --timeout=3m || true
+            # Update deployment (nodes pull from GHCR via imagePullSecrets)
+            kubectl -n t-backend set image deployment/anchor-worker anchor-worker="$TAG_IMAGE"
+            kubectl -n t-backend rollout restart deployment/anchor-worker
+            kubectl -n t-backend rollout status deployment/anchor-worker --timeout=3m
             kubectl -n t-backend get pods -l app=anchor-worker
