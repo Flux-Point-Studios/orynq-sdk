@@ -37,9 +37,9 @@ async function getLucid(): Promise<Awaited<ReturnType<typeof Lucid.new>>> {
   }
 
   const networkMap: Record<string, string> = {
-    mainnet: "https://cardano-mainnet.blockfrost.io/api",
-    preprod: "https://cardano-preprod.blockfrost.io/api",
-    preview: "https://cardano-preview.blockfrost.io/api",
+    mainnet: "https://cardano-mainnet.blockfrost.io/api/v0",
+    preprod: "https://cardano-preprod.blockfrost.io/api/v0",
+    preview: "https://cardano-preview.blockfrost.io/api/v0",
   };
 
   const baseUrl = networkMap[CARDANO_NETWORK];
