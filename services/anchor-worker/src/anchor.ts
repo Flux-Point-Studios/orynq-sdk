@@ -7,6 +7,7 @@
 import { Lucid, Blockfrost } from "lucid-cardano";
 import {
   buildAnchorMetadata,
+  serializeForCbor,
   type AnchorEntry,
 } from "@fluxpointstudios/poi-sdk-anchors-cardano";
 import {
@@ -154,11 +155,15 @@ export async function anchorProcessTrace(
   // Build metadata using the anchors-cardano package
   const anchorResult = buildAnchorMetadata(entry);
 
+  // Serialize for CBOR - handles 64-byte string limit by chunking long strings
+  const cborMetadata = serializeForCbor(anchorResult);
+  const metadataPayload = cborMetadata[POI_METADATA_LABEL];
+
   // Build and sign transaction
   // NO explicit self-payment output - let Lucid handle change automatically
   const tx = await lucid
     .newTx()
-    .attachMetadata(POI_METADATA_LABEL, anchorResult.metadata)
+    .attachMetadata(POI_METADATA_LABEL, metadataPayload)
     .complete();
 
   const signedTx = await tx.sign().complete();
