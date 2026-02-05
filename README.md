@@ -202,16 +202,6 @@ Anchors are stored under Cardano metadata **label 2222**:
 
 ---
 
-## Use Cases
-
-- **AI Auditing** - Prove what an AI agent did for compliance and accountability
-- **Cryptographic AI Receipts** - Tamper-proof records of AI-generated content
-- **AI Process Tracing** - Debug and analyze AI agent behavior
-- **Dispute Resolution** - Verifiable evidence of AI actions
-- **Regulatory Compliance** - Immutable audit trails for regulated industries
-
----
-
 ## Documentation
 
 - **Full Docs:** [docs.fluxpointstudios.com/proof-of-inference/poi-sdk](https://docs.fluxpointstudios.com/proof-of-inference/poi-sdk)
