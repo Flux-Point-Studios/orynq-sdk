@@ -31,6 +31,12 @@ import type {
   DisclosureProof,
   InferenceInput,
   InferenceProof,
+  EvalAwarenessInput,
+  EvalAwarenessProof,
+  CovertChannelInput,
+  CovertChannelProof,
+  MonitorComplianceInput,
+  MonitorComplianceProof,
   AnyProof,
   PublicationResult,
   ProofVerificationResult,
@@ -170,6 +176,49 @@ export interface MidnightProver {
   proveInference?(input: InferenceInput): Promise<InferenceProof>;
 
   // ===========================================================================
+  // SAFETY PROOF GENERATION
+  // ===========================================================================
+
+  /**
+   * Generate an eval awareness proof.
+   *
+   * Proves that an EAI (Eval Awareness Index) score exceeds a specified
+   * threshold without revealing the actual score. This enables privacy-preserving
+   * verification that a model meets safety awareness requirements.
+   *
+   * @param input - Eval awareness input with score, threshold, and method hash
+   * @returns Eval awareness proof with public inputs
+   * @throws MidnightProverException on failure
+   */
+  proveEvalAwareness(input: EvalAwarenessInput): Promise<EvalAwarenessProof>;
+
+  /**
+   * Generate a covert channel detection proof.
+   *
+   * Proves that a covert channel detector score exceeds a specified threshold
+   * without revealing the actual score. This enables verification that a model
+   * output has been checked for covert information channels.
+   *
+   * @param input - Covert channel input with detector score, threshold, and config hash
+   * @returns Covert channel proof with public inputs
+   * @throws MidnightProverException on failure
+   */
+  proveCovertChannel(input: CovertChannelInput): Promise<CovertChannelProof>;
+
+  /**
+   * Generate a monitor compliance proof.
+   *
+   * Proves that all required safety monitors ran for a given trace without
+   * revealing individual monitor results. This enables verification that the
+   * full monitoring suite was executed.
+   *
+   * @param input - Monitor compliance input with results and config hash
+   * @returns Monitor compliance proof with public inputs
+   * @throws MidnightProverException on failure
+   */
+  proveMonitorCompliance(input: MonitorComplianceInput): Promise<MonitorComplianceProof>;
+
+  // ===========================================================================
   // PUBLICATION
   // ===========================================================================
 
@@ -306,6 +355,9 @@ export abstract class AbstractMidnightProver implements MidnightProver {
   abstract proveAttestation(input: AttestationInput): Promise<AttestationProof>;
   abstract proveSelectiveDisclosure(input: DisclosureInput): Promise<DisclosureProof>;
   abstract proveInference?(input: InferenceInput): Promise<InferenceProof>;
+  abstract proveEvalAwareness(input: EvalAwarenessInput): Promise<EvalAwarenessProof>;
+  abstract proveCovertChannel(input: CovertChannelInput): Promise<CovertChannelProof>;
+  abstract proveMonitorCompliance(input: MonitorComplianceInput): Promise<MonitorComplianceProof>;
   abstract publish(proof: AnyProof): Promise<PublicationResult>;
   abstract verify(proof: AnyProof): Promise<ProofVerificationResult>;
   abstract fetchProof(proofId: string): Promise<AnyProof | undefined>;

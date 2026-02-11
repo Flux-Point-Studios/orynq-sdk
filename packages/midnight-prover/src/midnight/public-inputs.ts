@@ -334,6 +334,9 @@ function getProofTypeId(type: ProofType): number {
     "attestation-valid": 3,
     "selective-disclosure": 4,
     "zkml-inference": 5,
+    "eval-awareness": 6,
+    "covert-channel": 7,
+    "monitor-compliance": 8,
   };
   return typeIds[type];
 }

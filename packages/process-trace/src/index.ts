@@ -255,6 +255,32 @@ export {
 } from "./manifest.js";
 
 // ---------------------------------------------------------------------------
+// Safety Event Exports
+// ---------------------------------------------------------------------------
+
+export type {
+  MonitorAlertCustomEvent,
+  FeatureSnapshotCustomEvent,
+  EvalAwarenessCustomEvent,
+  CovertChannelCustomEvent,
+  SafetyCustomEvent,
+  SafetyReportTrace,
+  SafetyReportManifest,
+  MonitorProvenance,
+  FinalityLevel,
+  CommitSink,
+  CommitReceipt,
+} from "./safety-events.js";
+
+export {
+  isMonitorAlertEvent,
+  isFeatureSnapshotEvent,
+  isEvalAwarenessEvent,
+  isCovertChannelEvent,
+  isSafetyEvent,
+} from "./safety-events.js";
+
+// ---------------------------------------------------------------------------
 // Version
 // ---------------------------------------------------------------------------
 

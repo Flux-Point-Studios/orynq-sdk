@@ -38,7 +38,10 @@ export type ProofType =
   | "policy-compliance"       // Content passed policy Y
   | "attestation-valid"       // TEE attestation is valid
   | "selective-disclosure"    // Span exists without reveal
-  | "zkml-inference";         // Output correct for input (expensive)
+  | "zkml-inference"          // Output correct for input (expensive)
+  | "eval-awareness"          // EAI score exceeds threshold
+  | "covert-channel"          // Covert channel detection score exceeds threshold
+  | "monitor-compliance";     // All required monitors ran
 
 // =============================================================================
 // BASE PROOF INTERFACE
@@ -338,6 +341,196 @@ export interface InferenceProofMetrics {
 }
 
 // =============================================================================
+// EVAL AWARENESS PROOF
+// =============================================================================
+
+/**
+ * Input for eval awareness proof.
+ * Proves that an EAI score exceeds a threshold without revealing the score.
+ *
+ * @property baseRootHash - Root hash of the base model trace
+ * @property eaiScore - Eval Awareness Index score (private witness)
+ * @property threshold - Minimum required score
+ * @property eaiMethodHash - H(probes + weights + templates + scoring algorithm)
+ * @property probeSetVersionHash - Hash of probe set used
+ * @property wrapperTemplatesHash - Hash of wrapper templates used
+ * @property scoringWeightsHash - Hash of scoring weights used
+ * @property thresholdPolicyId - Policy ID that defines the threshold
+ * @property cardanoAnchorTxHash - Transaction hash on Cardano L1 for cross-chain binding
+ */
+export interface EvalAwarenessInput {
+  baseRootHash: string;
+  eaiScore: number;
+  threshold: number;
+  /** H(probes + weights + templates + scoring algorithm) */
+  eaiMethodHash: string;
+  probeSetVersionHash: string;
+  wrapperTemplatesHash: string;
+  scoringWeightsHash: string;
+  thresholdPolicyId: string;
+  cardanoAnchorTxHash: string;
+}
+
+/**
+ * Eval awareness proof.
+ * Demonstrates that an EAI score exceeds a threshold without revealing the score.
+ *
+ * @property publicInputs - Values visible to verifiers
+ */
+export interface EvalAwarenessProof extends Proof {
+  proofType: "eval-awareness";
+  publicInputs: EvalAwarenessPublicInputs;
+}
+
+/**
+ * Public inputs for eval awareness proof.
+ *
+ * @property baseRootHash - Root hash of the base model trace
+ * @property eaiMethodHash - Hash of the evaluation method
+ * @property thresholdT - The threshold value
+ * @property eaiScoreExceedsT - Whether the score exceeds the threshold
+ * @property cardanoAnchorTxHash - Binding to Cardano anchor
+ */
+export interface EvalAwarenessPublicInputs {
+  baseRootHash: string;
+  eaiMethodHash: string;
+  thresholdT: number;
+  eaiScoreExceedsT: boolean;
+  cardanoAnchorTxHash: string;
+}
+
+// =============================================================================
+// COVERT CHANNEL PROOF
+// =============================================================================
+
+/**
+ * Input for covert channel detection proof.
+ * Proves that a covert channel detector score exceeds a threshold.
+ *
+ * @property baseRootHash - Root hash of the base model trace
+ * @property detectorScore - Detector score (private witness)
+ * @property threshold - Minimum required score
+ * @property detectorConfigHash - Hash of the detector configuration
+ * @property cardanoAnchorTxHash - Transaction hash on Cardano L1 for cross-chain binding
+ */
+export interface CovertChannelInput {
+  baseRootHash: string;
+  detectorScore: number;
+  threshold: number;
+  detectorConfigHash: string;
+  cardanoAnchorTxHash: string;
+}
+
+/**
+ * Covert channel detection proof.
+ * Demonstrates that a detector score exceeds a threshold.
+ *
+ * @property publicInputs - Values visible to verifiers
+ */
+export interface CovertChannelProof extends Proof {
+  proofType: "covert-channel";
+  publicInputs: CovertChannelPublicInputs;
+}
+
+/**
+ * Public inputs for covert channel detection proof.
+ *
+ * @property baseRootHash - Root hash of the base model trace
+ * @property detectorConfigHash - Hash of the detector configuration
+ * @property thresholdS - The threshold value
+ * @property detectorScoreExceedsS - Whether the detector score exceeds the threshold
+ * @property cardanoAnchorTxHash - Binding to Cardano anchor
+ */
+export interface CovertChannelPublicInputs {
+  baseRootHash: string;
+  detectorConfigHash: string;
+  thresholdS: number;
+  detectorScoreExceedsS: boolean;
+  cardanoAnchorTxHash: string;
+}
+
+// =============================================================================
+// MONITOR COMPLIANCE PROOF
+// =============================================================================
+
+/**
+ * Input for monitor compliance proof.
+ * Proves that all required monitors ran for a given trace.
+ *
+ * @property baseRootHash - Root hash of the base model trace
+ * @property monitorConfigHash - Hash of the monitor configuration
+ * @property monitorResults - Array of monitor results (private witness)
+ * @property cardanoAnchorTxHash - Transaction hash on Cardano L1 for cross-chain binding
+ */
+export interface MonitorComplianceInput {
+  baseRootHash: string;
+  monitorConfigHash: string;
+  monitorResults: Array<{ monitorId: string; ran: boolean; }>;
+  cardanoAnchorTxHash: string;
+}
+
+/**
+ * Monitor compliance proof.
+ * Demonstrates that all required monitors ran for a given trace.
+ *
+ * @property publicInputs - Values visible to verifiers
+ */
+export interface MonitorComplianceProof extends Proof {
+  proofType: "monitor-compliance";
+  publicInputs: MonitorCompliancePublicInputs;
+}
+
+/**
+ * Public inputs for monitor compliance proof.
+ *
+ * @property baseRootHash - Root hash of the base model trace
+ * @property monitorConfigHash - Hash of the monitor configuration
+ * @property allRequiredMonitorsRan - Whether all required monitors ran
+ * @property monitorCount - Number of monitors in the configuration
+ * @property cardanoAnchorTxHash - Binding to Cardano anchor
+ */
+export interface MonitorCompliancePublicInputs {
+  baseRootHash: string;
+  monitorConfigHash: string;
+  allRequiredMonitorsRan: boolean;
+  monitorCount: number;
+  cardanoAnchorTxHash: string;
+}
+
+// =============================================================================
+// DUAL-ROOT (ZK) SUPPORT
+// =============================================================================
+
+/**
+ * Parameters for Poseidon hash function.
+ * Consumers provide the implementation (e.g., circomlibjs).
+ *
+ * @property field - Finite field definition (e.g., "bn128")
+ * @property arity - Number of inputs per hash (typically 2 for binary Merkle)
+ * @property roundConstants - Serialized round constants identifier
+ */
+export interface PoseidonParams {
+  field: string;
+  arity: number;
+  roundConstants: string;
+}
+
+/**
+ * Dual-root input for supporting both SHA-256 and Poseidon Merkle roots.
+ * The auditRoot (SHA-256) is used for normal verification while the zkRoot
+ * (Poseidon) is used for ZK proofs.
+ *
+ * @property auditRoot - SHA-256 root (normal verification)
+ * @property zkRoot - Poseidon root (ZK proofs), optional
+ * @property poseidonParamsHash - Hash of the Poseidon parameters, optional
+ */
+export interface DualRootInput {
+  auditRoot: string;
+  zkRoot?: string;
+  poseidonParamsHash?: string;
+}
+
+// =============================================================================
 // PROOF SERVER CONFIGURATION
 // =============================================================================
 
@@ -451,6 +644,13 @@ export enum MidnightProverError {
   CIRCUIT_COMPILE_FAILED = 5120,
   CIRCUIT_EXECUTION_FAILED = 5121,
   CIRCUIT_CONSTRAINT_VIOLATED = 5122,
+
+  // Safety proof errors (5140-5159)
+  SAFETY_PROOF_GENERATION_FAILED = 5140,
+  INVALID_EAI_INPUT = 5141,
+  INVALID_CHANNEL_INPUT = 5142,
+  INVALID_COMPLIANCE_INPUT = 5143,
+  POSEIDON_NOT_AVAILABLE = 5144,
 }
 
 /**
@@ -489,7 +689,10 @@ export type AnyProof =
   | PolicyProof
   | AttestationProof
   | DisclosureProof
-  | InferenceProof;
+  | InferenceProof
+  | EvalAwarenessProof
+  | CovertChannelProof
+  | MonitorComplianceProof;
 
 /**
  * Union of all proof input types.
@@ -499,7 +702,10 @@ export type AnyProofInput =
   | PolicyInput
   | AttestationInput
   | DisclosureInput
-  | InferenceInput;
+  | InferenceInput
+  | EvalAwarenessInput
+  | CovertChannelInput
+  | MonitorComplianceInput;
 
 /**
  * Union of all public input types.
@@ -509,7 +715,10 @@ export type AnyPublicInputs =
   | PolicyPublicInputs
   | AttestationPublicInputs
   | DisclosurePublicInputs
-  | InferencePublicInputs;
+  | InferencePublicInputs
+  | EvalAwarenessPublicInputs
+  | CovertChannelPublicInputs
+  | MonitorCompliancePublicInputs;
 
 // =============================================================================
 // TYPE GUARDS
@@ -548,4 +757,25 @@ export function isDisclosureProof(proof: AnyProof): proof is DisclosureProof {
  */
 export function isInferenceProof(proof: AnyProof): proof is InferenceProof {
   return proof.proofType === "zkml-inference";
+}
+
+/**
+ * Type guard for EvalAwarenessProof.
+ */
+export function isEvalAwarenessProof(proof: AnyProof): proof is EvalAwarenessProof {
+  return proof.proofType === "eval-awareness";
+}
+
+/**
+ * Type guard for CovertChannelProof.
+ */
+export function isCovertChannelProof(proof: AnyProof): proof is CovertChannelProof {
+  return proof.proofType === "covert-channel";
+}
+
+/**
+ * Type guard for MonitorComplianceProof.
+ */
+export function isMonitorComplianceProof(proof: AnyProof): proof is MonitorComplianceProof {
+  return proof.proofType === "monitor-compliance";
 }

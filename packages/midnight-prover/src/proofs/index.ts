@@ -24,6 +24,9 @@
  * - hash-chain-proof.ts: Hash chain validity proofs
  * - policy-compliance-proof.ts: Policy compliance proofs
  * - selective-disclosure.ts: Selective disclosure proofs with Merkle utilities
+ * - eval-awareness-proof.ts: Eval awareness safety proofs
+ * - covert-channel-proof.ts: Covert channel detection proofs
+ * - monitor-compliance-proof.ts: Monitor compliance proofs
  * - (future) attestation-proof.ts: TEE attestation proofs
  */
 
@@ -75,3 +78,36 @@ export {
   verifyMerkleProof,
   verifySpanInclusion,
 } from "./selective-disclosure.js";
+
+// =============================================================================
+// EVAL AWARENESS PROVER
+// =============================================================================
+
+export type { EvalAwarenessProverOptions } from "./eval-awareness-proof.js";
+
+export {
+  EvalAwarenessProver,
+  createEvalAwarenessProver,
+} from "./eval-awareness-proof.js";
+
+// =============================================================================
+// COVERT CHANNEL PROVER
+// =============================================================================
+
+export type { CovertChannelProverOptions } from "./covert-channel-proof.js";
+
+export {
+  CovertChannelProver,
+  createCovertChannelProver,
+} from "./covert-channel-proof.js";
+
+// =============================================================================
+// MONITOR COMPLIANCE PROVER
+// =============================================================================
+
+export type { MonitorComplianceProverOptions } from "./monitor-compliance-proof.js";
+
+export {
+  MonitorComplianceProver,
+  createMonitorComplianceProver,
+} from "./monitor-compliance-proof.js";

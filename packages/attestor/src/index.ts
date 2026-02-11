@@ -107,6 +107,12 @@ export {
   createSevSnpVerifier,
 } from "./backends/sev-snp/sev-snp-verifier.js";
 
+// === Witness Quorum ===
+export type { QuorumConfig, WitnessObservation, QuorumCertificate } from "./quorum/index.js";
+export { QuorumError, QuorumException } from "./quorum/quorum-types.js";
+export { WitnessQuorum } from "./quorum/witness-quorum.js";
+export { verifyCertificate, computeCertificateHash } from "./quorum/quorum-certificate.js";
+
 // === Backend Registration ===
 import { attestorRegistry } from "./attestor-interface.js";
 import { verifierRegistry } from "./verification/verifier-interface.js";

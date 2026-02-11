@@ -102,6 +102,25 @@ export type {
   InferenceParams,
   InferenceProofMetrics,
 
+  // Eval awareness proof
+  EvalAwarenessInput,
+  EvalAwarenessProof,
+  EvalAwarenessPublicInputs,
+
+  // Covert channel proof
+  CovertChannelInput,
+  CovertChannelProof,
+  CovertChannelPublicInputs,
+
+  // Monitor compliance proof
+  MonitorComplianceInput,
+  MonitorComplianceProof,
+  MonitorCompliancePublicInputs,
+
+  // Dual-root support
+  PoseidonParams,
+  DualRootInput,
+
   // Configuration
   ProofServerConfig,
 
@@ -137,6 +156,9 @@ export {
   isAttestationProof,
   isDisclosureProof,
   isInferenceProof,
+  isEvalAwarenessProof,
+  isCovertChannelProof,
+  isMonitorComplianceProof,
 } from "./types.js";
 
 // =============================================================================
@@ -168,6 +190,9 @@ export type {
   RuleEvaluator,
   SelectiveDisclosureProverOptions,
   MerkleInclusionResult,
+  EvalAwarenessProverOptions,
+  CovertChannelProverOptions,
+  MonitorComplianceProverOptions,
 } from "./proofs/index.js";
 
 export {
@@ -188,6 +213,15 @@ export {
   generateMerkleInclusionProof,
   verifyMerkleProof,
   verifySpanInclusion,
+  // Eval awareness prover
+  EvalAwarenessProver,
+  createEvalAwarenessProver,
+  // Covert channel prover
+  CovertChannelProver,
+  createCovertChannelProver,
+  // Monitor compliance prover
+  MonitorComplianceProver,
+  createMonitorComplianceProver,
 } from "./proofs/index.js";
 
 // =============================================================================
@@ -229,6 +263,17 @@ export {
   ProofServerClient,
   createProofServerClient,
 } from "./midnight/index.js";
+
+// =============================================================================
+// POSEIDON HASH (ZK-FRIENDLY MERKLE)
+// =============================================================================
+
+export type { PoseidonHasher } from "./midnight/poseidon-hash.js";
+
+export {
+  computeZkRoot,
+  computePoseidonParamsHash,
+} from "./midnight/poseidon-hash.js";
 
 // =============================================================================
 // LINKING (Publication & Cross-Chain)

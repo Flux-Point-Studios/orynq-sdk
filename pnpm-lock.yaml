@@ -102,6 +102,25 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
 
+  packages/channel-firewall:
+    dependencies:
+      '@fluxpointstudios/poi-sdk-core':
+        specifier: workspace:*
+        version: link:../core
+      '@fluxpointstudios/poi-sdk-process-trace':
+        specifier: workspace:*
+        version: link:../process-trace
+    devDependencies:
+      tsup:
+        specifier: ^8.0.1
+        version: 8.5.1(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+      vitest:
+        specifier: ^1.2.0
+        version: 1.6.1(@types/node@20.19.30)
+
   packages/cli:
     dependencies:
       '@fluxpointstudios/poi-sdk-client':
@@ -159,6 +178,25 @@ importers:
         version: 1.6.1(@types/node@20.19.30)
 
   packages/core:
+    devDependencies:
+      tsup:
+        specifier: ^8.0.1
+        version: 8.5.1(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+      vitest:
+        specifier: ^1.2.0
+        version: 1.6.1(@types/node@20.19.30)
+
+  packages/feature-telemetry:
+    dependencies:
+      '@fluxpointstudios/poi-sdk-core':
+        specifier: workspace:*
+        version: link:../core
+      '@fluxpointstudios/poi-sdk-process-trace':
+        specifier: workspace:*
+        version: link:../process-trace
     devDependencies:
       tsup:
         specifier: ^8.0.1
@@ -366,6 +404,25 @@ importers:
       '@fluxpointstudios/poi-sdk-core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
+      tsup:
+        specifier: ^8.0.1
+        version: 8.5.1(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+      vitest:
+        specifier: ^1.2.0
+        version: 1.6.1(@types/node@20.19.30)
+
+  packages/safety-monitor:
+    dependencies:
+      '@fluxpointstudios/poi-sdk-core':
+        specifier: workspace:*
+        version: link:../core
+      '@fluxpointstudios/poi-sdk-process-trace':
+        specifier: workspace:*
+        version: link:../process-trace
     devDependencies:
       tsup:
         specifier: ^8.0.1

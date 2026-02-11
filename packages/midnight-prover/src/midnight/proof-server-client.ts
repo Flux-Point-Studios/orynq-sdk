@@ -115,6 +115,9 @@ const CIRCUIT_NAMES: Record<ProofType, string> = {
   "attestation-valid": "poi_attestation_v1",
   "selective-disclosure": "poi_disclosure_v1",
   "zkml-inference": "poi_inference_v1",
+  "eval-awareness": "poi_eval_awareness_v1",
+  "covert-channel": "poi_covert_channel_v1",
+  "monitor-compliance": "poi_monitor_compliance_v1",
 };
 
 // =============================================================================

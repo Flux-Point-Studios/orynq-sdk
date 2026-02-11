@@ -514,6 +514,8 @@ export const HASH_DOMAIN_PREFIXES = {
   node: "poi-trace:node:v1|",
   manifest: "poi-trace:manifest:v1|",
   root: "poi-trace:root:v1|",
+  safety: "poi-trace:safety:v1|",
+  safetyReport: "poi-trace:safety-report:v1|",
 } as const;
 
 /**

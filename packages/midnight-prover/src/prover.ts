@@ -46,6 +46,12 @@ import type {
   DisclosureProof,
   InferenceInput,
   InferenceProof,
+  EvalAwarenessInput,
+  EvalAwarenessProof,
+  CovertChannelInput,
+  CovertChannelProof,
+  MonitorComplianceInput,
+  MonitorComplianceProof,
   AnyProof,
   PublicationResult,
   ProofVerificationResult,
@@ -65,6 +71,9 @@ import {
 import { HashChainProver } from "./proofs/hash-chain-proof.js";
 import { PolicyComplianceProver } from "./proofs/policy-compliance-proof.js";
 import { SelectiveDisclosureProver } from "./proofs/selective-disclosure.js";
+import { EvalAwarenessProver } from "./proofs/eval-awareness-proof.js";
+import { CovertChannelProver } from "./proofs/covert-channel-proof.js";
+import { MonitorComplianceProver } from "./proofs/monitor-compliance-proof.js";
 import { ProofPublisher } from "./linking/proof-publication.js";
 import { ProofServerClient } from "./midnight/proof-server-client.js";
 
@@ -112,6 +121,9 @@ export class DefaultMidnightProver extends AbstractMidnightProver {
   private hashChainProver: HashChainProver;
   private policyProver: PolicyComplianceProver;
   private disclosureProver: SelectiveDisclosureProver;
+  private evalAwarenessProver: EvalAwarenessProver;
+  private covertChannelProver: CovertChannelProver;
+  private monitorComplianceProver: MonitorComplianceProver;
 
   // Network clients
   private proofServerClient: ProofServerClient;
@@ -148,6 +160,21 @@ export class DefaultMidnightProver extends AbstractMidnightProver {
       debug: this.options.debug,
       includeSpanData: true,
       includeEventData: true,
+    });
+
+    this.evalAwarenessProver = new EvalAwarenessProver({
+      debug: this.options.debug,
+      simulatedProvingTimeMs: 50,
+    });
+
+    this.covertChannelProver = new CovertChannelProver({
+      debug: this.options.debug,
+      simulatedProvingTimeMs: 50,
+    });
+
+    this.monitorComplianceProver = new MonitorComplianceProver({
+      debug: this.options.debug,
+      simulatedProvingTimeMs: 50,
     });
 
     // Initialize network clients
@@ -331,6 +358,79 @@ export class DefaultMidnightProver extends AbstractMidnightProver {
   }
 
   // ===========================================================================
+  // SAFETY PROOF GENERATION
+  // ===========================================================================
+
+  /**
+   * Generate an eval awareness proof.
+   */
+  async proveEvalAwareness(input: EvalAwarenessInput): Promise<EvalAwarenessProof> {
+    this.ensureConnected();
+    this.debug("Generating eval-awareness proof");
+
+    try {
+      const proof = await this.evalAwarenessProver.generateProof(input);
+      this.debug(`Eval-awareness proof generated: ${proof.proofId}`);
+      return proof;
+    } catch (error) {
+      if (error instanceof MidnightProverException) {
+        throw error;
+      }
+      throw new MidnightProverException(
+        MidnightProverError.SAFETY_PROOF_GENERATION_FAILED,
+        `Eval-awareness proof generation failed: ${String(error)}`,
+        error instanceof Error ? error : undefined
+      );
+    }
+  }
+
+  /**
+   * Generate a covert channel detection proof.
+   */
+  async proveCovertChannel(input: CovertChannelInput): Promise<CovertChannelProof> {
+    this.ensureConnected();
+    this.debug("Generating covert-channel proof");
+
+    try {
+      const proof = await this.covertChannelProver.generateProof(input);
+      this.debug(`Covert-channel proof generated: ${proof.proofId}`);
+      return proof;
+    } catch (error) {
+      if (error instanceof MidnightProverException) {
+        throw error;
+      }
+      throw new MidnightProverException(
+        MidnightProverError.SAFETY_PROOF_GENERATION_FAILED,
+        `Covert-channel proof generation failed: ${String(error)}`,
+        error instanceof Error ? error : undefined
+      );
+    }
+  }
+
+  /**
+   * Generate a monitor compliance proof.
+   */
+  async proveMonitorCompliance(input: MonitorComplianceInput): Promise<MonitorComplianceProof> {
+    this.ensureConnected();
+    this.debug("Generating monitor-compliance proof");
+
+    try {
+      const proof = await this.monitorComplianceProver.generateProof(input);
+      this.debug(`Monitor-compliance proof generated: ${proof.proofId}`);
+      return proof;
+    } catch (error) {
+      if (error instanceof MidnightProverException) {
+        throw error;
+      }
+      throw new MidnightProverException(
+        MidnightProverError.SAFETY_PROOF_GENERATION_FAILED,
+        `Monitor-compliance proof generation failed: ${String(error)}`,
+        error instanceof Error ? error : undefined
+      );
+    }
+  }
+
+  // ===========================================================================
   // PUBLICATION
   // ===========================================================================
 
@@ -399,6 +499,18 @@ export class DefaultMidnightProver extends AbstractMidnightProver {
         case "zkml-inference":
           warnings.push("zkML inference proof verification not yet implemented");
           valid = false;
+          break;
+
+        case "eval-awareness":
+          valid = await this.evalAwarenessProver.verifyProof(proof as EvalAwarenessProof);
+          break;
+
+        case "covert-channel":
+          valid = await this.covertChannelProver.verifyProof(proof as CovertChannelProof);
+          break;
+
+        case "monitor-compliance":
+          valid = await this.monitorComplianceProver.verifyProof(proof as MonitorComplianceProof);
           break;
 
         default: {

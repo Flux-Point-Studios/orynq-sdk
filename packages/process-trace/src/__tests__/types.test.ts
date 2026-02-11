@@ -33,6 +33,8 @@ describe('HASH_DOMAIN_PREFIXES', () => {
       'node',
       'manifest',
       'root',
+      'safety',
+      'safetyReport',
     ];
 
     const actualKeys = Object.keys(HASH_DOMAIN_PREFIXES);
@@ -46,8 +48,11 @@ describe('HASH_DOMAIN_PREFIXES', () => {
   it('has correct prefix format for all domains', () => {
     for (const [domain, prefix] of Object.entries(HASH_DOMAIN_PREFIXES)) {
       // All prefixes should follow pattern "poi-trace:<domain>:v1|"
-      expect(prefix).toMatch(/^poi-trace:[a-z]+:v1\|$/);
-      expect(prefix).toContain(domain);
+      // Domain may contain hyphens (e.g. "safety-report")
+      expect(prefix).toMatch(/^poi-trace:[a-z]+(-[a-z]+)*:v1\|$/);
+      // camelCase keys map to hyphenated prefixes (e.g. safetyReport -> safety-report)
+      const hyphenatedDomain = domain.replace(/[A-Z]/g, (c: string) => `-${c.toLowerCase()}`);
+      expect(prefix).toContain(hyphenatedDomain);
     }
   });
 
