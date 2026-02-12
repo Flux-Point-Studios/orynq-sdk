@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/poi-sdk-storage-adapters",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Storage adapters for PoI SDK - IPFS, S3, and Arweave backends",
   "type": "module",
   "main": "./dist/index.js",

@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/poi-sdk-midnight-prover",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "ZK proof generation for PoI using Midnight network",
   "type": "module",
   "main": "./dist/index.js",
