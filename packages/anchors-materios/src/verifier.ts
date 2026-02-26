@@ -13,7 +13,8 @@ export async function getAnchor(
   anchorId: string,
 ): Promise<AnchorRecord | null> {
   const api = provider.getApi();
-  const result = await api.query.orinqReceipts.anchors(anchorId);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await (api.query as any).orinqReceipts.anchors(anchorId);
 
   if (result.isEmpty) {
     return null;
@@ -38,6 +39,7 @@ export async function anchorExists(
   anchorId: string,
 ): Promise<boolean> {
   const api = provider.getApi();
-  const result = await api.query.orinqReceipts.anchors(anchorId);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await (api.query as any).orinqReceipts.anchors(anchorId);
   return !result.isEmpty;
 }

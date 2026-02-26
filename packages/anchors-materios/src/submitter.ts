@@ -39,7 +39,8 @@ export async function submitAnchor(
   // content_hash = SHA256(rootHash bytes)
   const contentHashHex = sha256Hex(rootHashHex);
 
-  const tx = api.tx.orinqReceipts.submitAnchor(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tx = (api.tx as any).orinqReceipts.submitAnchor(
     anchorId,
     "0x" + contentHashHex,
     "0x" + rootHashHex,
@@ -47,7 +48,8 @@ export async function submitAnchor(
   );
 
   return new Promise<MateriosAnchorResult>((resolve, reject) => {
-    tx.signAndSend(keypair, ({ status, dispatchError }) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    tx.signAndSend(keypair, ({ status, dispatchError }: any) => {
       if (dispatchError) {
         if (dispatchError.isModule) {
           const decoded = api.registry.findMetaError(dispatchError.asModule);

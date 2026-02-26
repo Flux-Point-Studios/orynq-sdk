@@ -42,7 +42,8 @@
     "directory": "packages/anchors-materios"
   },
   "dependencies": {
-    "@polkadot/api": "^14.0.0"
+    "@polkadot/api": "^14.0.0",
+    "@polkadot/keyring": "^13.0.0"
   },
   "devDependencies": {
     "tsup": "^8.0.1",
