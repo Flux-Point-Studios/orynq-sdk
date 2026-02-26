@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anchor-worker-materios
+  namespace: materios
+  labels:
+    app: anchor-worker-materios
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: anchor-worker-materios
+  template:
+    metadata:
+      labels:
+        app: anchor-worker-materios
+    spec:
+      imagePullSecrets:
+        - name: ghcr-credentials
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - amd64
+      containers:
+        - name: anchor-worker-materios
+          image: ghcr.io/flux-point-studios/anchor-worker-materios:latest
+          ports:
+            - containerPort: 3334
+          envFrom:
+            - configMapRef:
+                name: anchor-worker-materios
+          env:
+            - name: ANCHOR_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: anchor-worker-materios-secret
+                  key: token
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3334
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3334
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: anchor-worker-materios
+  namespace: materios
+spec:
+  selector:
+    app: anchor-worker-materios
+  ports:
+    - port: 3334
+      targetPort: 3334

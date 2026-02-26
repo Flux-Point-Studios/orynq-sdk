@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: anchor-worker-materios
+  namespace: materios
+data:
+  PORT: "3334"
+  MATERIOS_RPC_URL: "ws://materios-rpc.materios.svc.cluster.local:9944"
+  SIGNER_URI: "//Alice"
+  TX_TIMEOUT: "30000"
