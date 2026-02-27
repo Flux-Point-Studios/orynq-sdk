@@ -1,7 +1,7 @@
 /**
  * @fluxpointstudios/orynq-sdk-anchors-materios
  *
- * Materios blockchain support for the Proof-of-Intent SDK.
+ * Materios blockchain support for the Orynq SDK.
  *
  * Provides the full lifecycle for anchoring data on the Materios chain:
  *   1. Submit a receipt  →  submitReceipt()
@@ -44,16 +44,19 @@ export { submitAnchor } from "./submitter.js";
 export { getAnchor, anchorExists } from "./verifier.js";
 
 // Receipt submission and querying
-export { submitReceipt, getReceipt, isCertified, prepareBlobData } from "./receipt.js";
+export { submitReceipt, getReceipt, isCertified, prepareBlobData, queryMotraBalance, uploadBlobs, submitCertifiedReceipt } from "./receipt.js";
 
 // Polling / waiting
-export { waitForCertification, waitForAnchor, computeCheckpointLeaf } from "./polling.js";
+export { waitForCertification, waitForAnchor, computeCheckpointLeaf, waitForMotra, getCertificationStatus } from "./polling.js";
 
 // Verification
 export { verifyReceipt } from "./verify.js";
 
 // Hex utilities
 export { stripPrefix, ensureHex, zeroHash, isZeroHash } from "./hex.js";
+
+// Merkle tree utilities
+export { merkleRoot, merkleInclusionProof, verifyMerkleProof } from "./merkle.js";
 
 // Types
 export type {
@@ -75,4 +78,18 @@ export type {
   VerificationStatus,
   VerifyStep,
   VerifyResult,
+  // Merkle types
+  MerkleProof,
+  MerkleProofSibling,
+  // Certification status types
+  CertificationStatusCode,
+  CertificationStatusResult,
+  // Blob gateway types
+  BlobGatewayConfig,
+  BlobUploadResult,
+  // Batch metadata types
+  BatchMetadata,
+  // Certified receipt types
+  CertifiedReceiptOptions,
+  CertifiedReceiptResult,
 } from "./types.js";

@@ -172,5 +172,87 @@ export interface BlobManifest {
     sha256: string;
     size: number;
     path: string;
+    url?: string;
   }>;
+}
+
+// ---------------------------------------------------------------------------
+// Merkle types
+// ---------------------------------------------------------------------------
+
+export interface MerkleProofSibling {
+  hash: string;
+  position: "L" | "R";
+}
+
+export interface MerkleProof {
+  siblings: MerkleProofSibling[];
+}
+
+// ---------------------------------------------------------------------------
+// Certification status types
+// ---------------------------------------------------------------------------
+
+export type CertificationStatusCode =
+  | "RECEIPT_NOT_FOUND"
+  | "PENDING_NO_BLOBS"
+  | "PENDING_VERIFICATION"
+  | "CERTIFIED";
+
+export interface CertificationStatusResult {
+  receiptId: string;
+  status: CertificationStatusCode;
+  certHash?: string;
+  blobsUploaded?: boolean;
+  details?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Blob gateway types
+// ---------------------------------------------------------------------------
+
+export interface BlobGatewayConfig {
+  baseUrl: string;
+  apiKey?: string;
+}
+
+export interface BlobUploadResult {
+  success: boolean;
+  storageLocatorHash?: string;
+  error?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Batch metadata types (off-chain, via blob gateway)
+// ---------------------------------------------------------------------------
+
+export interface BatchMetadata {
+  anchorId: string;
+  rootHash: string;
+  leafCount: number;
+  leafHashes: string[];
+  blockRangeStart: number;
+  blockRangeEnd: number;
+  submitter: string;
+  timestamp: string;
+}
+
+// ---------------------------------------------------------------------------
+// Certified receipt types
+// ---------------------------------------------------------------------------
+
+export interface CertifiedReceiptOptions {
+  blobGateway: BlobGatewayConfig;
+  waitForAnchor?: boolean;
+  certificationPollOpts?: PollOptions;
+  anchorPollOpts?: PollOptions & { scanWindow?: number };
+}
+
+export interface CertifiedReceiptResult {
+  receiptId: string;
+  blockHash: string;
+  blockNumber: number;
+  certHash?: string;
+  leafHash?: string;
+  anchor?: AnchorMatchResult;
 }

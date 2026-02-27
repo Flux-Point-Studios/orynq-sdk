@@ -14,8 +14,10 @@ import type {
   PollOptions,
   CertificationResult,
   AnchorMatchResult,
+  BlobGatewayConfig,
+  CertificationStatusResult,
 } from "./types.js";
-import { getReceipt } from "./receipt.js";
+import { getReceipt, queryMotraBalance } from "./receipt.js";
 import { stripPrefix, ensureHex, isZeroHash } from "./hex.js";
 
 const DEFAULT_INTERVAL_MS = 6_000; // ~1 Substrate block
@@ -55,7 +57,9 @@ export async function waitForCertification(
     const elapsed = Date.now() - start;
     if (elapsed >= timeout) {
       throw new Error(
-        `Certification timeout after ${timeout}ms (${attempt} polls)`,
+        `Certification timeout after ${timeout}ms (${attempt} polls). ` +
+          `Hint: if blobs are not uploaded, certification will never complete. ` +
+          `Use getCertificationStatus() to check.`,
       );
     }
 
@@ -197,6 +201,115 @@ export function computeCheckpointLeaf(
     .digest("hex");
 
   return "0x" + hash;
+}
+
+/**
+ * Wait until an account has sufficient MOTRA balance to pay transaction fees.
+ *
+ * MOTRA is generated from MATRA holdings at ~1M per block per 1T MATRA.
+ * Transaction fees cost ~1.4M MOTRA. This function polls until the balance
+ * reaches the specified minimum.
+ *
+ * @param minBalance - Minimum MOTRA balance required (default: 1,500,000).
+ * @param opts - Poll interval and timeout options.
+ * @returns The MOTRA balance once it reaches the minimum.
+ */
+export async function waitForMotra(
+  provider: MateriosProvider,
+  minBalance = 1_500_000n,
+  opts: PollOptions = {},
+): Promise<bigint> {
+  const interval = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
+  const timeout = opts.timeoutMs ?? 60_000;
+  const start = Date.now();
+  let attempt = 0;
+
+  while (true) {
+    attempt++;
+    const elapsed = Date.now() - start;
+    if (elapsed >= timeout) {
+      throw new Error(
+        `MOTRA warm-up timeout after ${timeout}ms (${attempt} polls). ` +
+          `Account may not have sufficient MATRA holdings to generate MOTRA.`,
+      );
+    }
+
+    opts.onPoll?.(attempt, elapsed);
+
+    const balance = await queryMotraBalance(provider);
+    if (balance >= minBalance) return balance;
+
+    await sleep(interval);
+  }
+}
+
+/**
+ * Check the current certification status of a receipt.
+ * Optionally queries blob gateway for blob upload status.
+ *
+ * This is useful for diagnosing why `waitForCertification()` might be
+ * timing out — typically because blobs have not been uploaded to the
+ * gateway, so the cert daemon cannot verify availability.
+ *
+ * @example
+ * ```ts
+ * const status = await getCertificationStatus(provider, receiptId, {
+ *   baseUrl: "https://blobs.example.com",
+ * });
+ * console.log(status.status); // "PENDING_NO_BLOBS"
+ * ```
+ */
+export async function getCertificationStatus(
+  provider: MateriosProvider,
+  receiptId: string,
+  blobGateway?: BlobGatewayConfig,
+): Promise<CertificationStatusResult> {
+  // 1. Check if receipt exists on-chain
+  const receipt = await getReceipt(provider, receiptId);
+  if (!receipt) {
+    return { receiptId, status: "RECEIPT_NOT_FOUND", details: "Receipt not found on-chain" };
+  }
+
+  // 2. Check if cert hash is set (non-zero)
+  const certHash = receipt.availabilityCertHash;
+  if (certHash && !isZeroHash(certHash)) {
+    return { receiptId, status: "CERTIFIED", certHash, blobsUploaded: true };
+  }
+
+  // 3. If gateway provided, check blob status
+  if (blobGateway) {
+    try {
+      const contentHash = receipt.contentHash;
+      const stripped = stripPrefix(contentHash);
+      const res = await fetch(`${blobGateway.baseUrl}/blobs/${stripped}/status`);
+      if (res.ok) {
+        const status = await res.json();
+        if (status.complete) {
+          return {
+            receiptId,
+            status: "PENDING_VERIFICATION",
+            blobsUploaded: true,
+            details: "Blobs uploaded, waiting for daemon attestation",
+          };
+        }
+      }
+    } catch {
+      // Gateway unreachable, fall through
+    }
+    return {
+      receiptId,
+      status: "PENDING_NO_BLOBS",
+      blobsUploaded: false,
+      details: "Receipt exists but blob data not uploaded to gateway",
+    };
+  }
+
+  // No gateway → can't determine blob status, just say pending
+  return {
+    receiptId,
+    status: "PENDING_VERIFICATION",
+    details: "Receipt exists, cert hash not yet set",
+  };
 }
 
 function toBytes32(hex: string): Buffer {

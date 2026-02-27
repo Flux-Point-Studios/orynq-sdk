@@ -13,7 +13,12 @@ import type {
   ReceiptSubmitResult,
   ReceiptRecord,
   BlobManifest,
+  BlobGatewayConfig,
+  BlobUploadResult,
+  CertifiedReceiptOptions,
+  CertifiedReceiptResult,
 } from "./types.js";
+import { waitForCertification, waitForAnchor } from "./polling.js";
 import { stripPrefix, ensureHex, isZeroHash } from "./hex.js";
 
 /**
@@ -68,7 +73,7 @@ export async function submitReceipt(
 
   return new Promise<ReceiptSubmitResult>((resolve, reject) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    tx.signAndSend(keypair, ({ status, dispatchError }: any) => {
+    tx.signAndSend(keypair, { nonce: -1 }, ({ status, dispatchError }: any) => {
       if (dispatchError) {
         if (dispatchError.isModule) {
           const decoded = api.registry.findMetaError(dispatchError.asModule);
@@ -183,6 +188,164 @@ export function prepareBlobData(
   };
 
   return { manifest, chunks };
+}
+
+/**
+ * Query the MOTRA fee token balance for an account.
+ *
+ * MOTRA is a non-transferable fee token generated from MATRA holdings.
+ * Newly funded accounts start with 0 MOTRA and must wait ~2 blocks
+ * for sufficient balance to pay transaction fees (~1.4M per receipt).
+ */
+export async function queryMotraBalance(
+  provider: MateriosProvider,
+  address?: string,
+): Promise<bigint> {
+  const api = provider.getApi();
+  const addr = address ?? provider.getKeypair().address;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const json = await (api as any)._rpcCore.provider.send("motra_getBalance", [addr]);
+  return BigInt(json.balance ?? json ?? "0");
+}
+
+/**
+ * Upload blob data (manifest + chunks) to a blob gateway.
+ * The gateway uses contentHash as the primary key.
+ */
+export async function uploadBlobs(
+  contentHash: string,
+  manifest: BlobManifest,
+  chunks: Array<{ path: string; data: Buffer }>,
+  gateway: BlobGatewayConfig,
+): Promise<BlobUploadResult> {
+  const strippedHash = stripPrefix(contentHash);
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (gateway.apiKey) {
+    headers["x-api-key"] = gateway.apiKey;
+  }
+
+  try {
+    // 1. Upload manifest
+    const manifestRes = await fetch(
+      `${gateway.baseUrl}/blobs/${strippedHash}/manifest`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(manifest),
+      },
+    );
+    if (!manifestRes.ok && manifestRes.status !== 409) {
+      const text = await manifestRes.text();
+      return { success: false, error: `Manifest upload failed: ${manifestRes.status} ${text}` };
+    }
+
+    // 2. Upload each chunk
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]!;
+      const chunkHeaders: Record<string, string> = {
+        "Content-Type": "application/octet-stream",
+      };
+      if (gateway.apiKey) {
+        chunkHeaders["x-api-key"] = gateway.apiKey;
+      }
+
+      const chunkRes = await fetch(
+        `${gateway.baseUrl}/blobs/${strippedHash}/chunks/${i}`,
+        {
+          method: "PUT",
+          headers: chunkHeaders,
+          body: new Uint8Array(chunk.data),
+        },
+      );
+      if (!chunkRes.ok && chunkRes.status !== 409) {
+        const text = await chunkRes.text();
+        return { success: false, error: `Chunk ${i} upload failed: ${chunkRes.status} ${text}` };
+      }
+    }
+
+    // 3. Compute storage locator hash (SHA-256 of manifest JSON)
+    const manifestJson = JSON.stringify(manifest);
+    const storageLocatorHash = ensureHex(
+      createHash("sha256").update(manifestJson).digest("hex"),
+    );
+
+    return { success: true, storageLocatorHash };
+  } catch (err) {
+    return { success: false, error: `Upload failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+/**
+ * One-function orchestrator for external devs: submits receipt, uploads blobs,
+ * waits for certification, and optionally waits for anchor.
+ */
+export async function submitCertifiedReceipt(
+  provider: MateriosProvider,
+  input: ReceiptInput,
+  content: Buffer,
+  opts: CertifiedReceiptOptions,
+): Promise<CertifiedReceiptResult> {
+  // 1. Prepare blob data from content
+  const contentHashHex = ensureHex(
+    createHash("sha256").update(content).digest("hex"),
+  );
+  // Use contentHash from input if provided, otherwise derive
+  const effectiveContentHash = input.contentHash || contentHashHex;
+
+  // Derive receiptId
+  const receiptIdHex = ensureHex(
+    createHash("sha256")
+      .update(Buffer.from(stripPrefix(effectiveContentHash), "hex"))
+      .digest("hex"),
+  );
+
+  const { manifest, chunks } = prepareBlobData(receiptIdHex, content);
+
+  // 2. Upload blobs to gateway
+  const uploadResult = await uploadBlobs(
+    stripPrefix(effectiveContentHash),
+    manifest,
+    chunks,
+    opts.blobGateway,
+  );
+  if (!uploadResult.success) {
+    throw new Error(`Blob upload failed: ${uploadResult.error}`);
+  }
+
+  // 3. Submit receipt on-chain
+  const receiptInput: ReceiptInput = {
+    contentHash: effectiveContentHash,
+    rootHash: input.rootHash || contentHashHex,
+    manifestHash: uploadResult.storageLocatorHash || input.manifestHash || contentHashHex,
+  };
+  const submitResult = await submitReceipt(provider, receiptInput);
+
+  // 4. Wait for certification
+  const certResult = await waitForCertification(
+    provider,
+    submitResult.receiptId,
+    opts.certificationPollOpts,
+  );
+
+  const result: CertifiedReceiptResult = {
+    receiptId: submitResult.receiptId,
+    blockHash: submitResult.blockHash,
+    blockNumber: submitResult.blockNumber,
+    certHash: certResult.certHash,
+    leafHash: certResult.leafHash,
+  };
+
+  // 5. Optionally wait for anchor
+  if (opts.waitForAnchor) {
+    const anchorResult = await waitForAnchor(
+      provider,
+      certResult,
+      opts.anchorPollOpts,
+    );
+    result.anchor = anchorResult;
+  }
+
+  return result;
 }
 
 /**

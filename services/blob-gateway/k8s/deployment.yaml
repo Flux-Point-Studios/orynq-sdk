@@ -1,0 +1,101 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: materios-blob-gateway-data
+  namespace: materios
+spec:
+  storageClassName: longhorn-1replica
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: materios-blob-gateway
+  namespace: materios
+  labels:
+    app: materios-blob-gateway
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: materios-blob-gateway
+  template:
+    metadata:
+      labels:
+        app: materios-blob-gateway
+    spec:
+      imagePullSecrets:
+        - name: ghcr-credentials
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - amd64
+      initContainers:
+        - name: fix-permissions
+          image: busybox:latest
+          command: ["sh", "-c", "chown -R 1000:1000 /data/blobs"]
+          volumeMounts:
+            - name: blob-data
+              mountPath: /data/blobs
+      containers:
+        - name: materios-blob-gateway
+          image: ghcr.io/flux-point-studios/materios-blob-gateway:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: materios-blob-gateway-config
+            - secretRef:
+                name: materios-blob-gateway-secret
+          volumeMounts:
+            - name: blob-data
+              mountPath: /data/blobs
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: blob-data
+          persistentVolumeClaim:
+            claimName: materios-blob-gateway-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: materios-blob-gateway
+  namespace: materios
+spec:
+  type: NodePort
+  selector:
+    app: materios-blob-gateway
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30300

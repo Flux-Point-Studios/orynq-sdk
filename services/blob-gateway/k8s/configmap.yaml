@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: materios-blob-gateway-config
+  namespace: materios
+data:
+  PORT: "3000"
+  STORAGE_PATH: "/data/blobs"
+  GATEWAY_BASE_URL: "http://materios-blob-gateway.materios.svc.cluster.local:3000"
