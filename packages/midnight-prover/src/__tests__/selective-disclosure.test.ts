@@ -33,7 +33,7 @@ import type {
   CommandEvent,
   OutputEvent,
   MerkleProof,
-} from "@fluxpointstudios/poi-sdk-process-trace";
+} from "@fluxpointstudios/orynq-sdk-process-trace";
 
 // =============================================================================
 // TEST FIXTURES

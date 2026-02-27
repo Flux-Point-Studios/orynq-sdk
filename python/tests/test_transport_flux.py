@@ -1,5 +1,5 @@
 """
-Tests for poi_sdk.transport_flux module.
+Tests for orynq_sdk.transport_flux module.
 
 Tests Flux wire format parsing, 402 response detection, chain mapping,
 and payment header application.
@@ -8,14 +8,14 @@ and payment header application.
 import pytest
 from unittest.mock import MagicMock
 
-from poi_sdk.transport_flux import (
+from orynq_sdk.transport_flux import (
     is_flux_402,
     parse_flux_invoice,
     apply_payment_headers,
     FLUX_HEADERS,
     CHAIN_MAPPING,
 )
-from poi_sdk.types import PaymentProof
+from orynq_sdk.types import PaymentProof
 
 
 class MockResponse:

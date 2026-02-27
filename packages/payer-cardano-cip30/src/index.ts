@@ -1,8 +1,8 @@
 /**
- * @summary Main entry point for @fluxpointstudios/poi-sdk-payer-cardano-cip30 package.
+ * @summary Main entry point for @fluxpointstudios/orynq-sdk-payer-cardano-cip30 package.
  *
  * This package provides a CIP-30 browser wallet adapter for Cardano payments
- * in the poi-sdk ecosystem using MeshJS. It allows dApps to accept payments
+ * in the orynq-sdk ecosystem using MeshJS. It allows dApps to accept payments
  * via popular Cardano wallets like Nami, Eternl, Lace, Vespr, Flint, and Typhon.
  *
  * Key features:
@@ -18,7 +18,7 @@
  *   createCip30Payer,
  *   getAvailableWallets,
  *   Cip30Payer,
- * } from "@fluxpointstudios/poi-sdk-payer-cardano-cip30";
+ * } from "@fluxpointstudios/orynq-sdk-payer-cardano-cip30";
  * import { BrowserWallet } from "@meshsdk/core";
  *
  * // Quick start with convenience factory

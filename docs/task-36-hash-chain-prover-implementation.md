@@ -2,7 +2,7 @@
 
 ## Summary
 
-Implemented hash-chain validity proof generation for the `@fluxpointstudios/poi-sdk-midnight-prover` package. This implementation enables ZK proofs that demonstrate a sequence of trace events produces an expected rolling hash, binding the proof to a Cardano anchor transaction for cross-chain verification.
+Implemented hash-chain validity proof generation for the `@fluxpointstudios/orynq-sdk-midnight-prover` package. This implementation enables ZK proofs that demonstrate a sequence of trace events produces an expected rolling hash, binding the proof to a Cardano anchor transaction for cross-chain verification.
 
 ## Files Created/Modified
 
@@ -55,7 +55,7 @@ Implemented hash-chain validity proof generation for the `@fluxpointstudios/poi-
 
 ### Rolling Hash Algorithm
 
-The rolling hash computation matches the algorithm in `@fluxpointstudios/poi-sdk-process-trace`:
+The rolling hash computation matches the algorithm in `@fluxpointstudios/orynq-sdk-process-trace`:
 - Events sorted by sequence number
 - Event hash: `H("poi-trace:event:v1|" + canonical(event - hash field))`
 - Rolling hash: `H("poi-trace:roll:v1|" + prevHash + "|" + eventHash)`
@@ -86,7 +86,7 @@ Mock proofs include:
 
 ```bash
 # Build the package
-pnpm --filter @fluxpointstudios/poi-sdk-midnight-prover build
+pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build
 
 # Run tests
 pnpm test -- packages/midnight-prover

@@ -1,5 +1,5 @@
 """
-Tests for poi_sdk.client module.
+Tests for orynq_sdk.client module.
 
 Tests the PoiClient class with mock-based testing for HTTP requests
 and payment handling.
@@ -11,13 +11,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
-from poi_sdk.client import PoiClient
-from poi_sdk.types import (
+from orynq_sdk.client import PoiClient
+from orynq_sdk.types import (
     PaymentRequest,
     PaymentProof,
     BudgetConfig,
 )
-from poi_sdk.budget import BudgetExceededError
+from orynq_sdk.budget import BudgetExceededError
 
 
 class TestPoiClientInit:

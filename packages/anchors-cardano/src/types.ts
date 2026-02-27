@@ -19,7 +19,7 @@
  * - src/verifier.ts: Verifies anchor integrity against chain data
  * - src/providers/: Blockchain data provider implementations
  *
- * @see https://github.com/Flux-Point-Studios/poi-sdk for specification
+ * @see https://github.com/Flux-Point-Studios/orynq-sdk for specification
  */
 
 // =============================================================================

@@ -34,7 +34,7 @@
 import {
   sha256StringHex,
   canonicalize,
-} from "@fluxpointstudios/poi-sdk-core/utils";
+} from "@fluxpointstudios/orynq-sdk-core/utils";
 
 import type {
   PolicyInput,

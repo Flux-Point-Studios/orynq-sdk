@@ -6,7 +6,7 @@ import {
   isPaymentSettled,
   getSettlementTxHash,
 } from '../settlement';
-import { X402_HEADERS } from '@fluxpointstudios/poi-sdk-core';
+import { X402_HEADERS } from '@fluxpointstudios/orynq-sdk-core';
 
 describe('parseSettlement', () => {
   it('returns null if PAYMENT-RESPONSE header missing', () => {

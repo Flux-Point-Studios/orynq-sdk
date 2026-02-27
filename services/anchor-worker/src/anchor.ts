@@ -9,7 +9,7 @@ import {
   buildAnchorMetadata,
   serializeForCbor,
   type AnchorEntry,
-} from "@fluxpointstudios/poi-sdk-anchors-cardano";
+} from "@fluxpointstudios/orynq-sdk-anchors-cardano";
 import {
   BLOCKFROST_PROJECT_ID,
   CARDANO_NETWORK,

@@ -2,9 +2,9 @@
 
 ## Overview
 
-This document summarizes the completed implementation of the EVM payers for poi-sdk:
-- `@fluxpointstudios/poi-sdk-payer-evm-direct` - Direct ERC-20 transfers via viem
-- `@fluxpointstudios/poi-sdk-payer-evm-x402` - EIP-3009 gasless signatures for x402 protocol
+This document summarizes the completed implementation of the EVM payers for orynq-sdk:
+- `@fluxpointstudios/orynq-sdk-payer-evm-direct` - Direct ERC-20 transfers via viem
+- `@fluxpointstudios/orynq-sdk-payer-evm-x402` - EIP-3009 gasless signatures for x402 protocol
 
 ## Implementation Status
 
@@ -15,10 +15,10 @@ Both packages have been implemented with:
 
 ---
 
-## @fluxpointstudios/poi-sdk-payer-evm-direct
+## @fluxpointstudios/orynq-sdk-payer-evm-direct
 
 ### Location
-`D:\fluxPoint\PoI\poi-sdk\packages\payer-evm-direct`
+`D:\fluxPoint\PoI\orynq-sdk\packages\payer-evm-direct`
 
 ### Features Implemented
 
@@ -67,10 +67,10 @@ Both packages have been implemented with:
 
 ---
 
-## @fluxpointstudios/poi-sdk-payer-evm-x402
+## @fluxpointstudios/orynq-sdk-payer-evm-x402
 
 ### Location
-`D:\fluxPoint\PoI\poi-sdk\packages\payer-evm-x402`
+`D:\fluxPoint\PoI\orynq-sdk\packages\payer-evm-x402`
 
 ### Features Implemented
 
@@ -154,12 +154,12 @@ Both packages have been implemented with:
 Both packages build successfully:
 
 ```
-@fluxpointstudios/poi-sdk-payer-evm-direct:
+@fluxpointstudios/orynq-sdk-payer-evm-direct:
   ESM: 11.89 KB
   CJS: 12.08 KB
   DTS: 15.37 KB
 
-@fluxpointstudios/poi-sdk-payer-evm-x402:
+@fluxpointstudios/orynq-sdk-payer-evm-x402:
   ESM: 42.06 KB
   CJS: 42.61 KB
   DTS: 33.65 KB
@@ -207,7 +207,7 @@ Duration:   29.16s
 
 ```bash
 # Run all EVM payer tests
-cd D:\fluxPoint\PoI\poi-sdk
+cd D:\fluxPoint\PoI\orynq-sdk
 node node_modules/vitest/vitest.mjs run packages/payer-evm-direct packages/payer-evm-x402
 
 # Run specific test files
@@ -231,7 +231,7 @@ BASE_SEPOLIA_RPC_URL="https://sepolia.base.org"
 
 Please have the test engineer:
 
-1. Read this file at `D:\fluxPoint\PoI\poi-sdk\docs\evm-payers-implementation-complete.md`
+1. Read this file at `D:\fluxPoint\PoI\orynq-sdk\docs\evm-payers-implementation-complete.md`
 2. Review the test files in:
    - `packages/payer-evm-direct/src/__tests__/`
    - `packages/payer-evm-x402/src/__tests__/`

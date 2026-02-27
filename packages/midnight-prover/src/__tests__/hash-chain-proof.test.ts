@@ -45,7 +45,7 @@ import {
   type HashChainProof,
 } from "../types.js";
 
-import type { TraceEvent, CommandEvent, OutputEvent } from "@fluxpointstudios/poi-sdk-process-trace";
+import type { TraceEvent, CommandEvent, OutputEvent } from "@fluxpointstudios/orynq-sdk-process-trace";
 
 // =============================================================================
 // TEST HELPERS

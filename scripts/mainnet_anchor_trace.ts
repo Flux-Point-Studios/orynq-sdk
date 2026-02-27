@@ -14,7 +14,7 @@ import {
   createManifest,
   getChunkPath,
   type TraceRun,
-} from "@fluxpointstudios/poi-sdk-process-trace";
+} from "@fluxpointstudios/orynq-sdk-process-trace";
 
 import {
   createAnchorEntryFromBundle,
@@ -23,7 +23,7 @@ import {
   createBlockfrostProvider,
   verifyAnchor,
   verifyAnchorManifest,
-} from "@fluxpointstudios/poi-sdk-anchors-cardano";
+} from "@fluxpointstudios/orynq-sdk-anchors-cardano";
 
 const LABEL = 2222;
 

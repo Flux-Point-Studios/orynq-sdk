@@ -6,7 +6,7 @@
  *
  * Usage:
  * ```typescript
- * import { BlockfrostProvider, KoiosProvider } from "@fluxpointstudios/poi-sdk-payer-cardano-node/providers";
+ * import { BlockfrostProvider, KoiosProvider } from "@fluxpointstudios/orynq-sdk-payer-cardano-node/providers";
  *
  * // Using Blockfrost
  * const blockfrost = new BlockfrostProvider({

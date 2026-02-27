@@ -1,4 +1,4 @@
-# Orynq SDK (poi-sdk)
+# Orynq SDK (orynq-sdk)
 
 Cryptographic AI process tracing and blockchain anchoring. Create tamper-proof, verifiable records of AI agent actions.
 
@@ -30,18 +30,18 @@ Cryptographic AI process tracing and blockchain anchoring. Create tamper-proof, 
 Use your own Cardano wallet to anchor directly to the blockchain.
 
 ```bash
-npm install @fluxpointstudios/poi-sdk-process-trace \
-            @fluxpointstudios/poi-sdk-anchors-cardano \
+npm install @fluxpointstudios/orynq-sdk-process-trace \
+            @fluxpointstudios/orynq-sdk-anchors-cardano \
             lucid-cardano
 ```
 
 ```typescript
 import {
   createTrace, addSpan, addEvent, closeSpan, finalizeTrace,
-} from "@fluxpointstudios/poi-sdk-process-trace";
+} from "@fluxpointstudios/orynq-sdk-process-trace";
 import {
   createAnchorEntryFromBundle, buildAnchorMetadata, serializeForCbor, POI_METADATA_LABEL,
-} from "@fluxpointstudios/poi-sdk-anchors-cardano";
+} from "@fluxpointstudios/orynq-sdk-anchors-cardano";
 import { Lucid, Blockfrost } from "lucid-cardano";
 
 // 1. Instrument your AI agent
@@ -94,13 +94,13 @@ console.log("Anchored:", `https://cardanoscan.io/transaction/${txHash}`);
 Use the managed API with automatic payment handling.
 
 ```bash
-npm install @fluxpointstudios/poi-sdk-client \
-            @fluxpointstudios/poi-sdk-payer-cardano-cip30
+npm install @fluxpointstudios/orynq-sdk-client \
+            @fluxpointstudios/orynq-sdk-payer-cardano-cip30
 ```
 
 ```typescript
-import { PoiClient } from '@fluxpointstudios/poi-sdk-client';
-import { createCip30Payer } from '@fluxpointstudios/poi-sdk-payer-cardano-cip30';
+import { PoiClient } from '@fluxpointstudios/orynq-sdk-client';
+import { createCip30Payer } from '@fluxpointstudios/orynq-sdk-payer-cardano-cip30';
 
 const payer = await createCip30Payer(window.cardano.nami);
 const client = new PoiClient({
@@ -128,7 +128,7 @@ const { txHash } = await response.json();
 Anyone can verify an anchor independently:
 
 ```typescript
-import { createBlockfrostProvider, verifyAnchor } from "@fluxpointstudios/poi-sdk-anchors-cardano";
+import { createBlockfrostProvider, verifyAnchor } from "@fluxpointstudios/orynq-sdk-anchors-cardano";
 
 const provider = createBlockfrostProvider({
   projectId: process.env.BLOCKFROST_KEY,
@@ -154,27 +154,27 @@ curl -H "project_id: $BLOCKFROST_KEY" \
 
 | Package | Description |
 |---------|-------------|
-| `@fluxpointstudios/poi-sdk-process-trace` | Cryptographic process trace builder with hash chains and Merkle trees |
-| `@fluxpointstudios/poi-sdk-anchors-cardano` | Cardano anchor builder, serializer, and verifier |
+| `@fluxpointstudios/orynq-sdk-process-trace` | Cryptographic process trace builder with hash chains and Merkle trees |
+| `@fluxpointstudios/orynq-sdk-anchors-cardano` | Cardano anchor builder, serializer, and verifier |
 
 ### Payment Protocol (for Anchor-as-a-Service)
 
 | Package | Description |
 |---------|-------------|
-| `@fluxpointstudios/poi-sdk-core` | Protocol-neutral types and utilities |
-| `@fluxpointstudios/poi-sdk-client` | Auto-pay HTTP client with budget tracking |
-| `@fluxpointstudios/poi-sdk-payer-cardano-cip30` | CIP-30 browser wallet payer |
-| `@fluxpointstudios/poi-sdk-payer-cardano-node` | Server-side Cardano payer |
-| `@fluxpointstudios/poi-sdk-payer-evm-x402` | EIP-3009 gasless EVM payer |
-| `@fluxpointstudios/poi-sdk-payer-evm-direct` | Direct ERC-20 transfer payer |
-| `@fluxpointstudios/poi-sdk-server-middleware` | Express/Fastify payment middleware |
-| `@fluxpointstudios/poi-sdk-gateway` | x402 ↔ Flux protocol bridge |
-| `@fluxpointstudios/poi-sdk-cli` | Command-line interface |
+| `@fluxpointstudios/orynq-sdk-core` | Protocol-neutral types and utilities |
+| `@fluxpointstudios/orynq-sdk-client` | Auto-pay HTTP client with budget tracking |
+| `@fluxpointstudios/orynq-sdk-payer-cardano-cip30` | CIP-30 browser wallet payer |
+| `@fluxpointstudios/orynq-sdk-payer-cardano-node` | Server-side Cardano payer |
+| `@fluxpointstudios/orynq-sdk-payer-evm-x402` | EIP-3009 gasless EVM payer |
+| `@fluxpointstudios/orynq-sdk-payer-evm-direct` | Direct ERC-20 transfer payer |
+| `@fluxpointstudios/orynq-sdk-server-middleware` | Express/Fastify payment middleware |
+| `@fluxpointstudios/orynq-sdk-gateway` | x402 ↔ Flux protocol bridge |
+| `@fluxpointstudios/orynq-sdk-cli` | Command-line interface |
 
 ### Python
 
 ```bash
-pip install poi-sdk
+pip install orynq-sdk
 ```
 
 ---
@@ -204,7 +204,7 @@ Anchors are stored under Cardano metadata **label 2222**:
 
 ## Documentation
 
-- **Full Docs:** [docs.fluxpointstudios.com/proof-of-inference/poi-sdk](https://docs.fluxpointstudios.com/proof-of-inference/poi-sdk)
+- **Full Docs:** [docs.fluxpointstudios.com/proof-of-inference/orynq-sdk](https://docs.fluxpointstudios.com/proof-of-inference/orynq-sdk)
 - **Live Demo:** [fluxpointstudios.com/orynq](https://fluxpointstudios.com/orynq)
 - **Self-Anchor Example:** [examples/self-anchor](./examples/self-anchor)
 

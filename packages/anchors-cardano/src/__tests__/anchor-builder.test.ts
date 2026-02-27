@@ -25,7 +25,7 @@ import {
 } from "../anchor-builder.js";
 import { POI_METADATA_LABEL } from "../types.js";
 import type { AnchorEntry } from "../types.js";
-import type { TraceBundle } from "@fluxpointstudios/poi-sdk-process-trace";
+import type { TraceBundle } from "@fluxpointstudios/orynq-sdk-process-trace";
 
 // =============================================================================
 // TEST FIXTURES

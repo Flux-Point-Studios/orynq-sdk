@@ -1,5 +1,5 @@
 """
-Tests for poi_sdk.budget module.
+Tests for orynq_sdk.budget module.
 
 Tests budget tracking, spending limits enforcement, and the
 MemoryBudgetStore implementation.
@@ -8,12 +8,12 @@ MemoryBudgetStore implementation.
 import pytest
 from datetime import datetime, timezone
 
-from poi_sdk.budget import (
+from orynq_sdk.budget import (
     BudgetTracker,
     MemoryBudgetStore,
     BudgetExceededError,
 )
-from poi_sdk.types import BudgetConfig
+from orynq_sdk.types import BudgetConfig
 
 
 class TestMemoryBudgetStore:

@@ -1,12 +1,12 @@
 /**
- * @fluxpointstudios/poi-sdk-flight-recorder
+ * @fluxpointstudios/orynq-sdk-flight-recorder
  *
  * Streaming flight recorder for Proof of Inference (PoI).
  * Captures inference events with chunking, compression, and encryption.
  *
  * @example
  * ```typescript
- * import { FlightRecorder, LocalStorageAdapter } from '@fluxpointstudios/poi-sdk-flight-recorder';
+ * import { FlightRecorder, LocalStorageAdapter } from '@fluxpointstudios/orynq-sdk-flight-recorder';
  *
  * const storage = new LocalStorageAdapter({ baseDir: './traces' });
  *

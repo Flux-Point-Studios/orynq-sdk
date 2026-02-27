@@ -1,5 +1,5 @@
 /**
- * @summary Main entry point for @fluxpointstudios/poi-sdk-client package.
+ * @summary Main entry point for @fluxpointstudios/orynq-sdk-client package.
  *
  * This package provides the PoiClient for making requests to payment-protected
  * APIs with automatic payment handling. It supports both x402 and Flux protocols
@@ -14,7 +14,7 @@
  *
  * Usage:
  * ```typescript
- * import { createPoiClient, PoiClient } from "@fluxpointstudios/poi-sdk-client";
+ * import { createPoiClient, PoiClient } from "@fluxpointstudios/orynq-sdk-client";
  *
  * const client = createPoiClient({
  *   baseUrl: "https://api.example.com",

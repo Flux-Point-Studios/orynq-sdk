@@ -1,8 +1,8 @@
 """
-Location: python/poi_sdk/types.py
+Location: python/orynq_sdk/types.py
 
 Summary:
-    Pydantic models for the poi-sdk. Defines all the data structures used
+    Pydantic models for the orynq-sdk. Defines all the data structures used
     throughout the SDK including PaymentRequest, PaymentProof, PaymentStatus,
     BudgetConfig, and split-related models.
 
@@ -13,7 +13,7 @@ Usage:
     loss with large values.
 
 Example:
-    from poi_sdk.types import PaymentRequest, PaymentProof
+    from orynq_sdk.types import PaymentRequest, PaymentProof
 
     request = PaymentRequest(
         chain="cardano:mainnet",

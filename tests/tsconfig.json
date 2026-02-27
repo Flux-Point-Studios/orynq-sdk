@@ -10,14 +10,14 @@
     "noEmit": true,
     "types": ["vitest/globals", "node"],
     "paths": {
-      "@fluxpointstudios/poi-sdk-core": ["../packages/core/src/index.ts"],
-      "@fluxpointstudios/poi-sdk-client": ["../packages/client/src/index.ts"],
-      "@fluxpointstudios/poi-sdk-payer-cardano-node": ["../packages/payer-cardano-node/src/index.ts"],
-      "@fluxpointstudios/poi-sdk-payer-evm-direct": ["../packages/payer-evm-direct/src/index.ts"],
-      "@fluxpointstudios/poi-sdk-payer-evm-x402": ["../packages/payer-evm-x402/src/index.ts"],
-      "@fluxpointstudios/poi-sdk-server-middleware": ["../packages/server-middleware/src/index.ts"],
-      "@fluxpointstudios/poi-sdk-transport-flux": ["../packages/transport-flux/src/index.ts"],
-      "@fluxpointstudios/poi-sdk-transport-x402": ["../packages/transport-x402/src/index.ts"]
+      "@fluxpointstudios/orynq-sdk-core": ["../packages/core/src/index.ts"],
+      "@fluxpointstudios/orynq-sdk-client": ["../packages/client/src/index.ts"],
+      "@fluxpointstudios/orynq-sdk-payer-cardano-node": ["../packages/payer-cardano-node/src/index.ts"],
+      "@fluxpointstudios/orynq-sdk-payer-evm-direct": ["../packages/payer-evm-direct/src/index.ts"],
+      "@fluxpointstudios/orynq-sdk-payer-evm-x402": ["../packages/payer-evm-x402/src/index.ts"],
+      "@fluxpointstudios/orynq-sdk-server-middleware": ["../packages/server-middleware/src/index.ts"],
+      "@fluxpointstudios/orynq-sdk-transport-flux": ["../packages/transport-flux/src/index.ts"],
+      "@fluxpointstudios/orynq-sdk-transport-x402": ["../packages/transport-x402/src/index.ts"]
     }
   },
   "include": ["**/*.ts"],

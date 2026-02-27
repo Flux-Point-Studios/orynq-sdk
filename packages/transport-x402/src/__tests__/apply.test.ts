@@ -6,7 +6,7 @@ import {
   createPaymentHeaders,
   applyPaymentToRequest,
 } from '../apply';
-import { X402_HEADERS, type PaymentProof, type X402SignatureProof } from '@fluxpointstudios/poi-sdk-core';
+import { X402_HEADERS, type PaymentProof, type X402SignatureProof } from '@fluxpointstudios/orynq-sdk-core';
 
 describe('createPaymentSignatureHeader', () => {
   it('extracts signature from x402-signature proof', () => {

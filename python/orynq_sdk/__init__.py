@@ -1,16 +1,16 @@
 """
-Location: python/poi_sdk/__init__.py
+Location: python/orynq_sdk/__init__.py
 
 Summary:
-    Main package initialization for poi-sdk. Exports all public classes
+    Main package initialization for orynq-sdk. Exports all public classes
     and functions for convenient importing.
 
 Usage:
-    from poi_sdk import PoiClient, PaymentRequest, BudgetConfig
+    from orynq_sdk import PoiClient, PaymentRequest, BudgetConfig
 
     # Or import specific modules
-    from poi_sdk.signers import MemorySigner, KmsSigner
-    from poi_sdk.budget import BudgetTracker, MemoryBudgetStore
+    from orynq_sdk.signers import MemorySigner, KmsSigner
+    from orynq_sdk.budget import BudgetTracker, MemoryBudgetStore
 
 Version: 0.1.0 (Flux protocol only - v1)
 """

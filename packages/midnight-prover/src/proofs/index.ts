@@ -14,7 +14,7 @@
  *   PolicyComplianceProver,
  *   SelectiveDisclosureProver,
  *   createHashChainProver,
- * } from "@fluxpointstudios/poi-sdk-midnight-prover";
+ * } from "@fluxpointstudios/orynq-sdk-midnight-prover";
  *
  * const prover = createHashChainProver({ debug: true });
  * const proof = await prover.generateProof(input);

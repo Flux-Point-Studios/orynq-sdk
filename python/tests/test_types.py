@@ -1,5 +1,5 @@
 """
-Tests for poi_sdk.types module.
+Tests for orynq_sdk.types module.
 
 Tests Pydantic models for PaymentRequest, PaymentProof, PaymentStatus,
 BudgetConfig, and split-related models. Verifies serialization, alias
@@ -9,7 +9,7 @@ handling, and type coercion.
 import pytest
 from pydantic import ValidationError
 
-from poi_sdk.types import (
+from orynq_sdk.types import (
     PaymentRequest,
     PaymentProof,
     PaymentStatus,

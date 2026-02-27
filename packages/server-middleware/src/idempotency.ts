@@ -15,7 +15,7 @@
  * - Fastify plugin for idempotency handling
  */
 
-import { FLUX_HEADERS } from "@fluxpointstudios/poi-sdk-core";
+import { FLUX_HEADERS } from "@fluxpointstudios/orynq-sdk-core";
 import { hashRequest, type RequestHashOptions } from "./request-hash.js";
 import type { Invoice, InvoiceStore } from "./invoice-store.js";
 

@@ -1,5 +1,5 @@
 """
-Location: python/poi_sdk/transport_flux.py
+Location: python/orynq_sdk/transport_flux.py
 
 Summary:
     Flux wire format transport layer. Handles parsing Flux 402 responses
@@ -10,7 +10,7 @@ Usage:
     into PaymentRequest objects, and add payment proof headers.
 
 Example:
-    from poi_sdk.transport_flux import is_flux_402, parse_flux_invoice
+    from orynq_sdk.transport_flux import is_flux_402, parse_flux_invoice
 
     if is_flux_402(response):
         request = parse_flux_invoice(response.json())

@@ -49,7 +49,7 @@
  * ```
  */
 
-import { sha256StringHex, canonicalize } from "@fluxpointstudios/poi-sdk-core/utils";
+import { sha256StringHex, canonicalize } from "@fluxpointstudios/orynq-sdk-core/utils";
 import type {
   TraceManifest,
   TraceBundle,

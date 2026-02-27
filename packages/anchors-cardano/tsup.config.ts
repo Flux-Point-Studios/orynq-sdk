@@ -12,7 +12,7 @@ export default defineConfig({
   target: "es2022",
   outDir: "dist",
   external: [
-    "@fluxpointstudios/poi-sdk-core",
-    "@fluxpointstudios/poi-sdk-process-trace",
+    "@fluxpointstudios/orynq-sdk-core",
+    "@fluxpointstudios/orynq-sdk-process-trace",
   ],
 });

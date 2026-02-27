@@ -1,5 +1,5 @@
 """
-Location: python/poi_sdk/payer.py
+Location: python/orynq_sdk/payer.py
 
 Summary:
     Defines the Payer and Signer protocols (interfaces) for payment handling.
@@ -10,7 +10,7 @@ Usage:
     or extend BasePayer to create chain-specific payment implementations.
 
 Example:
-    from poi_sdk.payer import BasePayer, PaymentRequest, PaymentProof
+    from orynq_sdk.payer import BasePayer, PaymentRequest, PaymentProof
 
     class CardanoPayer(BasePayer):
         supported_chains = ["cardano:mainnet", "cardano:preprod"]

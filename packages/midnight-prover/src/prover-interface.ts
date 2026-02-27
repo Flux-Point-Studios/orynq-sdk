@@ -50,7 +50,7 @@ import type {
  *
  * @example
  * ```typescript
- * import { MidnightProver, createMidnightProver } from '@fluxpointstudios/poi-sdk-midnight-prover';
+ * import { MidnightProver, createMidnightProver } from '@fluxpointstudios/orynq-sdk-midnight-prover';
  *
  * const prover = createMidnightProver();
  * await prover.connect({ proofServerUrl: 'https://proof.midnight.network', timeout: 300000, retries: 3 });

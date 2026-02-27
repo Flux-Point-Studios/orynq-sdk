@@ -1,4 +1,4 @@
-# poi-sdk Python
+# orynq-sdk Python
 
 > **Note:** The Python SDK currently supports **Flux protocol only** (Cardano).
 > x402 protocol support for EVM chains is planned for a future release.
@@ -8,27 +8,27 @@ Dual-protocol commerce layer for Cardano/EVM payments.
 ## Installation
 
 ```bash
-pip install poi-sdk
+pip install orynq-sdk
 ```
 
 ### Optional Dependencies
 
 ```bash
 # For Cardano support (pycardano)
-pip install poi-sdk[cardano]
+pip install orynq-sdk[cardano]
 
 # For AWS KMS signing
-pip install poi-sdk[aws]
+pip install orynq-sdk[aws]
 
 # For development
-pip install poi-sdk[dev]
+pip install orynq-sdk[dev]
 ```
 
 ## Quick Start
 
 ```python
 import asyncio
-from poi_sdk import PoiClient, BudgetConfig
+from orynq_sdk import PoiClient, BudgetConfig
 
 async def main():
     # Create a client with auto-pay enabled
@@ -56,7 +56,7 @@ asyncio.run(main())
 ## Implementing a Payer
 
 ```python
-from poi_sdk import BasePayer, PaymentRequest, PaymentProof
+from orynq_sdk import BasePayer, PaymentRequest, PaymentProof
 
 class MyCardanoPayer(BasePayer):
     supported_chains = ["cardano:mainnet", "cardano:preprod"]

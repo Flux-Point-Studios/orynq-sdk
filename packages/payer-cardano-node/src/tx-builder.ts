@@ -11,7 +11,7 @@
  * - @emurgo/cardano-serialization-lib-nodejs for transaction building
  */
 
-import type { PaymentRequest, Signer } from "@fluxpointstudios/poi-sdk-core";
+import type { PaymentRequest, Signer } from "@fluxpointstudios/orynq-sdk-core";
 import type { UTxO, ProtocolParameters } from "./providers/interface.js";
 
 // ---------------------------------------------------------------------------

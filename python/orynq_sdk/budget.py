@@ -1,5 +1,5 @@
 """
-Location: python/poi_sdk/budget.py
+Location: python/orynq_sdk/budget.py
 
 Summary:
     Budget tracking and enforcement for payments. Provides rate limiting
@@ -10,8 +10,8 @@ Usage:
     Implements both the BudgetStore protocol and a memory-based store.
 
 Example:
-    from poi_sdk.budget import BudgetTracker, MemoryBudgetStore
-    from poi_sdk.types import BudgetConfig
+    from orynq_sdk.budget import BudgetTracker, MemoryBudgetStore
+    from orynq_sdk.types import BudgetConfig
 
     config = BudgetConfig(max_per_request="1000000", max_per_day="10000000")
     tracker = BudgetTracker(config, MemoryBudgetStore())

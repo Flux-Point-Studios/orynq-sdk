@@ -12,7 +12,7 @@
  * - cli.ts for command-line configuration
  */
 
-import type { ChainId } from "@fluxpointstudios/poi-sdk-core";
+import type { ChainId } from "@fluxpointstudios/orynq-sdk-core";
 import type { Request } from "express";
 import type { SettlementMode } from "./x402-settler.js";
 

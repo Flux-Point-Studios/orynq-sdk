@@ -12,7 +12,7 @@
 
 import chalk from "chalk";
 import type { Command } from "commander";
-import { X402_HEADERS } from "@fluxpointstudios/poi-sdk-core";
+import { X402_HEADERS } from "@fluxpointstudios/orynq-sdk-core";
 
 /**
  * Register the 'test-x402' command with the CLI program.

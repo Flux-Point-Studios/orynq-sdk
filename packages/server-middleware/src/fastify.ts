@@ -25,7 +25,7 @@ import {
   X402_HEADERS,
   type ChainId,
   type PaymentProof,
-} from "@fluxpointstudios/poi-sdk-core";
+} from "@fluxpointstudios/orynq-sdk-core";
 import type { InvoiceStore, Invoice, CreateInvoiceParams } from "./invoice-store.js";
 import type { ChainVerifier } from "./verifiers/interface.js";
 import { findVerifier } from "./verifiers/interface.js";
@@ -167,7 +167,7 @@ declare module "fastify" {
  * @example
  * ```typescript
  * import Fastify from "fastify";
- * import { fastifyPayment, MemoryInvoiceStore, CardanoVerifier } from "@fluxpointstudios/poi-sdk-server-middleware";
+ * import { fastifyPayment, MemoryInvoiceStore, CardanoVerifier } from "@fluxpointstudios/orynq-sdk-server-middleware";
  *
  * const fastify = Fastify();
  * const store = new MemoryInvoiceStore();

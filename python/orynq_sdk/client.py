@@ -1,8 +1,8 @@
 """
-Location: python/poi_sdk/client.py
+Location: python/orynq_sdk/client.py
 
 Summary:
-    Main PoiClient class for the poi-sdk. Provides auto-pay functionality
+    Main PoiClient class for the orynq-sdk. Provides auto-pay functionality
     for HTTP requests that return 402 Payment Required responses.
 
 Usage:
@@ -11,8 +11,8 @@ Usage:
     payment when needed.
 
 Example:
-    from poi_sdk import PoiClient
-    from poi_sdk.types import BudgetConfig
+    from orynq_sdk import PoiClient
+    from orynq_sdk.types import BudgetConfig
 
     client = PoiClient(
         base_url="https://api.example.com",
@@ -43,7 +43,7 @@ from .stream import parse_ndjson_stream
 
 class PoiClient:
     """
-    Main poi-sdk client with automatic payment handling.
+    Main orynq-sdk client with automatic payment handling.
 
     The PoiClient wraps HTTP requests and automatically handles
     402 Payment Required responses by:

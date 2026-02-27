@@ -14,7 +14,7 @@
  *   buildHashChainWitness,
  *   buildPublicInputs,
  *   serializeWitness,
- * } from "@fluxpointstudios/poi-sdk-midnight-prover";
+ * } from "@fluxpointstudios/orynq-sdk-midnight-prover";
  * ```
  *
  * Related files:

@@ -21,7 +21,7 @@ PoI v2 represents a fundamental philosophy shift from "deterministic replay" to 
 ### Package Overview
 
 ```
-poi-sdk/packages/
+orynq-sdk/packages/
   core/                    # Existing - types, utils, chains
   process-trace/           # Existing - trace building, merkle, bundles
   anchors-cardano/         # Existing - L1 anchoring (label 2222)
@@ -1297,7 +1297,7 @@ interface WrappedKey {
 
 ---
 
-## Integration with Existing poi-sdk
+## Integration with Existing orynq-sdk
 
 ### Migration from poi-openclaw
 
@@ -1307,7 +1307,7 @@ The `poi-flight-recorder` package includes an adapter layer for migrating from t
 // packages/flight-recorder/src/integration/openclaw-adapter.ts
 
 import { FlightRecorder, RecorderConfig } from "../recorder/stream-recorder";
-import { TraceRun, TraceEvent } from "@fluxpointstudios/poi-sdk-process-trace";
+import { TraceRun, TraceEvent } from "@fluxpointstudios/orynq-sdk-process-trace";
 
 /**
  * Adapter to bridge poi-openclaw traces to flight-recorder format.
@@ -1368,23 +1368,23 @@ export class OpenClawAdapter {
 ```json
 // packages/flight-recorder/package.json
 {
-  "name": "@fluxpointstudios/poi-sdk-flight-recorder",
+  "name": "@fluxpointstudios/orynq-sdk-flight-recorder",
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*",
-    "@fluxpointstudios/poi-sdk-process-trace": "workspace:*",
-    "@fluxpointstudios/poi-sdk-storage-adapters": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-storage-adapters": "workspace:*"
   },
   "optionalDependencies": {
-    "@fluxpointstudios/poi-sdk-attestor": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-attestor": "workspace:*"
   }
 }
 
 // packages/hydra-batcher/package.json
 {
-  "name": "@fluxpointstudios/poi-sdk-hydra-batcher",
+  "name": "@fluxpointstudios/orynq-sdk-hydra-batcher",
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*",
-    "@fluxpointstudios/poi-sdk-anchors-cardano": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-anchors-cardano": "workspace:*"
   },
   "peerDependencies": {
     "@cardano-ogmios/client": "^6.0.0"
@@ -1393,9 +1393,9 @@ export class OpenClawAdapter {
 
 // packages/attestor/package.json
 {
-  "name": "@fluxpointstudios/poi-sdk-attestor",
+  "name": "@fluxpointstudios/orynq-sdk-attestor",
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*"
   },
   "optionalDependencies": {
     // TEE SDKs as optional
@@ -1406,11 +1406,11 @@ export class OpenClawAdapter {
 
 // packages/midnight-prover/package.json
 {
-  "name": "@fluxpointstudios/poi-sdk-midnight-prover",
+  "name": "@fluxpointstudios/orynq-sdk-midnight-prover",
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*",
-    "@fluxpointstudios/poi-sdk-process-trace": "workspace:*",
-    "@fluxpointstudios/poi-sdk-anchors-cardano": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-anchors-cardano": "workspace:*"
   },
   "peerDependencies": {
     "@midnight-ntwrk/compact-runtime": "^0.1.0"
@@ -1735,8 +1735,8 @@ export enum PoiV2Error {
 ### Minimal Configuration (Integrity Only)
 
 ```typescript
-import { FlightRecorder } from "@fluxpointstudios/poi-sdk-flight-recorder";
-import { LocalStorageAdapter } from "@fluxpointstudios/poi-sdk-storage-adapters";
+import { FlightRecorder } from "@fluxpointstudios/orynq-sdk-flight-recorder";
+import { LocalStorageAdapter } from "@fluxpointstudios/orynq-sdk-storage-adapters";
 
 const recorder = new FlightRecorder({
   agentId: "my-agent",
@@ -1753,11 +1753,11 @@ const recorder = new FlightRecorder({
 ### Full Configuration (All Tiers)
 
 ```typescript
-import { FlightRecorder } from "@fluxpointstudios/poi-sdk-flight-recorder";
-import { NitroAttestor } from "@fluxpointstudios/poi-sdk-attestor";
-import { IpfsStorageAdapter } from "@fluxpointstudios/poi-sdk-storage-adapters";
-import { HydraBatcher } from "@fluxpointstudios/poi-sdk-hydra-batcher";
-import { MidnightProver } from "@fluxpointstudios/poi-sdk-midnight-prover";
+import { FlightRecorder } from "@fluxpointstudios/orynq-sdk-flight-recorder";
+import { NitroAttestor } from "@fluxpointstudios/orynq-sdk-attestor";
+import { IpfsStorageAdapter } from "@fluxpointstudios/orynq-sdk-storage-adapters";
+import { HydraBatcher } from "@fluxpointstudios/orynq-sdk-hydra-batcher";
+import { MidnightProver } from "@fluxpointstudios/orynq-sdk-midnight-prover";
 
 const attestor = new NitroAttestor({
   kmsKeyId: "arn:aws:kms:...",
@@ -1819,7 +1819,7 @@ const recorder = new FlightRecorder({
 
 ## References
 
-1. [PoI SDK GitHub Repository](https://github.com/Flux-Point-Studios/poi-sdk)
+1. [PoI SDK GitHub Repository](https://github.com/Flux-Point-Studios/orynq-sdk)
 2. [Cardano Metadata Labels (CIP-10)](https://cips.cardano.org/cips/cip10/)
 3. [Hydra Protocol Specification](https://hydra.family/head-protocol/)
 4. [Midnight Network Documentation](https://docs.midnight.network/)

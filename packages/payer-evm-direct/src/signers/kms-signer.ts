@@ -26,7 +26,7 @@
  * and payer-evm-x402.
  */
 
-import type { Signer, ChainId } from "@fluxpointstudios/poi-sdk-core";
+import type { Signer, ChainId } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Type Declarations for Optional AWS SDK
@@ -136,7 +136,7 @@ const SECP256K1_HALF_N = SECP256K1_N / BigInt(2);
  *
  * @example
  * ```typescript
- * import { EvmKmsSigner } from "@fluxpointstudios/poi-sdk-payer-evm-direct/signers";
+ * import { EvmKmsSigner } from "@fluxpointstudios/orynq-sdk-payer-evm-direct/signers";
  *
  * const signer = new EvmKmsSigner({
  *   keyId: "alias/my-eth-key",

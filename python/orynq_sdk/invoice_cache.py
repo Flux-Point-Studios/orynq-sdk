@@ -1,5 +1,5 @@
 """
-Location: python/poi_sdk/invoice_cache.py
+Location: python/orynq_sdk/invoice_cache.py
 
 Summary:
     Invoice caching to prevent double-payment. Stores payment proofs
@@ -10,7 +10,7 @@ Usage:
     before initiating a new payment, preventing accidental double-pay.
 
 Example:
-    from poi_sdk.invoice_cache import MemoryInvoiceCache
+    from orynq_sdk.invoice_cache import MemoryInvoiceCache
 
     cache = MemoryInvoiceCache()
 

@@ -10,8 +10,8 @@
  *
  * Usage:
  * ```typescript
- * import { MemorySigner, KmsSigner } from "@fluxpointstudios/poi-sdk-payer-cardano-node/signers";
- * import type { Signer } from "@fluxpointstudios/poi-sdk-payer-cardano-node/signers";
+ * import { MemorySigner, KmsSigner } from "@fluxpointstudios/orynq-sdk-payer-cardano-node/signers";
+ * import type { Signer } from "@fluxpointstudios/orynq-sdk-payer-cardano-node/signers";
  *
  * // Development (WARNING: not for production!)
  * const devSigner = new MemorySigner("hex-private-key");

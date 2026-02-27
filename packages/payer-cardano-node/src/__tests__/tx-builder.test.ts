@@ -13,7 +13,7 @@ import {
   calculateFee,
   isValidCardanoAddress,
 } from "../tx-builder.js";
-import type { PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
+import type { PaymentRequest } from "@fluxpointstudios/orynq-sdk-core";
 import type { UTxO } from "../providers/interface.js";
 
 // ---------------------------------------------------------------------------

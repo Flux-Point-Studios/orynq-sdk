@@ -1,7 +1,7 @@
 {
-  "name": "@fluxpointstudios/poi-sdk-transport-x402",
+  "name": "@fluxpointstudios/orynq-sdk-transport-x402",
   "version": "0.0.0",
-  "description": "x402 protocol transport implementation for poi-sdk",
+  "description": "x402 protocol transport implementation for orynq-sdk",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -48,13 +48,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
     "directory": "packages/transport-x402"
   },
-  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
-  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
+  "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*"
   },
   "peerDependencies": {
     "@x402/fetch": ">=0.1.0",

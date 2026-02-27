@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "poi-sdk"
+name = "orynq-sdk"
 version = "0.1.0"
 description = "Dual-protocol commerce layer for Cardano/EVM payments"
 readme = "README.md"
@@ -30,7 +30,7 @@ testpaths = ["tests"]
 asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
-source = ["poi_sdk"]
+source = ["orynq_sdk"]
 branch = true
 
 [tool.coverage.report]
@@ -43,4 +43,4 @@ exclude_lines = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["poi_sdk"]
+packages = ["orynq_sdk"]

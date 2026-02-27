@@ -6,7 +6,7 @@
  *
  * @example
  * ```typescript
- * import { createNitroAttestor, verifyBundle } from '@fluxpointstudios/poi-sdk-attestor';
+ * import { createNitroAttestor, verifyBundle } from '@fluxpointstudios/orynq-sdk-attestor';
  *
  * // In a Nitro Enclave
  * const attestor = createNitroAttestor('my-agent');

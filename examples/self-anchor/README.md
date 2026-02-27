@@ -11,8 +11,8 @@ This example shows how to anchor AI process traces to Cardano using your own wal
 ## Installation
 
 ```bash
-npm install @fluxpointstudios/poi-sdk-process-trace \
-            @fluxpointstudios/poi-sdk-anchors-cardano \
+npm install @fluxpointstudios/orynq-sdk-process-trace \
+            @fluxpointstudios/orynq-sdk-anchors-cardano \
             lucid-cardano
 ```
 
@@ -28,7 +28,7 @@ import {
   closeSpan,
   finalizeTrace,
   createManifest,
-} from "@fluxpointstudios/poi-sdk-process-trace";
+} from "@fluxpointstudios/orynq-sdk-process-trace";
 
 // Start a trace for your AI session
 const run = await createTrace({
@@ -84,7 +84,7 @@ import {
   buildAnchorMetadata,
   serializeForCbor,
   POI_METADATA_LABEL,
-} from "@fluxpointstudios/poi-sdk-anchors-cardano";
+} from "@fluxpointstudios/orynq-sdk-anchors-cardano";
 
 // Create anchor entry from the bundle
 const entry = createAnchorEntryFromBundle(bundle, {
@@ -139,7 +139,7 @@ console.log("Anchor confirmed on-chain!");
 import {
   createBlockfrostProvider,
   verifyAnchor,
-} from "@fluxpointstudios/poi-sdk-anchors-cardano";
+} from "@fluxpointstudios/orynq-sdk-anchors-cardano";
 
 const provider = createBlockfrostProvider({
   projectId: "YOUR_BLOCKFROST_PROJECT_ID",
@@ -161,7 +161,7 @@ if (result.verified) {
 If you prefer cardano-cli over Lucid:
 
 ```typescript
-import { serializeForCardanoCli } from "@fluxpointstudios/poi-sdk-anchors-cardano";
+import { serializeForCardanoCli } from "@fluxpointstudios/orynq-sdk-anchors-cardano";
 import { writeFileSync } from "fs";
 
 // Serialize metadata for cardano-cli

@@ -1,7 +1,7 @@
 {
-  "name": "@fluxpointstudios/poi-sdk-payer-cardano-node",
+  "name": "@fluxpointstudios/orynq-sdk-payer-cardano-node",
   "version": "0.0.0",
-  "description": "Server-side Cardano payer implementation with Signer abstraction for poi-sdk",
+  "description": "Server-side Cardano payer implementation with Signer abstraction for orynq-sdk",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -68,13 +68,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
     "directory": "packages/payer-cardano-node"
   },
-  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
-  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
+  "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*"
   },
   "peerDependencies": {
     "@emurgo/cardano-serialization-lib-nodejs": ">=11.0.0",

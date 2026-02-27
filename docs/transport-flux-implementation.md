@@ -1,12 +1,12 @@
-# @fluxpointstudios/poi-sdk-transport-flux Implementation Summary
+# @fluxpointstudios/orynq-sdk-transport-flux Implementation Summary
 
 ## Overview
 
-The `@fluxpointstudios/poi-sdk-transport-flux` package implements the Flux (T-Backend style) wire format transport for the poi-sdk payment layer. This package handles detection, parsing, and header application for the Flux payment protocol.
+The `@fluxpointstudios/orynq-sdk-transport-flux` package implements the Flux (T-Backend style) wire format transport for the orynq-sdk payment layer. This package handles detection, parsing, and header application for the Flux payment protocol.
 
 ## Package Location
 
-`D:\fluxPoint\PoI\poi-sdk\packages\transport-flux`
+`D:\fluxPoint\PoI\orynq-sdk\packages\transport-flux`
 
 ## Directory Structure
 
@@ -69,12 +69,12 @@ Main entry point with:
 
 ## Dependencies
 
-- `@fluxpointstudios/poi-sdk-core` (workspace:*) - Core types, FLUX_HEADERS, CHAINS mapping
+- `@fluxpointstudios/orynq-sdk-core` (workspace:*) - Core types, FLUX_HEADERS, CHAINS mapping
 
 ## Usage Example
 
 ```typescript
-import { createFluxTransport } from "@fluxpointstudios/poi-sdk-transport-flux";
+import { createFluxTransport } from "@fluxpointstudios/orynq-sdk-transport-flux";
 
 const flux = createFluxTransport();
 
@@ -195,7 +195,7 @@ The Test Engineer should verify the following test scenarios:
 ### Test Commands
 
 ```bash
-cd D:\fluxPoint\PoI\poi-sdk\packages\transport-flux
+cd D:\fluxPoint\PoI\orynq-sdk\packages\transport-flux
 pnpm test        # Run all tests
 pnpm test:watch  # Run tests in watch mode
 pnpm typecheck   # TypeScript validation
@@ -204,4 +204,4 @@ pnpm build       # Build package
 
 ---
 
-**For Test Engineer**: Please read this document and implement the recommended tests. The package is ready for testing at `D:\fluxPoint\PoI\poi-sdk\packages\transport-flux`.
+**For Test Engineer**: Please read this document and implement the recommended tests. The package is ready for testing at `D:\fluxPoint\PoI\orynq-sdk\packages\transport-flux`.

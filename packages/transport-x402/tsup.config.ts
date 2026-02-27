@@ -1,5 +1,5 @@
 /**
- * @summary Build configuration for @fluxpointstudios/poi-sdk-transport-x402 package using tsup.
+ * @summary Build configuration for @fluxpointstudios/orynq-sdk-transport-x402 package using tsup.
  *
  * This configuration produces both ESM and CJS outputs with declaration files.
  * The package wraps Coinbase's @x402/* packages for the x402 wire format.
@@ -18,5 +18,5 @@ export default defineConfig({
   minify: false,
   target: "es2022",
   outDir: "dist",
-  external: ["@fluxpointstudios/poi-sdk-core", "@x402/fetch", "@x402/evm"],
+  external: ["@fluxpointstudios/orynq-sdk-core", "@x402/fetch", "@x402/evm"],
 });

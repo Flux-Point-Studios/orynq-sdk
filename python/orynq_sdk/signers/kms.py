@@ -1,5 +1,5 @@
 """
-Location: python/poi_sdk/signers/kms.py
+Location: python/orynq_sdk/signers/kms.py
 
 Summary:
     AWS KMS signer for production use. Uses AWS Key Management Service
@@ -7,10 +7,10 @@ Summary:
 
 Usage:
     Used in production environments for secure transaction signing.
-    Requires boto3 to be installed (pip install poi-sdk[aws]).
+    Requires boto3 to be installed (pip install orynq-sdk[aws]).
 
 Example:
-    from poi_sdk.signers import KmsSigner
+    from orynq_sdk.signers import KmsSigner
 
     signer = KmsSigner(
         key_id="arn:aws:kms:us-east-1:123456789:key/abc123",
@@ -29,7 +29,7 @@ class KmsSigner:
     and use private keys. Keys never leave the KMS hardware security
     modules (HSMs), providing strong security guarantees.
 
-    Requires boto3: pip install poi-sdk[aws]
+    Requires boto3: pip install orynq-sdk[aws]
 
     Attributes:
         key_id: AWS KMS key ID or ARN
@@ -65,7 +65,7 @@ class KmsSigner:
         """
         raise NotImplementedError(
             "KmsSigner.get_address requires boto3. "
-            "Install with: pip install poi-sdk[aws]"
+            "Install with: pip install orynq-sdk[aws]"
         )
 
     async def sign(self, payload: bytes, chain: str) -> bytes:
@@ -87,5 +87,5 @@ class KmsSigner:
         """
         raise NotImplementedError(
             "KmsSigner.sign requires boto3. "
-            "Install with: pip install poi-sdk[aws]"
+            "Install with: pip install orynq-sdk[aws]"
         )

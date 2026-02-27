@@ -8,8 +8,8 @@
     "start:mainnet": "NETWORK=mainnet npx tsx self-anchor.ts"
   },
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-process-trace": "^0.1.0",
-    "@fluxpointstudios/poi-sdk-anchors-cardano": "^0.1.0",
+    "@fluxpointstudios/orynq-sdk-process-trace": "^0.1.0",
+    "@fluxpointstudios/orynq-sdk-anchors-cardano": "^0.1.0",
     "lucid-cardano": "^0.10.11"
   },
   "devDependencies": {

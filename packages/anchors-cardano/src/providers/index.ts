@@ -20,7 +20,7 @@
  * import {
  *   createBlockfrostProvider,
  *   createKoiosProvider,
- * } from "@fluxpointstudios/poi-sdk-anchors-cardano/providers";
+ * } from "@fluxpointstudios/orynq-sdk-anchors-cardano/providers";
  *
  * // Using Blockfrost
  * const blockfrost = createBlockfrostProvider({

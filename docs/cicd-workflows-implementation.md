@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document summarizes the GitHub Actions CI/CD workflows created for the poi-sdk project.
+This document summarizes the GitHub Actions CI/CD workflows created for the orynq-sdk project.
 
 ## Files Created
 

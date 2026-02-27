@@ -1,5 +1,5 @@
 """
-Location: python/poi_sdk/signers/memory.py
+Location: python/orynq_sdk/signers/memory.py
 
 Summary:
     Development-only in-memory signer. Stores keys in memory for testing
@@ -10,7 +10,7 @@ Usage:
     external key management. Real implementations require pycardano.
 
 Example:
-    from poi_sdk.signers import MemorySigner
+    from orynq_sdk.signers import MemorySigner
 
     # WARNING: Development only!
     signer = MemorySigner("abandon abandon abandon...")
@@ -67,7 +67,7 @@ class MemorySigner:
         """
         raise NotImplementedError(
             "MemorySigner.get_address requires pycardano. "
-            "Install with: pip install poi-sdk[cardano]"
+            "Install with: pip install orynq-sdk[cardano]"
         )
 
     async def sign(self, payload: bytes, chain: str) -> bytes:
@@ -88,5 +88,5 @@ class MemorySigner:
         """
         raise NotImplementedError(
             "MemorySigner.sign requires pycardano. "
-            "Install with: pip install poi-sdk[cardano]"
+            "Install with: pip install orynq-sdk[cardano]"
         )

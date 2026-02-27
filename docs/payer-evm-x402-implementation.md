@@ -1,8 +1,8 @@
-# @fluxpointstudios/poi-sdk-payer-evm-x402 Implementation Summary
+# @fluxpointstudios/orynq-sdk-payer-evm-x402 Implementation Summary
 
 ## Overview
 
-The `@fluxpointstudios/poi-sdk-payer-evm-x402` package has been implemented as an EVM Payer for the x402 payment protocol using EIP-3009 "Transfer With Authorization" for gasless token transfers.
+The `@fluxpointstudios/orynq-sdk-payer-evm-x402` package has been implemented as an EVM Payer for the x402 payment protocol using EIP-3009 "Transfer With Authorization" for gasless token transfers.
 
 ## Files Created
 
@@ -53,8 +53,8 @@ The `@fluxpointstudios/poi-sdk-payer-evm-x402` package has been implemented as a
 ## Dependencies
 
 ### Runtime Dependencies
-- `@fluxpointstudios/poi-sdk-core`: workspace:* (protocol-neutral types and utilities)
-- `@fluxpointstudios/poi-sdk-transport-x402`: workspace:* (x402 protocol transport)
+- `@fluxpointstudios/orynq-sdk-core`: workspace:* (protocol-neutral types and utilities)
+- `@fluxpointstudios/orynq-sdk-transport-x402`: workspace:* (x402 protocol transport)
 
 ### Peer Dependencies
 - `viem`: >=2.0.0 (required)
@@ -115,7 +115,7 @@ class ViemSigner implements Signer {
 ### Basic Usage
 
 ```typescript
-import { createEvmX402Payer } from "@fluxpointstudios/poi-sdk-payer-evm-x402";
+import { createEvmX402Payer } from "@fluxpointstudios/orynq-sdk-payer-evm-x402";
 
 const payer = createEvmX402Payer("0x...", {
   chains: ["eip155:8453"], // Base mainnet
@@ -136,7 +136,7 @@ const proof = await payer.pay({
 ### Custom Signer Configuration
 
 ```typescript
-import { EvmX402Payer, ViemSigner } from "@fluxpointstudios/poi-sdk-payer-evm-x402";
+import { EvmX402Payer, ViemSigner } from "@fluxpointstudios/orynq-sdk-payer-evm-x402";
 import { privateKeyToAccount } from "viem/accounts";
 
 const account = privateKeyToAccount("0x...");
@@ -151,11 +151,11 @@ const payer = new EvmX402Payer({
 });
 ```
 
-### Integration with @fluxpointstudios/poi-sdk-client
+### Integration with @fluxpointstudios/orynq-sdk-client
 
 ```typescript
-import { createPoiClient } from "@fluxpointstudios/poi-sdk-client";
-import { createEvmX402Payer } from "@fluxpointstudios/poi-sdk-payer-evm-x402";
+import { createPoiClient } from "@fluxpointstudios/orynq-sdk-client";
+import { createEvmX402Payer } from "@fluxpointstudios/orynq-sdk-payer-evm-x402";
 
 const payer = createEvmX402Payer("0x...");
 const client = createPoiClient({
@@ -262,8 +262,8 @@ pnpm build         # Verify build succeeds
 ### Mock Data for Tests
 
 ```typescript
-import { createEvmX402Payer } from "@fluxpointstudios/poi-sdk-payer-evm-x402";
-import type { PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
+import { createEvmX402Payer } from "@fluxpointstudios/orynq-sdk-payer-evm-x402";
+import type { PaymentRequest } from "@fluxpointstudios/orynq-sdk-core";
 
 // Test private key (DO NOT USE IN PRODUCTION)
 const TEST_PRIVATE_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";

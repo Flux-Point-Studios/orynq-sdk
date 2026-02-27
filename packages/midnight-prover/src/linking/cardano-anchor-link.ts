@@ -47,7 +47,7 @@ import {
   isInferenceProof,
 } from "../types.js";
 
-import { canonicalize } from "@fluxpointstudios/poi-sdk-core/utils";
+import { canonicalize } from "@fluxpointstudios/orynq-sdk-core/utils";
 
 // =============================================================================
 // TYPES

@@ -10,7 +10,7 @@
  * - Client code that needs to verify payment completion
  */
 
-import { X402_HEADERS } from "@fluxpointstudios/poi-sdk-core";
+import { X402_HEADERS } from "@fluxpointstudios/orynq-sdk-core";
 import type { X402Settlement } from "./types.js";
 import { isX402PaymentResponse } from "./types.js";
 

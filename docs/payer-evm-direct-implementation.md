@@ -1,8 +1,8 @@
-# @fluxpointstudios/poi-sdk-payer-evm-direct Implementation Summary
+# @fluxpointstudios/orynq-sdk-payer-evm-direct Implementation Summary
 
 ## Overview
 
-The `@fluxpointstudios/poi-sdk-payer-evm-direct` package has been implemented at `D:\fluxPoint\PoI\poi-sdk\packages\payer-evm-direct`. This is a legacy EVM payer for direct ERC-20 transfers using the viem library.
+The `@fluxpointstudios/orynq-sdk-payer-evm-direct` package has been implemented at `D:\fluxPoint\PoI\orynq-sdk\packages\payer-evm-direct`. This is a legacy EVM payer for direct ERC-20 transfers using the viem library.
 
 ## Key Features
 
@@ -17,7 +17,7 @@ The `@fluxpointstudios/poi-sdk-payer-evm-direct` package has been implemented at
 
 ```
 packages/payer-evm-direct/
-├── package.json           # Package configuration, deps: @fluxpointstudios/poi-sdk-core, viem (peer)
+├── package.json           # Package configuration, deps: @fluxpointstudios/orynq-sdk-core, viem (peer)
 ├── tsconfig.json          # TypeScript configuration extending monorepo base
 ├── tsup.config.ts         # Build configuration for ESM/CJS outputs
 └── src/
@@ -44,7 +44,7 @@ packages/payer-evm-direct/
 - `getSupportedChains()`: Get all supported chain IDs
 
 ### 3. `src/viem-payer.ts`
-- `ViemPayer` class implementing `@fluxpointstudios/poi-sdk-core` Payer interface
+- `ViemPayer` class implementing `@fluxpointstudios/orynq-sdk-core` Payer interface
 - Methods: `supports()`, `getAddress()`, `getBalance()`, `pay()`
 - Lazy client initialization with caching
 - Configurable RPC URLs and chain support
@@ -56,7 +56,7 @@ packages/payer-evm-direct/
 ## Dependencies
 
 ### Production Dependencies
-- `@fluxpointstudios/poi-sdk-core`: workspace:* (core types and interfaces)
+- `@fluxpointstudios/orynq-sdk-core`: workspace:* (core types and interfaces)
 
 ### Peer Dependencies
 - `viem`: >=2.0.0 (EVM client library)
@@ -79,7 +79,7 @@ packages/payer-evm-direct/
 ## Usage Example
 
 ```typescript
-import { createEvmPayer, ViemPayer } from "@fluxpointstudios/poi-sdk-payer-evm-direct";
+import { createEvmPayer, ViemPayer } from "@fluxpointstudios/orynq-sdk-payer-evm-direct";
 
 // Using factory function
 const payer = createEvmPayer("0x...", {
@@ -115,7 +115,7 @@ const proof = await payer.pay({
 
 ## Recommended Tests
 
-The test engineer should verify the following test scenarios for `@fluxpointstudios/poi-sdk-payer-evm-direct`:
+The test engineer should verify the following test scenarios for `@fluxpointstudios/orynq-sdk-payer-evm-direct`:
 
 ### Unit Tests
 

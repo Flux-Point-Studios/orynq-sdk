@@ -17,7 +17,7 @@ import {
   addEvent,
   closeSpan,
   finalizeTrace,
-} from "@fluxpointstudios/poi-sdk-process-trace";
+} from "@fluxpointstudios/orynq-sdk-process-trace";
 
 import {
   createAnchorEntryFromBundle,
@@ -26,7 +26,7 @@ import {
   createBlockfrostProvider,
   verifyAnchor,
   POI_METADATA_LABEL,
-} from "@fluxpointstudios/poi-sdk-anchors-cardano";
+} from "@fluxpointstudios/orynq-sdk-anchors-cardano";
 
 import { Lucid, Blockfrost } from "lucid-cardano";
 

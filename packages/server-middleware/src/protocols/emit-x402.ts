@@ -16,7 +16,7 @@
  * - Fastify plugin when emitting 402 responses
  */
 
-import { X402_HEADERS } from "@fluxpointstudios/poi-sdk-core";
+import { X402_HEADERS } from "@fluxpointstudios/orynq-sdk-core";
 import type { Invoice } from "../invoice-store.js";
 
 // ---------------------------------------------------------------------------

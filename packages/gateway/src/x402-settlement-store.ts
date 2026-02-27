@@ -10,7 +10,7 @@
  * - Stores exact payment requirements for verification
  */
 
-import type { ChainId } from "@fluxpointstudios/poi-sdk-core";
+import type { ChainId } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Types

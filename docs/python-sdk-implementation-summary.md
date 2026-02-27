@@ -1,8 +1,8 @@
-# Python poi-sdk Implementation Summary
+# Python orynq-sdk Implementation Summary
 
 ## Overview
 
-This document summarizes the implementation of the Python poi-sdk v1 (Flux protocol only) and provides test recommendations for the test engineer.
+This document summarizes the implementation of the Python orynq-sdk v1 (Flux protocol only) and provides test recommendations for the test engineer.
 
 ## Implementation Details
 
@@ -11,17 +11,17 @@ This document summarizes the implementation of the Python poi-sdk v1 (Flux proto
 | File | Location | Purpose |
 |------|----------|---------|
 | `pyproject.toml` | `python/pyproject.toml` | Package configuration with dependencies |
-| `types.py` | `python/poi_sdk/types.py` | Pydantic models for all data structures |
-| `transport_flux.py` | `python/poi_sdk/transport_flux.py` | Flux wire format parsing and header management |
-| `payer.py` | `python/poi_sdk/payer.py` | Payer and Signer protocols + BasePayer class |
-| `budget.py` | `python/poi_sdk/budget.py` | Budget tracking with daily/per-request limits |
-| `invoice_cache.py` | `python/poi_sdk/invoice_cache.py` | Invoice caching to prevent double-pay |
-| `stream.py` | `python/poi_sdk/stream.py` | NDJSON streaming utilities |
-| `client.py` | `python/poi_sdk/client.py` | Main PoiClient with auto-pay functionality |
-| `__init__.py` | `python/poi_sdk/__init__.py` | Package exports |
-| `signers/__init__.py` | `python/poi_sdk/signers/__init__.py` | Signers package exports |
-| `signers/memory.py` | `python/poi_sdk/signers/memory.py` | Dev-only in-memory signer |
-| `signers/kms.py` | `python/poi_sdk/signers/kms.py` | AWS KMS signer stub |
+| `types.py` | `python/orynq_sdk/types.py` | Pydantic models for all data structures |
+| `transport_flux.py` | `python/orynq_sdk/transport_flux.py` | Flux wire format parsing and header management |
+| `payer.py` | `python/orynq_sdk/payer.py` | Payer and Signer protocols + BasePayer class |
+| `budget.py` | `python/orynq_sdk/budget.py` | Budget tracking with daily/per-request limits |
+| `invoice_cache.py` | `python/orynq_sdk/invoice_cache.py` | Invoice caching to prevent double-pay |
+| `stream.py` | `python/orynq_sdk/stream.py` | NDJSON streaming utilities |
+| `client.py` | `python/orynq_sdk/client.py` | Main PoiClient with auto-pay functionality |
+| `__init__.py` | `python/orynq_sdk/__init__.py` | Package exports |
+| `signers/__init__.py` | `python/orynq_sdk/signers/__init__.py` | Signers package exports |
+| `signers/memory.py` | `python/orynq_sdk/signers/memory.py` | Dev-only in-memory signer |
+| `signers/kms.py` | `python/orynq_sdk/signers/kms.py` | AWS KMS signer stub |
 | `README.md` | `python/README.md` | Package documentation |
 
 ### Key Features Implemented
@@ -49,7 +49,7 @@ This document summarizes the implementation of the Python poi-sdk v1 (Flux proto
 
 ```python
 import pytest
-from poi_sdk.types import PaymentRequest, PaymentProof, BudgetConfig, SplitConfig, SplitOutput
+from orynq_sdk.types import PaymentRequest, PaymentProof, BudgetConfig, SplitConfig, SplitOutput
 
 class TestPaymentRequest:
     def test_basic_creation(self):
@@ -103,8 +103,8 @@ class TestSplitConfig:
 ```python
 import pytest
 from unittest.mock import MagicMock
-from poi_sdk.transport_flux import is_flux_402, parse_flux_invoice, apply_payment_headers
-from poi_sdk.types import PaymentProof
+from orynq_sdk.transport_flux import is_flux_402, parse_flux_invoice, apply_payment_headers
+from orynq_sdk.types import PaymentProof
 
 class TestIsFlux402:
     def test_valid_flux_402(self):
@@ -176,8 +176,8 @@ class TestApplyPaymentHeaders:
 
 ```python
 import pytest
-from poi_sdk.budget import BudgetTracker, MemoryBudgetStore, BudgetExceededError
-from poi_sdk.types import BudgetConfig
+from orynq_sdk.budget import BudgetTracker, MemoryBudgetStore, BudgetExceededError
+from orynq_sdk.types import BudgetConfig
 
 @pytest.fixture
 def budget_store():
@@ -226,8 +226,8 @@ class TestBudgetTracker:
 
 ```python
 import pytest
-from poi_sdk.invoice_cache import MemoryInvoiceCache
-from poi_sdk.types import PaymentProof
+from orynq_sdk.invoice_cache import MemoryInvoiceCache
+from orynq_sdk.types import PaymentProof
 
 class TestMemoryInvoiceCache:
     @pytest.mark.asyncio
@@ -268,7 +268,7 @@ class TestMemoryInvoiceCache:
 import pytest
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
-from poi_sdk import PoiClient, BasePayer, PaymentRequest, PaymentProof, BudgetConfig
+from orynq_sdk import PoiClient, BasePayer, PaymentRequest, PaymentProof, BudgetConfig
 
 class MockPayer(BasePayer):
     supported_chains = ["cardano:mainnet"]
@@ -345,7 +345,7 @@ class TestPoiClient:
 ### Setup
 
 ```bash
-cd D:\fluxPoint\PoI\poi-sdk\python
+cd D:\fluxPoint\PoI\orynq-sdk\python
 
 # Create virtual environment
 python -m venv venv
@@ -363,7 +363,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 
 # Run with coverage
-pytest tests/ -v --cov=poi_sdk --cov-report=html
+pytest tests/ -v --cov=orynq_sdk --cov-report=html
 
 # Run specific test file
 pytest tests/test_types.py -v

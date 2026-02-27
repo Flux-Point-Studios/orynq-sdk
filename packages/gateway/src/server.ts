@@ -28,8 +28,8 @@
 
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
-import { X402_HEADERS, FLUX_HEADERS } from "@fluxpointstudios/poi-sdk-core";
-import { MemoryInvoiceStore, cors402 } from "@fluxpointstudios/poi-sdk-server-middleware";
+import { X402_HEADERS, FLUX_HEADERS } from "@fluxpointstudios/orynq-sdk-core";
+import { MemoryInvoiceStore, cors402 } from "@fluxpointstudios/orynq-sdk-server-middleware";
 import type { GatewayConfig } from "./config.js";
 import { mergeConfig, validateConfig } from "./config.js";
 import { createForwardMiddleware, type GatewayRequest } from "./forward.js";

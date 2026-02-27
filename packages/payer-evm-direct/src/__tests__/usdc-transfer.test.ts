@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from "vitest";
-import { PaymentFailedError } from "@fluxpointstudios/poi-sdk-core";
+import { PaymentFailedError } from "@fluxpointstudios/orynq-sdk-core";
 import {
   CHAIN_CONFIGS,
   getViemChain,

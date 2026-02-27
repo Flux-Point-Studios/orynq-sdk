@@ -119,7 +119,7 @@ The Test Engineer should verify:
 
 1. **Build verification**
    ```bash
-   pnpm --filter @fluxpointstudios/poi-sdk-midnight-prover build
+   pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build
    ```
 
 2. **Unit test execution**
@@ -149,7 +149,7 @@ The Test Engineer should verify:
 The Test Engineer should:
 1. Read this file for context on the implementation
 2. Execute the recommended tests above
-3. Perform integration testing with other poi-sdk packages
+3. Perform integration testing with other orynq-sdk packages
 4. Verify type exports work correctly when importing the package
 
 ---

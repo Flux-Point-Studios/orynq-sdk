@@ -34,14 +34,14 @@
 import {
   sha256StringHex,
   canonicalize,
-} from "@fluxpointstudios/poi-sdk-core/utils";
+} from "@fluxpointstudios/orynq-sdk-core/utils";
 
 import type {
   TraceBundle,
   TraceSpan,
   TraceEvent,
   MerkleProof,
-} from "@fluxpointstudios/poi-sdk-process-trace";
+} from "@fluxpointstudios/orynq-sdk-process-trace";
 
 import type {
   DisclosureInput,

@@ -22,8 +22,8 @@ import type {
   BudgetStore,
   ChainId,
   BudgetThresholdInfo,
-} from "@fluxpointstudios/poi-sdk-core";
-import { BudgetExceededError } from "@fluxpointstudios/poi-sdk-core";
+} from "@fluxpointstudios/orynq-sdk-core";
+import { BudgetExceededError } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Budget Tracker
@@ -37,8 +37,8 @@ import { BudgetExceededError } from "@fluxpointstudios/poi-sdk-core";
  *
  * @example
  * ```typescript
- * import { BudgetTracker } from "@fluxpointstudios/poi-sdk-client";
- * import { InMemoryBudgetStore } from "@fluxpointstudios/poi-sdk-core";
+ * import { BudgetTracker } from "@fluxpointstudios/orynq-sdk-client";
+ * import { InMemoryBudgetStore } from "@fluxpointstudios/orynq-sdk-core";
  *
  * const tracker = new BudgetTracker(
  *   {

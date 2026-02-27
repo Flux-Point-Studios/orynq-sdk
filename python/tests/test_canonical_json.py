@@ -2,7 +2,7 @@
 Cross-language compatibility tests for canonical JSON.
 
 These tests verify that Python produces the same canonical JSON output
-as TypeScript and other language implementations in the poi-sdk.
+as TypeScript and other language implementations in the orynq-sdk.
 """
 
 import json

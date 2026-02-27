@@ -8,8 +8,8 @@
     "submit-only": "npx tsx e2e-flow.ts --submit-only"
   },
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-process-trace": "workspace:*",
-    "@fluxpointstudios/poi-sdk-anchors-materios": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-anchors-materios": "workspace:*",
     "@polkadot/api": "^14.0.0"
   },
   "devDependencies": {

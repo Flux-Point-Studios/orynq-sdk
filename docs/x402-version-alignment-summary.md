@@ -63,8 +63,8 @@ The `api_version` references in t-backend are for a separate internal API versio
 
 Both affected packages build successfully:
 ```bash
-pnpm --filter @fluxpointstudios/poi-sdk-transport-x402 build  # PASSED
-pnpm --filter @fluxpointstudios/poi-sdk-gateway build          # PASSED
+pnpm --filter @fluxpointstudios/orynq-sdk-transport-x402 build  # PASSED
+pnpm --filter @fluxpointstudios/orynq-sdk-gateway build          # PASSED
 ```
 
 ## Test Engineer Instructions
@@ -83,10 +83,10 @@ Please verify the following:
 ### Test Commands
 ```bash
 # Run transport-x402 tests
-pnpm --filter @fluxpointstudios/poi-sdk-transport-x402 test
+pnpm --filter @fluxpointstudios/orynq-sdk-transport-x402 test
 
 # Run gateway tests
-pnpm --filter @fluxpointstudios/poi-sdk-gateway test
+pnpm --filter @fluxpointstudios/orynq-sdk-gateway test
 
 # Full test suite
 pnpm test

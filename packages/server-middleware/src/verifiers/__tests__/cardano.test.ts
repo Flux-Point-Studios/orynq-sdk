@@ -13,7 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { CardanoVerifier } from "../cardano.js";
-import type { CardanoTxHashProof, CardanoSignedCborProof } from "@fluxpointstudios/poi-sdk-core";
+import type { CardanoTxHashProof, CardanoSignedCborProof } from "@fluxpointstudios/orynq-sdk-core";
 
 // Mock fetch globally
 const mockFetch = vi.fn();

@@ -18,7 +18,7 @@
 import { createProxyMiddleware, type RequestHandler, type Options } from "http-proxy-middleware";
 import type { Request, Response, NextFunction } from "express";
 import type { IncomingMessage, ServerResponse } from "http";
-import { FLUX_HEADERS } from "@fluxpointstudios/poi-sdk-core";
+import { FLUX_HEADERS } from "@fluxpointstudios/orynq-sdk-core";
 import type { GatewayConfig } from "./config.js";
 import { generateInvoiceIdSync } from "./invoice-bridge.js";
 

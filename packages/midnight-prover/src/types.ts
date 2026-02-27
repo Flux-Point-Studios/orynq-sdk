@@ -22,8 +22,8 @@
  * - InferenceProof: Optional zkML proof for model inference correctness
  */
 
-import type { TraceEvent, TraceSpan, TraceBundle } from "@fluxpointstudios/poi-sdk-process-trace";
-import type { AttestationBundle, VerifierPolicy, TeeType } from "@fluxpointstudios/poi-sdk-attestor";
+import type { TraceEvent, TraceSpan, TraceBundle } from "@fluxpointstudios/orynq-sdk-process-trace";
+import type { AttestationBundle, VerifierPolicy, TeeType } from "@fluxpointstudios/orynq-sdk-attestor";
 
 // =============================================================================
 // PROOF TYPES

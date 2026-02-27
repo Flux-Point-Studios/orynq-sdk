@@ -14,7 +14,7 @@
  * - Fastify plugin for creating and managing invoices
  */
 
-import type { PaymentStatusValue, ChainId } from "@fluxpointstudios/poi-sdk-core";
+import type { PaymentStatusValue, ChainId } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Invoice Types

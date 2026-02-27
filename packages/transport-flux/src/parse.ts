@@ -2,7 +2,7 @@
  * @summary Parse Flux JSON invoice body into PaymentRequest format.
  *
  * This file handles the conversion from T-Backend wire format to the
- * protocol-neutral PaymentRequest structure used throughout poi-sdk.
+ * protocol-neutral PaymentRequest structure used throughout orynq-sdk.
  *
  * Key transformations:
  * - Chain format: "cardano-mainnet" -> "cardano:mainnet" (CAIP-2)
@@ -15,7 +15,7 @@
  * - Server middleware parsing incoming payment requests
  */
 
-import { CHAINS, type PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
+import { CHAINS, type PaymentRequest } from "@fluxpointstudios/orynq-sdk-core";
 import type { FluxInvoice } from "./types.js";
 
 // ---------------------------------------------------------------------------

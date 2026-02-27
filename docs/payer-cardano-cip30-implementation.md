@@ -1,12 +1,12 @@
-# @fluxpointstudios/poi-sdk-payer-cardano-cip30 Implementation Summary
+# @fluxpointstudios/orynq-sdk-payer-cardano-cip30 Implementation Summary
 
 ## Overview
 
-This document summarizes the implementation of the `@fluxpointstudios/poi-sdk-payer-cardano-cip30` package, a CIP-30 browser wallet adapter for Cardano payments in the poi-sdk ecosystem.
+This document summarizes the implementation of the `@fluxpointstudios/orynq-sdk-payer-cardano-cip30` package, a CIP-30 browser wallet adapter for Cardano payments in the orynq-sdk ecosystem.
 
 ## Package Location
 
-`D:\fluxPoint\PoI\poi-sdk\packages\payer-cardano-cip30`
+`D:\fluxPoint\PoI\orynq-sdk\packages\payer-cardano-cip30`
 
 ## Directory Structure
 
@@ -31,7 +31,7 @@ packages/payer-cardano-cip30/
 - Handles wallet connection flow with proper error handling
 
 ### 2. Payer Interface Implementation
-- Fully implements the `Payer` interface from `@fluxpointstudios/poi-sdk-core`
+- Fully implements the `Payer` interface from `@fluxpointstudios/orynq-sdk-core`
 - Supports both ADA and native token payments
 - Network validation (mainnet/preprod/preview)
 - Balance checking before payment execution
@@ -83,7 +83,7 @@ export { createCip30Payer } from "./index.js";
 
 #### Quick Start with Factory
 ```typescript
-import { createCip30Payer } from "@fluxpointstudios/poi-sdk-payer-cardano-cip30";
+import { createCip30Payer } from "@fluxpointstudios/orynq-sdk-payer-cardano-cip30";
 
 const payer = await createCip30Payer("nami", "mainnet", {
   blockfrostProjectId: "your-project-id",
@@ -95,7 +95,7 @@ console.log("Transaction hash:", proof.txHash);
 
 #### Manual Setup
 ```typescript
-import { connectWallet, Cip30Payer } from "@fluxpointstudios/poi-sdk-payer-cardano-cip30";
+import { connectWallet, Cip30Payer } from "@fluxpointstudios/orynq-sdk-payer-cardano-cip30";
 import { Lucid, Blockfrost } from "lucid-cardano";
 
 const walletApi = await connectWallet("eternl");
@@ -116,7 +116,7 @@ const payer = new Cip30Payer({
 ## Dependencies
 
 ### Production
-- `@fluxpointstudios/poi-sdk-core`: workspace:*
+- `@fluxpointstudios/orynq-sdk-core`: workspace:*
 
 ### Peer Dependencies
 - `lucid-cardano`: >=0.10.0

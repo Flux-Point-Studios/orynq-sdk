@@ -1,5 +1,5 @@
 """
-Tests for poi_sdk.invoice_cache module.
+Tests for orynq_sdk.invoice_cache module.
 
 Tests invoice payment caching to prevent double-payments and
 support idempotency key lookups.
@@ -7,8 +7,8 @@ support idempotency key lookups.
 
 import pytest
 
-from poi_sdk.invoice_cache import MemoryInvoiceCache
-from poi_sdk.types import PaymentProof
+from orynq_sdk.invoice_cache import MemoryInvoiceCache
+from orynq_sdk.types import PaymentProof
 
 
 class TestMemoryInvoiceCache:

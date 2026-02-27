@@ -2,7 +2,7 @@
  * @summary Parse x402 PAYMENT-REQUIRED headers into protocol-neutral PaymentRequest.
  *
  * This file handles the decoding and transformation of x402 wire format data
- * from the PAYMENT-REQUIRED header (base64-encoded JSON) into poi-sdk's
+ * from the PAYMENT-REQUIRED header (base64-encoded JSON) into orynq-sdk's
  * protocol-neutral PaymentRequest structure.
  *
  * Used by:
@@ -10,8 +10,8 @@
  * - Client code that needs to manually parse x402 responses
  */
 
-import { X402_HEADERS } from "@fluxpointstudios/poi-sdk-core";
-import type { PaymentRequest, PaymentFacilitator } from "@fluxpointstudios/poi-sdk-core";
+import { X402_HEADERS } from "@fluxpointstudios/orynq-sdk-core";
+import type { PaymentRequest, PaymentFacilitator } from "@fluxpointstudios/orynq-sdk-core";
 import type { X402PaymentRequired } from "./types.js";
 import { isX402PaymentRequired } from "./types.js";
 

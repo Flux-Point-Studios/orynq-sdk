@@ -1,5 +1,5 @@
 /**
- * @summary Build configuration for @fluxpointstudios/poi-sdk-server-middleware package using tsup.
+ * @summary Build configuration for @fluxpointstudios/orynq-sdk-server-middleware package using tsup.
  *
  * This configuration produces both ESM and CJS outputs with declaration files.
  * Entry points include the main index, express, fastify, and verifiers modules.
@@ -28,7 +28,7 @@ export default defineConfig({
   target: "es2022",
   outDir: "dist",
   external: [
-    "@fluxpointstudios/poi-sdk-core",
+    "@fluxpointstudios/orynq-sdk-core",
     "express",
     "fastify",
     "viem",

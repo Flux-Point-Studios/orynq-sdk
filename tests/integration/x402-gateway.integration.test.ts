@@ -17,14 +17,14 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import express, { type Express, type Request, type Response } from "express";
 import type { Server } from "http";
-import { X402_HEADERS, FLUX_HEADERS } from "@fluxpointstudios/poi-sdk-core";
-import { createGatewayServer, type GatewayServer } from "@fluxpointstudios/poi-sdk-gateway";
+import { X402_HEADERS, FLUX_HEADERS } from "@fluxpointstudios/orynq-sdk-core";
+import { createGatewayServer, type GatewayServer } from "@fluxpointstudios/orynq-sdk-gateway";
 import {
   serializeAuthorization,
   buildTypedData,
   generateNonce,
   type Eip3009Authorization,
-} from "@fluxpointstudios/poi-sdk-payer-evm-x402";
+} from "@fluxpointstudios/orynq-sdk-payer-evm-x402";
 import { privateKeyToAccount } from "viem/accounts";
 
 // ---------------------------------------------------------------------------

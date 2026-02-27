@@ -20,7 +20,7 @@
  * - Fastify plugin for verifying Cardano payment proofs
  */
 
-import type { ChainId, PaymentProof } from "@fluxpointstudios/poi-sdk-core";
+import type { ChainId, PaymentProof } from "@fluxpointstudios/orynq-sdk-core";
 import type { ChainVerifier, VerificationResult } from "./interface.js";
 
 // ---------------------------------------------------------------------------

@@ -28,7 +28,7 @@ import {
   addEvent,
   closeSpan,
   finalizeTrace,
-} from "@fluxpointstudios/poi-sdk-process-trace";
+} from "@fluxpointstudios/orynq-sdk-process-trace";
 
 import {
   MateriosProvider,
@@ -37,7 +37,7 @@ import {
   waitForCertification,
   waitForAnchor,
   verifyReceipt,
-} from "@fluxpointstudios/poi-sdk-anchors-materios";
+} from "@fluxpointstudios/orynq-sdk-anchors-materios";
 
 import { createHash } from "crypto";
 import { writeFileSync, mkdirSync, existsSync } from "fs";

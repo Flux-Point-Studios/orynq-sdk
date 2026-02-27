@@ -34,12 +34,12 @@ import type {
   BudgetConfig,
   BudgetStore,
   InvoiceCache,
-} from "@fluxpointstudios/poi-sdk-core";
+} from "@fluxpointstudios/orynq-sdk-core";
 import {
   InMemoryBudgetStore,
   InMemoryInvoiceCache,
   FLUX_HEADERS,
-} from "@fluxpointstudios/poi-sdk-core";
+} from "@fluxpointstudios/orynq-sdk-core";
 
 import { HttpClient } from "./http-client.js";
 import { BudgetTracker } from "./budget-tracker.js";
@@ -168,8 +168,8 @@ export interface PoiRequestOptions extends Omit<RequestInit, "body"> {
  *
  * @example
  * ```typescript
- * import { PoiClient } from "@fluxpointstudios/poi-sdk-client";
- * import { createCardanoPayer } from "@fluxpointstudios/poi-sdk-payer-cardano";
+ * import { PoiClient } from "@fluxpointstudios/orynq-sdk-client";
+ * import { createCardanoPayer } from "@fluxpointstudios/orynq-sdk-payer-cardano";
  *
  * const client = new PoiClient({
  *   baseUrl: "https://api.example.com",
@@ -596,7 +596,7 @@ export class PoiClient {
  *
  * @example
  * ```typescript
- * import { createPoiClient } from "@fluxpointstudios/poi-sdk-client";
+ * import { createPoiClient } from "@fluxpointstudios/orynq-sdk-client";
  *
  * const client = createPoiClient({
  *   baseUrl: "https://api.example.com",

@@ -1,7 +1,7 @@
 /**
  * @summary CIP-30 Payer implementation for Cardano browser wallets using MeshJS.
  *
- * This file implements the Payer interface from @fluxpointstudios/poi-sdk-core for CIP-30
+ * This file implements the Payer interface from @fluxpointstudios/orynq-sdk-core for CIP-30
  * compliant Cardano wallets. It handles wallet connection, transaction
  * building, signing, and submission using MeshJS BrowserWallet.
  *
@@ -25,12 +25,12 @@ import type {
   PaymentProof,
   PaymentRequest,
   ChainId,
-} from "@fluxpointstudios/poi-sdk-core";
+} from "@fluxpointstudios/orynq-sdk-core";
 import {
   InsufficientBalanceError,
   PaymentFailedError,
   ChainNotSupportedError,
-} from "@fluxpointstudios/poi-sdk-core";
+} from "@fluxpointstudios/orynq-sdk-core";
 import type { Cip30EnabledWalletApi, WalletName } from "./wallet-connector.js";
 import {
   buildPaymentTx,
@@ -95,7 +95,7 @@ export interface Cip30PayerConfig {
  * transaction building and wallet interaction.
  *
  * @example
- * import { Cip30Payer } from "@fluxpointstudios/poi-sdk-payer-cardano-cip30";
+ * import { Cip30Payer } from "@fluxpointstudios/orynq-sdk-payer-cardano-cip30";
  * import { BrowserWallet } from "@meshsdk/core";
  *
  * // Connect using MeshJS BrowserWallet

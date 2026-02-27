@@ -1,12 +1,12 @@
 /**
- * @fluxpointstudios/poi-sdk-hydra-batcher
+ * @fluxpointstudios/orynq-sdk-hydra-batcher
  *
  * High-frequency L2 commitment lane using Cardano Hydra for sub-second finality.
  * Batches PoI commitments in a Hydra head for cost-efficient, high-throughput anchoring.
  *
  * @example
  * ```typescript
- * import { HydraBatcher } from '@fluxpointstudios/poi-sdk-hydra-batcher';
+ * import { HydraBatcher } from '@fluxpointstudios/orynq-sdk-hydra-batcher';
  *
  * const batcher = new HydraBatcher({
  *   recorderNode: {

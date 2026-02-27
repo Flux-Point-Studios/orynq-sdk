@@ -18,7 +18,7 @@
  * - Invoice store for finding existing invoices
  */
 
-import { canonicalize, sha256StringHex } from "@fluxpointstudios/poi-sdk-core";
+import { canonicalize, sha256StringHex } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Types

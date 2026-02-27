@@ -26,7 +26,7 @@
  *   proverRegistry,
  *   HashChainInput,
  *   MidnightProverException,
- * } from '@fluxpointstudios/poi-sdk-midnight-prover';
+ * } from '@fluxpointstudios/orynq-sdk-midnight-prover';
  *
  * // Get the default prover
  * const prover = proverRegistry.getDefault();

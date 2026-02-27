@@ -1,5 +1,5 @@
 {
-  "name": "@fluxpointstudios/poi-sdk-payer-evm-direct",
+  "name": "@fluxpointstudios/orynq-sdk-payer-evm-direct",
   "version": "0.0.0",
   "description": "Legacy EVM payer for direct ERC-20 transfers using viem",
   "type": "module",
@@ -58,13 +58,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
     "directory": "packages/payer-evm-direct"
   },
-  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
-  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
+  "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*"
   },
   "peerDependencies": {
     "viem": ">=2.0.0",

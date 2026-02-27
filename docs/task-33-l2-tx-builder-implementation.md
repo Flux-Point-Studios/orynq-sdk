@@ -157,7 +157,7 @@ All 32 new tests pass:
 
 ```bash
 # Build passes successfully
-pnpm --filter @fluxpointstudios/poi-sdk-hydra-batcher build
+pnpm --filter @fluxpointstudios/orynq-sdk-hydra-batcher build
 
 # All tests pass
 pnpm test -- packages/hydra-batcher
@@ -195,4 +195,4 @@ pnpm test -- packages/hydra-batcher/src/__tests__/l2-tx-builder.test.ts
 
 ---
 
-*Orchestrator: Please have the Test Engineer read this file at `D:\fluxPoint\PoI\poi-sdk\docs\task-33-l2-tx-builder-implementation.md` to verify the implementation and run the recommended tests.*
+*Orchestrator: Please have the Test Engineer read this file at `D:\fluxPoint\PoI\orynq-sdk\docs\task-33-l2-tx-builder-implementation.md` to verify the implementation and run the recommended tests.*

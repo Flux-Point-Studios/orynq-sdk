@@ -68,10 +68,10 @@ importers:
 
   packages/anchors-cardano:
     dependencies:
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
-      '@fluxpointstudios/poi-sdk-process-trace':
+      '@fluxpointstudios/orynq-sdk-process-trace':
         specifier: workspace:*
         version: link:../process-trace
     devDependencies:
@@ -106,7 +106,7 @@ importers:
 
   packages/attestor:
     dependencies:
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
     optionalDependencies:
@@ -123,19 +123,19 @@ importers:
 
   packages/cli:
     dependencies:
-      '@fluxpointstudios/poi-sdk-client':
+      '@fluxpointstudios/orynq-sdk-client':
         specifier: workspace:*
         version: link:../client
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
-      '@fluxpointstudios/poi-sdk-payer-evm-direct':
+      '@fluxpointstudios/orynq-sdk-payer-evm-direct':
         specifier: workspace:*
         version: link:../payer-evm-direct
-      '@fluxpointstudios/poi-sdk-transport-flux':
+      '@fluxpointstudios/orynq-sdk-transport-flux':
         specifier: workspace:*
         version: link:../transport-flux
-      '@fluxpointstudios/poi-sdk-transport-x402':
+      '@fluxpointstudios/orynq-sdk-transport-x402':
         specifier: workspace:*
         version: link:../transport-x402
       chalk:
@@ -157,13 +157,13 @@ importers:
 
   packages/client:
     dependencies:
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
-      '@fluxpointstudios/poi-sdk-transport-flux':
+      '@fluxpointstudios/orynq-sdk-transport-flux':
         specifier: workspace:*
         version: link:../transport-flux
-      '@fluxpointstudios/poi-sdk-transport-x402':
+      '@fluxpointstudios/orynq-sdk-transport-x402':
         specifier: workspace:*
         version: link:../transport-x402
     devDependencies:
@@ -191,10 +191,10 @@ importers:
 
   packages/flight-recorder:
     dependencies:
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
-      '@fluxpointstudios/poi-sdk-process-trace':
+      '@fluxpointstudios/orynq-sdk-process-trace':
         specifier: workspace:*
         version: link:../process-trace
       fflate:
@@ -210,13 +210,13 @@ importers:
 
   packages/gateway:
     dependencies:
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
-      '@fluxpointstudios/poi-sdk-server-middleware':
+      '@fluxpointstudios/orynq-sdk-server-middleware':
         specifier: workspace:*
         version: link:../server-middleware
-      '@fluxpointstudios/poi-sdk-transport-x402':
+      '@fluxpointstudios/orynq-sdk-transport-x402':
         specifier: workspace:*
         version: link:../transport-x402
       cors:
@@ -244,7 +244,7 @@ importers:
 
   packages/hydra-batcher:
     dependencies:
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
       ws:
@@ -263,16 +263,16 @@ importers:
 
   packages/midnight-prover:
     dependencies:
-      '@fluxpointstudios/poi-sdk-anchors-cardano':
+      '@fluxpointstudios/orynq-sdk-anchors-cardano':
         specifier: workspace:*
         version: link:../anchors-cardano
-      '@fluxpointstudios/poi-sdk-attestor':
+      '@fluxpointstudios/orynq-sdk-attestor':
         specifier: workspace:*
         version: link:../attestor
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
-      '@fluxpointstudios/poi-sdk-process-trace':
+      '@fluxpointstudios/orynq-sdk-process-trace':
         specifier: workspace:*
         version: link:../process-trace
       '@midnight-ntwrk/compact-runtime':
@@ -291,7 +291,7 @@ importers:
 
   packages/payer-cardano-cip30:
     dependencies:
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -316,7 +316,7 @@ importers:
       '@emurgo/cardano-serialization-lib-nodejs':
         specifier: '>=11.0.0'
         version: 15.0.3
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -335,7 +335,7 @@ importers:
       '@aws-sdk/client-kms':
         specifier: '>=3.0.0'
         version: 3.999.0
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -357,10 +357,10 @@ importers:
       '@aws-sdk/client-kms':
         specifier: '>=3.0.0'
         version: 3.999.0
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
-      '@fluxpointstudios/poi-sdk-transport-x402':
+      '@fluxpointstudios/orynq-sdk-transport-x402':
         specifier: workspace:*
         version: link:../transport-x402
       '@x402/evm':
@@ -382,7 +382,7 @@ importers:
 
   packages/process-trace:
     dependencies:
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -398,7 +398,7 @@ importers:
 
   packages/server-middleware:
     dependencies:
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -426,7 +426,7 @@ importers:
 
   packages/storage-adapters:
     dependencies:
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
     optionalDependencies:
@@ -449,7 +449,7 @@ importers:
 
   packages/transport-flux:
     dependencies:
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -465,7 +465,7 @@ importers:
 
   packages/transport-x402:
     dependencies:
-      '@fluxpointstudios/poi-sdk-core':
+      '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
       '@x402/evm':
@@ -487,7 +487,7 @@ importers:
 
   services/anchor-worker:
     dependencies:
-      '@fluxpointstudios/poi-sdk-anchors-cardano':
+      '@fluxpointstudios/orynq-sdk-anchors-cardano':
         specifier: ^0.1.0
         version: link:../../packages/anchors-cardano
       express:

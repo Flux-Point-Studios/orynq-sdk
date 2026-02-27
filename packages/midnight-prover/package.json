@@ -1,5 +1,5 @@
 {
-  "name": "@fluxpointstudios/poi-sdk-midnight-prover",
+  "name": "@fluxpointstudios/orynq-sdk-midnight-prover",
   "version": "0.1.0",
   "description": "ZK proof generation for PoI using Midnight network",
   "type": "module",
@@ -23,10 +23,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*",
-    "@fluxpointstudios/poi-sdk-process-trace": "workspace:*",
-    "@fluxpointstudios/poi-sdk-anchors-cardano": "workspace:*",
-    "@fluxpointstudios/poi-sdk-attestor": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-anchors-cardano": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-attestor": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -53,7 +53,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Flux-Point-Studios/poi-sdk.git",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk.git",
     "directory": "packages/midnight-prover"
   }
 }

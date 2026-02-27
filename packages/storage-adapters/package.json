@@ -1,5 +1,5 @@
 {
-  "name": "@fluxpointstudios/poi-sdk-storage-adapters",
+  "name": "@fluxpointstudios/orynq-sdk-storage-adapters",
   "version": "0.1.0",
   "description": "Storage adapters for PoI SDK - IPFS, S3, and Arweave backends",
   "type": "module",
@@ -47,11 +47,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Flux-Point-Studios/poi-sdk.git",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk.git",
     "directory": "packages/storage-adapters"
   },
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*"
   },
   "optionalDependencies": {
     "@aws-sdk/client-s3": "^3.0.0",

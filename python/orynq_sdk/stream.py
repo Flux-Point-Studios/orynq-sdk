@@ -1,5 +1,5 @@
 """
-Location: python/poi_sdk/stream.py
+Location: python/orynq_sdk/stream.py
 
 Summary:
     NDJSON (Newline Delimited JSON) streaming utilities for handling
@@ -10,7 +10,7 @@ Usage:
     return NDJSON format (one JSON object per line).
 
 Example:
-    from poi_sdk.stream import parse_ndjson_stream
+    from orynq_sdk.stream import parse_ndjson_stream
 
     async with client.stream("POST", url) as response:
         async for item in parse_ndjson_stream(response):

@@ -1,5 +1,5 @@
 """
-Shared pytest fixtures for poi-sdk tests.
+Shared pytest fixtures for orynq-sdk tests.
 
 This module provides common fixtures used across all test files,
 including sample invoice data and cross-language hash vectors.
@@ -89,7 +89,7 @@ def hash_vectors():
 def mock_payer():
     """Create a mock payer for testing."""
     from unittest.mock import AsyncMock, MagicMock
-    from poi_sdk.types import PaymentProof
+    from orynq_sdk.types import PaymentProof
 
     payer = MagicMock()
     payer.supported_chains = ["cardano:mainnet", "cardano:preprod"]

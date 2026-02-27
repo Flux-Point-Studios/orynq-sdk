@@ -16,15 +16,15 @@
  * Related files:
  * - hash-chain-proof.ts: Uses this to build witnesses for proof generation
  * - public-inputs.ts: Builds corresponding public inputs
- * - @fluxpointstudios/poi-sdk-process-trace: TraceEvent types
+ * - @fluxpointstudios/orynq-sdk-process-trace: TraceEvent types
  */
 
-import type { TraceEvent } from "@fluxpointstudios/poi-sdk-process-trace";
+import type { TraceEvent } from "@fluxpointstudios/orynq-sdk-process-trace";
 import {
   sha256StringHex,
   canonicalize,
   hexToBytes,
-} from "@fluxpointstudios/poi-sdk-core/utils";
+} from "@fluxpointstudios/orynq-sdk-core/utils";
 
 // =============================================================================
 // TYPES

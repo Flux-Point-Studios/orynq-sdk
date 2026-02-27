@@ -1,1 +1,1 @@
-"""poi-sdk test suite."""
+"""orynq-sdk test suite."""

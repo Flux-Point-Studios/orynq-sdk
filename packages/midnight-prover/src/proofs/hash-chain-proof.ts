@@ -54,7 +54,7 @@ import {
   serializePublicInputs,
 } from "../midnight/public-inputs.js";
 
-import { sha256StringHex } from "@fluxpointstudios/poi-sdk-core/utils";
+import { sha256StringHex } from "@fluxpointstudios/orynq-sdk-core/utils";
 
 // =============================================================================
 // CONSTANTS

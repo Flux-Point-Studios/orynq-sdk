@@ -1,5 +1,5 @@
 {
-  "name": "@fluxpointstudios/poi-sdk-hydra-batcher",
+  "name": "@fluxpointstudios/orynq-sdk-hydra-batcher",
   "version": "0.1.0",
   "description": "High-frequency L2 commitment lane using Cardano Hydra for PoI",
   "type": "module",
@@ -23,7 +23,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -50,7 +50,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Flux-Point-Studios/poi-sdk.git",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk.git",
     "directory": "packages/hydra-batcher"
   }
 }

@@ -1,5 +1,5 @@
 /**
- * @summary Build configuration for @fluxpointstudios/poi-sdk-gateway package using tsup.
+ * @summary Build configuration for @fluxpointstudios/orynq-sdk-gateway package using tsup.
  *
  * This configuration produces both ESM and CJS outputs with declaration files.
  * It also creates a CLI entry point for running the gateway server.
@@ -27,9 +27,9 @@ export default defineConfig([
     target: "es2022",
     outDir: "dist",
     external: [
-      "@fluxpointstudios/poi-sdk-core",
-      "@fluxpointstudios/poi-sdk-transport-x402",
-      "@fluxpointstudios/poi-sdk-server-middleware",
+      "@fluxpointstudios/orynq-sdk-core",
+      "@fluxpointstudios/orynq-sdk-transport-x402",
+      "@fluxpointstudios/orynq-sdk-server-middleware",
       "express",
       "cors",
       "http-proxy-middleware",
@@ -50,9 +50,9 @@ export default defineConfig([
     target: "es2022",
     outDir: "dist",
     external: [
-      "@fluxpointstudios/poi-sdk-core",
-      "@fluxpointstudios/poi-sdk-transport-x402",
-      "@fluxpointstudios/poi-sdk-server-middleware",
+      "@fluxpointstudios/orynq-sdk-core",
+      "@fluxpointstudios/orynq-sdk-transport-x402",
+      "@fluxpointstudios/orynq-sdk-server-middleware",
       "express",
       "cors",
       "http-proxy-middleware",

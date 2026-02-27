@@ -16,7 +16,7 @@
  *   CardanoAnchorLinker,
  *   createProofPublisher,
  *   createCardanoAnchorLinker,
- * } from "@fluxpointstudios/poi-sdk-midnight-prover";
+ * } from "@fluxpointstudios/orynq-sdk-midnight-prover";
  *
  * const publisher = createProofPublisher({ maxRetries: 3 });
  * const linker = createCardanoAnchorLinker({ debug: true });

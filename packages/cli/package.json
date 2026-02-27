@@ -1,5 +1,5 @@
 {
-  "name": "@fluxpointstudios/poi-sdk-cli",
+  "name": "@fluxpointstudios/orynq-sdk-cli",
   "version": "0.0.1",
   "description": "CLI dev tool for testing x402 and Flux 402 payment flows",
   "type": "module",
@@ -49,17 +49,17 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
     "directory": "packages/cli"
   },
-  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
-  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
+  "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*",
-    "@fluxpointstudios/poi-sdk-client": "workspace:*",
-    "@fluxpointstudios/poi-sdk-transport-x402": "workspace:*",
-    "@fluxpointstudios/poi-sdk-transport-flux": "workspace:*",
-    "@fluxpointstudios/poi-sdk-payer-evm-direct": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-client": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-transport-x402": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-transport-flux": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-payer-evm-direct": "workspace:*",
     "commander": "^11.1.0",
     "chalk": "^5.3.0",
     "viem": "^2.7.0"

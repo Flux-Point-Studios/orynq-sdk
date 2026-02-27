@@ -28,12 +28,12 @@ import type {
   AnyPublicInputs,
 } from "../types.js";
 
-import type { TeeType } from "@fluxpointstudios/poi-sdk-attestor";
+import type { TeeType } from "@fluxpointstudios/orynq-sdk-attestor";
 
 import {
   hexToBytes,
   bytesToHex,
-} from "@fluxpointstudios/poi-sdk-core/utils";
+} from "@fluxpointstudios/orynq-sdk-core/utils";
 
 // =============================================================================
 // TYPES

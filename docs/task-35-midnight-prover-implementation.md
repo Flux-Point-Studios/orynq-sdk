@@ -2,7 +2,7 @@
 
 **Date:** 2026-02-02
 **Status:** Completed
-**Package:** `@fluxpointstudios/poi-sdk-midnight-prover`
+**Package:** `@fluxpointstudios/orynq-sdk-midnight-prover`
 
 ---
 
@@ -16,7 +16,7 @@ This task created the foundation for the `poi-midnight-prover` package, which pr
 
 Package configuration with:
 - ESM module type
-- Workspace dependencies: `poi-sdk-core`, `poi-sdk-process-trace`, `poi-sdk-anchors-cardano`, `poi-sdk-attestor`
+- Workspace dependencies: `orynq-sdk-core`, `orynq-sdk-process-trace`, `orynq-sdk-anchors-cardano`, `orynq-sdk-attestor`
 - Optional peer dependency on `@midnight-ntwrk/compact-runtime@^0.14.0`
 - Standard build and test scripts
 
@@ -111,7 +111,7 @@ Public API exports with comprehensive JSDoc documentation and usage examples.
 
 ### 6. `vitest.config.ts` (Updated)
 
-Added alias for `@fluxpointstudios/poi-sdk-midnight-prover` pointing to `packages/midnight-prover/src/index.ts`.
+Added alias for `@fluxpointstudios/orynq-sdk-midnight-prover` pointing to `packages/midnight-prover/src/index.ts`.
 
 ---
 
@@ -127,10 +127,10 @@ Added alias for `@fluxpointstudios/poi-sdk-midnight-prover` pointing to `package
 ## Dependencies
 
 The package depends on:
-- `@fluxpointstudios/poi-sdk-core`: Core types and utilities
-- `@fluxpointstudios/poi-sdk-process-trace`: TraceEvent, TraceSpan, TraceBundle types
-- `@fluxpointstudios/poi-sdk-anchors-cardano`: Cardano anchor binding
-- `@fluxpointstudios/poi-sdk-attestor`: AttestationBundle, VerifierPolicy, TeeType types
+- `@fluxpointstudios/orynq-sdk-core`: Core types and utilities
+- `@fluxpointstudios/orynq-sdk-process-trace`: TraceEvent, TraceSpan, TraceBundle types
+- `@fluxpointstudios/orynq-sdk-anchors-cardano`: Cardano anchor binding
+- `@fluxpointstudios/orynq-sdk-attestor`: AttestationBundle, VerifierPolicy, TeeType types
 
 Optional peer dependency:
 - `@midnight-ntwrk/compact-runtime@^0.14.0`: Midnight network runtime (optional)
@@ -163,13 +163,13 @@ The test engineer should read this file and implement the following tests:
 
 ```bash
 # Run all tests for midnight-prover
-pnpm --filter @fluxpointstudios/poi-sdk-midnight-prover test
+pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover test
 
 # Run typecheck
-pnpm --filter @fluxpointstudios/poi-sdk-midnight-prover typecheck
+pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover typecheck
 
 # Run build
-pnpm --filter @fluxpointstudios/poi-sdk-midnight-prover build
+pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build
 ```
 
 ---
@@ -192,7 +192,7 @@ pnpm --filter @fluxpointstudios/poi-sdk-midnight-prover build
 
 Please have the test engineer read this file at:
 ```
-D:\fluxPoint\PoI\poi-sdk\docs\task-35-midnight-prover-implementation.md
+D:\fluxPoint\PoI\orynq-sdk\docs\task-35-midnight-prover-implementation.md
 ```
 
 The test engineer should:

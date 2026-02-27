@@ -67,7 +67,7 @@ import type {
   TraceSpan,
   CommandEvent,
   OutputEvent,
-} from "@fluxpointstudios/poi-sdk-process-trace";
+} from "@fluxpointstudios/orynq-sdk-process-trace";
 
 // =============================================================================
 // TEST HELPERS

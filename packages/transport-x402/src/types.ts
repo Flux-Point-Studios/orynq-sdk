@@ -3,7 +3,7 @@
  *
  * This file defines types specific to the x402 wire format as used by
  * Coinbase's @x402/* packages. These types represent the raw protocol data
- * before conversion to poi-sdk's protocol-neutral PaymentRequest format.
+ * before conversion to orynq-sdk's protocol-neutral PaymentRequest format.
  *
  * The x402 protocol uses version "1" in the wire format payload.
  *
@@ -13,7 +13,7 @@
  * - index.ts for the X402Transport interface implementation
  */
 
-import type { PaymentRequest, PaymentProof } from "@fluxpointstudios/poi-sdk-core";
+import type { PaymentRequest, PaymentProof } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // x402 Raw Protocol Types

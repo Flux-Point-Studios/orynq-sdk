@@ -1,5 +1,5 @@
 /**
- * @summary Main entry point for @fluxpointstudios/poi-sdk-process-trace package.
+ * @summary Main entry point for @fluxpointstudios/orynq-sdk-process-trace package.
  *
  * This package provides cryptographic process tracing for Proof-of-Intent SDK.
  * It enables agents to create tamper-evident execution traces with:
@@ -22,7 +22,7 @@
  *   addEvent,
  *   closeSpan,
  *   finalizeTrace,
- * } from "@fluxpointstudios/poi-sdk-process-trace";
+ * } from "@fluxpointstudios/orynq-sdk-process-trace";
  *
  * const run = await createTrace({ agentId: "agent-1" });
  * const span = addSpan(run, { name: "build-project" });

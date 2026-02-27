@@ -34,7 +34,7 @@
  * - kms:DescribeKey - (Optional) Verify key configuration
  */
 
-import type { Signer, ChainId } from "@fluxpointstudios/poi-sdk-core";
+import type { Signer, ChainId } from "@fluxpointstudios/orynq-sdk-core";
 
 // ---------------------------------------------------------------------------
 // Type Declarations for Optional AWS SDK
@@ -217,7 +217,7 @@ const SECP256K1_HALF_N = SECP256K1_N / BigInt(2);
  *
  * @example
  * ```typescript
- * import { KmsSigner } from "@fluxpointstudios/poi-sdk-payer-cardano-node/signers";
+ * import { KmsSigner } from "@fluxpointstudios/orynq-sdk-payer-cardano-node/signers";
  *
  * const signer = new KmsSigner({
  *   keyId: "alias/my-cardano-payment-key",

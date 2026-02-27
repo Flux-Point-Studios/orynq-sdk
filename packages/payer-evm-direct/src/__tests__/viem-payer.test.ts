@@ -14,8 +14,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from "vitest";
 import { privateKeyToAccount } from "viem/accounts";
-import type { PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
-import { InsufficientBalanceError } from "@fluxpointstudios/poi-sdk-core";
+import type { PaymentRequest } from "@fluxpointstudios/orynq-sdk-core";
+import { InsufficientBalanceError } from "@fluxpointstudios/orynq-sdk-core";
 import { ViemPayer } from "../viem-payer.js";
 
 // Test private key (DO NOT USE IN PRODUCTION - this is a well-known test key)

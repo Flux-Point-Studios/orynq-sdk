@@ -145,7 +145,7 @@ For the test engineer, please run:
 
 ```bash
 # Build the package
-pnpm --filter @fluxpointstudios/poi-sdk-midnight-prover build
+pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build
 
 # Run all midnight-prover tests
 pnpm test -- packages/midnight-prover

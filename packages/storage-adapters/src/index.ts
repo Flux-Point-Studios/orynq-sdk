@@ -6,7 +6,7 @@
  *
  * @example
  * ```typescript
- * import { IpfsAdapter, S3Adapter, ReplicatedStorageAdapter } from '@fluxpointstudios/poi-sdk-storage-adapters';
+ * import { IpfsAdapter, S3Adapter, ReplicatedStorageAdapter } from '@fluxpointstudios/orynq-sdk-storage-adapters';
  *
  * // Single adapter usage
  * const ipfs = new IpfsAdapter({

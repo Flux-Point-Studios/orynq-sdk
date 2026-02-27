@@ -1,7 +1,7 @@
 {
-  "name": "@fluxpointstudios/poi-sdk-payer-cardano-cip30",
+  "name": "@fluxpointstudios/orynq-sdk-payer-cardano-cip30",
   "version": "0.0.0",
-  "description": "CIP-30 browser wallet adapter for Cardano payments in poi-sdk using MeshJS",
+  "description": "CIP-30 browser wallet adapter for Cardano payments in orynq-sdk using MeshJS",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -48,13 +48,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Flux-Point-Studios/poi-sdk",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
     "directory": "packages/payer-cardano-cip30"
   },
-  "homepage": "https://github.com/Flux-Point-Studios/poi-sdk#readme",
-  "bugs": "https://github.com/Flux-Point-Studios/poi-sdk/issues",
+  "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
-    "@fluxpointstudios/poi-sdk-core": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*"
   },
   "peerDependencies": {
     "@meshsdk/core": ">=1.5.0"

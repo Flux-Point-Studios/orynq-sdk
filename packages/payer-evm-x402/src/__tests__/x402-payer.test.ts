@@ -12,12 +12,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from "vitest";
 import { privateKeyToAccount } from "viem/accounts";
-import type { PaymentRequest } from "@fluxpointstudios/poi-sdk-core";
+import type { PaymentRequest } from "@fluxpointstudios/orynq-sdk-core";
 import {
   InsufficientBalanceError,
   ChainNotSupportedError,
   PaymentFailedError,
-} from "@fluxpointstudios/poi-sdk-core";
+} from "@fluxpointstudios/orynq-sdk-core";
 import { EvmX402Payer } from "../x402-payer.js";
 import { ViemSigner } from "../signers/viem-signer.js";
 

@@ -1,5 +1,5 @@
 /**
- * @summary Main entry point for @fluxpointstudios/poi-sdk-transport-x402 package.
+ * @summary Main entry point for @fluxpointstudios/orynq-sdk-transport-x402 package.
  *
  * This package provides the x402 protocol transport layer implementation,
  * wrapping Coinbase's @x402/* packages for the x402 wire format. It handles:
@@ -10,11 +10,11 @@
  * - Parsing PAYMENT-RESPONSE headers for settlement information
  *
  * The transport layer abstracts the wire protocol details, allowing client
- * code to work with poi-sdk's unified PaymentRequest and PaymentProof types.
+ * code to work with orynq-sdk's unified PaymentRequest and PaymentProof types.
  *
  * Usage:
  * ```typescript
- * import { createX402Transport } from "@fluxpointstudios/poi-sdk-transport-x402";
+ * import { createX402Transport } from "@fluxpointstudios/orynq-sdk-transport-x402";
  *
  * const transport = createX402Transport();
  *
@@ -29,12 +29,12 @@
  * ```
  *
  * Used by:
- * - @fluxpointstudios/poi-sdk-client for automatic payment handling
+ * - @fluxpointstudios/orynq-sdk-client for automatic payment handling
  * - Custom client implementations needing x402 support
  */
 
-import { X402_HEADERS } from "@fluxpointstudios/poi-sdk-core";
-import type { PaymentRequest, PaymentProof } from "@fluxpointstudios/poi-sdk-core";
+import { X402_HEADERS } from "@fluxpointstudios/orynq-sdk-core";
+import type { PaymentRequest, PaymentProof } from "@fluxpointstudios/orynq-sdk-core";
 
 import { parse402Response, parsePaymentRequired, x402ToPaymentRequest } from "./parse.js";
 import {
@@ -74,7 +74,7 @@ import { isX402PaymentRequired, isX402PaymentResponse } from "./types.js";
  *
  * @example
  * ```typescript
- * import { createX402Transport } from "@fluxpointstudios/poi-sdk-transport-x402";
+ * import { createX402Transport } from "@fluxpointstudios/orynq-sdk-transport-x402";
  *
  * const transport = createX402Transport();
  *
@@ -119,7 +119,7 @@ export function createX402Transport(): X402Transport {
      * Parse a 402 response to extract the payment request.
      *
      * Decodes the base64-encoded JSON from the PAYMENT-REQUIRED header
-     * and converts it to poi-sdk's protocol-neutral PaymentRequest format.
+     * and converts it to orynq-sdk's protocol-neutral PaymentRequest format.
      *
      * @param res - HTTP Response containing x402 payment headers
      * @returns Protocol-neutral PaymentRequest with protocol: "x402"
