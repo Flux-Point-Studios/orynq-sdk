@@ -49,8 +49,9 @@ function sha256Hex(hex: string): string {
 }
 
 function ensureHexPrefix(s: string): string {
-  const clean = s.replace(/^(sha256:)?0x?/, "");
-  return "0x" + clean;
+  if (s.startsWith("sha256:")) s = s.slice(7);
+  if (s.startsWith("0x") || s.startsWith("0X")) return s;
+  return "0x" + s;
 }
 
 /**
