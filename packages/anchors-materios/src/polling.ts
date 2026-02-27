@@ -1,0 +1,208 @@
+/**
+ * Polling utilities for waiting on receipt certification and anchor submission.
+ *
+ * After submitting a receipt, the cert daemon committee must attest its
+ * availability (setting availability_cert_hash), and then the checkpoint
+ * system batches it into a Merkle tree whose root is anchored to L1.
+ *
+ * These functions poll the chain until the expected state is reached.
+ */
+
+import { createHash } from "crypto";
+import type { MateriosProvider } from "./provider.js";
+import type {
+  PollOptions,
+  CertificationResult,
+  AnchorMatchResult,
+} from "./types.js";
+import { getReceipt } from "./receipt.js";
+import { stripPrefix, ensureHex, isZeroHash } from "./hex.js";
+
+const DEFAULT_INTERVAL_MS = 6_000; // ~1 Substrate block
+const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes
+
+/**
+ * Wait until a receipt has been certified by the attester committee.
+ *
+ * Polls `orinqReceipts.receipts(receiptId)` until
+ * `availability_cert_hash` is non-zero.
+ *
+ * @returns The cert hash, computed checkpoint leaf, and chain ID.
+ *
+ * @example
+ * ```ts
+ * const cert = await waitForCertification(provider, receiptId, {
+ *   onPoll: (n, ms) => console.log(`  poll #${n} (${ms}ms elapsed)`),
+ * });
+ * console.log("Certified:", cert.certHash);
+ * ```
+ */
+export async function waitForCertification(
+  provider: MateriosProvider,
+  receiptId: string,
+  opts: PollOptions = {},
+): Promise<CertificationResult> {
+  const interval = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
+  const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const start = Date.now();
+  let attempt = 0;
+
+  const api = provider.getApi();
+  const chainId = api.genesisHash.toHex();
+
+  while (true) {
+    attempt++;
+    const elapsed = Date.now() - start;
+    if (elapsed >= timeout) {
+      throw new Error(
+        `Certification timeout after ${timeout}ms (${attempt} polls)`,
+      );
+    }
+
+    opts.onPoll?.(attempt, elapsed);
+
+    const receipt = await getReceipt(provider, receiptId);
+    if (receipt && !isZeroHash(receipt.availabilityCertHash)) {
+      const certHash = receipt.availabilityCertHash;
+      const leafHash = computeCheckpointLeaf(
+        chainId,
+        receiptId,
+        certHash,
+      );
+      return { receiptId: ensureHex(receiptId), certHash, leafHash, chainId };
+    }
+
+    await sleep(interval);
+  }
+}
+
+/**
+ * Wait until an anchor containing the receipt's checkpoint leaf is found.
+ *
+ * Scans `AnchorSubmitted` events for an anchor whose `rootHash` matches
+ * the receipt's leaf hash (single-leaf batch). For multi-leaf batches,
+ * use the Python `materios-verify` tool for full Merkle reconstruction.
+ *
+ * @param certResult - The certification result from `waitForCertification`.
+ * @param scanWindow - Number of recent blocks to scan (default: 500).
+ *
+ * @example
+ * ```ts
+ * const anchor = await waitForAnchor(provider, certResult, {
+ *   onPoll: (n) => console.log(`  scanning for anchor... (attempt ${n})`),
+ * });
+ * console.log("Anchored in block:", anchor.blockHash);
+ * ```
+ */
+export async function waitForAnchor(
+  provider: MateriosProvider,
+  certResult: CertificationResult,
+  opts: PollOptions & { scanWindow?: number } = {},
+): Promise<AnchorMatchResult> {
+  const interval = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
+  const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const scanWindow = opts.scanWindow ?? 500;
+  const start = Date.now();
+  let attempt = 0;
+
+  while (true) {
+    attempt++;
+    const elapsed = Date.now() - start;
+    if (elapsed >= timeout) {
+      throw new Error(
+        `Anchor timeout after ${timeout}ms (${attempt} polls)`,
+      );
+    }
+
+    opts.onPoll?.(attempt, elapsed);
+
+    const match = await scanForAnchor(
+      provider,
+      certResult.leafHash,
+      scanWindow,
+    );
+    if (match) return match;
+
+    await sleep(interval);
+  }
+}
+
+/**
+ * Scan recent blocks for an AnchorSubmitted event whose root matches the leaf.
+ */
+async function scanForAnchor(
+  provider: MateriosProvider,
+  leafHash: string,
+  scanWindow: number,
+): Promise<AnchorMatchResult | null> {
+  const api = provider.getApi();
+  const best = (
+    await api.rpc.chain.getHeader()
+  ).number.toNumber();
+  const from = Math.max(1, best - scanWindow);
+
+  const leafHex = stripPrefix(leafHash).toLowerCase();
+
+  for (let block = best; block >= from; block--) {
+    const blockHash = await api.rpc.chain.getBlockHash(block);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const events = (await (api.query as any).system.events.at(
+      blockHash,
+    )) as any[];
+
+    for (const { event } of events) {
+      if (
+        event.section === "orinqReceipts" &&
+        event.method === "AnchorSubmitted"
+      ) {
+        const data = event.data;
+        const anchorId = data[0]?.toHex?.() ?? String(data[0]);
+        const rootHash = data[1]?.toHex?.() ?? String(data[1]);
+        const rootHex = stripPrefix(rootHash).toLowerCase();
+
+        if (rootHex === leafHex) {
+          return {
+            anchorId,
+            rootHash: ensureHex(rootHex),
+            blockHash: blockHash.toHex(),
+            exactMatch: true,
+          };
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Compute the checkpoint leaf hash.
+ *
+ * leaf = SHA256("materios-checkpoint-v1" || chainId || receiptId || certHash)
+ *
+ * All values are converted to 32-byte big-endian before concatenation.
+ */
+export function computeCheckpointLeaf(
+  chainId: string,
+  receiptId: string,
+  certHash: string,
+): string {
+  const prefix = Buffer.from("materios-checkpoint-v1", "utf8");
+  const chainBytes = toBytes32(chainId);
+  const receiptBytes = toBytes32(receiptId);
+  const certBytes = toBytes32(certHash);
+
+  const hash = createHash("sha256")
+    .update(Buffer.concat([prefix, chainBytes, receiptBytes, certBytes]))
+    .digest("hex");
+
+  return "0x" + hash;
+}
+
+function toBytes32(hex: string): Buffer {
+  return Buffer.from(stripPrefix(hex).padStart(64, "0"), "hex");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

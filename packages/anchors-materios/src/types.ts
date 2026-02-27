@@ -55,3 +55,122 @@ export interface AnchorRecord {
   submitter: string;
   blockNumber: number;
 }
+
+// ---------------------------------------------------------------------------
+// Receipt types
+// ---------------------------------------------------------------------------
+
+/** Input for submitting a receipt to the Materios chain. */
+export interface ReceiptInput {
+  /** SHA-256 content hash of the data being anchored */
+  contentHash: string;
+  /** Base root hash (SHA-256 Merkle root of the data tree) */
+  rootHash: string;
+  /** Manifest hash describing the data layout */
+  manifestHash: string;
+  /** Optional pre-computed receipt ID. If omitted, derived from contentHash. */
+  receiptId?: string;
+}
+
+/** Result of a receipt submission. */
+export interface ReceiptSubmitResult {
+  /** Receipt ID (H256) stored on-chain */
+  receiptId: string;
+  /** Block hash containing the extrinsic */
+  blockHash: string;
+  /** Block number */
+  blockNumber: number;
+}
+
+/** On-chain receipt record. */
+export interface ReceiptRecord {
+  receiptId: string;
+  contentHash: string;
+  /** Zero hash if not yet certified */
+  availabilityCertHash: string;
+  submitter: string;
+}
+
+// ---------------------------------------------------------------------------
+// Polling types
+// ---------------------------------------------------------------------------
+
+/** Options for polling functions. */
+export interface PollOptions {
+  /** Polling interval in ms (default: 6000 — ~1 Substrate block) */
+  intervalMs?: number;
+  /** Maximum wait time in ms (default: 600000 — 10 minutes) */
+  timeoutMs?: number;
+  /** Called on each poll attempt */
+  onPoll?: (attempt: number, elapsed: number) => void;
+}
+
+/** Result after certification is confirmed. */
+export interface CertificationResult {
+  receiptId: string;
+  /** The availability cert hash set by the attester committee */
+  certHash: string;
+  /** SHA-256 checkpoint leaf = H("materios-checkpoint-v1" || chainId || receiptId || certHash) */
+  leafHash: string;
+  /** Genesis hash of the chain */
+  chainId: string;
+}
+
+/** Result when an anchor matching the receipt's leaf is found. */
+export interface AnchorMatchResult {
+  /** Anchor ID (H256) */
+  anchorId: string;
+  /** Merkle root stored in the anchor */
+  rootHash: string;
+  /** Block hash containing the anchor */
+  blockHash: string;
+  /** True if rootHash === leafHash (single-leaf batch) */
+  exactMatch: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Verification types
+// ---------------------------------------------------------------------------
+
+/** Verification status for a receipt's chain of custody. */
+export type VerificationStatus =
+  | "FULLY_VERIFIED"
+  | "PARTIALLY_VERIFIED"
+  | "NOT_VERIFIED";
+
+/** One step in the verification pipeline. */
+export interface VerifyStep {
+  step: number;
+  title: string;
+  passed: boolean;
+  details: Record<string, string>;
+}
+
+/** Full verification result. */
+export interface VerifyResult {
+  status: VerificationStatus;
+  receipt: ReceiptRecord | null;
+  certHash: string | null;
+  leafHash: string | null;
+  anchor: AnchorMatchResult | null;
+  chainId: string;
+  steps: VerifyStep[];
+}
+
+// ---------------------------------------------------------------------------
+// Blob provisioning types
+// ---------------------------------------------------------------------------
+
+/** Manifest for blob data stored alongside a receipt. */
+export interface BlobManifest {
+  receipt_id: string;
+  content_hash: string;
+  total_size: number;
+  chunk_count: number;
+  chunks: Array<{
+    index: number;
+    sha256: string;
+    size: number;
+    path: string;
+  }>;
+}

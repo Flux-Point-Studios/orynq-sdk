@@ -5,12 +5,13 @@
 import { createHash } from "crypto";
 import type { MateriosProvider } from "./provider.js";
 import type { AnchorEntry, MateriosAnchorResult } from "./types.js";
+import { stripPrefix } from "./hex.js";
 
 /**
  * Compute SHA-256 of a hex string (without 0x prefix).
  */
 function sha256Hex(hex: string): string {
-  const bytes = Buffer.from(hex.replace(/^0x/, ""), "hex");
+  const bytes = Buffer.from(stripPrefix(hex), "hex");
   return createHash("sha256").update(bytes).digest("hex");
 }
 
@@ -18,7 +19,7 @@ function sha256Hex(hex: string): string {
  * Compute the anchor_id as H256 from the entry's rootHash + manifestHash.
  */
 function computeAnchorId(rootHash: string, manifestHash: string): string {
-  const combined = rootHash.replace(/^(sha256:)?0x?/, "") + manifestHash.replace(/^(sha256:)?0x?/, "");
+  const combined = stripPrefix(rootHash) + stripPrefix(manifestHash);
   return "0x" + sha256Hex(combined);
 }
 
@@ -32,8 +33,8 @@ export async function submitAnchor(
   const api = provider.getApi();
   const keypair = provider.getKeypair();
 
-  const rootHashHex = entry.rootHash.replace(/^(sha256:)?0x?/, "");
-  const manifestHashHex = entry.manifestHash.replace(/^(sha256:)?0x?/, "");
+  const rootHashHex = stripPrefix(entry.rootHash);
+  const manifestHashHex = stripPrefix(entry.manifestHash);
   const anchorId = computeAnchorId(entry.rootHash, entry.manifestHash);
 
   // content_hash = SHA256(rootHash bytes)
