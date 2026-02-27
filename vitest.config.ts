@@ -10,6 +10,7 @@ export default defineConfig({
       '@fluxpointstudios/orynq-sdk-core/chains': resolve(__dirname, 'packages/core/src/chains.ts'),
       // Main package aliases
       '@fluxpointstudios/orynq-sdk-anchors-cardano': resolve(__dirname, 'packages/anchors-cardano/src/index.ts'),
+      '@fluxpointstudios/orynq-sdk-anchors-materios': resolve(__dirname, 'packages/anchors-materios/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-client': resolve(__dirname, 'packages/client/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-core': resolve(__dirname, 'packages/core/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-flight-recorder': resolve(__dirname, 'packages/flight-recorder/src/index.ts'),
