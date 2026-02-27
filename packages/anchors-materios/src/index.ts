@@ -1,5 +1,5 @@
 /**
- * @fluxpointstudios/poi-sdk-anchors-materios
+ * @fluxpointstudios/orynq-sdk-anchors-materios
  *
  * Materios blockchain support for the Proof-of-Intent SDK.
  *
@@ -20,7 +20,7 @@
  *   waitForCertification,
  *   waitForAnchor,
  *   verifyReceipt,
- * } from "@fluxpointstudios/poi-sdk-anchors-materios";
+ * } from "@fluxpointstudios/orynq-sdk-anchors-materios";
  *
  * const provider = new MateriosProvider({ rpcUrl, signerUri: "//Alice" });
  * await provider.connect();

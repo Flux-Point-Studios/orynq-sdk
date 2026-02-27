@@ -5,8 +5,8 @@
     "rootDir": "./src",
     "baseUrl": ".",
     "paths": {
-      "@fluxpointstudios/poi-sdk-anchors-materios": ["./src/index.ts"],
-      "@fluxpointstudios/poi-sdk-anchors-materios/*": ["./src/*"]
+      "@fluxpointstudios/orynq-sdk-anchors-materios": ["./src/index.ts"],
+      "@fluxpointstudios/orynq-sdk-anchors-materios/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts"],
