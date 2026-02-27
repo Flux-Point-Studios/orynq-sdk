@@ -47,7 +47,7 @@ export async function verifyReceipt(
 ): Promise<VerifyResult> {
   const api = provider.getApi();
   const chainId = api.genesisHash.toHex();
-  const scanWindow = opts.scanWindow ?? 500;
+  const scanWindow = opts.scanWindow ?? 50;
   const steps: VerifyStep[] = [];
 
   // Step 1: Receipt exists
@@ -254,54 +254,59 @@ async function findAnchorViaBatchMetadata(
   const scanStart = Math.max(1, bestNumber - 50);
 
   for (let blockNum = bestNumber; blockNum >= scanStart; blockNum--) {
-    const blockHash = await api.rpc.chain.getBlockHash(blockNum);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const events = (await (api.query as any).system.events.at(
-      blockHash,
-    )) as any[];
+    try {
+      const blockHash = await api.rpc.chain.getBlockHash(blockNum);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const events = (await (api.query as any).system.events.at(
+        blockHash,
+      )) as any[];
 
-    for (const { event } of events) {
-      if (
-        event.section === "orinqReceipts" &&
-        event.method === "AnchorSubmitted"
-      ) {
-        const anchorId = event.data[0]?.toHex?.() ?? String(event.data[0]);
-        const rootHash = event.data[1]?.toHex?.() ?? String(event.data[1]);
+      for (const { event } of events) {
+        if (
+          event.section === "orinqReceipts" &&
+          event.method === "AnchorSubmitted"
+        ) {
+          const anchorId = event.data[0]?.toHex?.() ?? String(event.data[0]);
+          const rootHash = event.data[1]?.toHex?.() ?? String(event.data[1]);
 
-        // Query batch metadata from gateway
-        try {
-          const headers: Record<string, string> = {};
-          if (gateway.apiKey) headers["x-api-key"] = gateway.apiKey;
-          const res = await fetch(
-            `${gateway.baseUrl}/batches/${stripPrefix(anchorId)}`,
-            { headers },
-          );
-          if (res.ok) {
-            const batch: BatchMetadata = await res.json();
-            // Check if our leaf is in this batch
-            const leafIndex = batch.leafHashes.findIndex(
-              (h) => stripPrefix(h).toLowerCase() === stripPrefix(leafHash).toLowerCase(),
+          // Query batch metadata from gateway
+          try {
+            const headers: Record<string, string> = {};
+            if (gateway.apiKey) headers["x-api-key"] = gateway.apiKey;
+            const res = await fetch(
+              `${gateway.baseUrl}/batches/${stripPrefix(anchorId)}`,
+              { headers },
             );
-            if (leafIndex >= 0) {
-              // Verify Merkle root matches the on-chain root
-              const computedRoot = merkleRoot(batch.leafHashes);
-              if (
-                stripPrefix(computedRoot).toLowerCase() ===
-                stripPrefix(rootHash).toLowerCase()
-              ) {
-                return {
-                  anchorId: ensureHex(stripPrefix(anchorId)),
-                  rootHash: ensureHex(stripPrefix(rootHash)),
-                  blockHash: blockHash.toHex(),
-                  exactMatch: batch.leafCount === 1,
-                };
+            if (res.ok) {
+              const batch: BatchMetadata = await res.json();
+              // Check if our leaf is in this batch
+              const leafIndex = batch.leafHashes.findIndex(
+                (h) => stripPrefix(h).toLowerCase() === stripPrefix(leafHash).toLowerCase(),
+              );
+              if (leafIndex >= 0) {
+                // Verify Merkle root matches the on-chain root
+                const computedRoot = merkleRoot(batch.leafHashes);
+                if (
+                  stripPrefix(computedRoot).toLowerCase() ===
+                  stripPrefix(rootHash).toLowerCase()
+                ) {
+                  return {
+                    anchorId: ensureHex(stripPrefix(anchorId)),
+                    rootHash: ensureHex(stripPrefix(rootHash)),
+                    blockHash: blockHash.toHex(),
+                    exactMatch: batch.leafCount === 1,
+                  };
+                }
               }
             }
+          } catch {
+            // Gateway unreachable, continue scanning
           }
-        } catch {
-          // Gateway unreachable, continue scanning
         }
       }
+    } catch {
+      // State pruned for this block, stop scanning further back
+      break;
     }
   }
   return null;

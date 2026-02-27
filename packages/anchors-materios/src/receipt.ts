@@ -340,7 +340,7 @@ export async function submitCertifiedReceipt(
     const anchorResult = await waitForAnchor(
       provider,
       certResult,
-      opts.anchorPollOpts,
+      { ...opts.anchorPollOpts, blobGateway: opts.blobGateway },
     );
     result.anchor = anchorResult;
   }

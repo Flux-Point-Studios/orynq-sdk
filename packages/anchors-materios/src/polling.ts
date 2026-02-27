@@ -15,10 +15,12 @@ import type {
   CertificationResult,
   AnchorMatchResult,
   BlobGatewayConfig,
+  BatchMetadata,
   CertificationStatusResult,
 } from "./types.js";
 import { getReceipt, queryMotraBalance } from "./receipt.js";
 import { stripPrefix, ensureHex, isZeroHash } from "./hex.js";
+import { merkleRoot } from "./merkle.js";
 
 const DEFAULT_INTERVAL_MS = 6_000; // ~1 Substrate block
 const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes
@@ -101,11 +103,11 @@ export async function waitForCertification(
 export async function waitForAnchor(
   provider: MateriosProvider,
   certResult: CertificationResult,
-  opts: PollOptions & { scanWindow?: number } = {},
+  opts: PollOptions & { scanWindow?: number; blobGateway?: BlobGatewayConfig } = {},
 ): Promise<AnchorMatchResult> {
   const interval = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
   const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const scanWindow = opts.scanWindow ?? 500;
+  const scanWindow = opts.scanWindow ?? 50;
   const start = Date.now();
   let attempt = 0;
 
@@ -120,6 +122,18 @@ export async function waitForAnchor(
 
     opts.onPoll?.(attempt, elapsed);
 
+    // Try batch metadata from gateway first (handles multi-leaf + pruned nodes)
+    if (opts.blobGateway) {
+      const batchMatch = await scanForAnchorWithGateway(
+        provider,
+        certResult.leafHash,
+        scanWindow,
+        opts.blobGateway,
+      );
+      if (batchMatch) return batchMatch;
+    }
+
+    // Fallback: exact-match on-chain scan (single-leaf only)
     const match = await scanForAnchor(
       provider,
       certResult.leafHash,
@@ -148,31 +162,120 @@ async function scanForAnchor(
   const leafHex = stripPrefix(leafHash).toLowerCase();
 
   for (let block = best; block >= from; block--) {
-    const blockHash = await api.rpc.chain.getBlockHash(block);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const events = (await (api.query as any).system.events.at(
-      blockHash,
-    )) as any[];
+    try {
+      const blockHash = await api.rpc.chain.getBlockHash(block);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const events = (await (api.query as any).system.events.at(
+        blockHash,
+      )) as any[];
 
-    for (const { event } of events) {
-      if (
-        event.section === "orinqReceipts" &&
-        event.method === "AnchorSubmitted"
-      ) {
-        const data = event.data;
-        const anchorId = data[0]?.toHex?.() ?? String(data[0]);
-        const rootHash = data[1]?.toHex?.() ?? String(data[1]);
-        const rootHex = stripPrefix(rootHash).toLowerCase();
+      for (const { event } of events) {
+        if (
+          event.section === "orinqReceipts" &&
+          event.method === "AnchorSubmitted"
+        ) {
+          const data = event.data;
+          const anchorId = data[0]?.toHex?.() ?? String(data[0]);
+          const rootHash = data[1]?.toHex?.() ?? String(data[1]);
+          const rootHex = stripPrefix(rootHash).toLowerCase();
 
-        if (rootHex === leafHex) {
-          return {
-            anchorId,
-            rootHash: ensureHex(rootHex),
-            blockHash: blockHash.toHex(),
-            exactMatch: true,
-          };
+          if (rootHex === leafHex) {
+            return {
+              anchorId,
+              rootHash: ensureHex(rootHex),
+              blockHash: blockHash.toHex(),
+              exactMatch: true,
+            };
+          }
         }
       }
+    } catch {
+      // State pruned for this block, stop scanning further back
+      break;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Scan recent blocks for AnchorSubmitted events and check batch metadata
+ * from the gateway to find multi-leaf anchors containing the target leaf.
+ * Handles pruned nodes gracefully.
+ */
+async function scanForAnchorWithGateway(
+  provider: MateriosProvider,
+  leafHash: string,
+  scanWindow: number,
+  gateway: BlobGatewayConfig,
+): Promise<AnchorMatchResult | null> {
+  const api = provider.getApi();
+  const best = (await api.rpc.chain.getHeader()).number.toNumber();
+  const from = Math.max(1, best - scanWindow);
+  const leafHex = stripPrefix(leafHash).toLowerCase();
+
+  for (let block = best; block >= from; block--) {
+    try {
+      const blockHash = await api.rpc.chain.getBlockHash(block);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const events = (await (api.query as any).system.events.at(
+        blockHash,
+      )) as any[];
+
+      for (const { event } of events) {
+        if (
+          event.section === "orinqReceipts" &&
+          event.method === "AnchorSubmitted"
+        ) {
+          const anchorId = event.data[0]?.toHex?.() ?? String(event.data[0]);
+          const rootHash = event.data[1]?.toHex?.() ?? String(event.data[1]);
+
+          // Check exact match first
+          if (stripPrefix(rootHash).toLowerCase() === leafHex) {
+            return {
+              anchorId,
+              rootHash: ensureHex(stripPrefix(rootHash)),
+              blockHash: blockHash.toHex(),
+              exactMatch: true,
+            };
+          }
+
+          // Query batch metadata from gateway for multi-leaf match
+          try {
+            const headers: Record<string, string> = {};
+            if (gateway.apiKey) headers["x-api-key"] = gateway.apiKey;
+            const res = await fetch(
+              `${gateway.baseUrl}/batches/${stripPrefix(anchorId)}`,
+              { headers },
+            );
+            if (res.ok) {
+              const batch: BatchMetadata = await res.json();
+              const leafIndex = batch.leafHashes.findIndex(
+                (h) => stripPrefix(h).toLowerCase() === leafHex,
+              );
+              if (leafIndex >= 0) {
+                const computedRoot = merkleRoot(batch.leafHashes);
+                if (
+                  stripPrefix(computedRoot).toLowerCase() ===
+                  stripPrefix(rootHash).toLowerCase()
+                ) {
+                  return {
+                    anchorId: ensureHex(stripPrefix(anchorId)),
+                    rootHash: ensureHex(stripPrefix(rootHash)),
+                    blockHash: blockHash.toHex(),
+                    exactMatch: batch.leafCount === 1,
+                  };
+                }
+              }
+            }
+          } catch {
+            // Gateway unreachable, continue scanning
+          }
+        }
+      }
+    } catch {
+      // State pruned for this block, stop scanning further back
+      break;
     }
   }
 
