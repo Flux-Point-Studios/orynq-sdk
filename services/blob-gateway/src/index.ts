@@ -1,15 +1,5 @@
 /**
  * Materios Blob Gateway Service - Express server for blob storage and retrieval.
- *
- * Provides:
- *   POST /blobs/:contentHash/manifest     — upload manifest
- *   PUT  /blobs/:contentHash/chunks/:i    — upload chunk binary
- *   GET  /blobs/:contentHash/status       — blob status (public)
- *   GET  /locators/:receiptId             — daemon-compatible locator
- *   GET  /chunks/:receiptId/:i            — download chunk binary
- *   POST /batches/:anchorId               — save batch metadata
- *   GET  /batches/:anchorId               — read batch metadata
- *   GET  /health                          — health check
  */
 
 import express, { type Request, type Response, type NextFunction } from "express";
@@ -19,39 +9,62 @@ import { blobsRouter } from "./routes/blobs.js";
 import { locatorsRouter } from "./routes/locators.js";
 import { chunksRouter } from "./routes/chunks.js";
 import { batchesRouter } from "./routes/batches.js";
+import { statusRouter } from "./routes/status.js";
 import { ensureDir } from "./storage.js";
+import { initQuotaDb, resolveKey } from "./quota.js";
+import { startCleanupTimer } from "./cleanup.js";
 
 const app = express();
 
 /**
- * Auth middleware - validates x-api-key header.
- * Skips auth for health and status endpoints.
+ * Auth middleware - validates x-api-key via SQLite-backed quota system.
+ * Skips auth for health, status, and blob status endpoints.
  */
 function authMiddleware(req: Request, res: Response, next: NextFunction): void {
-  // Skip auth for health and status endpoints
-  if (req.path === "/health" || req.path.match(/^\/blobs\/[^/]+\/status$/)) {
+  // Skip auth for public endpoints
+  if (
+    req.path === "/health" ||
+    req.path === "/status" ||
+    req.path.match(/^\/blobs\/[^/]+\/status$/)
+  ) {
     next();
     return;
   }
-  const apiKey = req.headers["x-api-key"];
-  if (!apiKey || apiKey !== config.apiKey) {
-    res.status(401).json({ error: "Unauthorized" });
+  const apiKey = req.headers["x-api-key"] as string | undefined;
+  if (!apiKey) {
+    res.status(401).json({ error: "Unauthorized: missing x-api-key header" });
+    return;
+  }
+  const keyInfo = resolveKey(apiKey);
+  if (!keyInfo) {
+    res.status(401).json({ error: "Unauthorized: invalid or disabled API key" });
     return;
   }
   next();
 }
 
+// Request timeout middleware
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setTimeout(config.uploadTimeoutMs, () => {
+    res.status(408).json({ error: "Request timeout" });
+  });
+  next();
+});
+
 // Raw body parser for chunk uploads - MUST come before JSON parser for chunk routes
-app.put("/blobs/:contentHash/chunks/:i", express.raw({ type: "*/*", limit: "64mb" }));
+app.put("/blobs/:contentHash/chunks/:i", express.raw({ type: "*/*", limit: `${config.maxChunkBytes}` }));
 
 // JSON parser for everything else
 app.use(express.json({ limit: "2mb" }));
 
+// Public routes (before auth)
+app.get("/health", healthHandler);
+app.use(statusRouter);
+
 // Auth
 app.use(authMiddleware);
 
-// Routes
-app.get("/health", healthHandler);
+// Protected routes
 app.use(blobsRouter);
 app.use(locatorsRouter);
 app.use(chunksRouter);
@@ -61,10 +74,17 @@ async function start(): Promise<void> {
   // Ensure storage directories exist
   await ensureDir(config.storagePath);
 
+  // Initialize SQLite quota database
+  initQuotaDb();
+
+  // Start TTL cleanup timer (hourly)
+  startCleanupTimer();
+
   app.listen(config.port, () => {
     console.log(`[blob-gateway] Service started on port ${config.port}`);
     console.log(`[blob-gateway] Storage path: ${config.storagePath}`);
     console.log(`[blob-gateway] Health: http://localhost:${config.port}/health`);
+    console.log(`[blob-gateway] Status: http://localhost:${config.port}/status`);
   });
 }
 

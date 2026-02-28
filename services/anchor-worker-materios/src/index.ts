@@ -7,7 +7,8 @@
 import express, { type Request, type Response, type NextFunction } from "express";
 import { PORT, ANCHOR_WORKER_TOKEN, validateEnv } from "./config.js";
 import { getApi, submitAnchor, type AnchorRequest } from "./anchor.js";
-import { healthHandler, readyHandler, setConnected } from "./health.js";
+import { healthHandler, readyHandler, statusHandler, setConnected, incrementAnchorCount } from "./health.js";
+import { postBatchMetadataBackup, type BatchMetadata } from "./batch-metadata.js";
 
 validateEnv();
 
@@ -25,16 +26,17 @@ function authMiddleware(req: Request, res: Response, next: NextFunction): void {
 
 app.get("/health", healthHandler);
 app.get("/ready", readyHandler);
+app.get("/status", statusHandler);
 
 /**
  * POST /anchor
- * Body: { contentHash, rootHash, manifestHash, anchorId? }
+ * Body: { contentHash, rootHash, manifestHash, anchorId?, batchMetadata? }
  *
  * Same request shape works against Cardano worker for API compatibility.
  */
 app.post("/anchor", authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { contentHash, rootHash, manifestHash, anchorId } = req.body as Partial<AnchorRequest>;
+    const { contentHash, rootHash, manifestHash, anchorId, batchMetadata } = req.body as Partial<AnchorRequest & { batchMetadata?: BatchMetadata }>;
 
     if (!rootHash) {
       res.status(400).json({ error: "Missing required field: rootHash" });
@@ -54,6 +56,13 @@ app.post("/anchor", authMiddleware, async (req: Request, res: Response) => {
     const result = await submitAnchor({ contentHash, rootHash, manifestHash, anchorId });
 
     console.log(`[materios-anchor] Anchor submitted: blockHash=${result.blockHash}, anchorId=${result.anchorId}`);
+
+    incrementAnchorCount();
+
+    // Post batch metadata backup to gateway (fire-and-forget)
+    if (batchMetadata && result.anchorId) {
+      postBatchMetadataBackup(result.anchorId, batchMetadata).catch(() => {});
+    }
 
     res.json({ success: true, ...result });
   } catch (error) {

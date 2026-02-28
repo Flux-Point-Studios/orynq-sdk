@@ -4,6 +4,7 @@
  * Directory layout under STORAGE_PATH:
  *   receipts/{contentHash}/
  *     manifest.json
+ *     receipt.meta.json
  *     chunks/0.bin, 1.bin, ...
  *     .complete            # sentinel file when all chunks uploaded
  *   batches/{anchorId}.json
@@ -15,6 +16,7 @@ import { mkdir, readFile, writeFile, access, readdir } from "fs/promises";
 import { join } from "path";
 import { createHash } from "crypto";
 import { config } from "./config.js";
+import { notifyDaemon } from "./notify.js";
 
 /**
  * Strip "0x" prefix from a hex string if present.
@@ -60,7 +62,7 @@ function batchesDir(): string {
 
 /**
  * Save manifest.json for a content hash.
- * Also writes receipt-to-content index file.
+ * Also writes receipt-to-content index file and receipt.meta.json.
  */
 export async function saveManifest(contentHash: string, manifest: object): Promise<void> {
   const dir = receiptsDir(contentHash);
@@ -74,6 +76,15 @@ export async function saveManifest(contentHash: string, manifest: object): Promi
   await ensureDir(idxDir);
   const receiptIdClean = stripHexPrefix(receiptId);
   await writeFile(join(idxDir, `${receiptIdClean}.txt`), stripHexPrefix(contentHash));
+
+  // Write metadata for TTL cleanup
+  const metaPath = join(dir, "receipt.meta.json");
+  const meta = {
+    createdAt: new Date().toISOString(),
+    certifiedAt: null,
+    keyName: "",
+  };
+  await writeFile(metaPath, JSON.stringify(meta, null, 2));
 }
 
 /**
@@ -91,6 +102,7 @@ export async function getManifest(contentHash: string): Promise<object | null> {
 
 /**
  * Save a chunk binary. After saving, checks completeness and writes .complete sentinel.
+ * Notifies daemon when upload is complete.
  */
 export async function saveChunk(contentHash: string, chunkIndex: number, data: Buffer): Promise<void> {
   const dir = chunksDir(contentHash);
@@ -104,6 +116,9 @@ export async function saveChunk(contentHash: string, chunkIndex: number, data: B
     const uploaded = await countUploadedChunks(contentHash);
     if (uploaded >= expectedCount) {
       await writeFile(join(receiptsDir(contentHash), ".complete"), "");
+      // Notify daemon that blob is complete
+      const receiptId = computeReceiptId(contentHash);
+      notifyDaemon(contentHash, receiptId).catch(() => {});
     }
   }
 }
@@ -193,5 +208,21 @@ export async function getBatch(anchorId: string): Promise<object | null> {
     return JSON.parse(data);
   } catch {
     return null;
+  }
+}
+
+/**
+ * Mark a receipt as certified — sets certifiedAt in receipt.meta.json.
+ */
+export async function markCertified(contentHash: string): Promise<boolean> {
+  const metaPath = join(receiptsDir(contentHash), "receipt.meta.json");
+  try {
+    const raw = await readFile(metaPath, "utf-8");
+    const meta = JSON.parse(raw);
+    meta.certifiedAt = new Date().toISOString();
+    await writeFile(metaPath, JSON.stringify(meta, null, 2));
+    return true;
+  } catch {
+    return false;
   }
 }

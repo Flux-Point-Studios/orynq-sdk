@@ -8,10 +8,10 @@ import { saveBatch, getBatch } from "../storage.js";
 export const batchesRouter = Router();
 
 /**
- * POST /batches/:anchorId
- * Saves batch metadata JSON.
+ * PUT /batches/:anchorId (also accepts POST for backwards compat)
+ * Idempotent upsert of batch metadata JSON.
  */
-batchesRouter.post("/batches/:anchorId", async (req: Request, res: Response) => {
+async function upsertBatch(req: Request, res: Response): Promise<void> {
   try {
     const { anchorId } = req.params;
     const metadata = req.body;
@@ -22,13 +22,16 @@ batchesRouter.post("/batches/:anchorId", async (req: Request, res: Response) => 
     }
 
     await saveBatch(anchorId, metadata);
-    res.status(201).json({ status: "ok", anchorId });
+    res.status(200).json({ status: "ok", anchorId });
   } catch (error) {
     console.error("[blob-gateway] Error saving batch:", error);
     const message = error instanceof Error ? error.message : "Unknown error";
     res.status(500).json({ error: message });
   }
-});
+}
+
+batchesRouter.post("/batches/:anchorId", upsertBatch);
+batchesRouter.put("/batches/:anchorId", upsertBatch);
 
 /**
  * GET /batches/:anchorId
