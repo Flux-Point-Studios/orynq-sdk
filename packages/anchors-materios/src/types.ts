@@ -80,6 +80,22 @@ export interface ReceiptSubmitResult {
   blockHash: string;
   /** Block number */
   blockNumber: number;
+  /** Transaction (extrinsic) hash. Present when the tx was broadcast. */
+  txHash?: string;
+  /**
+   * Whether the receipt was confirmed in on-chain storage after inclusion.
+   * `true`  — storage query found the receipt (success).
+   * `false` — storage query did NOT find the receipt (dispatch likely failed).
+   * `undefined` — storage confirmation was skipped (e.g. older code path).
+   */
+  confirmed?: boolean;
+  /**
+   * High-level submission status.
+   * `'submitted'` — receipt was included in a block AND confirmed in storage.
+   * `'failed'`    — receipt was included in a block but NOT found in storage.
+   * `undefined`   — status unknown (storage confirmation was skipped).
+   */
+  status?: "submitted" | "failed";
 }
 
 /** On-chain receipt record. */
@@ -252,6 +268,10 @@ export interface CertifiedReceiptResult {
   receiptId: string;
   blockHash: string;
   blockNumber: number;
+  /** Transaction (extrinsic) hash from the receipt submission. */
+  txHash?: string;
+  /** Whether the receipt was confirmed in on-chain storage after inclusion. */
+  confirmed?: boolean;
   certHash?: string;
   leafHash?: string;
   anchor?: AnchorMatchResult;

@@ -71,41 +71,146 @@ export async function submitReceipt(
     toBytes32("00".repeat(32)), // attestation_evidence_hash: [u8; 32]
   );
 
+  // Sign the extrinsic first so dry-run can simulate the fully signed payload
+  const signed = await tx.signAsync(keypair, { nonce: -1 });
+
+  // ── Dry-run: catch dispatch errors BEFORE consuming a nonce ──────────
+  // system.dryRun may not be available on every chain, so wrap in try/catch
+  // for graceful degradation.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dryRunResult: any = await (api.rpc as any).system.dryRun(signed.toHex());
+
+    // ApplyExtrinsicResult = Result<DispatchOutcome, TransactionValidityError>
+    // DispatchOutcome      = Result<(), DispatchError>
+    if (dryRunResult.isErr) {
+      // Outer error: TransactionValidityError (invalid nonce, can't pay fees, etc.)
+      throw new Error(
+        `Receipt submission would fail (transaction invalid): ${dryRunResult.asErr.toString()}. ` +
+        `This was caught by dry-run BEFORE broadcasting — no nonce was consumed.`,
+      );
+    }
+
+    // dryRunResult.asOk is the inner DispatchOutcome (Result<(), DispatchError>)
+    const dispatchOutcome = dryRunResult.asOk;
+    if (dispatchOutcome.isErr) {
+      // Inner error: DispatchError (e.g. ReceiptAlreadyExists, insufficient balance)
+      const innerErr = dispatchOutcome.asErr;
+      let errorMsg: string;
+      if (innerErr.isModule) {
+        const decoded = api.registry.findMetaError(innerErr.asModule);
+        errorMsg = `${decoded.section}.${decoded.name}: ${decoded.docs.join(" ")}`;
+      } else {
+        errorMsg = innerErr.toString();
+      }
+      throw new Error(
+        `Receipt submission would fail at dispatch: ${errorMsg}. ` +
+        `This was caught by dry-run BEFORE broadcasting — no nonce was consumed.`,
+      );
+    }
+  } catch (err) {
+    // If the error was thrown by our own dry-run checks above, re-throw it
+    if (err instanceof Error && err.message.includes("dry-run")) {
+      throw err;
+    }
+    // Otherwise, system.dryRun is likely unavailable on this chain —
+    // log a warning and proceed without the safety net.
+    console.warn(
+      `[materios-sdk] system.dryRun unavailable, skipping pre-flight check: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+
+  // ── Broadcast the signed extrinsic ───────────────────────────────────
   return new Promise<ReceiptSubmitResult>((resolve, reject) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    tx.signAndSend(keypair, { nonce: -1 }, ({ status, dispatchError }: any) => {
+    signed.send(({ status, dispatchError, txHash: extrinsicHash }: any) => {
       if (dispatchError) {
         if (dispatchError.isModule) {
           const decoded = api.registry.findMetaError(dispatchError.asModule);
           reject(
             new Error(
-              `${decoded.section}.${decoded.name}: ${decoded.docs.join(" ")}`,
+              `Receipt dispatch failed: ${decoded.section}.${decoded.name}: ${decoded.docs.join(" ")}`,
             ),
           );
         } else {
-          reject(new Error(dispatchError.toString()));
+          reject(new Error(`Receipt dispatch failed: ${dispatchError.toString()}`));
         }
         return;
       }
       if (status.isInBlock) {
         const blockHash = status.asInBlock.toHex();
-        // Get block number from the block hash
-        api.rpc.chain
-          .getHeader(blockHash)
-          .then((header) => {
+        const txHash = extrinsicHash ? extrinsicHash.toHex() : signed.hash.toHex();
+
+        // ── Post-submit storage confirmation ─────────────────────────
+        // Verify the receipt actually landed in on-chain storage.
+        // This catches silent dispatch failures that don't surface
+        // through the dispatchError callback (e.g. nonce consumed
+        // but extrinsic failed at execution).
+        const finalReceiptId = ensureHex(receiptId);
+
+        const confirmAndResolve = async () => {
+          let blockNumber = 0;
+          try {
+            const header = await api.rpc.chain.getHeader(blockHash);
+            blockNumber = header.number.toNumber();
+          } catch {
+            // Non-critical: block number is nice-to-have
+          }
+
+          let confirmed: boolean;
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const onChain = await (api.query as any).orinqReceipts.receipts(finalReceiptId);
+            confirmed = !onChain.isEmpty;
+          } catch (storageErr) {
+            // If we can't query storage, we can't confirm — warn but don't fail
+            console.warn(
+              `[materios-sdk] Could not verify receipt in storage: ${
+                storageErr instanceof Error ? storageErr.message : String(storageErr)
+              }`,
+            );
+            // Resolve without confirmation info so we don't break existing callers
             resolve({
-              receiptId: ensureHex(receiptId),
+              receiptId: finalReceiptId,
               blockHash,
-              blockNumber: header.number.toNumber(),
+              blockNumber,
+              txHash,
             });
-          })
-          .catch(() => {
-            resolve({
-              receiptId: ensureHex(receiptId),
-              blockHash,
-              blockNumber: 0,
-            });
+            return;
+          }
+
+          if (!confirmed) {
+            reject(
+              new Error(
+                `Receipt ${finalReceiptId} was included in block ${blockHash} (tx: ${txHash}) ` +
+                `but was NOT found in on-chain storage. The extrinsic likely failed at dispatch. ` +
+                `Check the block events for details. No receipt was stored — you may retry with a new submission.`,
+              ),
+            );
+            return;
+          }
+
+          resolve({
+            receiptId: finalReceiptId,
+            blockHash,
+            blockNumber,
+            txHash,
+            confirmed: true,
+            status: "submitted",
           });
+        };
+
+        confirmAndResolve().catch((err) => {
+          reject(
+            new Error(
+              `Receipt post-submit confirmation failed: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            ),
+          );
+        });
       }
     }).catch(reject);
   });
@@ -331,6 +436,8 @@ export async function submitCertifiedReceipt(
     receiptId: submitResult.receiptId,
     blockHash: submitResult.blockHash,
     blockNumber: submitResult.blockNumber,
+    ...(submitResult.txHash !== undefined ? { txHash: submitResult.txHash } : {}),
+    ...(submitResult.confirmed !== undefined ? { confirmed: submitResult.confirmed } : {}),
     certHash: certResult.certHash,
     leafHash: certResult.leafHash,
   };
