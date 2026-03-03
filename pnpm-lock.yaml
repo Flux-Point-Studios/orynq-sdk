@@ -93,6 +93,9 @@ importers:
       '@polkadot/keyring':
         specifier: ^13.0.0
         version: 13.5.9(@polkadot/util-crypto@13.5.9)(@polkadot/util@13.5.9)
+      '@polkadot/util':
+        specifier: ^13.0.0
+        version: 13.5.9
     devDependencies:
       tsup:
         specifier: ^8.0.1
@@ -553,6 +556,9 @@ importers:
 
   services/blob-gateway:
     dependencies:
+      '@polkadot/api':
+        specifier: ^14.0.0
+        version: 14.3.1
       '@polkadot/util':
         specifier: ^13.0.0
         version: 13.5.9
