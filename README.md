@@ -17,6 +17,7 @@ Cryptographic AI process tracing and blockchain anchoring. Create tamper-proof, 
 - **Anchor-as-a-Service** - Managed API with pay-per-use or subscription plans
 - **Independent Verification** - Anyone can verify anchors using only the txHash
 - **Cardano Native** - Stored under metadata label 2222
+- **Materios Partner Chain** - High-throughput receipts with committee certification and Cardano L1 anchoring
 
 ### Payment Protocol (for Anchor-as-a-Service)
 - **x402 Protocol** - Coinbase standard for EVM chains
@@ -89,7 +90,48 @@ console.log("Anchored:", `https://cardanoscan.io/transaction/${txHash}`);
 
 **Full example:** [examples/self-anchor](./examples/self-anchor)
 
-### Option 2: Anchor-as-a-Service API
+### Option 2: Materios Partner Chain
+
+Anchor high-throughput data on the Materios Partner Chain with automatic committee certification and Cardano L1 anchoring.
+
+```bash
+npm install @fluxpointstudios/orynq-sdk-anchors-materios
+```
+
+```typescript
+import {
+  MateriosProvider,
+  submitCertifiedReceipt,
+} from "@fluxpointstudios/orynq-sdk-anchors-materios";
+
+const provider = new MateriosProvider({
+  rpcUrl: "wss://materios.fluxpointstudios.com/rpc",
+  signerUri: "//Alice", // or BIP39 mnemonic
+});
+await provider.connect();
+
+// One function: upload blobs → submit receipt → wait for certification
+const result = await submitCertifiedReceipt(provider, {
+  contentHash: bundle.rootHash,
+  rootHash: bundle.rootHash,
+  manifestHash: bundle.manifestHash,
+}, content, {
+  blobGateway: {
+    baseUrl: "https://materios.fluxpointstudios.com/blobs",
+    // Option A: API key (higher rate limits)
+    apiKey: process.env.BLOB_GATEWAY_API_KEY,
+    // Option B: sr25519 signature (no API key needed, just a funded account)
+    // signerKeypair: { address, sign },
+  },
+});
+
+console.log("Receipt ID:", result.receiptId);
+console.log("Certified:", !!result.certHash);
+```
+
+**Full example:** [examples/materios-e2e](./examples/materios-e2e)
+
+### Option 3: Anchor-as-a-Service API
 
 Use the managed API with automatic payment handling.
 
@@ -156,6 +198,7 @@ curl -H "project_id: $BLOCKFROST_KEY" \
 |---------|-------------|
 | `@fluxpointstudios/orynq-sdk-process-trace` | Cryptographic process trace builder with hash chains and Merkle trees |
 | `@fluxpointstudios/orynq-sdk-anchors-cardano` | Cardano anchor builder, serializer, and verifier |
+| `@fluxpointstudios/orynq-sdk-anchors-materios` | Materios chain receipts, certification, blob uploads, and verification |
 
 ### Payment Protocol (for Anchor-as-a-Service)
 
