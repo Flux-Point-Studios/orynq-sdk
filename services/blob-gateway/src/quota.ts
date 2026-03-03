@@ -20,6 +20,7 @@ interface KeyInfo {
   maxReceiptsPerDay: number;
   maxBytesPerDay: number;
   maxConcurrentUploads: number;
+  validatorId: string | null;
 }
 
 export interface QuotaCheckResult {
@@ -46,7 +47,8 @@ export function initQuotaDb(): void {
       enabled INTEGER NOT NULL DEFAULT 1,
       max_receipts_per_day INTEGER NOT NULL DEFAULT 100,
       max_bytes_per_day INTEGER NOT NULL DEFAULT 1073741824,
-      max_concurrent_uploads INTEGER NOT NULL DEFAULT 5
+      max_concurrent_uploads INTEGER NOT NULL DEFAULT 5,
+      validator_id TEXT DEFAULT NULL
     );
 
     CREATE TABLE IF NOT EXISTS quota_daily (
@@ -65,6 +67,12 @@ export function initQuotaDb(): void {
       status TEXT NOT NULL DEFAULT 'active'
     );
   `);
+
+  // Migration: add validator_id column if missing (existing databases)
+  const cols = db.prepare("PRAGMA table_info(api_keys)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "validator_id")) {
+    db.exec("ALTER TABLE api_keys ADD COLUMN validator_id TEXT DEFAULT NULL");
+  }
 
   loadKeys();
 }
@@ -89,17 +97,19 @@ function loadKeys(): void {
         maxReceiptsPerDay?: number;
         maxBytesPerDay?: number;
         maxConcurrentUploads?: number;
+        validatorId?: string;
       }>;
 
       const upsert = db.prepare(`
-        INSERT INTO api_keys (key_hash, name, enabled, max_receipts_per_day, max_bytes_per_day, max_concurrent_uploads)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO api_keys (key_hash, name, enabled, max_receipts_per_day, max_bytes_per_day, max_concurrent_uploads, validator_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(key_hash) DO UPDATE SET
           name = excluded.name,
           enabled = excluded.enabled,
           max_receipts_per_day = excluded.max_receipts_per_day,
           max_bytes_per_day = excluded.max_bytes_per_day,
-          max_concurrent_uploads = excluded.max_concurrent_uploads
+          max_concurrent_uploads = excluded.max_concurrent_uploads,
+          validator_id = excluded.validator_id
       `);
 
       const upsertMany = db.transaction((items: typeof keys) => {
@@ -111,6 +121,7 @@ function loadKeys(): void {
             k.maxReceiptsPerDay ?? 100,
             k.maxBytesPerDay ?? 1073741824,
             k.maxConcurrentUploads ?? 5,
+            k.validatorId ?? null,
           );
         }
       });
@@ -138,7 +149,7 @@ function loadKeys(): void {
 export function resolveKey(apiKeyPlaintext: string): KeyInfo | null {
   const kh = hashKey(apiKeyPlaintext);
   const row = db.prepare(
-    "SELECT key_hash, name, enabled, max_receipts_per_day, max_bytes_per_day, max_concurrent_uploads FROM api_keys WHERE key_hash = ?",
+    "SELECT key_hash, name, enabled, max_receipts_per_day, max_bytes_per_day, max_concurrent_uploads, validator_id FROM api_keys WHERE key_hash = ?",
   ).get(kh) as Record<string, unknown> | undefined;
 
   if (!row || !row.enabled) return null;
@@ -150,6 +161,7 @@ export function resolveKey(apiKeyPlaintext: string): KeyInfo | null {
     maxReceiptsPerDay: row.max_receipts_per_day as number,
     maxBytesPerDay: row.max_bytes_per_day as number,
     maxConcurrentUploads: row.max_concurrent_uploads as number,
+    validatorId: (row.validator_id as string) ?? null,
   };
 }
 

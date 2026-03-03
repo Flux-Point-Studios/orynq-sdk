@@ -3,6 +3,7 @@
  */
 
 import express, { type Request, type Response, type NextFunction } from "express";
+import { cryptoWaitReady } from "@polkadot/util-crypto";
 import { config } from "./config.js";
 import { healthHandler } from "./health.js";
 import { blobsRouter } from "./routes/blobs.js";
@@ -10,8 +11,10 @@ import { locatorsRouter } from "./routes/locators.js";
 import { chunksRouter } from "./routes/chunks.js";
 import { batchesRouter } from "./routes/batches.js";
 import { statusRouter } from "./routes/status.js";
+import { heartbeatsRouter } from "./routes/heartbeats.js";
 import { ensureDir } from "./storage.js";
 import { initQuotaDb, resolveKey } from "./quota.js";
+import { initHeartbeatDb, startHeartbeatCleanup } from "./heartbeat-store.js";
 import { startCleanupTimer } from "./cleanup.js";
 
 const app = express();
@@ -25,6 +28,7 @@ function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   if (
     req.path === "/health" ||
     req.path === "/status" ||
+    req.path === "/heartbeats/status" ||
     req.path.match(/^\/blobs\/[^/]+\/status$/)
   ) {
     next();
@@ -69,22 +73,30 @@ app.use(blobsRouter);
 app.use(locatorsRouter);
 app.use(chunksRouter);
 app.use(batchesRouter);
+app.use(heartbeatsRouter);
 
 async function start(): Promise<void> {
+  // Initialize sr25519/ed25519 WASM (required for signatureVerify)
+  await cryptoWaitReady();
+  console.log("[blob-gateway] Polkadot crypto WASM initialized");
+
   // Ensure storage directories exist
   await ensureDir(config.storagePath);
 
-  // Initialize SQLite quota database
+  // Initialize SQLite databases
   initQuotaDb();
+  initHeartbeatDb();
 
-  // Start TTL cleanup timer (hourly)
+  // Start cleanup timers
   startCleanupTimer();
+  startHeartbeatCleanup();
 
   app.listen(config.port, () => {
     console.log(`[blob-gateway] Service started on port ${config.port}`);
     console.log(`[blob-gateway] Storage path: ${config.storagePath}`);
     console.log(`[blob-gateway] Health: http://localhost:${config.port}/health`);
     console.log(`[blob-gateway] Status: http://localhost:${config.port}/status`);
+    console.log(`[blob-gateway] Heartbeats: http://localhost:${config.port}/heartbeats/status`);
   });
 }
 
