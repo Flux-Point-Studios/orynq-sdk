@@ -83,6 +83,9 @@ export async function saveManifest(contentHash: string, manifest: object): Promi
     createdAt: new Date().toISOString(),
     certifiedAt: null,
     keyName: "",
+    uploaderAddress: "",
+    lastReceiptCheck: null,
+    receiptOnChain: null,
   };
   await writeFile(metaPath, JSON.stringify(meta, null, 2));
 }
@@ -220,6 +223,31 @@ export async function markCertified(contentHash: string): Promise<boolean> {
     const raw = await readFile(metaPath, "utf-8");
     const meta = JSON.parse(raw);
     meta.certifiedAt = new Date().toISOString();
+    await writeFile(metaPath, JSON.stringify(meta, null, 2));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Partial update of receipt.meta.json fields.
+ * Returns true if successful, false if meta file not found.
+ */
+export async function updateReceiptMeta(
+  contentHash: string,
+  updates: Partial<{
+    certifiedAt: string;
+    uploaderAddress: string;
+    lastReceiptCheck: string;
+    receiptOnChain: boolean;
+  }>,
+): Promise<boolean> {
+  const metaPath = join(receiptsDir(contentHash), "receipt.meta.json");
+  try {
+    const raw = await readFile(metaPath, "utf-8");
+    const meta = JSON.parse(raw);
+    Object.assign(meta, updates);
     await writeFile(metaPath, JSON.stringify(meta, null, 2));
     return true;
   } catch {

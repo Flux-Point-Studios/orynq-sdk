@@ -1,19 +1,31 @@
 /**
  * Batch metadata routes.
+ *
+ * Phase 4: Write (POST/PUT) requires auth. Read (GET) is public.
  */
 
 import { Router, type Request, type Response } from "express";
 import { saveBatch, getBatch } from "../storage.js";
+import { resolveAuth } from "../auth.js";
 
 export const batchesRouter = Router();
 
 /**
  * PUT /batches/:anchorId (also accepts POST for backwards compat)
  * Idempotent upsert of batch metadata JSON.
+ * Requires auth: API key or sr25519 signature.
  */
 async function upsertBatch(req: Request, res: Response): Promise<void> {
   try {
     const { anchorId } = req.params;
+
+    // Auth: sig or API key (anchorId used as contentHash for sig verification)
+    const auth = await resolveAuth(req, anchorId);
+    if (!auth.authenticated) {
+      res.status(401).json({ error: auth.error });
+      return;
+    }
+
     const metadata = req.body;
 
     if (!metadata || typeof metadata !== "object") {

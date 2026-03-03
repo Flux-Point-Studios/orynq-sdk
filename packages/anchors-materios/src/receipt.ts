@@ -20,6 +20,7 @@ import type {
 } from "./types.js";
 import { waitForCertification, waitForAnchor } from "./polling.js";
 import { stripPrefix, ensureHex, isZeroHash } from "./hex.js";
+import { u8aToHex, stringToU8a } from "@polkadot/util";
 
 /**
  * Submit a receipt to the Materios chain.
@@ -314,6 +315,26 @@ export async function queryMotraBalance(
 }
 
 /**
+ * Build auth headers for gateway requests (API key or sr25519 signature).
+ */
+function buildAuthHeaders(gateway: BlobGatewayConfig, contentHash: string): Record<string, string> {
+  if (gateway.apiKey) {
+    return { "x-api-key": gateway.apiKey };
+  }
+  if (gateway.signerKeypair) {
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const msg = `materios-upload-v1|${contentHash}|${gateway.signerKeypair.address}|${ts}`;
+    const sig = gateway.signerKeypair.sign(stringToU8a(msg));
+    return {
+      "x-upload-sig": u8aToHex(sig),
+      "x-uploader-address": gateway.signerKeypair.address,
+      "x-upload-ts": ts,
+    };
+  }
+  return {};
+}
+
+/**
  * Upload blob data (manifest + chunks) to a blob gateway.
  * The gateway uses contentHash as the primary key.
  */
@@ -325,9 +346,7 @@ export async function uploadBlobs(
 ): Promise<BlobUploadResult> {
   const strippedHash = stripPrefix(contentHash);
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (gateway.apiKey) {
-    headers["x-api-key"] = gateway.apiKey;
-  }
+  Object.assign(headers, buildAuthHeaders(gateway, strippedHash));
 
   try {
     // 1. Upload manifest
@@ -350,9 +369,7 @@ export async function uploadBlobs(
       const chunkHeaders: Record<string, string> = {
         "Content-Type": "application/octet-stream",
       };
-      if (gateway.apiKey) {
-        chunkHeaders["x-api-key"] = gateway.apiKey;
-      }
+      Object.assign(chunkHeaders, buildAuthHeaders(gateway, strippedHash));
 
       const chunkRes = await fetch(
         `${gateway.baseUrl}/blobs/${strippedHash}/chunks/${i}`,

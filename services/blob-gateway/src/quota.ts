@@ -13,7 +13,7 @@ import { config } from "./config.js";
 
 let db: Database.Database;
 
-interface KeyInfo {
+export interface KeyInfo {
   keyHash: string;
   name: string;
   enabled: boolean;
@@ -62,6 +62,22 @@ export function initQuotaDb(): void {
     CREATE TABLE IF NOT EXISTS uploads_inflight (
       upload_id TEXT PRIMARY KEY,
       key_hash TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      bytes INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active'
+    );
+
+    CREATE TABLE IF NOT EXISTS account_quotas_daily (
+      address TEXT NOT NULL,
+      day TEXT NOT NULL,
+      receipts INTEGER NOT NULL DEFAULT 0,
+      bytes INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (address, day)
+    );
+
+    CREATE TABLE IF NOT EXISTS account_uploads_inflight (
+      upload_id TEXT PRIMARY KEY,
+      address TEXT NOT NULL,
       started_at TEXT NOT NULL,
       bytes INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'active'
@@ -294,6 +310,121 @@ export function finalizeUpload(keyInfo: KeyInfo, contentHash: string): QuotaChec
     ).run(contentHash, keyInfo.keyHash);
 
     return { allowed: true, keyInfo } as QuotaCheckResult;
+  });
+
+  return txn();
+}
+
+// ---------------------------------------------------------------------------
+// Account-based quotas (sig-only uploaders — keyed by SS58 address)
+// ---------------------------------------------------------------------------
+
+function cleanStaleAccountInflight(address: string): void {
+  const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  db.prepare(
+    "DELETE FROM account_uploads_inflight WHERE address = ? AND started_at < ? AND status = 'active'",
+  ).run(address, cutoff);
+}
+
+/**
+ * Check and record upload start for sig-only uploader.
+ */
+export function startAccountUpload(address: string, contentHash: string): QuotaCheckResult {
+  const txn = db.transaction(() => {
+    cleanStaleAccountInflight(address);
+
+    const inflight = db.prepare(
+      "SELECT COUNT(*) as cnt FROM account_uploads_inflight WHERE address = ? AND status = 'active'",
+    ).get(address) as { cnt: number };
+
+    if (inflight.cnt >= config.sigOnlyMaxConcurrentUploads) {
+      return {
+        allowed: false,
+        error: "Concurrent upload limit exceeded",
+        limit: config.sigOnlyMaxConcurrentUploads,
+        current: inflight.cnt,
+      } as QuotaCheckResult;
+    }
+
+    db.prepare(
+      "INSERT OR REPLACE INTO account_uploads_inflight (upload_id, address, started_at, bytes, status) VALUES (?, ?, ?, 0, 'active')",
+    ).run(contentHash, address, new Date().toISOString());
+
+    return { allowed: true } as QuotaCheckResult;
+  });
+
+  return txn();
+}
+
+/**
+ * Record chunk bytes for sig-only uploader.
+ */
+export function recordAccountChunkBytes(address: string, contentHash: string, chunkBytes: number): QuotaCheckResult {
+  const d = today();
+  const txn = db.transaction(() => {
+    db.prepare(
+      "INSERT OR IGNORE INTO account_quotas_daily (address, day, receipts, bytes) VALUES (?, ?, 0, 0)",
+    ).run(address, d);
+
+    const daily = db.prepare(
+      "SELECT bytes FROM account_quotas_daily WHERE address = ? AND day = ?",
+    ).get(address, d) as { bytes: number };
+
+    if (daily.bytes + chunkBytes > config.sigOnlyMaxBytesPerDay) {
+      return {
+        allowed: false,
+        error: "Daily byte quota exceeded",
+        limit: config.sigOnlyMaxBytesPerDay,
+        current: daily.bytes,
+      } as QuotaCheckResult;
+    }
+
+    db.prepare(
+      "UPDATE account_quotas_daily SET bytes = bytes + ? WHERE address = ? AND day = ?",
+    ).run(chunkBytes, address, d);
+
+    db.prepare(
+      "UPDATE account_uploads_inflight SET bytes = bytes + ?, started_at = ? WHERE upload_id = ? AND address = ?",
+    ).run(chunkBytes, new Date().toISOString(), contentHash, address);
+
+    return { allowed: true } as QuotaCheckResult;
+  });
+
+  return txn();
+}
+
+/**
+ * Finalize upload for sig-only uploader. Increments daily receipt count.
+ */
+export function finalizeAccountUpload(address: string, contentHash: string): QuotaCheckResult {
+  const d = today();
+  const txn = db.transaction(() => {
+    db.prepare(
+      "INSERT OR IGNORE INTO account_quotas_daily (address, day, receipts, bytes) VALUES (?, ?, 0, 0)",
+    ).run(address, d);
+
+    const daily = db.prepare(
+      "SELECT receipts FROM account_quotas_daily WHERE address = ? AND day = ?",
+    ).get(address, d) as { receipts: number };
+
+    if (daily.receipts >= config.sigOnlyMaxReceiptsPerDay) {
+      return {
+        allowed: false,
+        error: "Daily receipt quota exceeded",
+        limit: config.sigOnlyMaxReceiptsPerDay,
+        current: daily.receipts,
+      } as QuotaCheckResult;
+    }
+
+    db.prepare(
+      "UPDATE account_quotas_daily SET receipts = receipts + 1 WHERE address = ? AND day = ?",
+    ).run(address, d);
+
+    db.prepare(
+      "UPDATE account_uploads_inflight SET status = 'complete' WHERE upload_id = ? AND address = ?",
+    ).run(contentHash, address);
+
+    return { allowed: true } as QuotaCheckResult;
   });
 
   return txn();

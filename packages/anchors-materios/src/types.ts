@@ -230,6 +230,12 @@ export interface CertificationStatusResult {
 export interface BlobGatewayConfig {
   baseUrl: string;
   apiKey?: string;
+  /** sr25519 keypair for signing uploads (alternative to apiKey).
+   *  Provide when the uploader has a funded Materios account but no API key. */
+  signerKeypair?: {
+    address: string;
+    sign: (message: Uint8Array) => Uint8Array;
+  };
 }
 
 export interface BlobUploadResult {

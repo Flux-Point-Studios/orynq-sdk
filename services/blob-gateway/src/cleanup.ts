@@ -8,11 +8,16 @@
 import { readdir, readFile, writeFile, rm, access } from "fs/promises";
 import { join } from "path";
 import { config } from "./config.js";
+import { checkReceiptStatus } from "./rpc-client.js";
+import { computeReceiptId, updateReceiptMeta } from "./storage.js";
 
 interface ReceiptMeta {
   createdAt: string;
   certifiedAt: string | null;
   keyName: string;
+  uploaderAddress?: string;
+  lastReceiptCheck?: string | null;
+  receiptOnChain?: boolean | null;
 }
 
 const MS_PER_DAY = 86400_000;
@@ -90,8 +95,85 @@ export async function runCleanup(): Promise<void> {
     if (deleted > 0) {
       console.log(`[blob-gateway] Cleanup: deleted ${deleted} receipts, freed ~${(bytesFreed / 1024 / 1024).toFixed(1)}MB`);
     }
+
+    // Phase 3: Deferred receipt-exists cleanup for orphaned blobs
+    await runReceiptExistsCheck(receiptsPath, indexPath);
   } catch (err) {
     console.error(`[blob-gateway] Cleanup error: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * Deferred receipt-exists cleanup: checks if uncertified blobs have an on-chain receipt.
+ * Deletes orphaned blobs (no on-chain receipt after grace period).
+ * Updates local meta for receipts that were certified on-chain but missed the PATCH.
+ */
+async function runReceiptExistsCheck(receiptsPath: string, indexPath: string): Promise<void> {
+  const graceMs = config.receiptGraceHours * 3600_000;
+  const now = Date.now();
+  let checked = 0;
+  let orphansDeleted = 0;
+
+  let entries: string[];
+  try {
+    entries = await readdir(receiptsPath);
+  } catch {
+    return;
+  }
+
+  for (const contentHash of entries) {
+    const metaPath = join(receiptsPath, contentHash, "receipt.meta.json");
+    let meta: ReceiptMeta;
+    try {
+      meta = JSON.parse(await readFile(metaPath, "utf-8"));
+    } catch {
+      continue;
+    }
+
+    // Skip if already certified or already confirmed on-chain
+    if (meta.certifiedAt || meta.receiptOnChain === true) continue;
+
+    // Skip if created recently (within grace period)
+    const age = now - new Date(meta.createdAt).getTime();
+    if (age < graceMs) continue;
+
+    // Skip if checked recently (no more than once per hour per blob)
+    if (meta.lastReceiptCheck) {
+      const lastCheck = new Date(meta.lastReceiptCheck).getTime();
+      if (now - lastCheck < 3600_000) continue;
+    }
+
+    // Query chain
+    const receiptId = computeReceiptId(contentHash);
+    const status = await checkReceiptStatus(receiptId);
+    checked++;
+
+    if (status === "rpc_error") continue; // Don't delete on RPC errors
+
+    if (status === "not_found") {
+      // Receipt never submitted — orphaned blob → delete
+      console.log(`[cleanup] Orphaned blob ${contentHash.slice(0, 16)}... (no receipt on-chain after ${Math.round(age / 3600_000)}h)`);
+      await writeFile(join(receiptsPath, contentHash, ".deleting"), "");
+      await deleteReceipt(join(receiptsPath, contentHash), contentHash, indexPath);
+      orphansDeleted++;
+    } else if (status === "certified") {
+      // Certified on-chain but we missed the PATCH — update local meta
+      await updateReceiptMeta(contentHash, {
+        certifiedAt: new Date().toISOString(),
+        receiptOnChain: true,
+        lastReceiptCheck: new Date().toISOString(),
+      });
+    } else {
+      // "pending" — receipt exists but not certified yet
+      await updateReceiptMeta(contentHash, {
+        receiptOnChain: true,
+        lastReceiptCheck: new Date().toISOString(),
+      });
+    }
+  }
+
+  if (checked > 0) {
+    console.log(`[cleanup] Receipt-exists check: ${checked} checked, ${orphansDeleted} orphans deleted`);
   }
 }
 

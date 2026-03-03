@@ -7,3 +7,6 @@ data:
   PORT: "3000"
   STORAGE_PATH: "/data/blobs"
   GATEWAY_BASE_URL: "http://materios-blob-gateway.materios.svc.cluster.local:3000"
+  MATERIOS_RPC_URL: "ws://materios-rpc.materios.svc.cluster.local:9945"
+  MIN_UPLOAD_BALANCE: "1000000000000"
+  RECEIPT_GRACE_HOURS: "24"

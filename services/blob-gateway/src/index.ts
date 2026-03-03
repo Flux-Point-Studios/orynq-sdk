@@ -13,40 +13,16 @@ import { batchesRouter } from "./routes/batches.js";
 import { statusRouter } from "./routes/status.js";
 import { heartbeatsRouter } from "./routes/heartbeats.js";
 import { ensureDir } from "./storage.js";
-import { initQuotaDb, resolveKey } from "./quota.js";
+import { initQuotaDb } from "./quota.js";
 import { initHeartbeatDb, startHeartbeatCleanup } from "./heartbeat-store.js";
 import { startCleanupTimer } from "./cleanup.js";
 
 const app = express();
 
-/**
- * Auth middleware - validates x-api-key via SQLite-backed quota system.
- * Skips auth for health, status, and blob status endpoints.
- */
-function authMiddleware(req: Request, res: Response, next: NextFunction): void {
-  // Skip auth for public endpoints
-  if (
-    req.path === "/health" ||
-    req.path === "/status" ||
-    req.path === "/heartbeats/status" ||
-    req.path === "/heartbeats" ||
-    req.path.match(/^\/blobs\/[^/]+\/status$/)
-  ) {
-    next();
-    return;
-  }
-  const apiKey = req.headers["x-api-key"] as string | undefined;
-  if (!apiKey) {
-    res.status(401).json({ error: "Unauthorized: missing x-api-key header" });
-    return;
-  }
-  const keyInfo = resolveKey(apiKey);
-  if (!keyInfo) {
-    res.status(401).json({ error: "Unauthorized: invalid or disabled API key" });
-    return;
-  }
-  next();
-}
+// Phase 4: No global auth middleware — each route handles its own auth.
+// Read endpoints (locators, chunks, batches GET) are public.
+// Write endpoints (manifest POST, chunk PUT, certified PATCH, batches POST/PUT)
+// use resolveAuth() or verifyUploadSig() directly.
 
 // Request timeout middleware
 app.use((_req: Request, res: Response, next: NextFunction) => {
@@ -62,19 +38,16 @@ app.put("/blobs/:contentHash/chunks/:i", express.raw({ type: "*/*", limit: `${co
 // JSON parser for everything else
 app.use(express.json({ limit: "2mb" }));
 
-// Public routes (before auth)
+// Public routes
 app.get("/health", healthHandler);
 app.use(statusRouter);
 
-// Auth
-app.use(authMiddleware);
-
-// Protected routes
-app.use(blobsRouter);
-app.use(locatorsRouter);
-app.use(chunksRouter);
-app.use(batchesRouter);
-app.use(heartbeatsRouter);
+// All routes — each handles its own auth (Phase 4)
+app.use(blobsRouter);       // Manifest/chunk: sig or API key. Status: public.
+app.use(locatorsRouter);    // Public (read-only resolution)
+app.use(chunksRouter);      // Public (content-addressed, SHA-256 verified)
+app.use(batchesRouter);     // Write: resolveAuth(). Read: public.
+app.use(heartbeatsRouter);  // Handles own dual-mode auth (Phase 2)
 
 async function start(): Promise<void> {
   // Initialize sr25519/ed25519 WASM (required for signatureVerify)
@@ -98,6 +71,7 @@ async function start(): Promise<void> {
     console.log(`[blob-gateway] Health: http://localhost:${config.port}/health`);
     console.log(`[blob-gateway] Status: http://localhost:${config.port}/status`);
     console.log(`[blob-gateway] Heartbeats: http://localhost:${config.port}/heartbeats/status`);
+    console.log(`[blob-gateway] RPC endpoint: ${config.materiosRpcUrl} (lazy connect)`);
   });
 }
 

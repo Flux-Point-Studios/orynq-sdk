@@ -4,9 +4,15 @@
 
 import { Router, type Request, type Response } from "express";
 import { createHash } from "crypto";
-import { saveManifest, getManifest, saveChunk, getChunk, getStatus, markCertified } from "../storage.js";
+import { saveManifest, getManifest, saveChunk, getChunk, getStatus, markCertified, updateReceiptMeta } from "../storage.js";
 import { config } from "../config.js";
-import { resolveKey, startUpload, recordChunkBytes, finalizeUpload } from "../quota.js";
+import {
+  resolveKey, startUpload, recordChunkBytes, finalizeUpload,
+  startAccountUpload, recordAccountChunkBytes, finalizeAccountUpload,
+} from "../quota.js";
+import { verifyUploadSig } from "../upload-auth.js";
+import { checkFunded } from "../rpc-client.js";
+import { resolveAuth } from "../auth.js";
 
 export const blobsRouter = Router();
 
@@ -37,11 +43,37 @@ blobsRouter.post("/blobs/:contentHash/manifest", async (req: Request, res: Respo
       return;
     }
 
-    // Quota: authenticate and check concurrent uploads
+    // Dual-path auth: API key OR upload signature
     const apiKey = req.headers["x-api-key"] as string | undefined;
-    const keyInfo = apiKey ? resolveKey(apiKey) : null;
-    if (keyInfo) {
+    let uploaderAddress: string | undefined;
+
+    if (apiKey) {
+      const keyInfo = resolveKey(apiKey);
+      if (!keyInfo) {
+        res.status(401).json({ error: "Invalid or disabled API key" });
+        return;
+      }
       const quotaCheck = startUpload(keyInfo, contentHash);
+      if (!quotaCheck.allowed) {
+        res.status(429).json({ error: quotaCheck.error, limit: quotaCheck.limit, current: quotaCheck.current });
+        return;
+      }
+    } else {
+      // Sig-based auth
+      const authResult = verifyUploadSig(req, contentHash);
+      if (!authResult.valid) {
+        res.status(401).json({ error: authResult.error });
+        return;
+      }
+      uploaderAddress = authResult.address;
+
+      const funded = await checkFunded(uploaderAddress!);
+      if (!funded) {
+        res.status(403).json({ error: "Account does not meet minimum MATRA balance" });
+        return;
+      }
+
+      const quotaCheck = startAccountUpload(uploaderAddress!, contentHash);
       if (!quotaCheck.allowed) {
         res.status(429).json({ error: quotaCheck.error, limit: quotaCheck.limit, current: quotaCheck.current });
         return;
@@ -69,6 +101,12 @@ blobsRouter.post("/blobs/:contentHash/manifest", async (req: Request, res: Respo
     }
 
     await saveManifest(contentHash, manifest);
+
+    // Record uploader address for sig-based uploads
+    if (uploaderAddress) {
+      await updateReceiptMeta(contentHash, { uploaderAddress });
+    }
+
     res.status(201).json({ status: "ok", contentHash });
   } catch (error) {
     console.error("[blob-gateway] Error saving manifest:", error);
@@ -124,7 +162,7 @@ blobsRouter.put("/blobs/:contentHash/chunks/:i", async (req: Request, res: Respo
       return;
     }
 
-    // Quota: record bytes
+    // Quota: record bytes (API key or sig-based)
     const apiKey = req.headers["x-api-key"] as string | undefined;
     const keyInfo = apiKey ? resolveKey(apiKey) : null;
     if (keyInfo && data) {
@@ -133,6 +171,17 @@ blobsRouter.put("/blobs/:contentHash/chunks/:i", async (req: Request, res: Respo
         res.status(429).json({ error: quotaCheck.error, limit: quotaCheck.limit, current: quotaCheck.current });
         return;
       }
+    } else if (!apiKey && data) {
+      // For sig-based: check upload auth headers if present for quota tracking
+      const authResult = verifyUploadSig(req, contentHash);
+      if (authResult.valid && authResult.address) {
+        const quotaCheck = recordAccountChunkBytes(authResult.address, contentHash, data.length);
+        if (!quotaCheck.allowed) {
+          res.status(429).json({ error: quotaCheck.error, limit: quotaCheck.limit, current: quotaCheck.current });
+          return;
+        }
+      }
+      // No sig headers on chunk → allow anyway (SHA-256 is the guard)
     }
 
     // Validate SHA-256 against manifest entry
@@ -156,11 +205,21 @@ blobsRouter.put("/blobs/:contentHash/chunks/:i", async (req: Request, res: Respo
 
     // Check if upload is now complete and finalize quota
     const statusAfter = await getStatus(contentHash);
-    if (statusAfter.complete && keyInfo) {
-      const finalCheck = finalizeUpload(keyInfo, contentHash);
-      if (!finalCheck.allowed) {
-        // Upload is complete but over receipt quota — log warning but don't fail
-        console.warn(`[blob-gateway] Receipt quota exceeded for key ${keyInfo.name} but upload already complete`);
+    if (statusAfter.complete) {
+      if (keyInfo) {
+        const finalCheck = finalizeUpload(keyInfo, contentHash);
+        if (!finalCheck.allowed) {
+          console.warn(`[blob-gateway] Receipt quota exceeded for key ${keyInfo.name} but upload already complete`);
+        }
+      } else {
+        // Finalize account quota for sig-based uploads
+        const authResult = verifyUploadSig(req, contentHash);
+        if (authResult.valid && authResult.address) {
+          const finalCheck = finalizeAccountUpload(authResult.address, contentHash);
+          if (!finalCheck.allowed) {
+            console.warn(`[blob-gateway] Receipt quota exceeded for ${authResult.address} but upload already complete`);
+          }
+        }
       }
     }
 
@@ -191,10 +250,18 @@ blobsRouter.get("/blobs/:contentHash/status", async (req: Request, res: Response
 /**
  * PATCH /blobs/:contentHash/certified
  * Marks a receipt as certified — sets certifiedAt in receipt.meta.json.
+ * Requires auth: API key or sr25519 signature (Phase 4).
  */
 blobsRouter.patch("/blobs/:contentHash/certified", async (req: Request, res: Response) => {
   try {
     const { contentHash } = req.params;
+
+    const auth = await resolveAuth(req, contentHash);
+    if (!auth.authenticated) {
+      res.status(401).json({ error: auth.error });
+      return;
+    }
+
     const success = await markCertified(contentHash);
     if (success) {
       res.json({ status: "ok", contentHash, certifiedAt: new Date().toISOString() });
