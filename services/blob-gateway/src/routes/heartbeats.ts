@@ -8,7 +8,7 @@
 import { Router, type Request, type Response } from "express";
 import { signatureVerify } from "@polkadot/util-crypto";
 import { stringToU8a } from "@polkadot/util";
-import { resolveKey } from "../quota.js";
+import { resolveKey, lookupValidatorInfo } from "../quota.js";
 import {
   upsertHeartbeat,
   getLastSeq,
@@ -59,24 +59,6 @@ const STATUS_CACHE_TTL_MS = 10_000; // 10 seconds
 
 heartbeatsRouter.post("/heartbeats", (req: Request, res: Response) => {
   try {
-    const apiKey = req.headers["x-api-key"] as string | undefined;
-    if (!apiKey) {
-      res.status(401).json({ error: "Unauthorized: missing x-api-key header" });
-      return;
-    }
-
-    const keyInfo = resolveKey(apiKey);
-    if (!keyInfo) {
-      res.status(401).json({ error: "Unauthorized: invalid or disabled API key" });
-      return;
-    }
-
-    // Require validatorId binding on the key
-    if (!keyInfo.validatorId) {
-      res.status(403).json({ error: "API key is not bound to a validator" });
-      return;
-    }
-
     const body = req.body;
     if (!body || typeof body !== "object") {
       res.status(400).json({ error: "Invalid body: expected JSON object" });
@@ -115,12 +97,34 @@ heartbeatsRouter.post("/heartbeats", (req: Request, res: Response) => {
       return;
     }
 
-    // Enforce key <-> validator binding
-    if (validator_id !== keyInfo.validatorId) {
-      const ip = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "";
-      logReject(validator_id, "validator_id mismatch with API key binding", ip);
-      res.status(403).json({ error: "validator_id does not match API key binding" });
-      return;
+    const ip = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "";
+
+    // --- AUTH: API key OR signature-only with registered validator ---
+    const apiKey = req.headers["x-api-key"] as string | undefined;
+    let label: string;
+
+    if (apiKey) {
+      // Traditional path: validate API key + binding
+      const keyInfo = resolveKey(apiKey);
+      if (!keyInfo) {
+        res.status(401).json({ error: "Invalid or disabled API key" });
+        return;
+      }
+      if (keyInfo.validatorId && validator_id !== keyInfo.validatorId) {
+        logReject(validator_id, "validator_id mismatch with API key binding", ip);
+        res.status(403).json({ error: "validator_id does not match API key binding" });
+        return;
+      }
+      label = keyInfo.name;
+    } else {
+      // Keyless path: validator must be in registry, sig is the real auth
+      const info = lookupValidatorInfo(validator_id);
+      if (!info) {
+        logReject(validator_id, "unregistered validator (no API key, not in registry)", ip);
+        res.status(403).json({ error: "Validator not registered" });
+        return;
+      }
+      label = info.name;
     }
 
     // Rate limit: reject if < 10s since last POST for this validator
@@ -195,7 +199,7 @@ heartbeatsRouter.post("/heartbeats", (req: Request, res: Response) => {
     // All checks passed — upsert heartbeat
     upsertHeartbeat(
       validator_id,
-      keyInfo.name,        // label from key, NOT from body
+      label,               // label from registry, NOT from body
       seq,
       JSON.stringify(body), // store full payload
       signature,

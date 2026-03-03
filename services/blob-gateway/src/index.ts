@@ -29,6 +29,7 @@ function authMiddleware(req: Request, res: Response, next: NextFunction): void {
     req.path === "/health" ||
     req.path === "/status" ||
     req.path === "/heartbeats/status" ||
+    req.path === "/heartbeats" ||
     req.path.match(/^\/blobs\/[^/]+\/status$/)
   ) {
     next();

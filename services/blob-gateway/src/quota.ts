@@ -254,6 +254,17 @@ export function recordChunkBytes(keyInfo: KeyInfo, contentHash: string, chunkByt
  * Finalize upload (all chunks uploaded). Increments daily receipt count.
  * Returns 429 info if daily receipt limit exceeded.
  */
+/**
+ * Look up a validator by SS58 address in the registry.
+ * Returns { name } if the validator is registered and enabled, null otherwise.
+ */
+export function lookupValidatorInfo(validatorId: string): { name: string } | null {
+  const row = db.prepare(
+    "SELECT name FROM api_keys WHERE validator_id = ? AND enabled = 1 LIMIT 1",
+  ).get(validatorId) as { name: string } | undefined;
+  return row ?? null;
+}
+
 export function finalizeUpload(keyInfo: KeyInfo, contentHash: string): QuotaCheckResult {
   const d = today();
   const txn = db.transaction(() => {
