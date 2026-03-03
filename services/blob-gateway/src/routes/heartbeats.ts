@@ -94,7 +94,7 @@ heartbeatsRouter.post("/heartbeats", (req: Request, res: Response) => {
       certs_submitted,
       substrate_connected,
       version,
-      uptime,
+      uptime_seconds,
     } = body;
 
     // Validate required fields
@@ -165,6 +165,8 @@ heartbeatsRouter.post("/heartbeats", (req: Request, res: Response) => {
     }
 
     // Build canonical signing string
+    // substrate_connected: daemon sends boolean, signing string uses 1/0 integer
+    const scInt = substrate_connected ? 1 : 0;
     const signingString = [
       "materios-heartbeat-v1",
       validator_id,
@@ -175,9 +177,9 @@ heartbeatsRouter.post("/heartbeats", (req: Request, res: Response) => {
       String(finality_gap ?? 0),
       String(pending_receipts ?? 0),
       String(certs_submitted ?? 0),
-      String(substrate_connected ?? 1),
+      String(scInt),
       String(version ?? ""),
-      String(uptime ?? 0),
+      String(uptime_seconds ?? 0),
     ].join("|");
 
     const sigBytes = stringToU8a(signingString);
@@ -202,9 +204,9 @@ heartbeatsRouter.post("/heartbeats", (req: Request, res: Response) => {
       finality_gap ?? 0,
       pending_receipts ?? 0,
       certs_submitted ?? 0,
-      substrate_connected ?? 1,
+      scInt,
       version ?? "",
-      uptime ?? 0,
+      uptime_seconds ?? 0,
       clockSkew,
     );
 
