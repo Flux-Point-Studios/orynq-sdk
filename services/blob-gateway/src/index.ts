@@ -12,6 +12,7 @@ import { chunksRouter } from "./routes/chunks.js";
 import { batchesRouter } from "./routes/batches.js";
 import { statusRouter } from "./routes/status.js";
 import { heartbeatsRouter } from "./routes/heartbeats.js";
+import { operatorsRouter, initOperatorsDb } from "./routes/operators.js";
 import { ensureDir } from "./storage.js";
 import { initQuotaDb } from "./quota.js";
 import { initHeartbeatDb, startHeartbeatCleanup } from "./heartbeat-store.js";
@@ -48,6 +49,7 @@ app.use(locatorsRouter);    // Public (read-only resolution)
 app.use(chunksRouter);      // Public (content-addressed, SHA-256 verified)
 app.use(batchesRouter);     // Write: resolveAuth(). Read: public.
 app.use(heartbeatsRouter);  // Handles own dual-mode auth (Phase 2)
+app.use(operatorsRouter);   // Invite-only operator registration
 
 async function start(): Promise<void> {
   // Initialize sr25519/ed25519 WASM (required for signatureVerify)
@@ -60,6 +62,7 @@ async function start(): Promise<void> {
   // Initialize SQLite databases
   initQuotaDb();
   initHeartbeatDb();
+  initOperatorsDb();
 
   // Start cleanup timers
   startCleanupTimer();
