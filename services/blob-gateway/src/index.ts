@@ -17,6 +17,7 @@ import { ensureDir } from "./storage.js";
 import { initQuotaDb } from "./quota.js";
 import { initHeartbeatDb, startHeartbeatCleanup } from "./heartbeat-store.js";
 import { startCleanupTimer } from "./cleanup.js";
+import { startReceiptIndexer } from "./receipt-indexer.js";
 
 const app = express();
 
@@ -67,6 +68,11 @@ async function start(): Promise<void> {
   // Start cleanup timers
   startCleanupTimer();
   startHeartbeatCleanup();
+
+  // Start receipt indexer (polls chain for receipt→content_hash mapping)
+  startReceiptIndexer().catch((err) =>
+    console.error("[receipt-indexer] Failed to start:", err),
+  );
 
   app.listen(config.port, () => {
     console.log(`[blob-gateway] Service started on port ${config.port}`);
