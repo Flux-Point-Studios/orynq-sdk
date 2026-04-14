@@ -228,6 +228,19 @@ heartbeatsRouter.post("/heartbeats", (req: Request, res: Response) => {
   }
 });
 
+/* ---------- GET /heartbeats/seq/:validatorId ---------- */
+
+heartbeatsRouter.get("/heartbeats/seq/:validatorId", (req: Request, res: Response) => {
+  try {
+    const { validatorId } = req.params;
+    const lastSeq = getLastSeq(validatorId);
+    res.json({ validator_id: validatorId, last_seq: lastSeq ?? 0 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ error: message });
+  }
+});
+
 /* ---------- GET /heartbeats/status ---------- */
 
 heartbeatsRouter.get("/heartbeats/status", (_req: Request, res: Response) => {
