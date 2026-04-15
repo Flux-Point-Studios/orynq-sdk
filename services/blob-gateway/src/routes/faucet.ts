@@ -58,14 +58,31 @@ faucetRouter.post("/faucet/drip", async (req: Request, res: Response) => {
     return;
   }
 
-  // Check ledger — one drip per address
+  // Check ledger — one drip per address, but allow re-drip if on-chain balance is 0
+  // (handles cases where the original drip TX was lost due to chain reorgs)
   const ledger = loadLedger();
   if (ledger[address]) {
-    res.status(409).json({
-      error: "Address already received a drip",
-      dripped_at: ledger[address],
-    });
-    return;
+    try {
+      const chainApi = await getApi();
+      const acct = (await chainApi.query.system.account(address)) as any;
+      const free = BigInt(acct.data?.free?.toString() || "0");
+      if (free > 0n) {
+        res.status(409).json({
+          error: "Address already received a drip",
+          dripped_at: ledger[address],
+        });
+        return;
+      }
+      // Balance is 0 — original drip was lost, allow re-drip
+      console.log(`[faucet] Re-drip allowed for ${address} (on-chain balance is 0, previous drip lost)`);
+    } catch {
+      // If we can't check balance, enforce the ledger
+      res.status(409).json({
+        error: "Address already received a drip",
+        dripped_at: ledger[address],
+      });
+      return;
+    }
   }
 
   try {
