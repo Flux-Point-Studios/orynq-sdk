@@ -312,7 +312,9 @@ function computeAgeSecs(row: HeartbeatRow): number {
 }
 
 function classifyStatus(ageSecs: number): "online" | "degraded" | "offline" {
-  if (ageSecs < 60) return "online";
-  if (ageSecs <= 120) return "degraded";
-  return "offline";
+  // Heartbeats fire every 30s. Allow generous windows to avoid
+  // flapping from single missed beats or network blips.
+  if (ageSecs < 90) return "online";     // 3 heartbeat cycles
+  if (ageSecs <= 300) return "degraded";  // 10 cycles (5 min)
+  return "offline";                       // truly gone
 }
