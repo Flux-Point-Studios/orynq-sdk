@@ -51,9 +51,10 @@
   "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
   "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
+    "@fluxpointstudios/orynq-sdk-anchors-cardano": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-anchors-materios": "workspace:^",
     "@fluxpointstudios/orynq-sdk-core": "workspace:*",
     "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*",
-    "@fluxpointstudios/orynq-sdk-anchors-cardano": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "zod": "^3.24.0"
   },
