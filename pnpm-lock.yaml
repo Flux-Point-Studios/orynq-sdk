@@ -547,7 +547,7 @@ importers:
   services/anchor-worker-materios:
     dependencies:
       '@fluxpointstudios/orynq-sdk-anchors-cardano':
-        specifier: workspace:*
+        specifier: ^0.2.2
         version: link:../../packages/anchors-cardano
       '@polkadot/api':
         specifier: ^14.0.0
