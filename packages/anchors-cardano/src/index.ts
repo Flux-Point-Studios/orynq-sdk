@@ -139,7 +139,27 @@ export {
 } from "./providers/koios.js";
 
 // =============================================================================
+// MATERIOS ANCHOR V2 (label 8746)
+// =============================================================================
+
+// v2 schema and label used by anchor-worker-materios for Materios → Cardano L1
+// checkpoint anchors. Kept distinct from the POI label-2222 path above so
+// indexers can filter Materios checkpoints cleanly.
+export {
+  MATERIOS_ANCHOR_LABEL,
+  MATERIOS_ANCHOR_PROTOCOL,
+  MATERIOS_ANCHOR_VERSION,
+  buildMateriosAnchorV2,
+  looksLikeBip39,
+  scanForSeedPhrase,
+} from "./materios-anchor-v2.js";
+export type {
+  MateriosAnchorV2Input,
+  MateriosAnchorV2Metadata,
+} from "./materios-anchor-v2.js";
+
+// =============================================================================
 // VERSION
 // =============================================================================
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";

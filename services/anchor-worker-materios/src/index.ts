@@ -5,10 +5,11 @@
  */
 
 import express, { type Request, type Response, type NextFunction } from "express";
-import { PORT, ANCHOR_WORKER_TOKEN, validateEnv } from "./config.js";
+import { PORT, ANCHOR_WORKER_TOKEN, CARDANO_L1_ENABLED, validateEnv } from "./config.js";
 import { getApi, submitAnchor, type AnchorRequest } from "./anchor.js";
 import { healthHandler, readyHandler, statusHandler, setConnected, incrementAnchorCount } from "./health.js";
 import { postBatchMetadataBackup, type BatchMetadata } from "./batch-metadata.js";
+import { submitToCardano } from "./cardano.js";
 
 validateEnv();
 
@@ -64,7 +65,26 @@ app.post("/anchor", authMiddleware, async (req: Request, res: Response) => {
       postBatchMetadataBackup(result.anchorId, batchMetadata).catch(() => {});
     }
 
-    res.json({ success: true, ...result });
+    // Cardano L1 settlement (materios-anchor-v2, label 8746). Fire-and-forget
+    // so Cardano outages never block Materios anchoring. The request body
+    // (req.body) is handed in raw so the BIP39 scan covers everything the
+    // caller sent, not just fields we picked off.
+    let cardanoTxHash: string | undefined;
+    if (CARDANO_L1_ENABLED) {
+      try {
+        const cardano = await submitToCardano({
+          rootHash,
+          manifestHash,
+          batchMetadata,
+          rawBody: req.body,
+        });
+        cardanoTxHash = cardano.txHash;
+      } catch (e) {
+        console.error(`[materios-anchor] Cardano L1 submit failed (non-fatal):`, e);
+      }
+    }
+
+    res.json({ success: true, ...result, cardanoTxHash });
   } catch (error) {
     console.error("[materios-anchor] Error:", error);
     const message = error instanceof Error ? error.message : "Unknown error";

@@ -523,7 +523,7 @@ importers:
     dependencies:
       '@fluxpointstudios/orynq-sdk-anchors-cardano':
         specifier: ^0.1.0
-        version: link:../../packages/anchors-cardano
+        version: 0.1.0
       express:
         specifier: ^4.18.2
         version: 4.22.1
@@ -546,6 +546,9 @@ importers:
 
   services/anchor-worker-materios:
     dependencies:
+      '@fluxpointstudios/orynq-sdk-anchors-cardano':
+        specifier: workspace:*
+        version: link:../../packages/anchors-cardano
       '@polkadot/api':
         specifier: ^14.0.0
         version: 14.3.1
@@ -555,6 +558,9 @@ importers:
       express:
         specifier: ^4.18.2
         version: 4.22.1
+      lucid-cardano:
+        specifier: ^0.10.7
+        version: 0.10.11
     devDependencies:
       '@types/express':
         specifier: ^4.17.21
@@ -2725,6 +2731,26 @@ packages:
   /@floating-ui/utils@0.2.11:
     resolution: {integrity: sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg==}
     dev: true
+
+  /@fluxpointstudios/orynq-sdk-anchors-cardano@0.1.0:
+    resolution: {integrity: sha512-FWsffq1Kx9vvgCamPQDcuJizkUm7Fls3kVfGbVbu843lbv/G6fyamVSm5oGB/9gcTzzP13pmPoSC0EVSb2A/Tw==}
+    engines: {node: '>=18.0.0'}
+    dependencies:
+      '@fluxpointstudios/orynq-sdk-core': 0.1.0
+      '@fluxpointstudios/orynq-sdk-process-trace': 0.1.0
+    dev: false
+
+  /@fluxpointstudios/orynq-sdk-core@0.1.0:
+    resolution: {integrity: sha512-hd2tnLuJGytZU/m9sIhNeHFM4s3fTH8X5wt/04br3jNuZF6Z1y+iLmT+h9tforrZ+dE5NBbw35/Zp8IvHGktHA==}
+    engines: {node: '>=18.0.0'}
+    dev: false
+
+  /@fluxpointstudios/orynq-sdk-process-trace@0.1.0:
+    resolution: {integrity: sha512-xjsvLFjDK3AmQAk3p5giQutHlm0a6k0x3WVti8Caz5kp7aUvBURJy/BChRcPuYb+78F1LqtC6HuhSn9Bacn7NA==}
+    engines: {node: '>=18.0.0'}
+    dependencies:
+      '@fluxpointstudios/orynq-sdk-core': 0.1.0
+    dev: false
 
   /@foxglove/crc@0.0.3:
     resolution: {integrity: sha512-DjIZsnL3CyP/yQ/vUYA9cjrD0a/8YXejI5ZmsaOiT16cLfZcTwaCxIN01/ys4jsy+dZCQ/9DnWFn7AEFbiMDaA==}

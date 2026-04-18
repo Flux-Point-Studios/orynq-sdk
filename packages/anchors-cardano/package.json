@@ -1,7 +1,7 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-anchors-cardano",
-  "version": "0.1.0",
-  "description": "Cardano blockchain anchor support for Proof-of-Intent SDK - transaction metadata builder and verifier for PoI anchors (label 2222)",
+  "version": "0.2.0",
+  "description": "Cardano blockchain anchor support for Proof-of-Intent SDK — PoI anchors (label 2222) and Materios checkpoint anchors (label 8746, materios-anchor-v2)",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
