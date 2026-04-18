@@ -123,7 +123,7 @@ export function registerAnchorMateriosSubmit(
           const content = Buffer.from(
             JSON.stringify({
               publicView: bundle.publicView,
-              manifest: bundle.manifest,
+              manifestHash: bundle.manifestHash,
             }),
             "utf-8",
           );
@@ -157,29 +157,51 @@ export function registerAnchorMateriosSubmit(
             {
               contentHash: bundle.rootHash,
               rootHash: bundle.rootHash,
-              manifestHash: bundle.manifestHash,
+              // `manifestHash` is optional on TraceBundle; fall back to rootHash
+              // so we always submit a non-empty string to the pallet.
+              manifestHash: bundle.manifestHash ?? bundle.rootHash,
             },
             content,
             {
               blobGateway,
-              timeoutSeconds,
+              certificationPollOpts: { timeoutMs: timeoutSeconds * 1000 },
+              anchorPollOpts: { timeoutMs: timeoutSeconds * 1000 },
             },
           );
 
           let l1Anchor: unknown = null;
           if (waitForL1Anchor) {
             // Wait for the checkpoint that includes this receipt to land
-            // on Cardano. Returns { anchorTxHash, cardanoBlockNo, ... }.
-            l1Anchor = await waitForAnchor(provider, result.receiptId, {
-              timeoutSeconds,
+            // on Cardano. `waitForAnchor` needs a CertificationResult; the
+            // result here is CertifiedReceiptResult — lift the fields across.
+            if (!result.certHash || !result.leafHash) {
+              throw new Error(
+                "Cannot wait for L1 anchor: certification did not complete (missing certHash/leafHash)",
+              );
+            }
+            const chainIdHash = await provider
+              .getApi()
+              .rpc.chain.getBlockHash(0);
+            const certResult = {
+              receiptId: result.receiptId,
+              certHash: result.certHash,
+              leafHash: result.leafHash,
+              chainId: chainIdHash.toHex(),
+            };
+            l1Anchor = await waitForAnchor(provider, certResult, {
+              timeoutMs: timeoutSeconds * 1000,
             });
           }
 
+          // Cast through unknown — the TraceEntry shape in this codebase
+          // doesn't yet declare materios-specific result fields; we attach
+          // them as extensions so future reads can see the receipt without
+          // a breaking schema change.
           store.set(traceId, {
             ...entry,
             materiosReceipt: result,
             materiosL1Anchor: l1Anchor,
-          });
+          } as unknown as typeof entry);
 
           return {
             traceId,

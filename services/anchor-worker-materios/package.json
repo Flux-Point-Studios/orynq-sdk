@@ -14,7 +14,7 @@
     "@polkadot/api": "^14.0.0",
     "@polkadot/keyring": "^13.0.0",
     "lucid-cardano": "^0.10.7",
-    "@fluxpointstudios/orynq-sdk-anchors-cardano": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-anchors-cardano": "^0.2.2"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
