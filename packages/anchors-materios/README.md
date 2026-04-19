@@ -126,7 +126,7 @@ if (!result.success) throw new Error(result.error);
 
 ### Signature-Based Auth
 
-No API key needed. Requires a funded Materios account (minimum 1T MATRA). Uploads are signed with sr25519:
+No API key needed. Requires a funded Materios account (minimum 1 MATRA at 6 decimals; the live faucet drips 1000 MATRA, well above the threshold). Uploads are signed with sr25519:
 
 ```ts
 import { Keyring } from "@polkadot/keyring";

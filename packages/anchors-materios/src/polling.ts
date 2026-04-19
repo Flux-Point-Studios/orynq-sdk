@@ -309,17 +309,23 @@ export function computeCheckpointLeaf(
 /**
  * Wait until an account has sufficient MOTRA balance to pay transaction fees.
  *
- * MOTRA is generated from MATRA holdings at ~1M per block per 1T MATRA.
- * Transaction fees cost ~1.4M MOTRA. This function polls until the balance
- * reaches the specified minimum.
+ * On Materios v5+, MOTRA is 15 decimals (Midnight DUST parity) and MATRA is 6.
+ * With the default pallet params (`generation_per_matra_per_block = 100_000`),
+ * holding 1 MATRA generates ~1e5 MOTRA-base per block = 1e-10 MOTRA/block in
+ * display units. A v5 extrinsic costs ~1.2 µMOTRA = 1.2e9 base — so the
+ * default minBalance below is tuned to cover ~1000× a single tx fee, giving
+ * cert-daemon bursts room to chain several txs before waiting again.
  *
- * @param minBalance - Minimum MOTRA balance required (default: 1,500,000).
+ * @param minBalance - Minimum MOTRA balance required in base units
+ *   (default: 1.5e12 = 1.5 milli-MOTRA at 15 decimals). Pre-v5 callers that
+ *   hard-coded 1_500_000n should update — that value is now 1000× too small
+ *   and the poll will return immediately with a balance that can't pay fees.
  * @param opts - Poll interval and timeout options.
  * @returns The MOTRA balance once it reaches the minimum.
  */
 export async function waitForMotra(
   provider: MateriosProvider,
-  minBalance = 1_500_000n,
+  minBalance = 1_500_000_000_000n,
   opts: PollOptions = {},
 ): Promise<bigint> {
   const interval = opts.intervalMs ?? DEFAULT_INTERVAL_MS;

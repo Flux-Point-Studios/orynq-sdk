@@ -27,8 +27,13 @@ export const config = {
   anchorWorkerUrl: process.env.ANCHOR_WORKER_URL || "http://anchor-worker-materios.materios.svc.cluster.local:3334",
   // RPC for on-chain queries (balance check, receipt-exists cleanup)
   materiosRpcUrl: process.env.MATERIOS_RPC_URL || "ws://materios-rpc.materios.svc.cluster.local:9945",
-  // Minimum MATRA balance to upload without API key (base units, 12 decimals)
-  minUploadBalance: BigInt(process.env.MIN_UPLOAD_BALANCE || "1000000000000"), // 1T
+  // Minimum MATRA balance to upload without API key. MATRA is 6 decimals on
+  // Materios v5 (Cardano cMATRA-compatible, u64 cap). Default = 1e6 base = 1
+  // MATRA. Override via MIN_UPLOAD_BALANCE env. The old 1e12 default came
+  // from the 12-decimal v4 era when that equaled "1 MATRA"; if it leaks
+  // through on a 6-decimal chain it would mean "1,000,000 MATRA" and lock
+  // out every operator.
+  minUploadBalance: BigInt(process.env.MIN_UPLOAD_BALANCE || "1000000"), // 1 MATRA (6 decimals)
   // Balance cache TTL
   balanceCacheTtlMs: parseInt(process.env.BALANCE_CACHE_TTL_MS || "300000"), // 5 min
   // Upload sig clock skew tolerance

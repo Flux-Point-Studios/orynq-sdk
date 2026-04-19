@@ -84,7 +84,7 @@ Clock skew tolerance: 120 seconds (configurable via `UPLOAD_SIG_MAX_AGE_SEC`).
 | `PORT` | `3000` | HTTP listen port |
 | `STORAGE_PATH` | `/data/blobs` | Blob storage directory |
 | `MATERIOS_RPC_URL` | `ws://materios-rpc.materios.svc.cluster.local:9945` | Substrate RPC endpoint |
-| `MIN_UPLOAD_BALANCE` | `1000000000000` (1T MATRA) | Minimum balance for sig-only uploads |
+| `MIN_UPLOAD_BALANCE` | `1000000` (1 MATRA at 6-dec) | Minimum balance for sig-only uploads |
 | `BALANCE_CACHE_TTL_MS` | `300000` (5 min) | Balance check cache duration |
 | `UPLOAD_SIG_MAX_AGE_SEC` | `120` | Max signature age |
 | `SIG_ONLY_MAX_RECEIPTS_PER_DAY` | `10` | Sig-only daily receipt limit |

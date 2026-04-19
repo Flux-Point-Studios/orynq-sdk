@@ -13,7 +13,7 @@ import { join } from "path";
 
 export const faucetRouter = Router();
 
-const DRIP_AMOUNT = "100000000000000"; // 100 tMATRA (generates ~10M MOTRA/block, enough for TXs in 1 block)
+const DRIP_AMOUNT = "1000000000"; // 1000 MATRA at 6 decimals (Materios v5+; old "100000000000000" default was 100 MATRA at 12-dec = 100M MATRA at 6-dec and would drain the faucet)
 const DRIP_LEDGER_PATH = join(config.storagePath, "faucet-ledger.json");
 const FAUCET_SIGNER_URI = process.env.FAUCET_SIGNER_URI || "//Alice";
 
