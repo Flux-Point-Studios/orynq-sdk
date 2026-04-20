@@ -35,6 +35,8 @@ export default defineConfig({
     include: [
       'packages/**/src/**/*.test.ts',
       'packages/**/tests/**/*.test.ts',
+      'services/**/src/**/*.test.ts',
+      'services/**/tests/**/*.test.ts',
       'tests/**/*.test.ts',
     ],
     // Integration tests have longer timeouts

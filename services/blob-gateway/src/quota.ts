@@ -13,6 +13,14 @@ import { config } from "./config.js";
 
 let db: Database.Database;
 
+/**
+ * Test hook: allow a test to inject its own (in-memory) handle without
+ * needing a real /data/blobs/quota.db on disk. Never used in production.
+ */
+export function setQuotaDbForTests(injected: Database.Database): void {
+  db = injected;
+}
+
 export interface KeyInfo {
   keyHash: string;
   name: string;

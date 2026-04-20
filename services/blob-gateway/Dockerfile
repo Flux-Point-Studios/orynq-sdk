@@ -8,6 +8,7 @@ COPY package.json ./
 RUN npm install --production
 
 COPY dist/ ./dist/
+COPY bin/ ./bin/
 
 USER node
 
