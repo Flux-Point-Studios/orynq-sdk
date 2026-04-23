@@ -16,6 +16,7 @@
  *   - req.keyInfo  — KeyInfo from quota.ts if path 2/3
  */
 
+import { timingSafeEqual } from "node:crypto";
 import type { Request, Response, NextFunction, RequestHandler } from "express";
 import { verifyToken, getApiTokensDb, TOKEN_PREFIX } from "./api-tokens.js";
 import { resolveKey, type KeyInfo } from "./quota.js";
@@ -115,13 +116,24 @@ export function bearerAuth(opts: BearerAuthOptions = {}): RequestHandler {
  * admin token (same env var as the rest of our admin endpoints).
  */
 export function adminGuard(expectedAdminToken: string): RequestHandler {
+  const expectedBuf = Buffer.from(expectedAdminToken, "utf8");
   return function (req: Request, res: Response, next: NextFunction): void {
     const provided = req.headers["x-admin-token"];
-    if (
-      typeof provided !== "string" ||
-      provided.length === 0 ||
-      provided !== expectedAdminToken
-    ) {
+    if (typeof provided !== "string" || provided.length === 0) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    // Timing-safe compare: reject short-circuit on mismatched length by
+    // first hardening the candidate to the expected length, then using
+    // constant-time equality. Length mismatch always takes the same path
+    // as a content mismatch.
+    const providedBuf = Buffer.from(provided, "utf8");
+    const sameLen = providedBuf.length === expectedBuf.length;
+    const candidate = sameLen
+      ? providedBuf
+      : Buffer.alloc(expectedBuf.length); // zero-filled; never matches
+    const equal = timingSafeEqual(candidate, expectedBuf);
+    if (!sameLen || !equal) {
       res.status(401).json({ error: "unauthorized" });
       return;
     }

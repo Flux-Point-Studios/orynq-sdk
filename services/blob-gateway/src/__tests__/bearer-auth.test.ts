@@ -242,6 +242,33 @@ describe("bearer auth middleware", () => {
     expect(body.token.startsWith(TOKEN_PREFIX)).toBe(true);
   });
 
+  test("admin_guard_rejects_wrong_length_admin_token_without_leaking_length", async () => {
+    // A candidate shorter than the real admin token used to short-circuit
+    // on `!==`, which leaks length via timing. With constant-time compare
+    // all rejections take the same code path; we only assert on the
+    // observable behaviour (401 + no side effect).
+    const tooShort = await fetchJson(ctx.app, "POST", "/auth/token", {
+      headers: { "x-admin-token": "a" },
+      body: { account: "5ShouldNotBeCreated11111111111111111111111111", label: "x" },
+    });
+    expect(tooShort.status).toBe(401);
+
+    const tooLong = await fetchJson(ctx.app, "POST", "/auth/token", {
+      headers: {
+        "x-admin-token": ctx.adminToken + "extra-suffix-that-should-fail",
+      },
+      body: { account: "5ShouldNotBeCreated11111111111111111111111112", label: "x" },
+    });
+    expect(tooLong.status).toBe(401);
+
+    // And an empty header too.
+    const empty = await fetchJson(ctx.app, "POST", "/auth/token", {
+      headers: { "x-admin-token": "" },
+      body: { account: "5ShouldNotBeCreated11111111111111111111111113", label: "x" },
+    });
+    expect(empty.status).toBe(401);
+  });
+
   test("admin_revoke_marks_token_inactive", async () => {
     const mintRes = await fetchJson(ctx.app, "POST", "/auth/token", {
       headers: { "x-admin-token": ctx.adminToken },
