@@ -45,15 +45,99 @@ SDK / Operator  -->  Blob Gateway  -->  Disk storage (/data/blobs)
 | `POST` | `/batches/:anchorId` | Create batch metadata |
 | `PUT` | `/batches/:anchorId` | Update batch metadata |
 
+### Admin-only (x-admin-token)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/auth/token` | Mint a new Bearer token for an operator (returns plaintext ONCE) |
+| `DELETE` | `/auth/token/:hash` | Revoke a token by its sha256 hash |
+| `GET` | `/auth/tokens` | List all tokens (hashes + metadata; never raw tokens) |
+
+All three require `x-admin-token: <DAEMON_NOTIFY_TOKEN>` in headers.
+
 ## Authentication
 
-Three-tier auth model resolved by `resolveAuth()` in `src/auth.ts`:
+Four-tier auth model resolved by `resolveAuth()` in `src/auth.ts`:
 
 | Tier | Auth mechanism | Upload quota |
 |------|----------------|-------------|
+| **bearer** | `Authorization: Bearer matra_<token>` (preferred, revocable, hashed) | Same as api-key |
 | **sig-only** | sr25519 signature + funded on-chain account | 10 receipts/day, 256 MB/day, 3 concurrent |
-| **api-key** | `x-api-key` header | Per-key (default 100/day, 1 GB/day, 5 concurrent) |
+| **api-key** | `x-api-key` header (legacy random-hex key) | Per-key (default 100/day, 1 GB/day, 5 concurrent) |
+| **api-key-legacy-ss58** | `x-api-key` header containing the operator's SS58 address (**deprecated**; each call is warn-logged) | Per-key quotas |
 | **registered-validator** | Signature + committee registry membership | API-key-level quotas |
+
+### Bearer Tokens (Preferred)
+
+Bearer tokens are the new default. They are:
+
+- **Opaque** — `matra_<43 base62 chars>`, 256 bits of entropy from `crypto.randomBytes`.
+- **Hashed at rest** — only `sha256(token)` is stored in `operators.db:api_tokens`.
+- **Shown once** — returned by `POST /auth/token` and never again. Lost token => mint a new one.
+- **Revocable** — `DELETE /auth/token/:hash` marks `revoked_at`; the middleware rejects subsequent requests.
+- **Auditable** — every successful verify updates `last_used_at`; `listTokens()` exposes activity.
+
+#### How to get a token
+
+Ask an admin (someone with `x-admin-token` access) to mint one for your SS58:
+
+```bash
+curl -X POST https://materios.fluxpointstudios.com/preprod-blobs/auth/token \
+  -H "x-admin-token: <shared-admin-secret>" \
+  -H "content-type: application/json" \
+  -d '{"account":"5YourSs58Address...","label":"penny-macbook"}'
+# {
+#   "status": "created",
+#   "token": "matra_AbCdEf...",         <-- store NOW, only shown once
+#   "tokenHash": "3fa8...64 hex...",
+#   ...
+# }
+```
+
+Or from inside the gateway container:
+
+```bash
+docker exec materios-node-blob-gateway-preprod-1 \
+  node /app/bin/issue-token.mjs --account 5Your... --label "penny-macbook"
+```
+
+#### How to use a token
+
+```bash
+curl -H "Authorization: Bearer matra_AbCdEf..." \
+     https://materios.fluxpointstudios.com/preprod-blobs/blobs/<hash>/status
+```
+
+For clients built on `@fluxpointstudios/orynq-sdk-anchors-materios`, set the
+`apiKey` field of `BlobGatewayConfig` to the raw Bearer token. The SDK already
+forwards via `x-api-key` today; until the SDK is upgraded (follow-up PR), wrap
+your own fetch call that sends `Authorization: Bearer ...`.
+
+#### How to rotate
+
+1. Mint a new token with a fresh label (e.g. `"penny-macbook-2026-05"`).
+2. Update the client config / env var (`MATERIOS_BLOB_GATEWAY_TOKEN`).
+3. Restart the client, confirm it works.
+4. Revoke the old token: `curl -X DELETE .../auth/token/<old-hash> -H "x-admin-token: ..."`.
+
+### Legacy SS58-as-API-key (Deprecated)
+
+Historically operators sent their SS58 address as the API key (`x-api-key: <ss58>`).
+This is still accepted for backwards compatibility but:
+
+- Every such call emits a structured warn log — grep for `deprecated-ss58-auth`
+  in blob-gateway logs to track clients that haven't migrated.
+- The secret is an operator's public on-chain identity — anyone watching the
+  explorer can guess it. It will be removed in a future PR after all clients
+  have migrated.
+
+Sample migration-tracking grep:
+
+```bash
+docker logs materios-node-blob-gateway-preprod-1 2>&1 \
+  | grep deprecated-ss58-auth \
+  | awk '{print $4}' | sort | uniq -c | sort -rn
+```
 
 ### Upload Signing Protocol
 
@@ -104,7 +188,9 @@ Clock skew tolerance: 120 seconds (configurable via `UPLOAD_SIG_MAX_AGE_SEC`).
 ```
 src/
   index.ts            Express app entry, route mounting
-  auth.ts             Unified resolveAuth() for write endpoints
+  auth.ts             Unified resolveAuth() for write endpoints (Bearer > api-key > sig)
+  bearer-auth.ts      bearerAuth() middleware + adminGuard()
+  api-tokens.ts       Issue/verify/revoke/list Bearer tokens (sha256 at rest)
   upload-auth.ts      verifyUploadSig() for sr25519 signatures
   rpc-client.ts       Lazy @polkadot/api singleton, checkFunded(), checkReceiptStatus()
   quota.ts            API key + account quota management (SQLite)
@@ -120,11 +206,32 @@ src/
     heartbeats.ts     Validator heartbeat dual-auth
     chunks.ts         Chunk download
     locators.ts       Receipt-to-blob locator resolution
+    operators.ts      Invite-only operator registration
+    tokens.ts         Admin: /auth/token mint/revoke/list
     status.ts         System status endpoint
+bin/
+  issue-token.mjs     Admin CLI: mint a Bearer token (JSON stdout)
+  revoke-token.mjs    Admin CLI: revoke a Bearer token by hash
 k8s/
   configmap.yaml      Environment configuration
   deployment.yaml     K8s Deployment spec
   secret.yaml         Sensitive config (API keys, etc.)
+```
+
+## Admin CLI
+
+```bash
+# Mint a new token for an operator (inside the container)
+docker exec materios-node-blob-gateway-preprod-1 \
+  node /app/bin/issue-token.mjs \
+    --account 5YourSs58Address... \
+    --label "penny-macbook"
+
+# Revoke a token by its sha256 hash
+docker exec materios-node-blob-gateway-preprod-1 \
+  node /app/bin/revoke-token.mjs \
+    --hash 3fa8...<64 hex>... \
+    --reason "lost laptop"
 ```
 
 ## Build and Deploy

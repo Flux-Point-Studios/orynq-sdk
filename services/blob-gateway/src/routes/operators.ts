@@ -27,6 +27,18 @@ export const operatorsRouter = Router();
 
 let db: Database.Database;
 
+/**
+ * Expose the operators-db handle so other modules (api-tokens) can share
+ * the same SQLite connection instead of opening a second handle on the
+ * same file.
+ */
+export function getOperatorsDb(): Database.Database {
+  if (!db) {
+    throw new Error("operators db not initialised — call initOperatorsDb() first");
+  }
+  return db;
+}
+
 interface InviteRow {
   token_hash: string;
   label: string;
