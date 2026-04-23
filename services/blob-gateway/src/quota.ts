@@ -289,6 +289,33 @@ export function lookupValidatorInfo(validatorId: string): { name: string } | nul
   return row ?? null;
 }
 
+/**
+ * Resolve full KeyInfo by SS58 validator_id. Used by the Bearer-token path in
+ * resolveAuth() — a bearer token identifies the account, and we need to find
+ * the operator's registered api_keys row so upload quotas apply to the same
+ * pool whether the caller used Bearer or x-api-key.
+ *
+ * Returns the first enabled key row bound to this validator_id, or null if
+ * the account hasn't registered as an operator (in which case callers should
+ * fall back to account-based quotas).
+ */
+export function resolveKeyByAccount(ss58: string): KeyInfo | null {
+  const row = db.prepare(
+    `SELECT key_hash, name, enabled, max_receipts_per_day, max_bytes_per_day, max_concurrent_uploads, validator_id
+     FROM api_keys WHERE validator_id = ? AND enabled = 1 LIMIT 1`,
+  ).get(ss58) as Record<string, unknown> | undefined;
+  if (!row || !row.enabled) return null;
+  return {
+    keyHash: row.key_hash as string,
+    name: row.name as string,
+    enabled: !!row.enabled,
+    maxReceiptsPerDay: row.max_receipts_per_day as number,
+    maxBytesPerDay: row.max_bytes_per_day as number,
+    maxConcurrentUploads: row.max_concurrent_uploads as number,
+    validatorId: (row.validator_id as string) ?? null,
+  };
+}
+
 export function finalizeUpload(keyInfo: KeyInfo, contentHash: string): QuotaCheckResult {
   const d = today();
   const txn = db.transaction(() => {

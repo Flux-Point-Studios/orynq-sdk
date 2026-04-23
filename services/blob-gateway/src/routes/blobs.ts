@@ -7,11 +7,9 @@ import { createHash } from "crypto";
 import { saveManifest, getManifest, saveChunk, getChunk, getStatus, markCertified, updateReceiptMeta } from "../storage.js";
 import { config } from "../config.js";
 import {
-  resolveKey, startUpload, recordChunkBytes, finalizeUpload,
+  startUpload, recordChunkBytes, finalizeUpload,
   startAccountUpload, recordAccountChunkBytes, finalizeAccountUpload,
 } from "../quota.js";
-import { verifyUploadSig } from "../upload-auth.js";
-import { checkFunded } from "../rpc-client.js";
 import { resolveAuth } from "../auth.js";
 
 export const blobsRouter = Router();
@@ -32,6 +30,11 @@ interface Manifest {
 /**
  * POST /blobs/:contentHash/manifest
  * Saves the manifest JSON for a blob.
+ *
+ * Auth (unified via resolveAuth): Bearer → x-api-key (legacy incl. SS58-as-key)
+ * → sr25519 upload signature. The Bearer and api-key tiers are pre-funded
+ * (operators authorised by admin); sig-only tier is balance-gated inside
+ * resolveAuth() via checkFunded().
  */
 blobsRouter.post("/blobs/:contentHash/manifest", async (req: Request, res: Response) => {
   try {
@@ -43,40 +46,51 @@ blobsRouter.post("/blobs/:contentHash/manifest", async (req: Request, res: Respo
       return;
     }
 
-    // Dual-path auth: API key OR upload signature
-    const apiKey = req.headers["x-api-key"] as string | undefined;
-    let uploaderAddress: string | undefined;
-
-    if (apiKey) {
-      const keyInfo = resolveKey(apiKey);
-      if (!keyInfo) {
-        res.status(401).json({ error: "Invalid or disabled API key" });
+    const auth = await resolveAuth(req, contentHash);
+    if (!auth.authenticated) {
+      // Preserve existing 403 for the specific "below min balance" case so
+      // Penny's client can keep distinguishing 401 (no/invalid creds) from
+      // 403 (valid sig, underfunded account).
+      if (auth.error && auth.error.toLowerCase().includes("below minimum balance")) {
+        res.status(403).json({ error: "Account does not meet minimum MATRA balance" });
         return;
       }
-      const quotaCheck = startUpload(keyInfo, contentHash);
+      res.status(401).json({ error: auth.error ?? "authentication required" });
+      return;
+    }
+
+    // Dispatch quota tracking by tier. Bearer/api-key tiers use per-operator
+    // keyed quotas if the account is a registered operator; otherwise (bearer
+    // tied to an unregistered account) we fall back to per-account quotas.
+    // Sig-only + registered-validator always use per-account quotas.
+    let uploaderAddress: string | undefined;
+    const useKeyedQuotas =
+      (auth.tier === "bearer" || auth.tier === "api-key" || auth.tier === "api-key-legacy-ss58") &&
+      auth.keyInfo !== undefined;
+
+    if (useKeyedQuotas && auth.keyInfo) {
+      const quotaCheck = startUpload(auth.keyInfo, contentHash);
       if (!quotaCheck.allowed) {
         res.status(429).json({ error: quotaCheck.error, limit: quotaCheck.limit, current: quotaCheck.current });
         return;
       }
     } else {
-      // Sig-based auth
-      const authResult = verifyUploadSig(req, contentHash);
-      if (!authResult.valid) {
-        res.status(401).json({ error: authResult.error });
+      // Account-based quota — covers sig-only, registered-validator, and
+      // Bearer tokens for operators not yet present in quota.db api_keys.
+      const accountId = auth.identity;
+      if (!accountId) {
+        res.status(401).json({ error: "resolved auth has no identity" });
         return;
       }
-      uploaderAddress = authResult.address;
-
-      const funded = await checkFunded(uploaderAddress!);
-      if (!funded) {
-        res.status(403).json({ error: "Account does not meet minimum MATRA balance" });
-        return;
-      }
-
-      const quotaCheck = startAccountUpload(uploaderAddress!, contentHash);
+      const quotaCheck = startAccountUpload(accountId, contentHash);
       if (!quotaCheck.allowed) {
         res.status(429).json({ error: quotaCheck.error, limit: quotaCheck.limit, current: quotaCheck.current });
         return;
+      }
+      // Record uploader address only for actual sig-based uploads, mirroring
+      // previous behaviour (Bearer/api-key don't set uploaderAddress in meta).
+      if (auth.tier === "sig-only" || auth.tier === "registered-validator") {
+        uploaderAddress = accountId;
       }
     }
 
@@ -120,6 +134,11 @@ blobsRouter.post("/blobs/:contentHash/manifest", async (req: Request, res: Respo
  * Uploads a chunk binary. Validates SHA-256 against manifest entry.
  * Returns 409 if chunk already exists (idempotent).
  * Returns 400 if manifest not found or chunk index out of range.
+ *
+ * Auth (unified via resolveAuth): Bearer → x-api-key (legacy incl. SS58) →
+ * sr25519 upload signature. Same dispatch as POST manifest; no header is
+ * strictly required on the chunk leg if the manifest was authed, but if any
+ * auth is present we validate + record quotas.
  */
 blobsRouter.put("/blobs/:contentHash/chunks/:i", async (req: Request, res: Response) => {
   try {
@@ -162,27 +181,48 @@ blobsRouter.put("/blobs/:contentHash/chunks/:i", async (req: Request, res: Respo
       return;
     }
 
-    // Quota: record bytes (API key or sig-based)
-    const apiKey = req.headers["x-api-key"] as string | undefined;
-    const keyInfo = apiKey ? resolveKey(apiKey) : null;
-    if (keyInfo && data) {
-      const quotaCheck = recordChunkBytes(keyInfo, contentHash, data.length);
+    // Resolve auth once for quota routing.
+    //
+    // Historical behaviour: if no auth header was present the chunk leg
+    // silently allowed the write (SHA-256 was the guard). We keep that
+    // fallback so existing sig-without-sig-headers-on-chunk flows don't
+    // regress, but when any auth is present we validate it and record
+    // quotas. A Bearer token that *fails* verification, however, is rejected
+    // outright — we never mask a revoked token as "unauthenticated".
+    const hasAuthHeader =
+      typeof req.headers.authorization === "string" ||
+      typeof req.headers["x-api-key"] === "string" ||
+      typeof req.headers["x-upload-sig"] === "string";
+    const auth = hasAuthHeader ? await resolveAuth(req, contentHash) : null;
+
+    if (auth && !auth.authenticated) {
+      if (auth.error && auth.error.toLowerCase().includes("below minimum balance")) {
+        res.status(403).json({ error: "Account does not meet minimum MATRA balance" });
+        return;
+      }
+      res.status(401).json({ error: auth.error ?? "authentication required" });
+      return;
+    }
+
+    const useKeyedQuotas =
+      auth !== null &&
+      (auth.tier === "bearer" || auth.tier === "api-key" || auth.tier === "api-key-legacy-ss58") &&
+      auth.keyInfo !== undefined;
+
+    if (useKeyedQuotas && auth && auth.keyInfo) {
+      const quotaCheck = recordChunkBytes(auth.keyInfo, contentHash, data.length);
       if (!quotaCheck.allowed) {
         res.status(429).json({ error: quotaCheck.error, limit: quotaCheck.limit, current: quotaCheck.current });
         return;
       }
-    } else if (!apiKey && data) {
-      // For sig-based: check upload auth headers if present for quota tracking
-      const authResult = verifyUploadSig(req, contentHash);
-      if (authResult.valid && authResult.address) {
-        const quotaCheck = recordAccountChunkBytes(authResult.address, contentHash, data.length);
-        if (!quotaCheck.allowed) {
-          res.status(429).json({ error: quotaCheck.error, limit: quotaCheck.limit, current: quotaCheck.current });
-          return;
-        }
+    } else if (auth && auth.identity) {
+      const quotaCheck = recordAccountChunkBytes(auth.identity, contentHash, data.length);
+      if (!quotaCheck.allowed) {
+        res.status(429).json({ error: quotaCheck.error, limit: quotaCheck.limit, current: quotaCheck.current });
+        return;
       }
-      // No sig headers on chunk → allow anyway (SHA-256 is the guard)
     }
+    // else: no auth header present → legacy fallthrough (SHA-256 is the guard)
 
     // Validate SHA-256 against manifest entry
     const manifestChunk = manifest.chunks[chunkIndex];
@@ -206,19 +246,15 @@ blobsRouter.put("/blobs/:contentHash/chunks/:i", async (req: Request, res: Respo
     // Check if upload is now complete and finalize quota
     const statusAfter = await getStatus(contentHash);
     if (statusAfter.complete) {
-      if (keyInfo) {
-        const finalCheck = finalizeUpload(keyInfo, contentHash);
+      if (useKeyedQuotas && auth && auth.keyInfo) {
+        const finalCheck = finalizeUpload(auth.keyInfo, contentHash);
         if (!finalCheck.allowed) {
-          console.warn(`[blob-gateway] Receipt quota exceeded for key ${keyInfo.name} but upload already complete`);
+          console.warn(`[blob-gateway] Receipt quota exceeded for key ${auth.keyInfo.name} but upload already complete`);
         }
-      } else {
-        // Finalize account quota for sig-based uploads
-        const authResult = verifyUploadSig(req, contentHash);
-        if (authResult.valid && authResult.address) {
-          const finalCheck = finalizeAccountUpload(authResult.address, contentHash);
-          if (!finalCheck.allowed) {
-            console.warn(`[blob-gateway] Receipt quota exceeded for ${authResult.address} but upload already complete`);
-          }
+      } else if (auth && auth.identity) {
+        const finalCheck = finalizeAccountUpload(auth.identity, contentHash);
+        if (!finalCheck.allowed) {
+          console.warn(`[blob-gateway] Receipt quota exceeded for ${auth.identity} but upload already complete`);
         }
       }
     }

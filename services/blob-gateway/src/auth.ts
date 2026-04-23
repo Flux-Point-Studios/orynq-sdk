@@ -9,7 +9,7 @@
  */
 
 import type { Request } from "express";
-import { resolveKey, lookupValidatorInfo, type KeyInfo } from "./quota.js";
+import { resolveKey, resolveKeyByAccount, lookupValidatorInfo, type KeyInfo } from "./quota.js";
 import { verifyUploadSig } from "./upload-auth.js";
 import { checkFunded } from "./rpc-client.js";
 import {
@@ -51,10 +51,17 @@ export async function resolveAuth(req: Request, contentHash?: string): Promise<A
       try {
         const verify = verifyToken(getApiTokensDb(), token);
         if (verify.valid) {
+          // Best-effort lookup: if this account has a registered api_keys row,
+          // surface the KeyInfo so upload quotas key off the same pool
+          // regardless of which header the caller used. If the account isn't
+          // registered, keyInfo stays undefined and callers fall back to
+          // account-based quotas.
+          const keyInfo = resolveKeyByAccount(verify.accountSs58) ?? undefined;
           return {
             authenticated: true,
             tier: "bearer",
             identity: verify.accountSs58,
+            ...(keyInfo ? { keyInfo } : {}),
           };
         }
         return {
