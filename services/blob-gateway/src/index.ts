@@ -20,6 +20,10 @@ import { startCleanupTimer } from "./cleanup.js";
 import { startReceiptIndexer } from "./receipt-indexer.js";
 import { initApiTokensDb } from "./api-tokens.js";
 import { registerTokenRoutes } from "./routes/tokens.js";
+import { chainInfoRouter, initChainInfoPoller } from "./routes/chain-info.js";
+// initChainInfoPoller is re-exported for consumers that want to pre-warm the
+// cache at startup; we also call it in start() so the first /chain-info hit
+// after cold-start returns 200 instead of 503.
 
 const app = express();
 
@@ -53,6 +57,7 @@ app.use(chunksRouter);      // Public (content-addressed, SHA-256 verified)
 app.use(batchesRouter);     // Write: resolveAuth(). Read: public.
 app.use(heartbeatsRouter);  // Handles own dual-mode auth (Phase 2)
 app.use(operatorsRouter);   // Invite-only operator registration
+app.use(chainInfoRouter);   // Public: /chain-info — used by flux1 explorer + cert-daemon auto-discovery
 registerTokenRoutes(app);   // Bearer-token lifecycle (admin-only)
 
 async function start(): Promise<void> {
@@ -74,6 +79,10 @@ async function start(): Promise<void> {
   // Start cleanup timers
   startCleanupTimer();
   startHeartbeatCleanup();
+
+  // Pre-warm /chain-info cache so the first hit after cold-start returns 200
+  // instead of 503. Fire-and-forget; errors are handled inside the poller.
+  void initChainInfoPoller();
 
   // Start receipt indexer (polls chain for receipt→content_hash mapping)
   startReceiptIndexer().catch((err) =>
