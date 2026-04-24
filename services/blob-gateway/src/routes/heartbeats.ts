@@ -1,14 +1,23 @@
 /**
  * Heartbeat routes — validators report liveness with sr25519-signed heartbeats.
  *
- * POST /heartbeats        — API-key-protected, validates signature + seq
+ * POST /heartbeats        — Accepts Bearer / x-api-key / sr25519 sig; validates signature + seq
  * GET  /heartbeats/status — Public, returns validator liveness summary
+ *
+ * Auth (PR #129): unified via `resolveAuth` for the account-bound tiers
+ * (Bearer token → legacy x-api-key), then falls through to the heartbeat-
+ * specific sr25519 `x-heartbeat-sig` path for keyless validators. The
+ * heartbeat-sig scheme signs a different payload than upload-sig
+ * (`materios-heartbeat-v1|...` vs `materios-upload-v1|...`) and uses a
+ * different header, so we cannot collapse it into resolveAuth without
+ * breaking the cert-daemon wire format.
  */
 
 import { Router, type Request, type Response } from "express";
 import { signatureVerify } from "@polkadot/util-crypto";
 import { stringToU8a } from "@polkadot/util";
-import { resolveKey, lookupValidatorInfo } from "../quota.js";
+import { lookupValidatorInfo } from "../quota.js";
+import { resolveAuth } from "../auth.js";
 import {
   upsertHeartbeat,
   getLastSeq,
@@ -57,7 +66,7 @@ const STATUS_CACHE_TTL_MS = 10_000; // 10 seconds
 
 /* ---------- POST /heartbeats ---------- */
 
-heartbeatsRouter.post("/heartbeats", (req: Request, res: Response) => {
+heartbeatsRouter.post("/heartbeats", async (req: Request, res: Response) => {
   try {
     const body = req.body;
     if (!body || typeof body !== "object") {
@@ -99,25 +108,59 @@ heartbeatsRouter.post("/heartbeats", (req: Request, res: Response) => {
 
     const ip = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "";
 
-    // --- AUTH: API key OR signature-only with registered validator ---
-    const apiKey = req.headers["x-api-key"] as string | undefined;
-    let label: string;
+    // --- AUTH: Bearer token → legacy x-api-key → sr25519 x-heartbeat-sig ---
+    //
+    // resolveAuth() handles Bearer (priority 0) and x-api-key (priority 1).
+    // We call it without a contentHash so its upload-sig branch is skipped —
+    // heartbeats use `x-heartbeat-sig` with a completely different signing
+    // payload, which we handle as a parallel fallback below.
+    //
+    // If neither a Bearer nor an x-api-key header is present, resolveAuth
+    // returns `authenticated: false` with error "No authentication
+    // provided" — that's our signal to fall through to the sig path.
+    // An INVALID api-key or Bearer short-circuits with 401 here so the
+    // cert-daemon's `401 Invalid or disabled API key` contract survives.
+    const hasAccountAuthHeader =
+      typeof req.headers.authorization === "string" ||
+      typeof req.headers["x-api-key"] === "string";
 
-    if (apiKey) {
-      // Traditional path: validate API key + binding
-      const keyInfo = resolveKey(apiKey);
-      if (!keyInfo) {
-        res.status(401).json({ error: "Invalid or disabled API key" });
+    let label: string | undefined;
+    let authTier: "bearer" | "api-key" | "api-key-legacy-ss58" | "sig-only" | undefined;
+
+    if (hasAccountAuthHeader) {
+      const auth = await resolveAuth(req);
+      if (!auth.authenticated) {
+        // Wire-format preserved: "Invalid or disabled API key" for legacy
+        // x-api-key clients; bearer errors surface their own verbose reason.
+        res.status(401).json({ error: auth.error ?? "Invalid or disabled API key" });
         return;
       }
-      if (keyInfo.validatorId && validator_id !== keyInfo.validatorId) {
-        logReject(validator_id, "validator_id mismatch with API key binding", ip);
+
+      // Bearer / api-key / api-key-legacy-ss58 tiers carry an identity.
+      // Enforce the validator_id binding: if the auth maps to a specific
+      // SS58 (either via keyInfo.validatorId or the bearer's accountSs58),
+      // the body's validator_id must match. Same 403 as the old code.
+      const boundSs58 =
+        auth.keyInfo?.validatorId ?? (auth.tier === "bearer" ? auth.identity : undefined);
+      if (boundSs58 && validator_id !== boundSs58) {
+        logReject(validator_id, "validator_id mismatch with auth binding", ip);
         res.status(403).json({ error: "validator_id does not match API key binding" });
         return;
       }
-      label = keyInfo.name;
+
+      // Label preference: KeyInfo.name (named operator row) > registered
+      // validator name > the raw identity SS58. Matches the prior behaviour
+      // where `keyInfo.name` was used for api-key flows; for Bearer tokens
+      // with no api_keys row, we fall back to the validator registry.
+      if (auth.keyInfo) {
+        label = auth.keyInfo.name;
+      } else {
+        const info = lookupValidatorInfo(validator_id);
+        label = info ? info.name : (auth.identity ?? validator_id);
+      }
+      authTier = auth.tier as typeof authTier;
     } else {
-      // Keyless path: validator must be in registry, sig is the real auth
+      // Keyless path: validator must be in registry, sig is the real auth.
       const info = lookupValidatorInfo(validator_id);
       if (!info) {
         logReject(validator_id, "unregistered validator (no API key, not in registry)", ip);
@@ -125,6 +168,7 @@ heartbeatsRouter.post("/heartbeats", (req: Request, res: Response) => {
         return;
       }
       label = info.name;
+      authTier = "sig-only";
     }
 
     // Rate limit: reject if < 10s since last POST for this validator
@@ -142,7 +186,6 @@ heartbeatsRouter.post("/heartbeats", (req: Request, res: Response) => {
     const nowSecs = Math.floor(now / 1000);
     const clockSkew = timestamp - nowSecs;
     if (Math.abs(clockSkew) > 120) {
-      const ip = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "";
       logReject(validator_id, `clock skew too large: ${clockSkew}s`, ip);
       res.status(400).json({ error: "Clock skew exceeds 120 seconds", clock_skew_secs: clockSkew });
       return;
@@ -159,10 +202,13 @@ heartbeatsRouter.post("/heartbeats", (req: Request, res: Response) => {
       return;
     }
 
-    // Verify sr25519 signature
+    // Verify sr25519 signature. This is REQUIRED for every heartbeat — even
+    // Bearer/api-key flows must supply `x-heartbeat-sig`, because the sig is
+    // what binds the heartbeat payload to the validator's key. The bearer
+    // token only authenticates the account; the sig proves the
+    // payload-integrity + non-replay of this specific beat.
     const signature = req.headers["x-heartbeat-sig"] as string | undefined;
     if (!signature) {
-      const ip = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "";
       logReject(validator_id, "missing x-heartbeat-sig header", ip);
       res.status(400).json({ error: "Missing x-heartbeat-sig header" });
       return;
@@ -190,7 +236,6 @@ heartbeatsRouter.post("/heartbeats", (req: Request, res: Response) => {
     const result = signatureVerify(sigBytes, signature, validator_id);
 
     if (!result.isValid) {
-      const ip = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "";
       logReject(validator_id, "invalid sr25519 signature", ip);
       res.status(400).json({ error: "Invalid signature" });
       return;
@@ -199,7 +244,7 @@ heartbeatsRouter.post("/heartbeats", (req: Request, res: Response) => {
     // All checks passed — upsert heartbeat
     upsertHeartbeat(
       validator_id,
-      label,               // label from registry, NOT from body
+      label ?? validator_id, // label from registry/key, NOT from body
       seq,
       JSON.stringify(body), // store full payload
       signature,
@@ -220,7 +265,10 @@ heartbeatsRouter.post("/heartbeats", (req: Request, res: Response) => {
     // Invalidate status cache on new heartbeat
     cachedStatusResponse = null;
 
-    res.status(200).json({ status: "ok", seq, clock_skew_secs: clockSkew });
+    // auth_tier is informational only — clients have historically ignored
+    // unknown response fields, and surfacing it helps operators debug which
+    // header was accepted during migration.
+    res.status(200).json({ status: "ok", seq, clock_skew_secs: clockSkew, auth_tier: authTier });
   } catch (error) {
     console.error("[blob-gateway] Heartbeat POST error:", error);
     const message = error instanceof Error ? error.message : "Unknown error";
