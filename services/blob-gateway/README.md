@@ -161,6 +161,33 @@ Clock skew tolerance: 120 seconds (configurable via `UPLOAD_SIG_MAX_AGE_SEC`).
 2. **Per-identity quotas** tracked in SQLite
 3. **Deferred orphan cleanup** -- blobs with no on-chain receipt after 24 hours are deleted
 
+### Sponsored-Receipt Submission (Optional)
+
+Some clients can upload blobs but cannot sign the on-chain `orinqReceipts.submitReceipt` extrinsic — e.g. OpenHome community abilities, whose Python sandbox has no sr25519 primitives. Without a receipt the blob is an orphan the cert-daemon never sees, and it gets reaped after `RECEIPT_GRACE_HOURS`.
+
+When `SPONSORED_RECEIPT_SUBMITTER_URL` is configured, the gateway fires a fire-and-forget POST to that URL the moment a sponsored-tier upload (Bearer, api-key, or api-key-legacy-ss58) completes. Contract:
+
+```
+POST <SPONSORED_RECEIPT_SUBMITTER_URL>
+Headers:
+  content-type: application/json
+  authorization: Bearer <SPONSORED_RECEIPT_SUBMITTER_TOKEN>   (if set)
+Body:
+  {
+    "contentHash":  "<64 hex, no 0x>",
+    "operator":     "<SS58 the upload was authed against>",
+    "authTier":     "bearer" | "api-key" | "api-key-legacy-ss58",
+    "rootHash":     "<optional 64 hex from the manifest>",
+    "manifestHash": "<sha256 of the canonical manifest JSON>",
+    "source":       "blob-gateway"
+  }
+Expected response:
+  2xx → gateway considers receipt delegated, moves on
+  non-2xx → warn-logged; blob still counts as uploaded; normal orphan-cleanup applies
+```
+
+The submitter is a separate service (not provided by this repo today) that holds the operator signing keys and turns the notification into an on-chain receipt. Signing infra never touches the gateway process. When the URL is unset (default), the hook is a no-op and non-sponsored sig-only flows with their own signers are unaffected.
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -182,6 +209,9 @@ Clock skew tolerance: 120 seconds (configurable via `UPLOAD_SIG_MAX_AGE_SEC`).
 | `MAX_CHUNK_BYTES` | `67108864` (64 MB) | Maximum size per chunk |
 | `MAX_CHUNKS_PER_MANIFEST` | `256` | Maximum chunks per manifest |
 | `UPLOAD_TIMEOUT_MS` | `300000` (5 min) | Upload request timeout |
+| `SPONSORED_RECEIPT_SUBMITTER_URL` | `""` (disabled) | Optional. When set, completed Bearer/api-key-authed uploads POST `{contentHash, operator, authTier, rootHash?, manifestHash, source:"blob-gateway"}` here so an external submitter can build + sign the on-chain `orinqReceipts.submitReceipt` extrinsic on the operator's behalf. Enables community abilities (OpenHome etc.) that upload but can't sign. Fire-and-forget; non-2xx responses are warn-logged but do not affect upload success. |
+| `SPONSORED_RECEIPT_SUBMITTER_TOKEN` | `""` | Optional bearer token added as `authorization: Bearer <token>` when posting to the submitter. |
+| `SPONSORED_RECEIPT_NOTIFY_TIMEOUT_MS` | `5000` | Abort timeout for the submitter POST. |
 
 ## Project Structure
 
