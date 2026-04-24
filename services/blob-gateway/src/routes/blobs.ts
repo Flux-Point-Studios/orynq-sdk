@@ -11,6 +11,7 @@ import {
   startAccountUpload, recordAccountChunkBytes, finalizeAccountUpload,
 } from "../quota.js";
 import { resolveAuth } from "../auth.js";
+import { notifySponsoredReceiptSubmitter, isSponsoredTier } from "../sponsored-receipts.js";
 
 export const blobsRouter = Router();
 
@@ -256,6 +257,31 @@ blobsRouter.put("/blobs/:contentHash/chunks/:i", async (req: Request, res: Respo
         if (!finalCheck.allowed) {
           console.warn(`[blob-gateway] Receipt quota exceeded for ${auth.identity} but upload already complete`);
         }
+      }
+
+      // Sponsored-receipt hand-off: if this upload was sponsored (Bearer
+      // or api-key tier) and an external submitter is configured, fire
+      // a notification so the submitter can build + sign + send the
+      // on-chain receipt. Fire-and-forget — never blocks the 200 OK.
+      if (
+        config.sponsoredReceiptSubmitterUrl &&
+        auth &&
+        isSponsoredTier(auth.tier) &&
+        auth.identity
+      ) {
+        const manifestJson = JSON.stringify(manifest);
+        const manifestHash = createHash("sha256").update(manifestJson).digest("hex");
+        const rawRoot = manifest["rootHash"];
+        const rootHash = typeof rawRoot === "string"
+          ? rawRoot.replace(/^0x/, "")
+          : undefined;
+        void notifySponsoredReceiptSubmitter({
+          contentHash,
+          operator: auth.identity,
+          authTier: auth.tier,
+          rootHash,
+          manifestHash,
+        });
       }
     }
 

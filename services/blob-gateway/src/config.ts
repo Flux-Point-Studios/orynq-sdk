@@ -44,4 +44,22 @@ export const config = {
   sigOnlyMaxConcurrentUploads: parseInt(process.env.SIG_ONLY_MAX_CONCURRENT_UPLOADS || "3"),
   // Grace period before orphaned blobs (no on-chain receipt) get cleaned up
   receiptGraceHours: parseInt(process.env.RECEIPT_GRACE_HOURS || "24"),
+  // Sponsored-receipt submitter (opt-in; disabled when URL is empty).
+  // Community abilities (OpenHome, etc.) can upload blobs via Bearer or
+  // api-key auth but cannot sign the `orinqReceipts.submitReceipt`
+  // extrinsic — their sandbox has no sr25519 primitives. Without a
+  // receipt the blob is an orphan the cert-daemon never touches.
+  //
+  // When this URL is set, on a COMPLETE upload whose auth tier is
+  // sponsored (bearer | api-key | api-key-legacy-ss58), the gateway
+  // fires a fire-and-forget POST to the submitter with
+  //   { contentHash, operator, rootHash, manifestHash, source: "blob-gateway" }
+  // and the submitter is expected to build + sign + send the receipt
+  // extrinsic using its own operator keypairs. Signing infra never
+  // touches the gateway process. HTTP 202 from the submitter means
+  // "accepted, will submit async"; any non-2xx is logged and does NOT
+  // affect the upload's 200 OK response.
+  sponsoredReceiptSubmitterUrl: process.env.SPONSORED_RECEIPT_SUBMITTER_URL || "",
+  sponsoredReceiptSubmitterToken: process.env.SPONSORED_RECEIPT_SUBMITTER_TOKEN || "",
+  sponsoredReceiptNotifyTimeoutMs: parseInt(process.env.SPONSORED_RECEIPT_NOTIFY_TIMEOUT_MS || "5000"),
 };
