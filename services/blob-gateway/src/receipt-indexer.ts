@@ -135,27 +135,44 @@ export async function startReceiptIndexer(): Promise<void> {
       const receiptCount = countData.result || 0;
 
       if (receiptCount > 0) {
-        // Scan all receipts and check if they're indexed
-        // Use state_getKeysPaged to enumerate receipt storage keys
-        const keysResp = await fetch(rpcUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "state_getKeysPaged",
-            // OrinqReceipts.Receipts prefix (twox128("OrinqReceipts") ++ twox128("Receipts"))
-            params: [
-              "0xcd01cd31249ddf8841dad036babd910f9a6912f00c3f09f66bdf9eb1bdb77563",
-              100,
-              null,
-            ],
-          }),
-        });
-        const keysData = (await keysResp.json()) as { result?: string[] };
-        const keys = keysData.result || [];
+        // Scan all receipts and check if they're indexed.
+        //
+        // state_getKeysPaged returns keys in blake2_128(receipt_id) hash order,
+        // so a single page of the first N keys is NOT "the newest N receipts".
+        // New receipts land at random hash positions and may be past any page
+        // boundary; the indexer must walk the entire storage map each tick,
+        // otherwise receipts past position N are never indexed and get stuck
+        // without an availability cert (see the live symptoms on preprod
+        // where cert-daemon logs "No locator found for 0x...").
+        //
+        // Paginate by passing the last key of batch K as start_key for batch
+        // K+1 until we see an empty response (or a short final page).
+        // OrinqReceipts.Receipts prefix = twox128("OrinqReceipts") ++ twox128("Receipts").
+        const PREFIX =
+          "0xcd01cd31249ddf8841dad036babd910f9a6912f00c3f09f66bdf9eb1bdb77563";
+        const PAGE_SIZE = 1000;
+        let startKey: string | null = null;
+        const allKeys: string[] = [];
+        for (;;) {
+          const keysResp = await fetch(rpcUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "state_getKeysPaged",
+              params: [PREFIX, PAGE_SIZE, startKey],
+            }),
+          });
+          const keysData = (await keysResp.json()) as { result?: string[] };
+          const batch = keysData.result || [];
+          if (batch.length === 0) break;
+          allKeys.push(...batch);
+          if (batch.length < PAGE_SIZE) break;
+          startKey = batch[batch.length - 1];
+        }
 
-        for (const key of keys) {
+        for (const key of allKeys) {
           // Extract receipt_id from the storage key
           // Key format: prefix(32) + blake2_128(16) + receipt_id(32) = 80 bytes hex = 160 chars + 0x
           // The receipt_id is the last 32 bytes (64 hex chars)
