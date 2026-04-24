@@ -25,10 +25,12 @@ import { mkdtemp, rm, mkdir, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// OrinqReceipts.Receipts storage prefix (twox128 x2) — must match the
-// constant in receipt-indexer.ts so the production code path is exercised.
+// OrinqReceipts.Receipts storage prefix = twox128("OrinqReceipts") ++ twox128("Receipts").
+// Must match the runtime-computed RECEIPTS_STORAGE_PREFIX constant inside
+// receipt-indexer.ts. Kept as a literal here (not recomputed) so a regression
+// to a stale hand-transcribed hex literal in the production code fails loudly.
 const RECEIPTS_PREFIX =
-  "0xcd01cd31249ddf8841dad036babd910f9a6912f00c3f09f66bdf9eb1bdb77563";
+  "0xf2f45ef88f71bc25f444a160450145be5087a88ab53079a394ab62a465d46183";
 
 // The indexer extracts receipt_id from the last 32 bytes (64 hex chars) of
 // each storage key: prefix(32) + blake2_128(16) + receipt_id(32). To keep

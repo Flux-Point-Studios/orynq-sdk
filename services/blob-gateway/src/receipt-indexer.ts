@@ -10,10 +10,28 @@
 
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
+import { xxhashAsHex } from "@polkadot/util-crypto";
 import { config } from "./config.js";
 
 const POLL_INTERVAL_MS = 6_000; // Poll every 6 seconds (1 block)
 const STATE_FILE = join(config.storagePath, "indexer-state.json");
+
+/**
+ * OrinqReceipts.Receipts storage prefix = twox128("OrinqReceipts") ++ twox128("Receipts").
+ *
+ * Computed at module load (not hardcoded) because runtime renames shift this
+ * value — we shipped with a stale hand-transcribed hex literal that returned
+ * zero keys from state_getKeysPaged after a pallet-rename somewhere in v5,
+ * and the indexer silently stopped picking up new receipts. Computing from
+ * the names guarantees the indexer stays correct across pallet renames as
+ * long as the pallet + storage name strings are right.
+ */
+const RECEIPTS_STORAGE_PREFIX: string = (() => {
+  const pallet = xxhashAsHex("OrinqReceipts", 128);
+  const storage = xxhashAsHex("Receipts", 128);
+  // strip 0x from the second piece so they concat correctly
+  return pallet + storage.slice(2);
+})();
 
 function stripHexPrefix(hex: string): string {
   return hex.startsWith("0x") ? hex.slice(2) : hex;
@@ -147,9 +165,10 @@ export async function startReceiptIndexer(): Promise<void> {
         //
         // Paginate by passing the last key of batch K as start_key for batch
         // K+1 until we see an empty response (or a short final page).
-        // OrinqReceipts.Receipts prefix = twox128("OrinqReceipts") ++ twox128("Receipts").
-        const PREFIX =
-          "0xcd01cd31249ddf8841dad036babd910f9a6912f00c3f09f66bdf9eb1bdb77563";
+        // Prefix is computed at module load from the pallet+storage names
+        // (see RECEIPTS_STORAGE_PREFIX declaration) rather than hard-coded,
+        // so renaming the pallet doesn't silently stop indexing.
+        const PREFIX = RECEIPTS_STORAGE_PREFIX;
         const PAGE_SIZE = 1000;
         let startKey: string | null = null;
         const allKeys: string[] = [];
