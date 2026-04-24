@@ -43,7 +43,7 @@ import { u8aToHex, stringToU8a } from "@polkadot/util";
 
 import { config } from "../config.js";
 import { blobsRouter } from "../routes/blobs.js";
-import { setQuotaDbForTests } from "../quota.js";
+import { setQuotaDbForTests, migrateUsageColumns } from "../quota.js";
 import {
   initApiTokensDb,
   issueToken,
@@ -112,6 +112,12 @@ async function setupApp(opts: { registerOperator?: boolean } = {}): Promise<{
       status TEXT NOT NULL DEFAULT 'active'
     );
   `);
+  // Phase 1 billing: add lifetime_* columns so recordUsage() from the
+  // manifest/chunk handlers has a column to UPDATE. Without this, the
+  // in-test handler emits a warn-log ("no such column: lifetime_receipts")
+  // which is harmless but noisy — the production initQuotaDb does the
+  // same migration automatically.
+  migrateUsageColumns(quotaDb);
   setQuotaDbForTests(quotaDb);
 
   // SS58-shape account used by both Bearer and legacy-SS58-as-API-key tests.

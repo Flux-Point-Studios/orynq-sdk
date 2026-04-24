@@ -9,6 +9,7 @@ import { config } from "../config.js";
 import {
   startUpload, recordChunkBytes, finalizeUpload,
   startAccountUpload, recordAccountChunkBytes, finalizeAccountUpload,
+  recordUsage,
 } from "../quota.js";
 import { resolveAuth } from "../auth.js";
 import { notifySponsoredReceiptSubmitter, isSponsoredTier } from "../sponsored-receipts.js";
@@ -74,6 +75,20 @@ blobsRouter.post("/blobs/:contentHash/manifest", async (req: Request, res: Respo
       if (!quotaCheck.allowed) {
         res.status(429).json({ error: quotaCheck.error, limit: quotaCheck.limit, current: quotaCheck.current });
         return;
+      }
+      // Phase 1 billing: count one receipt per admitted manifest POST.
+      // Bytes are attributed in the chunk leg. Not gated on saveManifest
+      // success — startUpload() already recorded the intent in the inflight
+      // table, and in practice saveManifest() failure is a disk error that
+      // the error handler converts to 500; we accept minor drift in the
+      // pathological crash-between-these-two-calls case.
+      try {
+        recordUsage(auth.keyInfo.keyHash, 0, 1);
+      } catch (err) {
+        console.warn(
+          `[blob-gateway] recordUsage(manifest) failed for ${auth.keyInfo.name}:`,
+          err,
+        );
       }
     } else {
       // Account-based quota — covers sig-only, registered-validator, and
@@ -243,6 +258,21 @@ blobsRouter.put("/blobs/:contentHash/chunks/:i", async (req: Request, res: Respo
     }
 
     await saveChunk(contentHash, chunkIndex, data);
+
+    // Phase 1 billing: credit bytes to the Bearer/API-key holder. Skipped
+    // for sig-only / registered-validator (no key-hash to attribute to —
+    // those use account-based quotas and will get their own meter in
+    // Phase 2 if/when we want to bill sig-only uploaders).
+    if (useKeyedQuotas && auth && auth.keyInfo) {
+      try {
+        recordUsage(auth.keyInfo.keyHash, data.length, 0);
+      } catch (err) {
+        console.warn(
+          `[blob-gateway] recordUsage(chunk) failed for ${auth.keyInfo.name}:`,
+          err,
+        );
+      }
+    }
 
     // Check if upload is now complete and finalize quota
     const statusAfter = await getStatus(contentHash);

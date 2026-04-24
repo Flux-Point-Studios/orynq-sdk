@@ -98,7 +98,48 @@ export function initQuotaDb(): void {
     db.exec("ALTER TABLE api_keys ADD COLUMN validator_id TEXT DEFAULT NULL");
   }
 
+  // Phase 1 billing: additive usage-metering columns. All defaults are 0 /
+  // NULL so existing rows migrate transparently. The ALTER statements are
+  // each wrapped in their own try/catch via migrateUsageColumns() so repeated
+  // startup is a no-op on already-migrated DBs (SQLite's ADD COLUMN lacks
+  // IF NOT EXISTS on the versions we target; catch "duplicate column name").
+  migrateUsageColumns(db);
+
   loadKeys();
+}
+
+/**
+ * Idempotent migration: add Phase 1 usage-metering columns to `api_keys`.
+ *
+ * Exported so tests can exercise the "run twice against the same DB" case
+ * without spinning up full initQuotaDb(). Safe to call on a freshly-created
+ * table too — each column is checked via PRAGMA first, and we still wrap
+ * the ALTERs in try/catch as belt-and-suspenders for concurrent startup.
+ */
+export function migrateUsageColumns(database: Database.Database): void {
+  const cols = database.prepare("PRAGMA table_info(api_keys)").all() as Array<{
+    name: string;
+  }>;
+  const have = new Set(cols.map((c) => c.name));
+  const adds: Array<[string, string]> = [
+    ["lifetime_receipts", "INTEGER NOT NULL DEFAULT 0"],
+    ["lifetime_bytes", "INTEGER NOT NULL DEFAULT 0"],
+    ["lifetime_matra_debited", "INTEGER NOT NULL DEFAULT 0"],
+    ["last_used_at", "TEXT"],
+  ];
+  for (const [name, type] of adds) {
+    if (have.has(name)) continue;
+    try {
+      database.exec(`ALTER TABLE api_keys ADD COLUMN ${name} ${type}`);
+    } catch (err) {
+      // SQLite surfaces a "duplicate column name" when a parallel startup
+      // beat us to it. Anything else is a real error.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column name/i.test(msg)) {
+        throw err;
+      }
+    }
+  }
 }
 
 function hashKey(plaintext: string): string {
@@ -426,6 +467,127 @@ export function recordAccountChunkBytes(address: string, contentHash: string, ch
   });
 
   return txn();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1 billing: lifetime usage metering (per-keyHash, non-enforced).
+// ---------------------------------------------------------------------------
+//
+// Intent: observe what each Bearer/API-key actually consumes so Phase 2 can
+// price against real data. No debits, no enforcement, no 402s. The existing
+// daily-quota enforcement path is untouched.
+//
+// Split metering from enforcement so we can keep these counters at the
+// bottom of a successful upload path without making them part of the check
+// transaction. If a chunk PUT gets admitted and then we crash, the counter
+// lags by one call — acceptable for metering, not for billing (Phase 2 will
+// promote this to a transactional debit).
+
+export interface UsageSnapshot {
+  /** Cumulative receipts (each completed manifest POST counts 1). */
+  lifetime_receipts: number;
+  /** Cumulative bytes (sum of chunk PUT body lengths). */
+  lifetime_bytes: number;
+  /** Reserved for Phase 2; always 0 until billing enforcement ships. */
+  lifetime_matra_debited: number;
+  /** ISO-8601 timestamp of the last recordUsage() call. */
+  last_used_at: string | null;
+  /** Daily cap snapshot so consumers can compute remaining budget. */
+  max_receipts_per_day: number;
+  max_bytes_per_day: number;
+}
+
+/**
+ * Atomically increment the lifetime counters for a keyHash.
+ *
+ * @param keyHash       sha256-hex of the API key (matches api_keys.key_hash).
+ * @param bytes         Byte-count to add to lifetime_bytes (>= 0).
+ * @param receiptCount  0 or 1. Pass 1 exactly once per completed manifest
+ *                      POST; pass 0 on every chunk PUT. Any other value is
+ *                      coerced to {0,1} to keep the counter monotonic.
+ *
+ * No-op (silent) if the keyHash doesn't exist in api_keys. Phase 2 may
+ * flip that to a strict error; for now missing rows indicate an in-flight
+ * registration race and we'd rather keep uploads succeeding.
+ */
+export function recordUsage(
+  keyHash: string,
+  bytes: number,
+  receiptCount: 0 | 1,
+): void {
+  const safeBytes = Number.isFinite(bytes) && bytes > 0 ? Math.floor(bytes) : 0;
+  const safeReceipts = receiptCount === 1 ? 1 : 0;
+  const nowIso = new Date().toISOString();
+  const txn = db.transaction(() => {
+    db.prepare(
+      `UPDATE api_keys
+       SET lifetime_receipts = lifetime_receipts + ?,
+           lifetime_bytes = lifetime_bytes + ?,
+           last_used_at = ?
+       WHERE key_hash = ?`,
+    ).run(safeReceipts, safeBytes, nowIso, keyHash);
+  });
+  txn();
+}
+
+/**
+ * Read the current lifetime counters + daily caps for a keyHash.
+ *
+ * Returns null if the key is not in api_keys — consumers should treat null
+ * as "unknown key" (e.g. HTTP 404 on the admin introspection endpoint).
+ */
+export function getUsage(keyHash: string): UsageSnapshot | null {
+  const row = db
+    .prepare(
+      `SELECT
+         COALESCE(lifetime_receipts, 0) AS lifetime_receipts,
+         COALESCE(lifetime_bytes, 0) AS lifetime_bytes,
+         COALESCE(lifetime_matra_debited, 0) AS lifetime_matra_debited,
+         last_used_at,
+         max_receipts_per_day,
+         max_bytes_per_day
+       FROM api_keys WHERE key_hash = ?`,
+    )
+    .get(keyHash) as
+    | {
+        lifetime_receipts: number;
+        lifetime_bytes: number;
+        lifetime_matra_debited: number;
+        last_used_at: string | null;
+        max_receipts_per_day: number;
+        max_bytes_per_day: number;
+      }
+    | undefined;
+  if (!row) return null;
+  return {
+    lifetime_receipts: row.lifetime_receipts,
+    lifetime_bytes: row.lifetime_bytes,
+    lifetime_matra_debited: row.lifetime_matra_debited,
+    last_used_at: row.last_used_at,
+    max_receipts_per_day: row.max_receipts_per_day,
+    max_bytes_per_day: row.max_bytes_per_day,
+  };
+}
+
+/**
+ * Read today's per-key counters from quota_daily (the existing enforcement
+ * table — we reuse it rather than inventing a parallel aggregation).
+ * Missing row = 0 bytes / 0 receipts today, which matches what the
+ * enforcement path would treat as "fresh day".
+ */
+export function getDailyUsage(
+  keyHash: string,
+  isoDay: string = today(),
+): { receipts_today: number; bytes_today: number } {
+  const row = db
+    .prepare(
+      "SELECT receipts, bytes FROM quota_daily WHERE key_hash = ? AND day = ?",
+    )
+    .get(keyHash, isoDay) as { receipts: number; bytes: number } | undefined;
+  return {
+    receipts_today: row?.receipts ?? 0,
+    bytes_today: row?.bytes ?? 0,
+  };
 }
 
 /**

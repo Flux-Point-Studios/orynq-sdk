@@ -24,6 +24,7 @@ import {
   TOKEN_PREFIX,
 } from "../api-tokens.js";
 import { adminGuard } from "../bearer-auth.js";
+import { resolveKeyByAccount, getUsage, getDailyUsage } from "../quota.js";
 
 const SS58_SHAPE = /^[15][a-zA-Z0-9]{45,47}$/;
 
@@ -57,6 +58,9 @@ export function registerTokenRoutes(app: Express, opts: RegisterTokenRoutesOpts 
       res.status(503).json({ error: "admin token not configured" });
     });
     app.get("/auth/tokens", (_req, res) => {
+      res.status(503).json({ error: "admin token not configured" });
+    });
+    app.get("/auth/token/:hash/usage", (_req, res) => {
       res.status(503).json({ error: "admin token not configured" });
     });
     return;
@@ -141,6 +145,84 @@ export function registerTokenRoutes(app: Express, opts: RegisterTokenRoutesOpts 
         includeRevoked,
       });
       res.status(200).json({ tokens });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  /**
+   * GET /auth/token/:hash/usage  (admin-only)
+   *
+   * Phase 1 billing introspection. Returns the lifetime + today's usage
+   * for the api_keys row bound to this token's SS58. The join is:
+   *
+   *   :hash (tokenHash from api_tokens)
+   *     → api_tokens.account_ss58
+   *     → api_keys.validator_id
+   *     → api_keys.key_hash
+   *     → lifetime_receipts, lifetime_bytes, lifetime_matra_debited
+   *
+   * 404 if either the token hash is unknown or the operator has no
+   * api_keys row yet (e.g. a Bearer was minted but the operator hasn't
+   * been granted a keyed-quota entry — this currently falls back to
+   * account-based quotas, which we'll surface in a future Phase 1.x).
+   */
+  app.get("/auth/token/:hash/usage", guard, (req: Request, res: Response) => {
+    try {
+      const hash = String(req.params.hash || "").toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(hash)) {
+        res.status(400).json({ error: "invalid token hash (expected 64 hex chars)" });
+        return;
+      }
+
+      const tokensDb = getApiTokensDb();
+      const tokenRow = tokensDb
+        .prepare(
+          `SELECT account_ss58, label FROM api_tokens WHERE token_hash = ?`,
+        )
+        .get(hash) as { account_ss58: string; label: string | null } | undefined;
+      if (!tokenRow) {
+        res.status(404).json({ error: "token not found" });
+        return;
+      }
+
+      const keyInfo = resolveKeyByAccount(tokenRow.account_ss58);
+      if (!keyInfo) {
+        res.status(404).json({ error: "no api_keys row bound to this account" });
+        return;
+      }
+
+      const usage = getUsage(keyInfo.keyHash);
+      if (!usage) {
+        // Defensive: resolveKeyByAccount() just handed us a keyHash so
+        // getUsage() should never miss — but treat missing as 404 rather
+        // than leaking an internal-consistency 500.
+        res.status(404).json({ error: "usage row missing for key_hash" });
+        return;
+      }
+
+      const daily = getDailyUsage(keyInfo.keyHash);
+
+      res.status(200).json({
+        tokenHash: hash,
+        accountSs58: tokenRow.account_ss58,
+        label: tokenRow.label,
+        lifetime: {
+          receipts: usage.lifetime_receipts,
+          bytes: usage.lifetime_bytes,
+          matra_debited: usage.lifetime_matra_debited,
+        },
+        today: {
+          receipts: daily.receipts_today,
+          bytes: daily.bytes_today,
+        },
+        caps: {
+          max_receipts_per_day: usage.max_receipts_per_day,
+          max_bytes_per_day: usage.max_bytes_per_day,
+        },
+        last_used_at: usage.last_used_at,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: message });
