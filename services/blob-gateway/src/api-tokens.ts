@@ -170,6 +170,49 @@ export function verifyToken(
   return { valid: true, accountSs58: row.account_ss58, label: row.label, tokenHash };
 }
 
+export interface UpdateLabelInput {
+  tokenHash: string;
+  /** New label, or null to clear. Trimmed and capped at 128 chars by the caller. */
+  label: string | null;
+}
+
+export interface UpdateLabelResult {
+  /** true iff the row existed AND was active (non-revoked). */
+  updated: boolean;
+  /** The label as stored after the update — equals input.label on success. */
+  label: string | null;
+  /** SS58 of the token's owner; used by routes for audit logging + responses. */
+  accountSs58: string | null;
+}
+
+/**
+ * Rename an existing active token. Self-service path: caller authenticates
+ * via Bearer, route resolves their own token_hash, then calls this. Admin
+ * path: caller passes any token_hash via URL.
+ *
+ * Idempotent — calling twice with the same label is a successful no-op.
+ * Refuses to update revoked tokens (returns updated=false).
+ */
+export function updateTokenLabel(
+  database: Database.Database,
+  input: UpdateLabelInput,
+): UpdateLabelResult {
+  const row = database
+    .prepare(
+      `SELECT account_ss58, revoked_at FROM api_tokens WHERE token_hash = ?`,
+    )
+    .get(input.tokenHash) as
+    | { account_ss58: string; revoked_at: number | null }
+    | undefined;
+  if (!row) return { updated: false, label: null, accountSs58: null };
+  if (row.revoked_at !== null)
+    return { updated: false, label: null, accountSs58: row.account_ss58 };
+  database
+    .prepare(`UPDATE api_tokens SET label = ? WHERE token_hash = ?`)
+    .run(input.label, input.tokenHash);
+  return { updated: true, label: input.label, accountSs58: row.account_ss58 };
+}
+
 export interface RevokeTokenInput {
   tokenHash: string;
   reason?: string | undefined;

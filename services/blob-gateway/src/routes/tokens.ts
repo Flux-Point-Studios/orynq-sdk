@@ -20,10 +20,11 @@ import {
   issueToken,
   revokeToken,
   listTokens,
+  updateTokenLabel,
   getApiTokensDb,
   TOKEN_PREFIX,
 } from "../api-tokens.js";
-import { adminGuard } from "../bearer-auth.js";
+import { adminGuard, bearerAuth, type AuthedRequest } from "../bearer-auth.js";
 import { resolveKeyByAccount, getUsage, getDailyUsage } from "../quota.js";
 
 const SS58_SHAPE = /^[15][a-zA-Z0-9]{45,47}$/;
@@ -222,6 +223,131 @@ export function registerTokenRoutes(app: Express, opts: RegisterTokenRoutesOpts 
           max_bytes_per_day: usage.max_bytes_per_day,
         },
         last_used_at: usage.last_used_at,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  /**
+   * PATCH /auth/token/label  — operator self-service rename.
+   *
+   * Authenticates via the operator's own Bearer (Authorization: Bearer matra_…)
+   * and updates the label on that exact token row. Operators don't need to
+   * know their tokenHash — they just curl with the Bearer they already have.
+   *
+   * Body: `{ "label": string | null }`. null clears the label (heartbeats
+   * fall back to the SS58). Trimmed and capped at 128 chars to match mint.
+   *
+   * Why Bearer-self instead of admin-only: the answer to "How do I change my
+   * attestor name?" should be a one-liner the operator can run, not a
+   * support ticket. The blast radius is bounded — caller can only rename
+   * the row their own active Bearer authenticates against.
+   */
+  app.patch(
+    "/auth/token/label",
+    bearerAuth({ required: true }),
+    (req: Request, res: Response) => {
+      try {
+        const r = req as AuthedRequest;
+        if (r.authTier !== "bearer" || !r.tokenHash) {
+          // Self-service rename only works for the new Bearer flow. Legacy
+          // x-api-key paths don't carry a token_hash to mutate.
+          res.status(400).json({
+            error:
+              "self-service label rename requires Bearer auth (api-key tier not supported)",
+          });
+          return;
+        }
+        const body = (req.body ?? {}) as { label?: unknown };
+        let label: string | null;
+        if (body.label === null) {
+          label = null;
+        } else if (typeof body.label === "string") {
+          const trimmed = body.label.trim().slice(0, 128);
+          label = trimmed.length > 0 ? trimmed : null;
+        } else {
+          res.status(400).json({
+            error: "missing label (expected string or null in body)",
+          });
+          return;
+        }
+        const result = updateTokenLabel(getApiTokensDb(), {
+          tokenHash: r.tokenHash,
+          label,
+        });
+        if (!result.updated) {
+          // Row exists (we got past auth) but somehow not updatable. The only
+          // way this happens is a race with revoke; surface a clean 409.
+          res.status(409).json({ error: "token revoked, cannot rename" });
+          return;
+        }
+        console.log(
+          `[blob-gateway] api-token rename account=${result.accountSs58} label="${label ?? "(cleared)"}" hash=${r.tokenHash.slice(0, 16)}... via=self`,
+        );
+        res.status(200).json({
+          status: "updated",
+          tokenHash: r.tokenHash,
+          accountSs58: result.accountSs58,
+          label: result.label,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        res.status(500).json({ error: message });
+      }
+    },
+  );
+
+  /**
+   * PATCH /auth/token/:hash/label  — admin-override rename.
+   *
+   * For renaming an operator who lost their Bearer (we mint replacement
+   * tokens for that case anyway) or for normalising labels en masse during
+   * a chain refresh.
+   */
+  app.patch("/auth/token/:hash/label", guard, (req: Request, res: Response) => {
+    try {
+      const hash = String(req.params.hash || "").toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(hash)) {
+        res
+          .status(400)
+          .json({ error: "invalid token hash (expected 64 hex chars)" });
+        return;
+      }
+      const body = (req.body ?? {}) as { label?: unknown };
+      let label: string | null;
+      if (body.label === null) {
+        label = null;
+      } else if (typeof body.label === "string") {
+        const trimmed = body.label.trim().slice(0, 128);
+        label = trimmed.length > 0 ? trimmed : null;
+      } else {
+        res.status(400).json({
+          error: "missing label (expected string or null in body)",
+        });
+        return;
+      }
+      const result = updateTokenLabel(getApiTokensDb(), {
+        tokenHash: hash,
+        label,
+      });
+      if (!result.updated) {
+        if (result.accountSs58 === null) {
+          res.status(404).json({ error: "token not found" });
+          return;
+        }
+        res.status(409).json({ error: "token revoked, cannot rename" });
+        return;
+      }
+      console.log(
+        `[blob-gateway] api-token rename account=${result.accountSs58} label="${label ?? "(cleared)"}" hash=${hash.slice(0, 16)}... via=admin`,
+      );
+      res.status(200).json({
+        status: "updated",
+        tokenHash: hash,
+        accountSs58: result.accountSs58,
+        label: result.label,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

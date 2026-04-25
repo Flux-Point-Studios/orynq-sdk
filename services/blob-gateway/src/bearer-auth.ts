@@ -27,6 +27,8 @@ export interface AuthedRequest extends Request {
   account?: string;
   authTier?: AuthTier;
   keyInfo?: KeyInfo;
+  /** Set on the Bearer auth path so handlers can identify the token row. */
+  tokenHash?: string;
 }
 
 export interface BearerAuthOptions {
@@ -53,6 +55,7 @@ export function bearerAuth(opts: BearerAuthOptions = {}): RequestHandler {
         if (verify.valid) {
           r.account = verify.accountSs58;
           r.authTier = "bearer";
+          r.tokenHash = verify.tokenHash;
           next();
           return;
         }
