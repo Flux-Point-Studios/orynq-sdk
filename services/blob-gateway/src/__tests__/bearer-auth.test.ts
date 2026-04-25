@@ -333,6 +333,151 @@ describe("admin CLI helper", () => {
   });
 });
 
+describe("PATCH /auth/token/label (self-service rename)", () => {
+  let m: MountedApp;
+  beforeEach(() => {
+    m = setupApp();
+  });
+
+  test("bearer_can_rename_own_token", async () => {
+    const r = await fetchJson(m.app, "PATCH", "/auth/token/label", {
+      headers: { Authorization: `Bearer ${m.bearerToken}` },
+      body: { label: "self-renamed" },
+    });
+    expect(r.status).toBe(200);
+    const body = r.body as { status: string; label: string; accountSs58: string };
+    expect(body.status).toBe("updated");
+    expect(body.label).toBe("self-renamed");
+    expect(body.accountSs58).toBe(m.ss58);
+
+    // The label MUST be persisted in the row used by heartbeat label-resolution.
+    const row = m.tokensDb
+      .prepare("SELECT label FROM api_tokens WHERE account_ss58 = ?")
+      .get(m.ss58) as { label: string };
+    expect(row.label).toBe("self-renamed");
+  });
+
+  test("rename_to_null_clears_label", async () => {
+    const r = await fetchJson(m.app, "PATCH", "/auth/token/label", {
+      headers: { Authorization: `Bearer ${m.bearerToken}` },
+      body: { label: null },
+    });
+    expect(r.status).toBe(200);
+    expect((r.body as { label: string | null }).label).toBeNull();
+  });
+
+  test("trims_and_caps_at_128_chars", async () => {
+    const long = "A".repeat(200);
+    const r = await fetchJson(m.app, "PATCH", "/auth/token/label", {
+      headers: { Authorization: `Bearer ${m.bearerToken}` },
+      body: { label: `   ${long}   ` },
+    });
+    expect(r.status).toBe(200);
+    const body = r.body as { label: string };
+    expect(body.label).toBe("A".repeat(128));
+  });
+
+  test("rejects_non_string_label", async () => {
+    const r = await fetchJson(m.app, "PATCH", "/auth/token/label", {
+      headers: { Authorization: `Bearer ${m.bearerToken}` },
+      body: { label: 42 },
+    });
+    expect(r.status).toBe(400);
+  });
+
+  test("rejects_unauthenticated_request", async () => {
+    const r = await fetchJson(m.app, "PATCH", "/auth/token/label", {
+      body: { label: "ghost" },
+    });
+    expect(r.status).toBe(401);
+  });
+
+  test("rejects_legacy_api_key_tier", async () => {
+    // Legacy x-api-key path doesn't carry a token_hash to mutate, so
+    // self-service rename must refuse it (and tell the caller why).
+    const r = await fetchJson(m.app, "PATCH", "/auth/token/label", {
+      headers: { "x-api-key": m.legacyApiKey },
+      body: { label: "from-legacy" },
+    });
+    expect(r.status).toBe(400);
+    expect(JSON.stringify(r.body)).toMatch(/Bearer/);
+  });
+
+  test("revoked_bearer_cannot_rename", async () => {
+    // Revoke the token then try to use it.
+    const tokenHash = createHash("sha256").update(m.bearerToken).digest("hex");
+    m.tokensDb
+      .prepare("UPDATE api_tokens SET revoked_at = ? WHERE token_hash = ?")
+      .run(Math.floor(Date.now() / 1000), tokenHash);
+
+    const r = await fetchJson(m.app, "PATCH", "/auth/token/label", {
+      headers: { Authorization: `Bearer ${m.bearerToken}` },
+      body: { label: "after-revoke" },
+    });
+    // bearerAuth catches revoked first — surfaces 401 from middleware.
+    expect(r.status).toBe(401);
+  });
+});
+
+describe("PATCH /auth/token/:hash/label (admin override)", () => {
+  let m: MountedApp;
+  beforeEach(() => {
+    m = setupApp();
+  });
+
+  test("admin_can_rename_any_token", async () => {
+    const tokenHash = createHash("sha256").update(m.bearerToken).digest("hex");
+    const r = await fetchJson(m.app, "PATCH", `/auth/token/${tokenHash}/label`, {
+      headers: { "x-admin-token": m.adminToken },
+      body: { label: "admin-renamed" },
+    });
+    expect(r.status).toBe(200);
+    expect((r.body as { label: string }).label).toBe("admin-renamed");
+  });
+
+  test("rejects_unknown_hash_with_404", async () => {
+    const r = await fetchJson(
+      m.app,
+      "PATCH",
+      `/auth/token/${"deadbeef".repeat(8)}/label`,
+      {
+        headers: { "x-admin-token": m.adminToken },
+        body: { label: "ghost" },
+      },
+    );
+    expect(r.status).toBe(404);
+  });
+
+  test("rejects_revoked_hash_with_409", async () => {
+    const tokenHash = createHash("sha256").update(m.bearerToken).digest("hex");
+    m.tokensDb
+      .prepare("UPDATE api_tokens SET revoked_at = ? WHERE token_hash = ?")
+      .run(Math.floor(Date.now() / 1000), tokenHash);
+
+    const r = await fetchJson(m.app, "PATCH", `/auth/token/${tokenHash}/label`, {
+      headers: { "x-admin-token": m.adminToken },
+      body: { label: "after-revoke" },
+    });
+    expect(r.status).toBe(409);
+  });
+
+  test("rejects_invalid_hash_shape_with_400", async () => {
+    const r = await fetchJson(m.app, "PATCH", "/auth/token/notahash/label", {
+      headers: { "x-admin-token": m.adminToken },
+      body: { label: "x" },
+    });
+    expect(r.status).toBe(400);
+  });
+
+  test("rejects_missing_admin_token_with_401_or_403", async () => {
+    const tokenHash = createHash("sha256").update(m.bearerToken).digest("hex");
+    const r = await fetchJson(m.app, "PATCH", `/auth/token/${tokenHash}/label`, {
+      body: { label: "no-admin" },
+    });
+    expect([401, 403]).toContain(r.status);
+  });
+});
+
 // Smoke-test the quota db injection so other tests don't rot silently
 describe("quota db test hook", () => {
   test("resolveKey_returns_null_for_unknown", () => {
