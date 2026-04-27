@@ -64,7 +64,21 @@ export interface AnchorRecord {
 export interface ReceiptInput {
   /** SHA-256 content hash of the data being anchored */
   contentHash: string;
-  /** Base root hash (SHA-256 Merkle root of the data tree) */
+  /**
+   * `base_root_sha256` — the SHA-256 chunk-Merkle root over the same chunks
+   * uploaded to the blob gateway.
+   *
+   * MUST be computed exactly as cert-daemon's `daemon/merkle.py` does:
+   *   - leaf_i = sha256(chunk_i_bytes) over RAW bytes
+   *   - 1 leaf -> returned as-is (no extra hashing)
+   *   - N > 1  -> sha256(left || right) raw-byte concat, duplicate-last on odd levels
+   *
+   * The canonical helper is {@link computeBaseRoot} (in `receipt.ts`); use
+   * {@link submitCertifiedReceipt} to have the SDK derive this for you from
+   * the upload chunks. Ad-hoc values (sha256(content), trace-bundle root,
+   * sha256("root-" + contentHash), etc.) will fail the cert-daemon's strict
+   * ROOT_VERIFIED gate.
+   */
   rootHash: string;
   /** Manifest hash describing the data layout */
   manifestHash: string;
