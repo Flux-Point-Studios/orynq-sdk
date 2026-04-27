@@ -20,7 +20,62 @@ import type {
 } from "./types.js";
 import { waitForCertification, waitForAnchor } from "./polling.js";
 import { stripPrefix, ensureHex, isZeroHash } from "./hex.js";
+import { merkleRoot } from "./merkle.js";
 import { u8aToHex, stringToU8a } from "@polkadot/util";
+
+/**
+ * Default blob chunk size used by `prepareBlobData` and `computeBaseRoot`.
+ *
+ * Must match the cert daemon's chunk-store layout. Changing this is a
+ * consensus-breaking change for the `base_root_sha256` field on receipts.
+ */
+export const DEFAULT_CHUNK_SIZE = 256 * 1024;
+
+/**
+ * Compute the canonical `base_root_sha256` for a blob.
+ *
+ * This produces a value byte-for-byte identical to cert-daemon's
+ * `daemon/merkle.py` so the strict ROOT_VERIFIED gate accepts receipts
+ * submitted via this SDK.
+ *
+ * Algorithm (mirroring `daemon/merkle.py`):
+ *   1. Split `content` into `chunkSize`-byte chunks (last chunk may be short).
+ *   2. Hash each chunk: `leaf_i = sha256(chunk_i_bytes)` over RAW bytes.
+ *   3. Build a binary Merkle tree:
+ *        - 0 leaves   -> 32 zero bytes
+ *        - 1 leaf     -> that leaf, returned as-is (NO extra hashing)
+ *        - N > 1      -> pair `sha256(left || right)`; duplicate last on
+ *                        odd levels; recurse upward.
+ *
+ * @param content   The full blob bytes that will be uploaded to the gateway.
+ * @param chunkSize Optional chunk size; defaults to {@link DEFAULT_CHUNK_SIZE}.
+ *                  Must match the chunk size used at upload time.
+ * @returns         Hex-encoded 32-byte root, prefixed with `0x`.
+ */
+export function computeBaseRoot(
+  content: Buffer,
+  chunkSize: number = DEFAULT_CHUNK_SIZE,
+): string {
+  if (content.length === 0) {
+    // Matches Python `if not leaf_hashes: return b'\x00' * 32`. The chunking
+    // loop in `prepareBlobData` produces zero chunks for an empty blob, which
+    // would otherwise produce an undefined root.
+    return ensureHex("0".repeat(64));
+  }
+
+  const leafHashes: string[] = [];
+  for (let i = 0; i * chunkSize < content.length; i++) {
+    const start = i * chunkSize;
+    const chunk = content.subarray(start, start + chunkSize);
+    leafHashes.push(createHash("sha256").update(chunk).digest("hex"));
+  }
+
+  // `merkleRoot` is the canonical implementation:
+  //   - single leaf returned as-is (no extra hashing)
+  //   - raw-byte concat for internal nodes
+  //   - duplicate-last on odd levels
+  return merkleRoot(leafHashes);
+}
 
 /**
  * Submit a receipt to the Materios chain.
@@ -28,12 +83,20 @@ import { u8aToHex, stringToU8a } from "@polkadot/util";
  * The receipt is stored on-chain and the cert daemon committee will
  * attempt to locate and verify the blob data, then attest availability.
  *
+ * The `input.rootHash` field is sent verbatim as `base_root_sha256` on the
+ * extrinsic. Callers MUST set it to the canonical chunk-Merkle root computed
+ * by {@link computeBaseRoot} (or use {@link submitCertifiedReceipt} which
+ * does it automatically). Sending any other value will fail the cert
+ * daemon's strict ROOT_VERIFIED gate.
+ *
  * @example
  * ```ts
+ * const baseRoot = computeBaseRoot(content);
+ * const contentHash = "0x" + createHash("sha256").update(content).digest("hex");
  * const result = await submitReceipt(provider, {
- *   contentHash: bundle.rootHash,
- *   rootHash: bundle.rootHash,
- *   manifestHash: bundle.manifestHash,
+ *   contentHash,
+ *   rootHash: baseRoot,
+ *   manifestHash,
  * });
  * console.log("Receipt ID:", result.receiptId);
  * ```
@@ -435,9 +498,18 @@ export async function submitCertifiedReceipt(
   }
 
   // 3. Submit receipt on-chain
+  //
+  // CRITICAL: `base_root_sha256` MUST be the canonical chunk-Merkle root over
+  // the same chunks the gateway just stored. Anything else (the old
+  // `input.rootHash || contentHashHex` fallback, a trace-bundle root, an
+  // ad-hoc sha256 of the content hash, etc.) will fail the cert-daemon's
+  // strict ROOT_VERIFIED gate. We compute it here from `manifest.chunks` so
+  // it is *always* in sync with the bytes the gateway received in step 2.
+  const baseRoot = merkleRoot(manifest.chunks.map((c) => c.sha256));
+
   const receiptInput: ReceiptInput = {
     contentHash: effectiveContentHash,
-    rootHash: input.rootHash || contentHashHex,
+    rootHash: baseRoot,
     manifestHash: uploadResult.storageLocatorHash || input.manifestHash || contentHashHex,
   };
   const submitResult = await submitReceipt(provider, receiptInput);
