@@ -14,6 +14,7 @@ import {
   verifyToken,
   revokeToken,
   listTokens,
+  updateTokenLabel,
   hashToken,
   TOKEN_PREFIX,
 } from "../api-tokens.js";
@@ -218,5 +219,107 @@ describe("api-tokens: revoke + list", () => {
       label: "hash-match",
     });
     expect(hashToken(token)).toBe(tokenHash);
+  });
+});
+
+describe("api-tokens: updateTokenLabel", () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeDb();
+  });
+
+  test("rename_updates_label_and_returns_account", () => {
+    const { tokenHash } = issueToken(db, {
+      accountSs58: "5Rename1111111111111111111111111111111111111",
+      label: "old-label",
+    });
+    const result = updateTokenLabel(db, { tokenHash, label: "new-label" });
+    expect(result.updated).toBe(true);
+    expect(result.label).toBe("new-label");
+    expect(result.accountSs58).toBe("5Rename1111111111111111111111111111111111111");
+
+    const row = db
+      .prepare("SELECT label FROM api_tokens WHERE token_hash = ?")
+      .get(tokenHash) as { label: string };
+    expect(row.label).toBe("new-label");
+  });
+
+  test("rename_to_null_clears_label", () => {
+    const { tokenHash } = issueToken(db, {
+      accountSs58: "5ClearAaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      label: "to-be-cleared",
+    });
+    const result = updateTokenLabel(db, { tokenHash, label: null });
+    expect(result.updated).toBe(true);
+    expect(result.label).toBeNull();
+
+    const row = db
+      .prepare("SELECT label FROM api_tokens WHERE token_hash = ?")
+      .get(tokenHash) as { label: string | null };
+    expect(row.label).toBeNull();
+  });
+
+  test("rename_unknown_hash_returns_not_found_signal", () => {
+    const result = updateTokenLabel(db, {
+      tokenHash: "deadbeef".repeat(8),
+      label: "ghost",
+    });
+    expect(result.updated).toBe(false);
+    expect(result.accountSs58).toBeNull();
+  });
+
+  test("rename_revoked_token_refused", () => {
+    const { tokenHash } = issueToken(db, {
+      accountSs58: "5Revoked22222222222222222222222222222222222222",
+      label: "active",
+    });
+    revokeToken(db, { tokenHash, reason: "test" });
+    const result = updateTokenLabel(db, { tokenHash, label: "after-revoke" });
+    expect(result.updated).toBe(false);
+    // Account is still returned so callers can produce a useful 4xx with
+    // the right context.
+    expect(result.accountSs58).toBe("5Revoked22222222222222222222222222222222222222");
+
+    const row = db
+      .prepare("SELECT label FROM api_tokens WHERE token_hash = ?")
+      .get(tokenHash) as { label: string };
+    expect(row.label).toBe("active");  // unchanged
+  });
+
+  test("rename_idempotent_same_label_twice", () => {
+    const { tokenHash } = issueToken(db, {
+      accountSs58: "5Idempotent22222222222222222222222222222222222",
+      label: "v1",
+    });
+    const a = updateTokenLabel(db, { tokenHash, label: "v2" });
+    const b = updateTokenLabel(db, { tokenHash, label: "v2" });
+    expect(a.updated).toBe(true);
+    expect(b.updated).toBe(true);
+    const row = db
+      .prepare("SELECT label FROM api_tokens WHERE token_hash = ?")
+      .get(tokenHash) as { label: string };
+    expect(row.label).toBe("v2");
+  });
+
+  test("rename_does_not_touch_other_columns", () => {
+    const { tokenHash, createdAt } = issueToken(db, {
+      accountSs58: "5Other3333333333333333333333333333333333333333",
+      label: "before",
+    });
+    updateTokenLabel(db, { tokenHash, label: "after" });
+    const row = db
+      .prepare(
+        "SELECT account_ss58, created_at, last_used_at, revoked_at FROM api_tokens WHERE token_hash = ?",
+      )
+      .get(tokenHash) as {
+        account_ss58: string;
+        created_at: number;
+        last_used_at: number | null;
+        revoked_at: number | null;
+      };
+    expect(row.account_ss58).toBe("5Other3333333333333333333333333333333333333333");
+    expect(row.created_at).toBe(createdAt);
+    expect(row.last_used_at).toBeNull();
+    expect(row.revoked_at).toBeNull();
   });
 });

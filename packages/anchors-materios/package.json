@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-anchors-materios",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Materios blockchain anchor support for Orynq SDK - submits and verifies anchors via Substrate extrinsics",
   "type": "module",
   "main": "./dist/index.cjs",

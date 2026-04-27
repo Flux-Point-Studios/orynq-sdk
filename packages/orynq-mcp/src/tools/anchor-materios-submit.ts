@@ -99,9 +99,16 @@ export function registerAnchorMateriosSubmit(
           status: "dry-run",
           wouldSubmit: {
             rpcUrl: config.materiosRpcUrl,
-            contentHash: bundle.rootHash,
-            rootHash: bundle.rootHash,
-            manifestHash: bundle.manifestHash,
+            // The SDK derives `contentHash` from the JSON content the
+            // operator persists to the blob gateway, NOT bundle.rootHash.
+            // The real `base_root_sha256` is the chunk-Merkle over those
+            // same chunks (computed inside submitCertifiedReceipt), not
+            // the trace-bundle's own root. Both are reported as
+            // "<derived from blob content>" here so the dry-run isn't
+            // misleading.
+            contentHash: "<derived from blob content>",
+            rootHash: "<derived: chunk-Merkle of upload chunks>",
+            manifestHash: "<derived: SHA-256 of manifest JSON>",
             blobGatewayUrl,
             waitForL1Anchor,
             timeoutSeconds,
@@ -152,14 +159,22 @@ export function registerAnchorMateriosSubmit(
             blobGateway.signerKeypair = signerKeypair;
           }
 
+          // `submitCertifiedReceipt` derives the on-chain hashes from the
+          // `content` Buffer:
+          //   - `contentHash`        = sha256(content)
+          //   - `base_root_sha256`   = chunk-Merkle over upload chunks
+          //                            (computed internally; `input.rootHash`
+          //                            is IGNORED — kept here for type-shape
+          //                            only)
+          //   - `manifestHash`       = sha256(manifest JSON), filled by upload
+          // The trace-bundle's own rootHash/manifestHash are for trace-bundle
+          // audit, not for the receipt's on-chain shape.
           const result = await submitCertifiedReceipt(
             provider,
             {
-              contentHash: bundle.rootHash,
-              rootHash: bundle.rootHash,
-              // `manifestHash` is optional on TraceBundle; fall back to rootHash
-              // so we always submit a non-empty string to the pallet.
-              manifestHash: bundle.manifestHash ?? bundle.rootHash,
+              contentHash: "",
+              rootHash: "",
+              manifestHash: "",
             },
             content,
             {
