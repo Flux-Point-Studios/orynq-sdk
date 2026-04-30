@@ -22,6 +22,7 @@ import { initApiTokensDb } from "./api-tokens.js";
 import { registerTokenRoutes } from "./routes/tokens.js";
 import { chainInfoRouter, initChainInfoPoller } from "./routes/chain-info.js";
 import { faucetRouter } from "./routes/faucet.js";
+import { registerAdminKeysRoutes } from "./routes/admin-keys.js";
 // initChainInfoPoller is re-exported for consumers that want to pre-warm the
 // cache at startup; we also call it in start() so the first /chain-info hit
 // after cold-start returns 200 instead of 503.
@@ -61,6 +62,7 @@ app.use(operatorsRouter);   // Invite-only operator registration
 app.use(chainInfoRouter);   // Public: /chain-info — used by flux1 explorer + cert-daemon auto-discovery
 app.use(faucetRouter);      // Public: /faucet/drip — operator onboarding (MATRA + MOTRA bootstrap). Volume-mounted overrides accepted; see ops compose templates.
 registerTokenRoutes(app);   // Bearer-token lifecycle (admin-only)
+registerAdminKeysRoutes(app); // Task #94: api_keys.bound_validator_aura get/set/clear (admin-only)
 
 async function start(): Promise<void> {
   // Initialize sr25519/ed25519 WASM (required for signatureVerify)

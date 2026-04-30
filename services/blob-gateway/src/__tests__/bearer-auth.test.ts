@@ -11,7 +11,7 @@ import express from "express";
 import Database from "better-sqlite3";
 import { createHash, randomBytes } from "crypto";
 import { initApiTokensDb, issueToken, setApiTokensDb, TOKEN_PREFIX } from "../api-tokens.js";
-import { setQuotaDbForTests, resolveKey } from "../quota.js";
+import { setQuotaDbForTests, resolveKey, migrateBindingColumn } from "../quota.js";
 import { mintAdminTokenForTests, registerTokenRoutes, setOperatorsDbForTests } from "../routes/tokens.js";
 import { bearerAuth } from "../bearer-auth.js";
 
@@ -43,6 +43,8 @@ function setupApp(): MountedApp {
       validator_id TEXT DEFAULT NULL
     );
   `);
+  // Task #94: add bound_validator_aura column so resolveKey() doesn't 500.
+  migrateBindingColumn(quotaDb);
   setQuotaDbForTests(quotaDb);
 
   const tokensDb = new Database(":memory:");
@@ -348,6 +350,7 @@ describe("quota db test hook", () => {
         validator_id TEXT DEFAULT NULL
       );
     `);
+    migrateBindingColumn(db);
     setQuotaDbForTests(db);
     expect(resolveKey("no-such-key")).toBeNull();
   });

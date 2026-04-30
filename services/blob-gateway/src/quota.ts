@@ -29,6 +29,13 @@ export interface KeyInfo {
   maxBytesPerDay: number;
   maxConcurrentUploads: number;
   validatorId: string | null;
+  /**
+   * Task #94: SS58 of the validator authoring (aura) key this api_keys row
+   * is bound to, when the operator is running cert-daemon and validator on
+   * SEPARATE keys (security best practice). NULL = no binding, in which case
+   * the explorer falls back to looking up heartbeats by aura SS58 directly.
+   */
+  boundValidatorAura: string | null;
 }
 
 export interface QuotaCheckResult {
@@ -105,7 +112,45 @@ export function initQuotaDb(): void {
   // IF NOT EXISTS on the versions we target; catch "duplicate column name").
   migrateUsageColumns(db);
 
+  // Task #94: aura → cert-daemon-signer binding column. Lets the explorer's
+  // Validators tab join from a committee aura SS58 to the heartbeat-store
+  // entry of the operator's cert-daemon when the operator is using SEPARATE
+  // keys (security best practice). Defaulted NULL so old rows migrate
+  // transparently. See bindValidatorAura() / getBindingForAura() below.
+  migrateBindingColumn(db);
+
   loadKeys();
+}
+
+/**
+ * Task #94 — Idempotent migration: add `bound_validator_aura` column to
+ * `api_keys`. Records the SS58 of a validator's authoring aura key when the
+ * api_keys row belongs to a SEPARATE cert-daemon signer (security-correct
+ * setup: validator aura ≠ cert-daemon signer to keep the authoring key out
+ * of the cert-daemon container's blast radius).
+ *
+ * The explorer joins on this column to render heartbeat status for the
+ * underlying cert-daemon under the validator's aura SS58.
+ *
+ * Exported so tests can exercise the "run twice against the same DB" case
+ * without spinning up full initQuotaDb(). PRAGMA-checked first; ALTER is
+ * still wrapped in try/catch belt-and-suspenders for parallel-startup races.
+ */
+export function migrateBindingColumn(database: Database.Database): void {
+  const cols = database.prepare("PRAGMA table_info(api_keys)").all() as Array<{
+    name: string;
+  }>;
+  if (cols.some((c) => c.name === "bound_validator_aura")) return;
+  try {
+    database.exec(
+      "ALTER TABLE api_keys ADD COLUMN bound_validator_aura TEXT DEFAULT NULL",
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/duplicate column name/i.test(msg)) {
+      throw err;
+    }
+  }
 }
 
 /**
@@ -163,18 +208,24 @@ function loadKeys(): void {
         maxBytesPerDay?: number;
         maxConcurrentUploads?: number;
         validatorId?: string;
+        boundValidatorAura?: string;
       }>;
 
+      // Task #94: ON CONFLICT preserves bound_validator_aura on existing rows
+      // even when keys.json doesn't carry the field (most rows won't).
+      // Operators who *do* declare a binding via keys.json get it written
+      // through; everyone else's existing binding survives a restart.
       const upsert = db.prepare(`
-        INSERT INTO api_keys (key_hash, name, enabled, max_receipts_per_day, max_bytes_per_day, max_concurrent_uploads, validator_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO api_keys (key_hash, name, enabled, max_receipts_per_day, max_bytes_per_day, max_concurrent_uploads, validator_id, bound_validator_aura)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(key_hash) DO UPDATE SET
           name = excluded.name,
           enabled = excluded.enabled,
           max_receipts_per_day = excluded.max_receipts_per_day,
           max_bytes_per_day = excluded.max_bytes_per_day,
           max_concurrent_uploads = excluded.max_concurrent_uploads,
-          validator_id = excluded.validator_id
+          validator_id = excluded.validator_id,
+          bound_validator_aura = COALESCE(excluded.bound_validator_aura, api_keys.bound_validator_aura)
       `);
 
       const upsertMany = db.transaction((items: typeof keys) => {
@@ -187,6 +238,7 @@ function loadKeys(): void {
             k.maxBytesPerDay ?? 1073741824,
             k.maxConcurrentUploads ?? 5,
             k.validatorId ?? null,
+            k.boundValidatorAura ?? null,
           );
         }
       });
@@ -214,7 +266,7 @@ function loadKeys(): void {
 export function resolveKey(apiKeyPlaintext: string): KeyInfo | null {
   const kh = hashKey(apiKeyPlaintext);
   const row = db.prepare(
-    "SELECT key_hash, name, enabled, max_receipts_per_day, max_bytes_per_day, max_concurrent_uploads, validator_id FROM api_keys WHERE key_hash = ?",
+    "SELECT key_hash, name, enabled, max_receipts_per_day, max_bytes_per_day, max_concurrent_uploads, validator_id, bound_validator_aura FROM api_keys WHERE key_hash = ?",
   ).get(kh) as Record<string, unknown> | undefined;
 
   if (!row || !row.enabled) return null;
@@ -227,6 +279,7 @@ export function resolveKey(apiKeyPlaintext: string): KeyInfo | null {
     maxBytesPerDay: row.max_bytes_per_day as number,
     maxConcurrentUploads: row.max_concurrent_uploads as number,
     validatorId: (row.validator_id as string) ?? null,
+    boundValidatorAura: (row.bound_validator_aura as string) ?? null,
   };
 }
 
@@ -342,7 +395,7 @@ export function lookupValidatorInfo(validatorId: string): { name: string } | nul
  */
 export function resolveKeyByAccount(ss58: string): KeyInfo | null {
   const row = db.prepare(
-    `SELECT key_hash, name, enabled, max_receipts_per_day, max_bytes_per_day, max_concurrent_uploads, validator_id
+    `SELECT key_hash, name, enabled, max_receipts_per_day, max_bytes_per_day, max_concurrent_uploads, validator_id, bound_validator_aura
      FROM api_keys WHERE validator_id = ? AND enabled = 1 LIMIT 1`,
   ).get(ss58) as Record<string, unknown> | undefined;
   if (!row || !row.enabled) return null;
@@ -354,7 +407,168 @@ export function resolveKeyByAccount(ss58: string): KeyInfo | null {
     maxBytesPerDay: row.max_bytes_per_day as number,
     maxConcurrentUploads: row.max_concurrent_uploads as number,
     validatorId: (row.validator_id as string) ?? null,
+    boundValidatorAura: (row.bound_validator_aura as string) ?? null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Task #94 — aura → cert-daemon-signer binding
+// ---------------------------------------------------------------------------
+//
+// Off-chain cache version (option 2 from task #94): registers the binding
+// without a runtime upgrade. The on-chain authoritative version is a
+// separate later task — when it ships, the explorer can fall back to the
+// chain query and these helpers retire.
+
+export interface ApiKeyRecord {
+  keyHash: string;
+  name: string;
+  enabled: boolean;
+  maxReceiptsPerDay: number;
+  maxBytesPerDay: number;
+  maxConcurrentUploads: number;
+  validatorId: string | null;
+  boundValidatorAura: string | null;
+}
+
+function rowToApiKeyRecord(
+  row: Record<string, unknown> | undefined,
+): ApiKeyRecord | null {
+  if (!row) return null;
+  return {
+    keyHash: row.key_hash as string,
+    name: row.name as string,
+    enabled: !!row.enabled,
+    maxReceiptsPerDay: row.max_receipts_per_day as number,
+    maxBytesPerDay: row.max_bytes_per_day as number,
+    maxConcurrentUploads: row.max_concurrent_uploads as number,
+    validatorId: (row.validator_id as string) ?? null,
+    boundValidatorAura: (row.bound_validator_aura as string) ?? null,
+  };
+}
+
+/**
+ * Look up an api_keys row by its key_hash. Returns null if no row exists.
+ * Used by the admin GET /admin/api-keys/:keyHash introspection endpoint.
+ *
+ * Unlike resolveKey()/resolveKeyByAccount(), this DOES return rows where
+ * enabled = 0 — admin needs visibility into disabled keys for binding ops.
+ */
+export function getApiKeyByHash(keyHash: string): ApiKeyRecord | null {
+  const row = db
+    .prepare(
+      `SELECT key_hash, name, enabled, max_receipts_per_day, max_bytes_per_day,
+              max_concurrent_uploads, validator_id, bound_validator_aura
+       FROM api_keys WHERE key_hash = ?`,
+    )
+    .get(keyHash) as Record<string, unknown> | undefined;
+  return rowToApiKeyRecord(row);
+}
+
+/**
+ * Set the binding from a cert-daemon api_keys row to its operator's
+ * validator authoring (aura) SS58. Returns true if the row was updated,
+ * false if no row exists for the given keyHash.
+ *
+ * The aura SS58 is stored verbatim — callers must validate the format
+ * (checkAddress round-trip) before calling. Same aura can be bound to
+ * multiple cert-daemon rows (degenerate fallback / multi-daemon setups).
+ */
+export function bindValidatorAura(keyHash: string, validatorAura: string): boolean {
+  const result = db
+    .prepare("UPDATE api_keys SET bound_validator_aura = ? WHERE key_hash = ?")
+    .run(validatorAura, keyHash);
+  return result.changes > 0;
+}
+
+/**
+ * Clear the binding for a cert-daemon api_keys row. Returns true if a row
+ * existed (regardless of whether it had a binding). Idempotent: safe to
+ * call on rows that already have NULL.
+ */
+export function clearValidatorAuraBinding(keyHash: string): boolean {
+  const result = db
+    .prepare("UPDATE api_keys SET bound_validator_aura = NULL WHERE key_hash = ?")
+    .run(keyHash);
+  return result.changes > 0;
+}
+
+export interface AuraBindingLookup {
+  /** keyHash of the cert-daemon api_keys row bound to this aura. */
+  keyHash: string;
+  /** Operator-friendly label from the bound api_keys row. */
+  name: string;
+  /** SS58 of the cert-daemon signer (= the api_keys row's validator_id). */
+  certDaemonSs58: string | null;
+}
+
+/**
+ * Reverse lookup: given a validator's authoring (aura) SS58, find the
+ * cert-daemon api_keys row(s) bound to it. Returns the *first* enabled
+ * binding — explorer rendering needs a single answer.
+ *
+ * NOTE: prod almost always has 1:1, but the schema allows N:1 (an operator
+ * could rotate cert-daemon keys without removing the old binding). We
+ * silently take the first to keep the explorer deterministic. Admin tooling
+ * should clean up stale bindings.
+ */
+export function getBindingForAura(validatorAura: string): AuraBindingLookup | null {
+  const row = db
+    .prepare(
+      `SELECT key_hash, name, validator_id
+       FROM api_keys
+       WHERE bound_validator_aura = ? AND enabled = 1
+       ORDER BY key_hash ASC
+       LIMIT 1`,
+    )
+    .get(validatorAura) as
+    | { key_hash: string; name: string; validator_id: string | null }
+    | undefined;
+  if (!row) return null;
+  return {
+    keyHash: row.key_hash,
+    name: row.name,
+    certDaemonSs58: row.validator_id ?? null,
+  };
+}
+
+/**
+ * List all enabled aura→cert-daemon bindings as a map keyed by aura SS58.
+ * Used by the /heartbeats/status endpoint to expose the bindings inline so
+ * the explorer doesn't need a separate round-trip per row.
+ *
+ * Skips rows where validator_id is NULL (no cert-daemon SS58 to point at)
+ * or where multiple cert-daemons claim the same aura — we keep the row
+ * with the lowest key_hash (deterministic via SQL ORDER BY) so explorer
+ * rendering stays stable across requests.
+ */
+export function listAllAuraBindings(): Record<
+  string,
+  { certDaemonSs58: string; label: string }
+> {
+  const rows = db
+    .prepare(
+      `SELECT bound_validator_aura, validator_id, name
+       FROM api_keys
+       WHERE bound_validator_aura IS NOT NULL
+         AND validator_id IS NOT NULL
+         AND enabled = 1
+       ORDER BY key_hash ASC`,
+    )
+    .all() as Array<{
+      bound_validator_aura: string;
+      validator_id: string;
+      name: string;
+    }>;
+  const out: Record<string, { certDaemonSs58: string; label: string }> = {};
+  for (const r of rows) {
+    if (out[r.bound_validator_aura]) continue;
+    out[r.bound_validator_aura] = {
+      certDaemonSs58: r.validator_id,
+      label: r.name,
+    };
+  }
+  return out;
 }
 
 export function finalizeUpload(keyInfo: KeyInfo, contentHash: string): QuotaCheckResult {
