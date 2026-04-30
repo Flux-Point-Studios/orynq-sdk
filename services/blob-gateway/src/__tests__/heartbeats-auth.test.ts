@@ -35,7 +35,7 @@ import type { KeyringPair } from "@polkadot/keyring/types";
 
 import { config } from "../config.js";
 import { heartbeatsRouter } from "../routes/heartbeats.js";
-import { setQuotaDbForTests } from "../quota.js";
+import { setQuotaDbForTests, migrateBindingColumn } from "../quota.js";
 import {
   initApiTokensDb,
   issueToken,
@@ -121,6 +121,9 @@ async function setupApp(opts: { registerValidator?: boolean } = {}): Promise<Har
       status TEXT NOT NULL DEFAULT 'active'
     );
   `);
+  // Task #94: add bound_validator_aura column so resolveKey()/resolveKeyByAccount()
+  // don't 500 when the heartbeat handler queries the row.
+  migrateBindingColumn(quotaDb);
   setQuotaDbForTests(quotaDb);
 
   // Real sr25519 validator key — the heartbeat-sig path requires a real

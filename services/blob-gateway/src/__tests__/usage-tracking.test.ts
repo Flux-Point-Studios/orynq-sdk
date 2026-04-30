@@ -42,6 +42,7 @@ import { blobsRouter } from "../routes/blobs.js";
 import {
   setQuotaDbForTests,
   migrateUsageColumns,
+  migrateBindingColumn,
   recordUsage,
   getUsage,
 } from "../quota.js";
@@ -108,6 +109,9 @@ function makeQuotaDb(): Database.Database {
     );
   `);
   migrateUsageColumns(quotaDb);
+  // Task #94: also add the bound_validator_aura column so resolveKey()
+  // doesn't 500 when bearer-auth queries the row.
+  migrateBindingColumn(quotaDb);
   setQuotaDbForTests(quotaDb);
   return quotaDb;
 }

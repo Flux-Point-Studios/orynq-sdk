@@ -43,7 +43,7 @@ import { u8aToHex, stringToU8a } from "@polkadot/util";
 
 import { config } from "../config.js";
 import { blobsRouter } from "../routes/blobs.js";
-import { setQuotaDbForTests, migrateUsageColumns } from "../quota.js";
+import { setQuotaDbForTests, migrateUsageColumns, migrateBindingColumn } from "../quota.js";
 import {
   initApiTokensDb,
   issueToken,
@@ -118,6 +118,8 @@ async function setupApp(opts: { registerOperator?: boolean } = {}): Promise<{
   // which is harmless but noisy — the production initQuotaDb does the
   // same migration automatically.
   migrateUsageColumns(quotaDb);
+  // Task #94: add bound_validator_aura column so resolveKey() doesn't 500.
+  migrateBindingColumn(quotaDb);
   setQuotaDbForTests(quotaDb);
 
   // SS58-shape account used by both Bearer and legacy-SS58-as-API-key tests.

@@ -16,7 +16,7 @@
 import { Router, type Request, type Response } from "express";
 import { signatureVerify } from "@polkadot/util-crypto";
 import { stringToU8a } from "@polkadot/util";
-import { lookupValidatorInfo } from "../quota.js";
+import { lookupValidatorInfo, listAllAuraBindings } from "../quota.js";
 import { resolveAuth } from "../auth.js";
 import {
   upsertHeartbeat,
@@ -40,6 +40,20 @@ const MIN_POST_INTERVAL_MS = 10_000; // 10 seconds
 interface StatusResponse {
   validators: Record<string, ValidatorStatus>;
   summary: { total: number; online: number; degraded: number; offline: number };
+  /**
+   * Task #94 — aura → cert-daemon-signer bindings. The explorer's Validators
+   * tab uses these to render heartbeat status for operators running cert-
+   * daemon and validator on SEPARATE keys.
+   *
+   * Each entry maps a validator's authoring (aura) SS58 to the SS58 of the
+   * cert-daemon signer whose heartbeat status should be displayed for that
+   * validator. The cert-daemon SS58 is the api_keys.validator_id of the
+   * row whose bound_validator_aura matches the aura.
+   *
+   * Empty object when no bindings have been registered. Forward-compatible:
+   * old explorer instances ignore the field, new ones JOIN by aura SS58.
+   */
+  bindings: Record<string, { certDaemonSs58: string; label: string }>;
 }
 
 interface ValidatorStatus {
@@ -332,6 +346,18 @@ heartbeatsRouter.get("/heartbeats/status", (_req: Request, res: Response) => {
       };
     }
 
+    // Task #94: pull bindings inline so the explorer doesn't need a second
+    // round-trip per validator row. Empty object when nothing is registered.
+    let bindings: Record<string, { certDaemonSs58: string; label: string }> = {};
+    try {
+      bindings = listAllAuraBindings();
+    } catch (err) {
+      // Defensive: a "no such column" on bound_validator_aura would mean
+      // migrateBindingColumn() didn't run — log and continue with an empty
+      // map so the rest of the response is still served.
+      console.warn("[blob-gateway] listAllAuraBindings failed:", err);
+    }
+
     const response: StatusResponse = {
       validators,
       summary: {
@@ -340,6 +366,7 @@ heartbeatsRouter.get("/heartbeats/status", (_req: Request, res: Response) => {
         degraded,
         offline,
       },
+      bindings,
     };
 
     cachedStatusResponse = response;
