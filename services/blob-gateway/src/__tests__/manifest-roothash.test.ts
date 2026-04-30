@@ -32,7 +32,7 @@ import { join } from "path";
 
 import { config } from "../config.js";
 import { blobsRouter } from "../routes/blobs.js";
-import { setQuotaDbForTests, migrateUsageColumns } from "../quota.js";
+import { setQuotaDbForTests, migrateUsageColumns, migrateBindingColumn } from "../quota.js";
 import {
   initApiTokensDb,
   issueToken,
@@ -100,6 +100,12 @@ async function setupApp(): Promise<{
     );
   `);
   migrateUsageColumns(quotaDb);
+  // Task #94: required by resolveKey()/resolveKeyByAccount() — they SELECT
+  // bound_validator_aura, so the column has to exist on the hand-built
+  // fixture too. Without this, every POST /blobs/:contentHash/manifest
+  // 500s on auth resolution. Was missed when #93 + #94 were merged in
+  // parallel without test-fixture co-evolution.
+  migrateBindingColumn(quotaDb);
   setQuotaDbForTests(quotaDb);
 
   const ss58 = "5OperatorRoothashTestaaaaaaaaaaaaaaaaaaaaaaaaab";
