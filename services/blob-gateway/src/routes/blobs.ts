@@ -13,6 +13,11 @@ import {
 } from "../quota.js";
 import { resolveAuth } from "../auth.js";
 import { notifySponsoredReceiptSubmitter, isSponsoredTier } from "../sponsored-receipts.js";
+import {
+  computeRootHashFromChunks,
+  isValidRootHash,
+  stripHexPrefix as stripHexPrefixUtil,
+} from "../merkle.js";
 
 export const blobsRouter = Router();
 
@@ -111,7 +116,7 @@ blobsRouter.post("/blobs/:contentHash/manifest", async (req: Request, res: Respo
     }
 
     // Content limits validation
-    const manifestBody = req.body as { chunks?: Array<{ size?: number }> };
+    const manifestBody = req.body as { chunks?: Array<{ size?: number; sha256?: string; index?: number }>; rootHash?: unknown };
     if (manifestBody.chunks) {
       if (manifestBody.chunks.length > config.maxChunksPerManifest) {
         res.status(400).json({ error: `Too many chunks: ${manifestBody.chunks.length} > ${config.maxChunksPerManifest}` });
@@ -130,6 +135,68 @@ blobsRouter.post("/blobs/:contentHash/manifest", async (req: Request, res: Respo
       }
     }
 
+    // Server-side rootHash compute (task #93, paired with task #60).
+    //
+    // The sponsored-receipt-submitter callback payload includes `rootHash`
+    // from `manifest.rootHash`. If a thin SDK client (e.g. Penny's OpenHome
+    // DevKit daemon) omits it, the receipt-submitter can no longer fall
+    // back to GET-the-manifest because (a) we now serve such a route below,
+    // and (b) we precompute here so the callback payload is always
+    // populated when the manifest carries chunks.
+    //
+    // Compute is identical to the cert-daemon's `daemon/merkle.py` so the
+    // on-chain `base_root_sha256` matches what cert-daemons compute on
+    // verify. Mismatch = instant CertHashMismatch.
+    //
+    // Behaviour matrix:
+    //   client supplied valid hex     → use it as-is
+    //   client supplied invalid hex   → log warning + replace with computed
+    //   client did not supply         → compute + log info-level
+    //   client supplied valid hex but → log warning, but DO NOT overwrite
+    //     it differs from computed       (existing on-chain receipts may
+    //                                    have been signed against the
+    //                                    client's value)
+    if (manifestBody.chunks && manifestBody.chunks.length > 0) {
+      const clientRoot = manifestBody.rootHash;
+      let computed: string | undefined;
+      try {
+        computed = computeRootHashFromChunks(manifestBody.chunks);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[blob-gateway] rootHash compute skipped (manifest invalid): ${msg} ` +
+            `contentHash=${contentHash}`,
+        );
+      }
+
+      if (typeof clientRoot === "string" && isValidRootHash(clientRoot)) {
+        const clientNorm = stripHexPrefixUtil(clientRoot).toLowerCase();
+        if (computed && clientNorm !== computed) {
+          console.warn(
+            `[blob-gateway] rootHash drift: client=${clientNorm} ` +
+              `computed=${computed} contentHash=${contentHash} ` +
+              `(keeping client value to avoid breaking already-signed receipts)`,
+          );
+        }
+        // Preserve client value verbatim — this honours the "compute is a
+        // fallback, not a replacement" rule so existing flows never drift.
+      } else if (computed) {
+        if (typeof clientRoot === "string" && clientRoot.length > 0) {
+          console.warn(
+            `[blob-gateway] rootHash present but not valid 64-hex — ` +
+              `replacing with server-side compute. raw=${JSON.stringify(clientRoot).slice(0, 80)} ` +
+              `contentHash=${contentHash}`,
+          );
+        } else {
+          console.log(
+            `[blob-gateway] rootHash absent in manifest — computed server-side: ${computed} ` +
+              `contentHash=${contentHash}`,
+          );
+        }
+        (manifest as Record<string, unknown>).rootHash = computed;
+      }
+    }
+
     await saveManifest(contentHash, manifest);
 
     // Record uploader address for sig-based uploads
@@ -140,6 +207,54 @@ blobsRouter.post("/blobs/:contentHash/manifest", async (req: Request, res: Respo
     res.status(201).json({ status: "ok", contentHash });
   } catch (error) {
     console.error("[blob-gateway] Error saving manifest:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ error: message });
+  }
+});
+
+/**
+ * GET /blobs/:contentHash/manifest
+ * Returns the stored manifest JSON for a blob.
+ *
+ * Auth (unified via resolveAuth): mirrors POST /blobs/:contentHash/manifest
+ * — Bearer → x-api-key (legacy incl. SS58-as-key) → sr25519 upload signature.
+ * Sig-only requests are balance-gated inside resolveAuth().
+ *
+ * Returns:
+ *   200 + JSON manifest body if found
+ *   401 if auth missing/invalid
+ *   403 if account is below minimum balance (sig tier)
+ *   404 if no manifest is stored under this contentHash
+ *
+ * Why auth-gated and not public: the manifest enumerates chunk URLs and
+ * sha256 digests, which are upload-attribution metadata; while the chunks
+ * themselves are content-addressed and protected by SHA-256, exposing the
+ * manifest list publicly would let unauthenticated callers enumerate which
+ * blobs an operator has uploaded. Auth-gating matches the POST side and
+ * keeps the surface symmetric.
+ */
+blobsRouter.get("/blobs/:contentHash/manifest", async (req: Request, res: Response) => {
+  try {
+    const { contentHash } = req.params;
+
+    const auth = await resolveAuth(req, contentHash);
+    if (!auth.authenticated) {
+      if (auth.error && auth.error.toLowerCase().includes("below minimum balance")) {
+        res.status(403).json({ error: "Account does not meet minimum MATRA balance" });
+        return;
+      }
+      res.status(401).json({ error: auth.error ?? "authentication required" });
+      return;
+    }
+
+    const manifest = await getManifest(contentHash);
+    if (!manifest) {
+      res.status(404).json({ error: "Manifest not found" });
+      return;
+    }
+    res.status(200).json(manifest);
+  } catch (error) {
+    console.error("[blob-gateway] Error fetching manifest:", error);
     const message = error instanceof Error ? error.message : "Unknown error";
     res.status(500).json({ error: message });
   }
