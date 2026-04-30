@@ -316,9 +316,18 @@ export async function queryMotraBalance(
 
 /**
  * Build auth headers for gateway requests (API key or sr25519 signature).
+ *
+ * Tokens prefixed with `matra_` are routed by the gateway's resolveAuth path
+ * which only accepts `Authorization: Bearer ...`. Legacy keys (no prefix) keep
+ * the `x-api-key` header for back-compat with pre-v6 deployments.
+ *
+ * Exported for unit testing; not part of the public package API.
  */
-function buildAuthHeaders(gateway: BlobGatewayConfig, contentHash: string): Record<string, string> {
+export function buildAuthHeaders(gateway: BlobGatewayConfig, contentHash: string): Record<string, string> {
   if (gateway.apiKey) {
+    if (gateway.apiKey.startsWith("matra_")) {
+      return { "Authorization": `Bearer ${gateway.apiKey}` };
+    }
     return { "x-api-key": gateway.apiKey };
   }
   if (gateway.signerKeypair) {
