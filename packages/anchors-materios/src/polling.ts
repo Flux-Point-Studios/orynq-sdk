@@ -243,7 +243,13 @@ async function scanForAnchorWithGateway(
           // Query batch metadata from gateway for multi-leaf match
           try {
             const headers: Record<string, string> = {};
-            if (gateway.apiKey) headers["x-api-key"] = gateway.apiKey;
+            if (gateway.apiKey) {
+              if (gateway.apiKey.startsWith("matra_")) {
+                headers["Authorization"] = `Bearer ${gateway.apiKey}`;
+              } else {
+                headers["x-api-key"] = gateway.apiKey;
+              }
+            }
             const res = await fetch(
               `${gateway.baseUrl}/batches/${stripPrefix(anchorId)}`,
               { headers },
