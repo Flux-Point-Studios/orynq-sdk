@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "materios-compute-meter"
-version = "0.1.1"
-description = "Worker signing identity SDK for Materios verifiable compute metering."
+version = "0.2.0-rc1"
+description = "Worker signing identity SDK for Materios verifiable compute metering (compute_metering_v1 + v2)."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"

@@ -51,3 +51,27 @@ class ReplayRejectedError(ComputeMeterError):
     with `period_start_ms <= last_seen` for the same `worker_id`. This is
     the SDK's own pre-flight check; the gateway also rejects replays
     server-side as a defense in depth."""
+
+
+# ---------------------------------------------------------------------------
+# v2 (compute_metering_v2) exceptions
+# ---------------------------------------------------------------------------
+
+
+class InvalidHardwareSpecError(ComputeMeterError):
+    """Raised by `HardwareSpec.load` / `HardwareSpec.__post_init__` when the
+    on-disk JSON spec is missing fields, has malformed values (wrong type,
+    out-of-range counts, unsupported gpu_type), or carries pubkey/signature
+    blobs that aren't 32/64 raw bytes respectively.
+
+    Does NOT raise on signature verification failure — that returns False
+    from `HardwareSpec.verify(worker_id)`. Only structural problems trigger
+    this exception.
+    """
+
+
+class InvalidV2RecordError(ComputeMeterError):
+    """Raised when the v2 record-builder sees a value-domain violation:
+    period out of range, bad metric value, gpu_type inconsistent with
+    gpu_count, etc. Distinct from `InvalidRecordError` (v1) so callers can
+    discriminate which envelope shape they were constructing."""

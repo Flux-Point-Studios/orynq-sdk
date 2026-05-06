@@ -14,16 +14,25 @@ Behavioural details:
   * Retry policy: one retry on 5xx with a 2-second backoff. 4xx is fatal.
   * Default timeout: 15 seconds, matches publisher convention.
   * URL normalization: trailing slash on `gateway_url` is stripped.
+
+v2 (compute_metering_v2): `submit_v2(record, gateway_url=..., bearer=...)`
+posts a sealed v2 envelope (worker_signature + optional observer co-sig)
+to the same `/metering/submit` route. Wire format hex-encodes the byte
+fields; the SDK recomputes content_hash locally and asserts equality
+against the gateway's response (refuses to trust a server-substituted
+hash).
 """
 from __future__ import annotations
 
 import logging
 import threading
 import time
-from typing import Any, Dict, Optional, Union
+from dataclasses import dataclass
+from typing import Any, Dict, Mapping, Optional, Union
 
 import httpx
 
+from .canonical import SCHEMA_VERSION_V2, canonical_content_hash_v2
 from .exceptions import (
     GatewayError,
     ReplayRejectedError,
@@ -259,3 +268,321 @@ def _reset_replay_cache_for_tests() -> None:
     parameterized runs that intentionally reuse `worker_id` values."""
     with _REPLAY_LOCK:
         _REPLAY_CACHE.clear()
+
+
+# ---------------------------------------------------------------------------
+# v2 submit (compute_metering_v2)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SubmissionResult:
+    """Structured response from a v2 submit.
+
+    Attributes:
+        status_code: HTTP status code returned by the gateway (200..299).
+        receipt_id: Stable receipt identifier the gateway assigned.
+        content_hash: SHA-256 hex of the worker-sig canonical pre-image.
+            The SDK MUST recompute this locally and assert equality before
+            returning, so the caller never sees a server-substituted hash.
+        accepted_at: Server-side timestamp (typically UNIX seconds or ms;
+            opaque — passthrough).
+        body: The full decoded JSON response body, for debugging /
+            forward-compat fields the SDK doesn't yet model.
+    """
+
+    status_code: int
+    receipt_id: str
+    content_hash: str
+    accepted_at: Any
+    body: Dict[str, Any]
+
+
+# v2 wire-shape: hardware_spec + observer carry raw bytes (CBOR-friendly).
+# We hex-encode them in the JSON body for safe transport. The gateway
+# reverses the hex on its side using the same canonical encoder.
+
+# Map for human-readable errors when the gateway returns one of the new
+# v2-specific status codes.
+_V2_STATUS_MEANINGS = {
+    400: "bad request (malformed envelope or missing field)",
+    401: "unauthorized (Bearer token rejected)",
+    403: "fleet_operator unknown (the operator pubkey is not registered)",
+    409: "duplicate (replay rejected by gateway)",
+    422: "hardware bound violated (metric exceeds spec capacity)",
+}
+
+
+def _v2_record_to_wire(record: Mapping[str, Any]) -> Dict[str, Any]:
+    """Translate the in-memory v2 record (bytes for pubkeys/sigs) to the JSON
+    wire shape (hex-encoded bytes). Does not mutate the input.
+
+    Required record keys: schema_version, worker_id, tenant_id,
+    period_start_ms, period_end_ms, metrics, hardware_spec,
+    worker_pubkey, worker_signature.
+
+    Optional: observer.
+
+    Raises:
+        SubmitError: if a required key is missing or wrong type.
+    """
+    if not isinstance(record, Mapping):
+        raise SubmitError(
+            f"v2 record must be a mapping, got {type(record).__name__}"
+        )
+
+    required = {
+        "schema_version",
+        "worker_id",
+        "tenant_id",
+        "period_start_ms",
+        "period_end_ms",
+        "metrics",
+        "hardware_spec",
+        "worker_pubkey",
+        "worker_signature",
+    }
+    missing = required - record.keys()
+    if missing:
+        raise SubmitError(
+            f"v2 record missing required keys: {sorted(missing)}"
+        )
+
+    hardware_spec = record["hardware_spec"]
+    if not isinstance(hardware_spec, Mapping):
+        raise SubmitError("hardware_spec must be a mapping")
+    hw_pub = hardware_spec.get("fleet_operator_pubkey")
+    hw_sig = hardware_spec.get("fleet_operator_signature")
+    if not isinstance(hw_pub, (bytes, bytearray)) or len(hw_pub) != 32:
+        raise SubmitError(
+            "hardware_spec.fleet_operator_pubkey must be 32-byte bytes"
+        )
+    if not isinstance(hw_sig, (bytes, bytearray)) or len(hw_sig) != 64:
+        raise SubmitError(
+            "hardware_spec.fleet_operator_signature must be 64-byte bytes"
+        )
+
+    worker_pub = record["worker_pubkey"]
+    worker_sig = record["worker_signature"]
+    if not isinstance(worker_pub, (bytes, bytearray)) or len(worker_pub) != 32:
+        raise SubmitError("worker_pubkey must be 32-byte bytes")
+    if not isinstance(worker_sig, (bytes, bytearray)) or len(worker_sig) != 64:
+        raise SubmitError("worker_signature must be 64-byte bytes")
+
+    wire_hw = {
+        "cpu_cores": hardware_spec["cpu_cores"],
+        "ram_gb": hardware_spec["ram_gb"],
+        "gpu_type": hardware_spec["gpu_type"],
+        "gpu_count": hardware_spec["gpu_count"],
+        "fleet_operator_pubkey_hex": bytes(hw_pub).hex(),
+        "fleet_operator_signature_hex": bytes(hw_sig).hex(),
+        "issued_ms": hardware_spec["issued_ms"],
+    }
+
+    wire: Dict[str, Any] = {
+        "schema_version": record["schema_version"],
+        "worker_id": record["worker_id"],
+        "tenant_id": record["tenant_id"],
+        "period_start_ms": record["period_start_ms"],
+        "period_end_ms": record["period_end_ms"],
+        "metrics": dict(record["metrics"]),
+        "hardware_spec": wire_hw,
+        "worker_pubkey_hex": bytes(worker_pub).hex(),
+        "worker_signature_hex": bytes(worker_sig).hex(),
+    }
+
+    obs = record.get("observer")
+    if obs is not None:
+        if not isinstance(obs, Mapping):
+            raise SubmitError("observer must be a mapping when present")
+        obs_pub = obs.get("observer_pubkey")
+        obs_sig = obs.get("observer_signature")
+        if not isinstance(obs_pub, (bytes, bytearray)) or len(obs_pub) != 32:
+            raise SubmitError("observer.observer_pubkey must be 32-byte bytes")
+        if not isinstance(obs_sig, (bytes, bytearray)) or len(obs_sig) != 64:
+            raise SubmitError("observer.observer_signature must be 64-byte bytes")
+        wire["observer"] = {
+            "observer_pubkey_hex": bytes(obs_pub).hex(),
+            "observer_signature_hex": bytes(obs_sig).hex(),
+        }
+
+    return wire
+
+
+def _v2_check_replay(record: Mapping[str, Any]) -> None:
+    """Same per-(worker_id) monotonic check as v1 submit, applied to v2
+    records. Worker_id and period_start_ms are field names from the v2
+    schema."""
+    worker_id = record["worker_id"]
+    period_start_ms = record["period_start_ms"]
+    if not isinstance(worker_id, str):
+        raise SubmitError("v2 record worker_id must be str")
+    if not isinstance(period_start_ms, int):
+        raise SubmitError("v2 record period_start_ms must be int")
+    with _REPLAY_LOCK:
+        last = _REPLAY_CACHE.get(worker_id)
+        if last is not None and period_start_ms <= last:
+            raise ReplayRejectedError(
+                f"replay rejected for worker_id={worker_id!r}: "
+                f"period_start_ms={period_start_ms} is not greater than "
+                f"last seen {last} (records must be monotonically increasing)"
+            )
+        _REPLAY_CACHE[worker_id] = period_start_ms
+
+
+def submit_v2(
+    record: Mapping[str, Any],
+    *,
+    gateway_url: str,
+    api_key: Optional[str] = None,
+    bearer: Optional[str] = None,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    _client: Optional[httpx.Client] = None,
+    _retry_backoff_seconds: float = DEFAULT_RETRY_BACKOFF_SECONDS,
+) -> SubmissionResult:
+    """Submit a sealed v2 record to the Materios blob gateway.
+
+    Args:
+        record: A worker-sealed v2 record (output of
+            `materios_compute_meter.record.sign_record_v2(...)`).
+            Optionally also observer-co-signed via
+            `attach_observer_signature_v2(...)`.
+        gateway_url: Base URL of the Materios blob gateway. The SDK appends
+            `/metering/submit`. Trailing slash tolerated.
+        api_key: Bearer token (mutually exclusive with `bearer` —
+            equivalent — both names provided so callers using either v1
+            or x402 idiom feel at home).
+        bearer: Alias for `api_key`. Pass either, not both.
+        timeout_seconds: Per-request timeout. Default 15s.
+
+    Returns:
+        A `SubmissionResult` carrying the gateway-returned receipt_id +
+        the SDK-verified content_hash (the SDK recomputes content_hash
+        locally and asserts it matches the server's response — so callers
+        never blindly trust a server-substituted hash).
+
+    Raises:
+        SubmitError: configuration / wire-shape / network error.
+        GatewayError: gateway returned a non-2xx after retries. Includes
+            v2-specific status meanings (403=fleet_operator unknown,
+            422=hardware bound violated).
+        ReplayRejectedError: SDK replay cache rejected the record.
+    """
+    if not gateway_url:
+        raise SubmitError("gateway_url must be a non-empty string")
+    if api_key and bearer and api_key != bearer:
+        raise SubmitError(
+            "submit_v2 received conflicting api_key and bearer; pass one"
+        )
+    token = api_key or bearer
+    if not token:
+        raise SubmitError(
+            "submit_v2 requires either api_key= or bearer= (Bearer token)"
+        )
+
+    base = gateway_url.rstrip("/")
+    url = f"{base}/metering/submit"
+
+    # Translate to wire shape FIRST — surfaces structural errors before any
+    # state mutation (replay-cache update happens after).
+    wire = _v2_record_to_wire(record)
+
+    # Compute the SDK-side content_hash from the original record (NOT the
+    # wire shape). This is what we'll cross-check against the server's
+    # response, so a mid-flight tamper or server bug surfaces here.
+    expected_content_hash = canonical_content_hash_v2(record)
+
+    # Replay check + cache update (post-wire-validation, pre-network).
+    _v2_check_replay(record)
+
+    headers = {
+        "authorization": f"Bearer {token}",
+        "content-type": "application/json",
+        "user-agent": "materios-compute-meter/0.2.0-rc1",
+        "x-schema-version": SCHEMA_VERSION_V2,
+    }
+
+    owns_client = _client is None
+    client = _client or httpx.Client(timeout=timeout_seconds)
+    try:
+        r = _post_with_retry(
+            client=client,
+            url=url,
+            headers=headers,
+            body=wire,
+            retry_backoff_seconds=_retry_backoff_seconds,
+        )
+
+        if not (200 <= r.status_code < 300):
+            try:
+                body: Optional[object] = r.json()
+            except Exception:
+                body = r.text
+            # Prefer the gateway's structured `code`/`message`/`error` over
+            # our status-code-based heuristic — the gateway knows exactly
+            # what went wrong and we should surface that to the operator.
+            err_msg: Any = None
+            if isinstance(body, dict):
+                # Validator-style: {"ok": false, "code": "...", "message": "..."}
+                if body.get("code") and body.get("message"):
+                    err_msg = f"{body['code']}: {body['message']}"
+                elif body.get("error"):
+                    err_msg = body["error"]
+                elif body.get("message"):
+                    err_msg = body["message"]
+            if err_msg is None:
+                err_msg = r.text or _V2_STATUS_MEANINGS.get(r.status_code, "")
+            # If we recognise the status, surface the meaning as a hint
+            # AFTER the structured error (so operators see both).
+            meaning = _V2_STATUS_MEANINGS.get(r.status_code)
+            full_msg = (
+                f"{err_msg} [{meaning}]" if meaning and meaning not in str(err_msg) else str(err_msg)
+            )
+            raise GatewayError(
+                status=r.status_code,
+                message=full_msg[:500],
+                body=body,
+            )
+
+        try:
+            decoded = r.json()
+        except Exception as e:
+            raise SubmitError(
+                f"gateway returned non-JSON 2xx body: {r.text[:200]!r}"
+            ) from e
+
+        if not isinstance(decoded, dict):
+            raise SubmitError(
+                f"gateway 2xx body is not a JSON object: {decoded!r}"
+            )
+
+        receipt_id = decoded.get("receipt_id")
+        server_content_hash = decoded.get("content_hash")
+        accepted_at = decoded.get("accepted_at")
+        if not isinstance(receipt_id, str):
+            raise SubmitError(
+                f"gateway response missing receipt_id (got {decoded!r})"
+            )
+        if not isinstance(server_content_hash, str):
+            raise SubmitError(
+                f"gateway response missing content_hash (got {decoded!r})"
+            )
+        if server_content_hash.lower() != expected_content_hash.lower():
+            raise SubmitError(
+                "gateway returned a content_hash that does not match the "
+                "SDK-computed canonical digest. SDK="
+                f"{expected_content_hash}, server={server_content_hash}. "
+                "This indicates a server-side encoder drift OR a network "
+                "tamper — refusing to trust the response."
+            )
+
+        return SubmissionResult(
+            status_code=r.status_code,
+            receipt_id=receipt_id,
+            content_hash=expected_content_hash,
+            accepted_at=accepted_at,
+            body=decoded,
+        )
+    finally:
+        if owns_client:
+            client.close()
