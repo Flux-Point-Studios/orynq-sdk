@@ -436,12 +436,16 @@ describe("POST /metering/submit v2 — Rule 1 structural", () => {
     expect((res.body as { field: string }).field).toBe("hardware_spec");
   });
 
-  test("worker_id_with_uppercase_returns_400", async () => {
+  test("tenant_id_with_uppercase_returns_400_ID_FORMAT", async () => {
+    // tenant_id has the strict regex `[a-z0-9-]{4,64}` (worker_id is
+    // intentionally looser to permit hostnames/pod-names with dots, mixed
+    // case, etc., per Team 1's schema rationale).
     const rec = buildV2();
-    (rec as unknown as Record<string, unknown>).worker_id = "Worker-001";
+    (rec as unknown as Record<string, unknown>).tenant_id = "Tenant-Acme-1";
     const res = await postJson(ctx.app, "/metering/submit", rec);
     expect(res.status).toBe(400);
     expect((res.body as { code: string }).code).toBe("ID_FORMAT");
+    expect((res.body as { field: string }).field).toBe("tenant_id");
   });
 
   test("hardware_spec_missing_cpu_cores_returns_400", async () => {
@@ -473,7 +477,7 @@ describe("POST /metering/submit v2 — Rule 2 period bounds", () => {
     expect(res.status).toBe(200);
   });
 
-  test("period_24h_plus_1ms_returns_400", async () => {
+  test("period_24h_plus_1ms_returns_400_PERIOD_INVALID", async () => {
     const end = Date.now() - 5_000;
     const start = end - 86_400_001;
     // Increase cpu_cores so we don't blow the cpu cap on this >24h period.
@@ -485,7 +489,12 @@ describe("POST /metering/submit v2 — Rule 2 period bounds", () => {
     });
     const res = await postJson(ctx.app, "/metering/submit", rec);
     expect(res.status).toBe(400);
-    expect((res.body as { code: string }).code).toBe("PERIOD_TOO_LONG");
+    // Team 1's structural validator emits a single PERIOD_INVALID code for
+    // every period anomaly (>24h, end<=start, end>now+skew). The test asserts
+    // the code + the field; the message string carries the reason ("must be
+    // <= 86_400_000 ms (24 h)") for callers who want to surface specifics.
+    expect((res.body as { code: string }).code).toBe("PERIOD_INVALID");
+    expect((res.body as { field: string }).field).toBe("period_end_ms");
   });
 });
 
@@ -502,13 +511,16 @@ describe("POST /metering/submit v2 — Rule 3 clock skew", () => {
     await teardown(ctx);
   });
 
-  test("period_end_in_far_future_returns_400_PERIOD_FUTURE_SKEW", async () => {
+  test("period_end_in_far_future_returns_400_PERIOD_INVALID", async () => {
     const end = Date.now() + 5 * 60 * 1000; // 5 minutes ahead
     const start = end - 60_000;
     const rec = buildV2({ period_start_ms: start, period_end_ms: end });
     const res = await postJson(ctx.app, "/metering/submit", rec);
     expect(res.status).toBe(400);
-    expect((res.body as { code: string }).code).toBe("PERIOD_FUTURE_SKEW");
+    // Same union code as period_24h_plus_1ms; differentiation is in `message`.
+    expect((res.body as { code: string }).code).toBe("PERIOD_INVALID");
+    expect((res.body as { field: string }).field).toBe("period_end_ms");
+    expect((res.body as { message: string }).message).toMatch(/skew/i);
   });
 
   test("period_end_within_60s_skew_passes", async () => {
@@ -578,7 +590,7 @@ describe("POST /metering/submit v2 — Rules 5/6 hardware caps", () => {
     expect(res.status).toBe(200);
   });
 
-  test("cpu_seconds_just_over_cap_returns_422_CPU_OVER_HARDWARE", async () => {
+  test("cpu_seconds_just_over_cap_returns_422_BOUND_EXCEEDED", async () => {
     const cpuCores = 1;
     const periodMs = 3_600_000;
     const end = Date.now() - 5_000;
@@ -592,7 +604,11 @@ describe("POST /metering/submit v2 — Rules 5/6 hardware caps", () => {
     });
     const res = await postJson(ctx.app, "/metering/submit", rec);
     expect(res.status).toBe(422);
-    expect((res.body as { code: string }).code).toBe("CPU_OVER_HARDWARE");
+    // Team 1's structural validator emits the union code BOUND_EXCEEDED for
+    // every cpu/ram cap overshoot (rules 5 and 6 in the spec); the field
+    // disambiguates `metrics.cpu_seconds` from `metrics.ram_gb_hours`.
+    expect((res.body as { code: string }).code).toBe("BOUND_EXCEEDED");
+    expect((res.body as { field: string }).field).toBe("metrics.cpu_seconds");
   });
 
   test("ram_gb_hours_at_exactly_1_05x_cap_passes", async () => {
@@ -611,7 +627,7 @@ describe("POST /metering/submit v2 — Rules 5/6 hardware caps", () => {
     expect(res.status).toBe(200);
   });
 
-  test("ram_gb_hours_just_over_cap_returns_422_RAM_OVER_HARDWARE", async () => {
+  test("ram_gb_hours_just_over_cap_returns_422_BOUND_EXCEEDED", async () => {
     const ramGb = 4;
     const periodHr = 1;
     const end = Date.now() - 5_000;
@@ -625,7 +641,8 @@ describe("POST /metering/submit v2 — Rules 5/6 hardware caps", () => {
     });
     const res = await postJson(ctx.app, "/metering/submit", rec);
     expect(res.status).toBe(422);
-    expect((res.body as { code: string }).code).toBe("RAM_OVER_HARDWARE");
+    expect((res.body as { code: string }).code).toBe("BOUND_EXCEEDED");
+    expect((res.body as { field: string }).field).toBe("metrics.ram_gb_hours");
   });
 });
 
@@ -642,8 +659,13 @@ describe("POST /metering/submit v2 — Rule 7 gpu consistency", () => {
     await teardown(ctx);
   });
 
+  // Team 1's GPU_TYPES enum is the closed set
+  // ["none","nvidia-h100","nvidia-h200","nvidia-b100","nvidia-a100",
+  //  "amd-mi300","custom"]. Plain "h100" / "a100" are NOT in the set, so
+  // we use the fully-prefixed names below. (Earlier Team-2 stubs used the
+  // short form; the canonical schema requires the vendor prefix.)
   test("gpu_seconds_nonzero_with_gpu_count_zero_returns_422", async () => {
-    const rec = buildV2({ gpu_type: "h100", gpu_count: 0, gpu_seconds: 100 });
+    const rec = buildV2({ gpu_type: "nvidia-h100", gpu_count: 0, gpu_seconds: 100 });
     const res = await postJson(ctx.app, "/metering/submit", rec);
     expect(res.status).toBe(422);
     expect((res.body as { code: string }).code).toBe("GPU_COUNT_MISMATCH");
@@ -664,9 +686,19 @@ describe("POST /metering/submit v2 — Rule 7 gpu consistency", () => {
 
   test("gpu_seconds_nonzero_with_real_gpu_passes", async () => {
     // 1 GPU × 3600s × 1.05 = 3780s budget
-    const rec = buildV2({ gpu_type: "a100", gpu_count: 1, gpu_seconds: 3000 });
+    const rec = buildV2({ gpu_type: "nvidia-a100", gpu_count: 1, gpu_seconds: 3000 });
     const res = await postJson(ctx.app, "/metering/submit", rec);
     expect(res.status).toBe(200);
+  });
+
+  test("gpu_type_short_form_h100_returns_400_GPU_TYPE_INVALID", async () => {
+    // Belt-and-suspenders: documents that the GPU_TYPES set is closed and
+    // that historical short-form aliases ("h100", "a100") are rejected at
+    // the gateway. Surfaces a regression if someone re-loosens the enum.
+    const rec = buildV2({ gpu_type: "h100", gpu_count: 1, gpu_seconds: 0 });
+    const res = await postJson(ctx.app, "/metering/submit", rec);
+    expect(res.status).toBe(400);
+    expect((res.body as { code: string }).code).toBe("GPU_TYPE_INVALID");
   });
 });
 
