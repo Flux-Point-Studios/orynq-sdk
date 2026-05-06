@@ -39,6 +39,24 @@ export interface SponsoredReceiptPayload {
   authTier: "bearer" | "api-key" | "api-key-legacy-ss58";
   rootHash?: string;
   manifestHash?: string;
+  /**
+   * Optional schema hash override. When set (e.g. by the
+   * `compute_metering_v1` route via `schemas/compute_metering_v1.ts`'s
+   * `SCHEMA_HASH_HEX`), the submitter is expected to pass it as
+   * `submit_receipt_v2(schema_hash = ...)`. When unset (existing manifest
+   * flow), the submitter uses its own default (sha256 of "manifest_v1") so
+   * existing callers don't change behaviour.
+   *
+   * Hex, 64 chars, no `0x` prefix.
+   */
+  schemaHash?: string;
+  /**
+   * Optional override for the `source` field in the outbound payload.
+   * Defaults to `"blob-gateway"`. Set to `"compute-metering-v1"` (or another
+   * stable string) when the submitter needs to route the request through a
+   * non-default code path (e.g. compute-portal billing).
+   */
+  source?: string;
 }
 
 /**
@@ -59,14 +77,19 @@ export async function notifySponsoredReceiptSubmitter(
     headers["authorization"] = "Bearer " + config.sponsoredReceiptSubmitterToken;
   }
 
-  const body = JSON.stringify({
+  // Include `schemaHash` only when caller supplied it — keeps the wire shape
+  // identical for the legacy manifest flow so existing submitter
+  // implementations don't see new fields they may reject as unknown.
+  const bodyShape: Record<string, unknown> = {
     contentHash: payload.contentHash,
     operator: payload.operator,
     authTier: payload.authTier,
     rootHash: payload.rootHash,
     manifestHash: payload.manifestHash,
-    source: "blob-gateway",
-  });
+    source: payload.source ?? "blob-gateway",
+  };
+  if (payload.schemaHash) bodyShape.schemaHash = payload.schemaHash;
+  const body = JSON.stringify(bodyShape);
 
   const controller = new AbortController();
   const timeoutId = setTimeout(

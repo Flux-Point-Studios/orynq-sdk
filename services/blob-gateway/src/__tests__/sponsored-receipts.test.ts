@@ -225,6 +225,37 @@ describe("sponsored-receipts notify hook", () => {
     warnSpy.mockRestore();
   });
 
+  test("notify_propagates_schemaHash_when_set_omits_when_unset", async () => {
+    process.env.SPONSORED_RECEIPT_SUBMITTER_URL = `http://127.0.0.1:${fake.port}/submit`;
+    const { notifySponsoredReceiptSubmitter } = await import(
+      "../sponsored-receipts.js"
+    );
+
+    // schemaHash unset → field not present (legacy manifest flow shape).
+    await notifySponsoredReceiptSubmitter({
+      contentHash: "a".repeat(64),
+      operator: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+      authTier: "bearer",
+    });
+    expect(fake.captured).toHaveLength(1);
+    const body0 = JSON.parse(fake.captured[0].body) as Record<string, unknown>;
+    expect("schemaHash" in body0).toBe(false);
+    expect(body0.source).toBe("blob-gateway");
+
+    // schemaHash set + custom source → both present in payload.
+    await notifySponsoredReceiptSubmitter({
+      contentHash: "a".repeat(64),
+      operator: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+      authTier: "bearer",
+      schemaHash: "f".repeat(64),
+      source: "compute-metering-v1",
+    });
+    expect(fake.captured).toHaveLength(2);
+    const body1 = JSON.parse(fake.captured[1].body) as Record<string, unknown>;
+    expect(body1.schemaHash).toBe("f".repeat(64));
+    expect(body1.source).toBe("compute-metering-v1");
+  });
+
   test("isSponsoredTier_matches_bearer_and_api_key_tiers_only", async () => {
     const { isSponsoredTier } = await import("../sponsored-receipts.js");
     expect(isSponsoredTier("bearer")).toBe(true);

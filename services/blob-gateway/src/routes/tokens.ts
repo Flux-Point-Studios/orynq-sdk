@@ -72,6 +72,8 @@ export function registerTokenRoutes(app: Express, opts: RegisterTokenRoutesOpts 
       const body = (req.body ?? {}) as {
         account?: string;
         label?: string;
+        tenant_id?: string;
+        tenantId?: string;
       };
       if (typeof body.account !== "string" || !SS58_SHAPE.test(body.account)) {
         res.status(400).json({ error: "missing or invalid account (expected SS58 address)" });
@@ -82,14 +84,26 @@ export function registerTokenRoutes(app: Express, opts: RegisterTokenRoutesOpts 
           ? body.label.trim().slice(0, 128)
           : null;
 
+      // Task #119: optional tenant_id binding. Accept either snake_case
+      // (matches the URL param convention used on /billing/usage) or
+      // camelCase. Trim + bound to 128 chars for the same reason as label.
+      const tenantRaw =
+        typeof body.tenant_id === "string" && body.tenant_id.trim()
+          ? body.tenant_id.trim()
+          : typeof body.tenantId === "string" && body.tenantId.trim()
+            ? body.tenantId.trim()
+            : null;
+      const tenantId = tenantRaw ? tenantRaw.slice(0, 128) : null;
+
       const issued = issueToken(getApiTokensDb(), {
         accountSs58: body.account,
         label: label ?? undefined,
+        tenantId: tenantId ?? undefined,
       });
 
-      // Structured audit log — account + label, never the raw token.
+      // Structured audit log — account + label + tenant, never the raw token.
       console.log(
-        `[blob-gateway] api-token minted account=${issued.accountSs58} label=${label ?? "-"} hash=${issued.tokenHash.slice(0, 16)}...`,
+        `[blob-gateway] api-token minted account=${issued.accountSs58} label=${label ?? "-"} tenant=${tenantId ?? "-"} hash=${issued.tokenHash.slice(0, 16)}...`,
       );
 
       res.status(200).json({
@@ -98,6 +112,7 @@ export function registerTokenRoutes(app: Express, opts: RegisterTokenRoutesOpts 
         tokenHash: issued.tokenHash,
         account: issued.accountSs58,
         label: issued.label,
+        tenantId: issued.tenantId,
         createdAt: issued.createdAt,
         message: "Store this token now. It will never be shown again.",
       });

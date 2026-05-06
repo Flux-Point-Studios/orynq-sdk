@@ -39,6 +39,10 @@ export function getApiTokensDb(): Database.Database {
  * When called with no arg, opens (or creates) operators.db at the canonical
  * path and stores the handle as the module default. Tests pass an in-memory
  * handle instead.
+ *
+ * Task #119: also runs `migrateTenantBindingColumn()` to add the optional
+ * `tenant_id` column to existing rows. Pre-existing tokens stay NULL → behave
+ * as legacy/admin tier (no tenant restriction).
  */
 export function initApiTokensDb(database?: Database.Database): Database.Database {
   const handle = database ?? new Database(join(config.storagePath, "operators.db"));
@@ -56,8 +60,40 @@ export function initApiTokensDb(database?: Database.Database): Database.Database
     );
     CREATE INDEX IF NOT EXISTS idx_api_tokens_account ON api_tokens(account_ss58);
   `);
+  // Task #119 — additive tenant_id column. NULL = legacy/admin tier
+  // (no tenant restriction); a non-null value binds the token to exactly one
+  // tenant for cross-tenant isolation on /billing/usage.
+  migrateTenantBindingColumn(handle);
   if (!db) db = handle;
   return handle;
+}
+
+/**
+ * Task #119 — Idempotent migration: add `tenant_id` column to `api_tokens`.
+ *
+ * Behaviour:
+ *   - NULL = legacy/admin tier (no tenant restriction).
+ *   - Non-null = the token's owning tenant; /billing/usage compares this
+ *     against the URL `tenant_id` param and 403s on mismatch.
+ *
+ * Exported so tests + the index.ts startup path can both run it without
+ * re-creating the whole table. PRAGMA-checked first; the ALTER is wrapped in
+ * try/catch as belt-and-suspenders for parallel-startup races (SQLite's
+ * `ADD COLUMN` lacks `IF NOT EXISTS` on the versions we target).
+ */
+export function migrateTenantBindingColumn(database: Database.Database): void {
+  const cols = database
+    .prepare("PRAGMA table_info(api_tokens)")
+    .all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === "tenant_id")) return;
+  try {
+    database.exec("ALTER TABLE api_tokens ADD COLUMN tenant_id TEXT DEFAULT NULL");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/duplicate column name/i.test(msg)) {
+      throw err;
+    }
+  }
 }
 
 /**
@@ -91,6 +127,13 @@ function toBase62(buf: Uint8Array): string {
 export interface IssueTokenInput {
   accountSs58: string;
   label?: string | undefined;
+  /**
+   * Task #119: Optional tenant binding. If supplied, the token can only be
+   * used to access this tenant's data on tenant-scoped routes
+   * (e.g. /billing/usage). Omit/null/undefined = legacy/admin tier with no
+   * tenant restriction.
+   */
+  tenantId?: string | null | undefined;
   /** Unix seconds override; used by tests for determinism. */
   now?: number;
 }
@@ -102,6 +145,8 @@ export interface IssuedToken {
   tokenHash: string;
   accountSs58: string;
   label: string | null;
+  /** Task #119 — null when not bound to any tenant. */
+  tenantId: string | null;
   createdAt: number;
 }
 
@@ -109,6 +154,9 @@ export interface IssuedToken {
  * Generate a new random token and insert the hashed row.
  * Returns the plaintext token to the caller — caller MUST forward it to
  * the operator immediately; we will never be able to reconstruct it.
+ *
+ * Task #119: when `input.tenantId` is supplied (non-empty string), the token
+ * row is persisted with that binding; otherwise tenant_id stays NULL.
  */
 export function issueToken(
   database: Database.Database,
@@ -118,15 +166,51 @@ export function issueToken(
   const token = `${TOKEN_PREFIX}${toBase62(raw)}`;
   const tokenHash = hashToken(token);
   const label = input.label ?? null;
+  const tenantId =
+    typeof input.tenantId === "string" && input.tenantId.length > 0
+      ? input.tenantId
+      : null;
   const createdAt = input.now ?? Math.floor(Date.now() / 1000);
 
   database
     .prepare(
-      `INSERT INTO api_tokens (token_hash, account_ss58, label, created_at) VALUES (?, ?, ?, ?)`,
+      `INSERT INTO api_tokens (token_hash, account_ss58, label, created_at, tenant_id) VALUES (?, ?, ?, ?, ?)`,
     )
-    .run(tokenHash, input.accountSs58, label, createdAt);
+    .run(tokenHash, input.accountSs58, label, createdAt, tenantId);
 
-  return { token, tokenHash, accountSs58: input.accountSs58, label, createdAt };
+  return {
+    token,
+    tokenHash,
+    accountSs58: input.accountSs58,
+    label,
+    tenantId,
+    createdAt,
+  };
+}
+
+/**
+ * Task #119 — Bind an existing token to a tenant_id (or clear by passing null).
+ *
+ * Used post-issuance for the "mint, then bind" admin flow (e.g. when the
+ * Compute Portal hands out a Bearer token and only later attaches it to a
+ * tenant). Safe to re-bind; the latest write wins.
+ *
+ * @param database  The api_tokens DB handle.
+ * @param tokenHash sha256-hex of the token (matches api_tokens.token_hash).
+ * @param tenantId  Non-empty string to set, null/empty to clear.
+ * @returns true iff a row was updated. false if no row exists for that hash.
+ */
+export function bindTokenToTenant(
+  database: Database.Database,
+  tokenHash: string,
+  tenantId: string | null,
+): boolean {
+  const normalized =
+    typeof tenantId === "string" && tenantId.length > 0 ? tenantId : null;
+  const result = database
+    .prepare(`UPDATE api_tokens SET tenant_id = ? WHERE token_hash = ?`)
+    .run(normalized, tokenHash);
+  return result.changes > 0;
 }
 
 export interface VerifyTokenOptions {
@@ -135,12 +219,24 @@ export interface VerifyTokenOptions {
 }
 
 export type VerifyResult =
-  | { valid: true; accountSs58: string; label: string | null; tokenHash: string }
+  | {
+      valid: true;
+      accountSs58: string;
+      label: string | null;
+      tokenHash: string;
+      /** Task #119 — null = legacy/admin tier, non-null = tenant-bound token. */
+      tenantId: string | null;
+    }
   | { valid: false; reason: "malformed" | "unknown" | "revoked" };
 
 /**
  * Verify a plaintext Bearer token against the DB.
  * On success, bumps last_used_at atomically.
+ *
+ * Task #119: surfaces `tenant_id` so route handlers can enforce that a
+ * tenant-bound token only reads its own tenant's data (see /billing/usage).
+ * Tokens issued before the column existed migrate as NULL → return null →
+ * preserve legacy behaviour.
  */
 export function verifyToken(
   database: Database.Database,
@@ -153,10 +249,15 @@ export function verifyToken(
   const tokenHash = hashToken(plaintext);
   const row = database
     .prepare(
-      `SELECT account_ss58, label, revoked_at FROM api_tokens WHERE token_hash = ?`,
+      `SELECT account_ss58, label, revoked_at, tenant_id FROM api_tokens WHERE token_hash = ?`,
     )
     .get(tokenHash) as
-    | { account_ss58: string; label: string | null; revoked_at: number | null }
+    | {
+        account_ss58: string;
+        label: string | null;
+        revoked_at: number | null;
+        tenant_id: string | null;
+      }
     | undefined;
 
   if (!row) return { valid: false, reason: "unknown" };
@@ -167,7 +268,13 @@ export function verifyToken(
     .prepare(`UPDATE api_tokens SET last_used_at = ? WHERE token_hash = ?`)
     .run(now, tokenHash);
 
-  return { valid: true, accountSs58: row.account_ss58, label: row.label, tokenHash };
+  return {
+    valid: true,
+    accountSs58: row.account_ss58,
+    label: row.label,
+    tokenHash,
+    tenantId: row.tenant_id ?? null,
+  };
 }
 
 export interface RevokeTokenInput {
@@ -203,6 +310,8 @@ export interface ListedToken {
   tokenHash: string;
   accountSs58: string;
   label: string | null;
+  /** Task #119 — null when not bound to a tenant (legacy/admin tier). */
+  tenantId: string | null;
   createdAt: number;
   lastUsedAt: number | null;
   revokedAt: number | null;
@@ -226,7 +335,7 @@ export function listTokens(
     where.push("revoked_at IS NULL");
   }
   const sql = `
-    SELECT token_hash, account_ss58, label, created_at, last_used_at, revoked_at, revoked_reason
+    SELECT token_hash, account_ss58, label, tenant_id, created_at, last_used_at, revoked_at, revoked_reason
     FROM api_tokens
     ${where.length ? "WHERE " + where.join(" AND ") : ""}
     ORDER BY created_at DESC
@@ -235,6 +344,7 @@ export function listTokens(
     token_hash: string;
     account_ss58: string;
     label: string | null;
+    tenant_id: string | null;
     created_at: number;
     last_used_at: number | null;
     revoked_at: number | null;
@@ -244,6 +354,7 @@ export function listTokens(
     tokenHash: r.token_hash,
     accountSs58: r.account_ss58,
     label: r.label,
+    tenantId: r.tenant_id ?? null,
     createdAt: r.created_at,
     lastUsedAt: r.last_used_at,
     revokedAt: r.revoked_at,
