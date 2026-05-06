@@ -281,7 +281,16 @@ class SubmissionResult:
 
     Attributes:
         status_code: HTTP status code returned by the gateway (200..299).
-        receipt_id: Stable receipt identifier the gateway assigned.
+        receipt_id: Stable receipt identifier the gateway assigned. **May be
+            None on initial accept** — the gateway issues a synchronous
+            "accepted" response immediately on validation success and assigns
+            the receipt_id asynchronously when the on-chain extrinsic lands.
+            Callers can recover the receipt_id by querying
+            `GET /billing/usage?...&include_records=true` and matching on
+            content_hash, OR by polling the gateway's receipt-by-content-hash
+            lookup. The `status` field on the body distinguishes the two
+            paths: `"accepted"` = async (no receipt_id yet), `"replay"` = same
+            content_hash already submitted (receipt_id usually present).
         content_hash: SHA-256 hex of the worker-sig canonical pre-image.
             The SDK MUST recompute this locally and assert equality before
             returning, so the caller never sees a server-substituted hash.
@@ -292,7 +301,7 @@ class SubmissionResult:
     """
 
     status_code: int
-    receipt_id: str
+    receipt_id: Optional[str]
     content_hash: str
     accepted_at: Any
     body: Dict[str, Any]
@@ -561,12 +570,19 @@ def submit_v2(
                 f"gateway 2xx body is not a JSON object: {decoded!r}"
             )
 
+        # `receipt_id` is async on v2 — the gateway issues an "accepted"
+        # response immediately and the receipt_id gets assigned when the
+        # on-chain extrinsic lands. Callers recover it later via
+        # /billing/usage?...&include_records=true matching on content_hash.
+        # Only raise if both receipt_id AND status are missing — that would
+        # mean the gateway returned an unexpected shape.
         receipt_id = decoded.get("receipt_id")
         server_content_hash = decoded.get("content_hash")
         accepted_at = decoded.get("accepted_at")
-        if not isinstance(receipt_id, str):
+        if receipt_id is not None and not isinstance(receipt_id, str):
             raise SubmitError(
-                f"gateway response missing receipt_id (got {decoded!r})"
+                f"gateway response receipt_id is wrong type "
+                f"(expected str | None, got {type(receipt_id).__name__})"
             )
         if not isinstance(server_content_hash, str):
             raise SubmitError(
