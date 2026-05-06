@@ -336,7 +336,11 @@ describe("POST /metering/submit — failure modes", () => {
   });
 
   test("wrong schema_version → 422", async () => {
-    const rec = { ...buildSigned(), schema_version: "compute_metering_v2" };
+    // Use a clearly-unknown schema_version so the dispatcher routes to the v1
+    // validator (any non-v2 / non-v1 schema string falls through). The v2
+    // dispatch trigger ("compute_metering_v2") is no longer "wrong" now that
+    // v2 is live — see metering_v2_route.test.ts for v2-side rejection tests.
+    const rec = { ...buildSigned(), schema_version: "compute_metering_vfuture" };
     const res = await fetchJson(ctx.app, "POST", "/metering/submit", rec);
     expect(res.status).toBe(422);
   });

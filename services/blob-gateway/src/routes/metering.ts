@@ -39,6 +39,7 @@ import {
   workerPubkeyToSs58,
   SCHEMA_VERSION,
 } from "../schemas/compute_metering_v1.js";
+import { SCHEMA_VERSION as SCHEMA_VERSION_V2 } from "../schemas/compute_metering_v2.js";
 import {
   getWorkerBounds,
   getLastPeriodStart,
@@ -48,6 +49,7 @@ import {
 } from "../worker_bounds.js";
 import { notifySponsoredReceiptSubmitter } from "../sponsored-receipts.js";
 import { saveManifest, updateReceiptMeta } from "../storage.js";
+import { handleV2Submit } from "./metering_v2.js";
 
 export const meteringRouter = Router();
 
@@ -100,6 +102,20 @@ meteringRouter.post(
           code: "INVALID_JSON",
           message: "request body must be a JSON object",
         });
+        return;
+      }
+
+      // Schema-version dispatch. We MUST keep the v1 path byte-for-byte
+      // identical to its pre-v2 behaviour — the v1 worker SDK is in
+      // production. Any record without a recognised schema_version flows
+      // through the v1 validator which will then reject it with the same
+      // WRONG_SCHEMA_VERSION code as before.
+      const schemaVersion =
+        typeof raw === "object" && raw !== null && "schema_version" in raw
+          ? (raw as { schema_version: unknown }).schema_version
+          : undefined;
+      if (schemaVersion === SCHEMA_VERSION_V2) {
+        await handleV2Submit(req, res, raw);
         return;
       }
 
