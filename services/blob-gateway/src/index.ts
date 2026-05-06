@@ -26,6 +26,10 @@ import { registerAdminKeysRoutes } from "./routes/admin-keys.js";
 import { meteringRouter } from "./routes/metering.js";
 import { billingRouter } from "./routes/billing.js";
 import { initWorkerBoundsDb } from "./worker_bounds.js";
+import { initFleetOperatorsDb } from "./fleet_operators.js";
+import { initObserversDb } from "./observers.js";
+import { registerFleetOperatorRoutes } from "./routes/fleet_operators.js";
+import { registerObserverRoutes } from "./routes/observers.js";
 // initChainInfoPoller is re-exported for consumers that want to pre-warm the
 // cache at startup; we also call it in start() so the first /chain-info hit
 // after cold-start returns 200 instead of 503.
@@ -68,6 +72,8 @@ app.use(meteringRouter);    // Task #109: POST /metering/submit — compute_mete
 app.use(billingRouter);     // Task #112: GET /billing/usage — verifiable compute-metering billing query.
 registerTokenRoutes(app);   // Bearer-token lifecycle (admin-only)
 registerAdminKeysRoutes(app); // Task #94: api_keys.bound_validator_aura get/set/clear (admin-only)
+registerFleetOperatorRoutes(app); // Wave 1+2: compute_metering_v2 hardware-attestor registry (admin-only)
+registerObserverRoutes(app);      // Wave 1+2: compute_metering_v2 optional co-signer registry (admin-only)
 
 async function start(): Promise<void> {
   // Initialize sr25519/ed25519 WASM (required for signatureVerify)
@@ -86,6 +92,11 @@ async function start(): Promise<void> {
   initApiTokensDb(getOperatorsDb());
   // Compute metering v1 — per-worker hardware bounds + monotonic period_start.
   initWorkerBoundsDb();
+  // Compute metering v2 — fleet operator + observer trust registries.
+  // Each lives in its own SQLite file (fleet_operators.db, observers.db) so
+  // schema migrations stay isolated from operators.db / quota.db.
+  initFleetOperatorsDb();
+  initObserversDb();
 
   // Start cleanup timers
   startCleanupTimer();
