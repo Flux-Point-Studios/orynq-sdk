@@ -128,3 +128,70 @@ those are the parts that don't depend on the canonical encoding.
 5. Assert on the canonical content_hash AND the gateway's response field —
    both must match. A passing assertion that only checks one side is a
    regression-risk gap.
+
+---
+
+## v2 (`compute_metering_v2`) E2E suite — `tests/test_v2_e2e_preprod.py`
+
+Separate suite for the v2 envelope (mandatory `hardware_spec` +
+optional `observer` co-signature). Gated by env vars per the team-3
+brief; skips gracefully when any prerequisite is missing.
+
+### Quick run
+
+```bash
+cd /home/deci/work/orynq-sdk/packages/compute-meter-sdk
+
+# Required:
+export MATERIOS_E2E_BEARER="matra_<your_token>"
+export MATERIOS_E2E_HARDWARE_SPEC="/path/to/fleet-signed-hardware.json"
+
+# Choose ONE worker_id-binding strategy:
+export MATERIOS_E2E_WORKER_ID="worker-baked-into-the-spec"
+# OR (preferred for repeated runs — re-issues per run):
+export MATERIOS_E2E_FLEET_OPERATOR_KEY="/path/to/fleet-operator-key.json"
+
+# Optional:
+export MATERIOS_E2E_GATEWAY="https://materios.fluxpointstudios.com/preprod-blobs"
+export MATERIOS_E2E_WORKER_KEY="/path/to/worker-key.json"
+export MATERIOS_E2E_OBSERVER_KEY="/path/to/observer-key.json"
+export MATERIOS_E2E_TENANT_ID="tenant-acme"
+
+.venv/bin/pytest tests/test_v2_e2e_preprod.py -m e2e -v
+```
+
+### v2 environment variables
+
+| var | required | default | purpose |
+|---|---|---|---|
+| `MATERIOS_E2E_BEARER` | yes | — | Bearer token for `/metering/submit`. Same token shape as v1 (`matra_*`). |
+| `MATERIOS_E2E_HARDWARE_SPEC` | yes | — | Path to a fleet-operator-signed hardware spec JSON (the file `HardwareSpec.save()` writes). |
+| `MATERIOS_E2E_FLEET_OPERATOR_KEY` | no | — | Path to the fleet operator's `WorkerKeypair` JSON keyfile. If set, the test re-issues hardware specs per run so each test gets a unique worker_id. Recommended. |
+| `MATERIOS_E2E_WORKER_KEY` | no | (generates) | Path to the worker's keyfile. Defaults to a fresh `WorkerKeypair.generate()`. |
+| `MATERIOS_E2E_OBSERVER_KEY` | no | (generates) | Path to the observer's `ObserverKeypair` JSON. Defaults to a fresh `ObserverKeypair.generate()`. |
+| `MATERIOS_E2E_TENANT_ID` | no | `tenant-e2e` | The `tenant_id` field for the test record. Must match `[a-z0-9-]{4,64}`. |
+| `MATERIOS_E2E_WORKER_ID` | no | `worker-e2e` | Prefix for the per-test worker_id. Each test appends a timestamp + suffix so submissions don't collide. |
+| `MATERIOS_E2E_GATEWAY` | no | preprod-blobs | Gateway base URL. |
+
+### Tests in the v2 suite
+
+| name | what it proves | budget |
+|---|---|---|
+| `test_live_v2_submit_no_observer_round_trips` | Build → sign → submit a v2 envelope WITHOUT an observer block. Gateway returns 2xx + a `content_hash` matching the SDK's locally-recomputed canonical hash. | <30s |
+| `test_live_v2_submit_with_observer_round_trips` | Same, with an observer co-signature attached. content_hash MUST equal the worker's pre-image hash (observer doesn't change content). | <30s |
+| `test_live_v2_replay_rejected_by_gateway` | Submit twice with the same (worker_id, period_start_ms). Second submit must be rejected by either the SDK's local cache OR the gateway's 409. | <30s |
+
+### v2 skip behaviour
+
+The suite gracefully skips with a CLEAR diagnostic at module level when:
+
+* `MATERIOS_E2E_BEARER` or `MATERIOS_E2E_HARDWARE_SPEC` is unset.
+* The hardware spec JSON file doesn't exist.
+* The gateway is unreachable.
+* The gateway's `/metering/submit` returns 404 (no metering route at all).
+* The gateway accepts only `compute_metering_v1` (Team 2's v2 validator
+  hasn't shipped). Detected by probing with a `compute_metering_v2`
+  schema_version and checking for a `WRONG_SCHEMA_VERSION` response.
+
+A skipped E2E run is NOT a failure — it tells the operator exactly which
+upstream piece is missing so they can fix THAT, not chase the SDK.

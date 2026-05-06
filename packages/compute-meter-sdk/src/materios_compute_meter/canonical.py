@@ -297,11 +297,17 @@ def _v2_metrics_to_cbor(metrics: dict) -> _CborValue:
     )
 
 
-def _v2_hex_to_bytes(hex_str: str) -> bytes:
-    """Decode a 0x-prefix-less lowercase hex string to raw bytes."""
-    if not isinstance(hex_str, str):
-        raise TypeError(f"hex must be str, got {type(hex_str).__name__}")
-    return bytes.fromhex(hex_str)
+def _v2_hex_to_bytes(value) -> bytes:
+    """Coerce hex-string OR raw-bytes input to raw bytes.
+
+    Worker-side SDK passes raw bytes (32-byte sr25519 pubkey); gateway-side
+    passes hex strings (wire-decoded). Same canonical output either way.
+    """
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    if isinstance(value, str):
+        return bytes.fromhex(value.removeprefix("0x"))
+    raise TypeError(f"expected bytes or hex str, got {type(value).__name__}")
 
 
 def _v2_hardware_spec_no_sig_to_cbor(spec: dict) -> _CborValue:
@@ -422,6 +428,13 @@ def canonical_cbor_for_worker_sig(record: dict) -> bytes:
             ]
         )
     )
+
+
+# Observer signs the EXACT SAME bytes as the worker (per the v2 spec — observer
+# is an independent witness over the same record body). Exposed as an alias for
+# call-site clarity; do NOT diverge — gateway verifies both sigs against the
+# same pre-image.
+canonical_cbor_for_observer_sig = canonical_cbor_for_worker_sig
 
 
 def canonical_content_hash_v2(record: dict) -> str:

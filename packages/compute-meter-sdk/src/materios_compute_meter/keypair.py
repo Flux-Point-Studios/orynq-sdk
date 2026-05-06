@@ -263,3 +263,85 @@ class WorkerKeypair:
             signature=sig.hex(),
             signer_public_hex=self.public_hex,
         )
+
+
+class ObserverKeypair(WorkerKeypair):
+    """sr25519 keypair for an INDEPENDENT observer (Wave 2).
+
+    Functionally identical to `WorkerKeypair` (same sr25519 algorithm, same
+    file format on disk, same SS58 prefix), but discriminated as a
+    SEPARATE TYPE so:
+
+      * Call sites read clearly:
+            `attach_observer_signature_v2(record, observer_kp)` — vs a
+            generic `WorkerKeypair` parameter that hides the role.
+      * Keyfiles can be tagged with `scheme=sr25519-observer` on disk so an
+        operator's `ls` of the secrets dir distinguishes worker from
+        observer keys.
+      * Future divergence (e.g. observer-only HSM integration, observer
+        attestation TTL) lives in this subclass without touching the
+        per-worker SDK surface.
+
+    The pre-image the observer signs is the SAME bytes the worker signs
+    (see `canonical_cbor_for_observer_sig`). DIFFERENT key, SAME bytes.
+
+    Subclassing rationale (vs separate class):
+      * Avoids duplicating the constructor / generate / sign_bytes /
+        verify_bytes / save / public_hex / ss58_address surface (about
+        100 LoC of identical code).
+      * `isinstance(kp, ObserverKeypair)` works for type narrowing while
+        `isinstance(kp, WorkerKeypair)` still admits both — the v2
+        signing helpers accept either, by design.
+      * The keyfile scheme tag still gives operators clear separation on
+        disk; the runtime crypto is the same algorithm so a subclass is
+        the honest model.
+
+    Inherits all constructors and methods from `WorkerKeypair`. The only
+    differences:
+
+      * `SCHEME = "sr25519-observer"` for keyfile tagging on save.
+      * `load()` accepts EITHER `sr25519-observer` (preferred) or
+        `sr25519` (legacy / cross-role reuse). Other schemes rejected.
+    """
+
+    SCHEME = "sr25519-observer"
+
+    @classmethod
+    def load(cls, path: str) -> "ObserverKeypair":
+        """Load an observer keyfile.
+
+        Accepts either `sr25519-observer` (preferred, written by `save()`)
+        or `sr25519` (legacy / cross-role reuse). Other schemes are rejected.
+        """
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                blob = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            raise InvalidKeyfileError(f"could not read {path}: {e}") from e
+
+        if not isinstance(blob, dict):
+            raise InvalidKeyfileError("keyfile root is not a JSON object")
+        scheme = blob.get("scheme")
+        if scheme not in (cls.SCHEME, "sr25519"):
+            raise InvalidKeyfileError(
+                f"unsupported scheme {scheme!r} for ObserverKeypair, "
+                f"expected {cls.SCHEME!r} or 'sr25519'"
+            )
+        secret_hex = blob.get("secret")
+        public_hex = blob.get("public")
+        if not isinstance(secret_hex, str) or not isinstance(public_hex, str):
+            raise InvalidKeyfileError("keyfile missing 'secret' or 'public' field")
+
+        try:
+            secret = bytes.fromhex(secret_hex)
+            public = bytes.fromhex(public_hex)
+        except ValueError as e:
+            raise InvalidKeyfileError(f"secret/public is not valid hex: {e}") from e
+
+        derived_public = bytes(sr25519.public_from_secret_key(secret))
+        if derived_public != public:
+            raise InvalidKeyfileError(
+                "keyfile public does not match the public derived from secret"
+            )
+
+        return cls(public_key=public, secret_key=secret)
