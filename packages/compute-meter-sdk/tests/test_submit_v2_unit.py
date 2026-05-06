@@ -147,12 +147,12 @@ def test_submit_v2_happy_path_posts_correct_wire_format() -> None:
     assert body["metrics"]["cpu_seconds"] == 60
     assert body["hardware_spec"]["cpu_cores"] == 8
     # Bytes are hex-on-the-wire.
-    assert isinstance(body["worker_pubkey_hex"], str)
-    assert len(body["worker_pubkey_hex"]) == 64
-    assert isinstance(body["worker_signature_hex"], str)
-    assert len(body["worker_signature_hex"]) == 128
-    assert len(body["hardware_spec"]["fleet_operator_pubkey_hex"]) == 64
-    assert len(body["hardware_spec"]["fleet_operator_signature_hex"]) == 128
+    assert isinstance(body["worker_pubkey"], str)
+    assert len(body["worker_pubkey"]) == 64
+    assert isinstance(body["worker_signature"], str)
+    assert len(body["worker_signature"]) == 128
+    assert len(body["hardware_spec"]["fleet_operator_pubkey"]) == 64
+    assert len(body["hardware_spec"]["fleet_operator_signature"]) == 128
     # No observer block in this run.
     assert "observer" not in body
 
@@ -182,8 +182,8 @@ def test_submit_v2_with_observer_block_posts_observer_in_body() -> None:
     )
     body = captured["body"]
     assert "observer" in body
-    assert len(body["observer"]["observer_pubkey_hex"]) == 64
-    assert len(body["observer"]["observer_signature_hex"]) == 128
+    assert len(body["observer"]["observer_pubkey"]) == 64
+    assert len(body["observer"]["observer_signature"]) == 128
 
 
 def test_submit_v2_accepts_api_key_alias_for_bearer() -> None:
