@@ -55,6 +55,29 @@ function ensureHexPrefix(s: string): string {
 }
 
 /**
+ * Deterministically synthesize an anchorId from (rootHash, manifestHash).
+ *
+ * Pre-image: rootHash raw bytes ++ manifestHash raw bytes (each parsed from
+ * its hex representation, any leading 0x stripped). SHA-256 over those raw
+ * bytes, 0x-prefixed digest hex.
+ *
+ * MUST stay byte-identical to the cert-daemon implementation in
+ * `daemon/checkpoint.py::compute_anchor_id`. The gateway's
+ * `/batches/:anchorId` reverse-lookup index is keyed on the same id, so a
+ * drift between daemon and worker would silently leak 404s for every anchor
+ * the cert-daemon didn't pre-compute the id for. Pinned by:
+ *   - tests/anchor-id.test.ts (TS side)
+ *   - tests/test_checkpoint_anchor_id.py (Python side)
+ *
+ * Exported so tests can pin the algorithm directly.
+ */
+export function deriveAnchorId(rootHashHex: string, manifestHashHex: string): string {
+  const root = rootHashHex.replace(/^0[xX]/, "");
+  const manifest = manifestHashHex.replace(/^0[xX]/, "");
+  return "0x" + sha256Hex(root + manifest);
+}
+
+/**
  * Submit an anchor to the Materios chain.
  *
  * Idempotent: if the anchor already exists on-chain, returns success
@@ -67,10 +90,27 @@ export async function submitAnchor(req: AnchorRequest): Promise<AnchorResult> {
   const manifestHashHex = ensureHexPrefix(req.manifestHash);
   const contentHashHex = ensureHexPrefix(req.contentHash);
 
-  // Compute anchor ID if not provided
-  const anchorId = req.anchorId
-    ? ensureHexPrefix(req.anchorId)
-    : "0x" + sha256Hex(rootHashHex.slice(2) + manifestHashHex.slice(2));
+  // Anchor-id contract (task #117): if the caller supplied one, preserve it
+  // verbatim — it's what the cert-daemon will use to PUT the leaf-list to
+  // the blob gateway, and what external auditors will look up. If absent
+  // (back-compat path), derive deterministically using the SAME algorithm
+  // the daemon uses (`deriveAnchorId`), so an upgrade migration where one
+  // side runs new-code and the other old-code still converges on the same
+  // id. A daemon-supplied id that disagrees with our derivation is logged
+  // (would indicate algorithm drift — should never happen in steady state).
+  const derived = deriveAnchorId(rootHashHex, manifestHashHex);
+  let anchorId: string;
+  if (req.anchorId) {
+    anchorId = ensureHexPrefix(req.anchorId);
+    if (anchorId.toLowerCase() !== derived.toLowerCase()) {
+      console.warn(
+        `[materios-anchor] anchorId drift: caller=${anchorId} derived=${derived} ` +
+          `— preserving caller's value. Investigate algorithm divergence.`,
+      );
+    }
+  } else {
+    anchorId = derived;
+  }
 
   // Idempotency check: if anchor already exists on-chain, return success
   const existing = await api.query.orinqReceipts.anchors(anchorId);
