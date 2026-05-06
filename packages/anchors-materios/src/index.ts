@@ -44,7 +44,17 @@ export { submitAnchor } from "./submitter.js";
 export { getAnchor, anchorExists } from "./verifier.js";
 
 // Receipt submission and querying
-export { submitReceipt, getReceipt, isCertified, prepareBlobData, queryMotraBalance, uploadBlobs, submitCertifiedReceipt } from "./receipt.js";
+export {
+  submitReceipt,
+  getReceipt,
+  isCertified,
+  prepareBlobData,
+  queryMotraBalance,
+  uploadBlobs,
+  submitCertifiedReceipt,
+  computeBaseRoot,
+  DEFAULT_CHUNK_SIZE,
+} from "./receipt.js";
 
 // Polling / waiting
 export { waitForCertification, waitForAnchor, computeCheckpointLeaf, waitForMotra, getCertificationStatus } from "./polling.js";

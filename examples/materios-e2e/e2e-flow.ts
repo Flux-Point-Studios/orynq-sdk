@@ -37,6 +37,7 @@ import {
   waitForCertification,
   waitForAnchor,
   verifyReceipt,
+  computeBaseRoot,
 } from "@fluxpointstudios/orynq-sdk-anchors-materios";
 
 import { createHash } from "crypto";
@@ -149,31 +150,14 @@ async function main() {
   hr();
 
   // =========================================================================
-  // Step 2: Submit receipt to chain
+  // Step 2: Build the blob and submit receipt to chain
   // =========================================================================
-  log("STEP 2", "Submitting receipt to Materios chain...");
+  log("STEP 2", "Building blob + submitting receipt to Materios chain...");
 
-  const contentHash =
-    "0x" +
-    createHash("sha256")
-      .update(Buffer.from(bundle.rootHash.replace(/^0x/, ""), "hex"))
-      .digest("hex");
-
-  const result = await submitReceipt(provider, {
-    contentHash,
-    rootHash: "0x" + bundle.rootHash.replace(/^0x/, ""),
-    manifestHash: "0x" + bundle.manifestHash.replace(/^0x/, ""),
-  });
-
-  log("STEP 2", `Receipt ID:  ${result.receiptId}`);
-  log("STEP 2", `Block:       ${result.blockHash} (#${result.blockNumber})`);
-  hr();
-
-  // =========================================================================
-  // Step 3: Provision blob data for cert daemon
-  // =========================================================================
-  log("STEP 3", "Provisioning blob data for cert daemon...");
-
+  // The bytes the cert daemon will pull back from the gateway. Build them
+  // FIRST so the chain hashes can be derived from these exact bytes — the
+  // trace-bundle's own rootHash is for trace-bundle audit, not for the
+  // receipt's `base_root_sha256`.
   const content = Buffer.from(
     JSON.stringify({
       rootHash: bundle.rootHash,
@@ -182,6 +166,29 @@ async function main() {
       timestamp: new Date().toISOString(),
     }),
   );
+
+  const contentHash =
+    "0x" + createHash("sha256").update(content).digest("hex");
+
+  // Canonical chunk-Merkle root over the same chunks the cert daemon will
+  // re-hash. Byte-for-byte identical to `daemon/merkle.py`.
+  const baseRoot = computeBaseRoot(content);
+
+  const result = await submitReceipt(provider, {
+    contentHash,
+    rootHash: baseRoot,
+    manifestHash: "0x" + bundle.manifestHash.replace(/^0x/, ""),
+  });
+
+  log("STEP 2", `Receipt ID:  ${result.receiptId}`);
+  log("STEP 2", `Block:       ${result.blockHash} (#${result.blockNumber})`);
+  log("STEP 2", `base_root:   ${baseRoot}`);
+  hr();
+
+  // =========================================================================
+  // Step 3: Provision blob data for cert daemon
+  // =========================================================================
+  log("STEP 3", "Provisioning blob data for cert daemon...");
 
   const { manifest, chunks } = prepareBlobData(result.receiptId, content);
   const receiptDir = join(BLOB_DIR, result.receiptId);

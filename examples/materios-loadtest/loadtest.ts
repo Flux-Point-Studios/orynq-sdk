@@ -37,6 +37,7 @@ import {
   isCertified,
   waitForMotra,
   queryMotraBalance,
+  computeBaseRoot,
 } from "../../packages/anchors-materios/dist/index.js";
 
 import type { BlobGatewayConfig } from "../../packages/anchors-materios/dist/index.js";
@@ -110,12 +111,34 @@ function log(tag: string, msg: string) {
   console.log(`[${ts}] ${tag.padEnd(8)} ${msg}`);
 }
 
-function generateHashes() {
-  const content = Buffer.from(`loadtest-${Date.now()}-${Math.random()}`);
-  const contentHash = "0x" + createHash("sha256").update(content).digest("hex");
-  const rootHash = "0x" + createHash("sha256").update(Buffer.from("root-" + contentHash)).digest("hex");
-  const manifestHash = "0x" + createHash("sha256").update(Buffer.from("manifest-" + contentHash)).digest("hex");
-  return { contentHash, rootHash, manifestHash };
+/**
+ * Build a self-consistent receipt envelope: generates the content bytes that
+ * will be uploaded to the gateway AND derives the on-chain hashes from those
+ * exact bytes. `rootHash` is the canonical chunk-Merkle root the cert daemon
+ * will recompute when it pulls the chunks back — this is what makes the
+ * receipt pass strict ROOT_VERIFIED.
+ */
+function generatePayload(): {
+  content: Buffer;
+  contentHash: string;
+  rootHash: string;
+  manifestHash: string;
+} {
+  // 1-4 KB of pseudo-random content per receipt, deterministic w.r.t. time.
+  const size = 1024 + Math.floor(Math.random() * 3072);
+  const content = randomBytes(size);
+  const contentHash =
+    "0x" + createHash("sha256").update(content).digest("hex");
+  const rootHash = computeBaseRoot(content);
+  // Manifest hash placeholder — cert daemon doesn't verify this; only the
+  // sponsored-receipt flow + uploadBlobs path compute the real storage
+  // locator hash.
+  const manifestHash =
+    "0x" +
+    createHash("sha256")
+      .update(Buffer.from("manifest-" + contentHash))
+      .digest("hex");
+  return { content, contentHash, rootHash, manifestHash };
 }
 
 async function queryCongestion(provider: MateriosProvider): Promise<CongestionSample> {
@@ -150,19 +173,20 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function writeBlobData(receiptId: string): Promise<void> {
+async function writeBlobData(
+  receiptId: string,
+  contentHash: string,
+  content: Buffer,
+): Promise<void> {
   if (!WITH_BLOBS && !BLOB_GATEWAY) return;
-
-  // Generate 1-4KB of random content
-  const size = 1024 + Math.floor(Math.random() * 3072);
-  const content = randomBytes(size);
 
   const { manifest, chunks } = prepareBlobData(receiptId, content);
 
-  // If gateway is configured, upload via HTTP instead of writing to disk
+  // If gateway is configured, upload via HTTP instead of writing to disk.
+  // The gateway keys blobs by contentHash, NOT receiptId.
   if (BLOB_GATEWAY) {
     const result = await uploadBlobs(
-      receiptId.replace(/^0x/, ""),
+      contentHash.replace(/^0x/, ""),
       manifest,
       chunks,
       BLOB_GATEWAY,
@@ -212,10 +236,14 @@ async function runSequential(mode: "baseline" | "burst") {
 
   try {
     for (let i = 0; i < COUNT; i++) {
-      const hashes = generateHashes();
+      const payload = generatePayload();
 
       try {
-        const result = await submitReceipt(provider, hashes);
+        const result = await submitReceipt(provider, {
+          contentHash: payload.contentHash,
+          rootHash: payload.rootHash,
+          manifestHash: payload.manifestHash,
+        });
         const sample = await queryCongestion(provider);
         congestion.push(sample);
 
@@ -228,7 +256,11 @@ async function runSequential(mode: "baseline" | "burst") {
         };
         receipts.push(entry);
 
-        await writeBlobData(result.receiptId);
+        await writeBlobData(
+          result.receiptId,
+          payload.contentHash,
+          payload.content,
+        );
 
         log("SUBMIT", `#${i + 1} receipt=${result.receiptId.slice(0, 18)}... block=#${result.blockNumber} congestion=${sample.congestionRate}`);
       } catch (err: unknown) {
@@ -277,10 +309,18 @@ async function runParallel() {
         const globalIdx = batch * SIGNERS.length + idx;
         if (globalIdx >= COUNT) return;
 
-        const hashes = generateHashes();
+        const payload = generatePayload();
         try {
-          const result = await submitReceipt(provider, hashes);
-          await writeBlobData(result.receiptId);
+          const result = await submitReceipt(provider, {
+            contentHash: payload.contentHash,
+            rootHash: payload.rootHash,
+            manifestHash: payload.manifestHash,
+          });
+          await writeBlobData(
+            result.receiptId,
+            payload.contentHash,
+            payload.content,
+          );
           return {
             receiptId: result.receiptId,
             block: result.blockNumber,
