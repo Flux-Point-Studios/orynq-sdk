@@ -369,13 +369,18 @@ def _v2_record_to_wire(record: Mapping[str, Any]) -> Dict[str, Any]:
     if not isinstance(worker_sig, (bytes, bytearray)) or len(worker_sig) != 64:
         raise SubmitError("worker_signature must be 64-byte bytes")
 
+    # Wire field names match the gateway-side validator's spec exactly — bare
+    # `*_pubkey` / `*_signature`, no `_hex` suffix. The bytes are still
+    # serialized as hex strings; the suffix in the field NAME was a stylistic
+    # divergence from the spec that broke gateway acceptance (gateway reads
+    # `hardware_spec.fleet_operator_pubkey`, not `..._pubkey_hex`).
     wire_hw = {
         "cpu_cores": hardware_spec["cpu_cores"],
         "ram_gb": hardware_spec["ram_gb"],
         "gpu_type": hardware_spec["gpu_type"],
         "gpu_count": hardware_spec["gpu_count"],
-        "fleet_operator_pubkey_hex": bytes(hw_pub).hex(),
-        "fleet_operator_signature_hex": bytes(hw_sig).hex(),
+        "fleet_operator_pubkey": bytes(hw_pub).hex(),
+        "fleet_operator_signature": bytes(hw_sig).hex(),
         "issued_ms": hardware_spec["issued_ms"],
     }
 
@@ -387,8 +392,8 @@ def _v2_record_to_wire(record: Mapping[str, Any]) -> Dict[str, Any]:
         "period_end_ms": record["period_end_ms"],
         "metrics": dict(record["metrics"]),
         "hardware_spec": wire_hw,
-        "worker_pubkey_hex": bytes(worker_pub).hex(),
-        "worker_signature_hex": bytes(worker_sig).hex(),
+        "worker_pubkey": bytes(worker_pub).hex(),
+        "worker_signature": bytes(worker_sig).hex(),
     }
 
     obs = record.get("observer")
@@ -402,8 +407,8 @@ def _v2_record_to_wire(record: Mapping[str, Any]) -> Dict[str, Any]:
         if not isinstance(obs_sig, (bytes, bytearray)) or len(obs_sig) != 64:
             raise SubmitError("observer.observer_signature must be 64-byte bytes")
         wire["observer"] = {
-            "observer_pubkey_hex": bytes(obs_pub).hex(),
-            "observer_signature_hex": bytes(obs_sig).hex(),
+            "observer_pubkey": bytes(obs_pub).hex(),
+            "observer_signature": bytes(obs_sig).hex(),
         }
 
     return wire

@@ -145,15 +145,15 @@ def test_cli_v2_submit_happy_path_no_observer(
                 "gpu_type": body["hardware_spec"]["gpu_type"],
                 "gpu_count": body["hardware_spec"]["gpu_count"],
                 "fleet_operator_pubkey": bytes.fromhex(
-                    body["hardware_spec"]["fleet_operator_pubkey_hex"]
+                    body["hardware_spec"]["fleet_operator_pubkey"]
                 ),
                 "fleet_operator_signature": bytes.fromhex(
-                    body["hardware_spec"]["fleet_operator_signature_hex"]
+                    body["hardware_spec"]["fleet_operator_signature"]
                 ),
                 "issued_ms": body["hardware_spec"]["issued_ms"],
             },
-            "worker_pubkey": bytes.fromhex(body["worker_pubkey_hex"]),
-            "worker_signature": bytes.fromhex(body["worker_signature_hex"]),
+            "worker_pubkey": bytes.fromhex(body["worker_pubkey"]),
+            "worker_signature": bytes.fromhex(body["worker_signature"]),
         }
         ch = canonical_content_hash_v2(rec)
         return httpx.Response(
@@ -234,15 +234,15 @@ def test_cli_v2_submit_with_observer_attaches_block(
                 "gpu_type": body["hardware_spec"]["gpu_type"],
                 "gpu_count": body["hardware_spec"]["gpu_count"],
                 "fleet_operator_pubkey": bytes.fromhex(
-                    body["hardware_spec"]["fleet_operator_pubkey_hex"]
+                    body["hardware_spec"]["fleet_operator_pubkey"]
                 ),
                 "fleet_operator_signature": bytes.fromhex(
-                    body["hardware_spec"]["fleet_operator_signature_hex"]
+                    body["hardware_spec"]["fleet_operator_signature"]
                 ),
                 "issued_ms": body["hardware_spec"]["issued_ms"],
             },
-            "worker_pubkey": bytes.fromhex(body["worker_pubkey_hex"]),
-            "worker_signature": bytes.fromhex(body["worker_signature_hex"]),
+            "worker_pubkey": bytes.fromhex(body["worker_pubkey"]),
+            "worker_signature": bytes.fromhex(body["worker_signature"]),
         }
         # Observer doesn't change worker pre-image.
         ch = canonical_content_hash_v2(rec)
@@ -285,8 +285,8 @@ def test_cli_v2_submit_with_observer_attaches_block(
     assert rc == 0
     body = captured["body"]
     assert "observer" in body
-    assert "observer_pubkey_hex" in body["observer"]
-    assert "observer_signature_hex" in body["observer"]
+    assert "observer_pubkey" in body["observer"]
+    assert "observer_signature" in body["observer"]
 
     out = capsys.readouterr().out
     parsed = json.loads(out)
@@ -370,15 +370,15 @@ def test_cli_v2_skip_spec_verify_bypasses_check(
                 "gpu_type": body["hardware_spec"]["gpu_type"],
                 "gpu_count": body["hardware_spec"]["gpu_count"],
                 "fleet_operator_pubkey": bytes.fromhex(
-                    body["hardware_spec"]["fleet_operator_pubkey_hex"]
+                    body["hardware_spec"]["fleet_operator_pubkey"]
                 ),
                 "fleet_operator_signature": bytes.fromhex(
-                    body["hardware_spec"]["fleet_operator_signature_hex"]
+                    body["hardware_spec"]["fleet_operator_signature"]
                 ),
                 "issued_ms": body["hardware_spec"]["issued_ms"],
             },
-            "worker_pubkey": bytes.fromhex(body["worker_pubkey_hex"]),
-            "worker_signature": bytes.fromhex(body["worker_signature_hex"]),
+            "worker_pubkey": bytes.fromhex(body["worker_pubkey"]),
+            "worker_signature": bytes.fromhex(body["worker_signature"]),
         }
         ch = canonical_content_hash_v2(rec)
         return httpx.Response(
