@@ -28,8 +28,10 @@ jobs:
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 9
+        # Don't pin a `version:` here — pnpm/action-setup auto-reads
+        # `packageManager` from package.json (currently pnpm@8.14.0).
+        # Setting `version:` AND `packageManager:` errors with
+        # ERR_PNPM_BAD_PM_VERSION ("Multiple versions of pnpm specified").
 
       - name: Set up Node
         uses: actions/setup-node@v4
