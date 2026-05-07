@@ -122,6 +122,24 @@ SCHEMA_VERSION_V2 = "compute_metering_v2"
 SCHEMA_HASH_V2_HEX = hashlib.sha256(SCHEMA_VERSION_V2.encode("utf-8")).hexdigest()
 FLEET_OP_TAG_V2 = "fleet_op_attestation_v1"
 
+# --- Wave 3 Phase 2: compute_metering_v2.1 attestation evidence ---
+
+SCHEMA_VERSION_V2_1 = "compute_metering_v2.1"
+SCHEMA_HASH_V2_1_HEX = hashlib.sha256(
+    SCHEMA_VERSION_V2_1.encode("utf-8")
+).hexdigest()
+
+# Discriminant order — PINNED across TS + Python + the parallel pallet enum.
+# Adding a new variant is a non-breaking change ONLY at the tail.
+EVIDENCE_TYPES = (
+    "amd_sev_snp",         # 0
+    "intel_tdx",           # 1
+    "arm_trustzone",       # 2
+    "reproducible_build",  # 3
+    "zkvm_execution",      # 4
+)
+EVIDENCE_TYPE_DISCRIMINANT = {t: i for i, t in enumerate(EVIDENCE_TYPES)}
+
 
 # --- Tagged value types for the canonical encoder ---
 
@@ -386,11 +404,24 @@ def canonical_cbor_for_fleet_op_sig(record: dict) -> bytes:
     )
 
 
-def canonical_cbor_for_worker_sig(record: dict) -> bytes:
+def canonical_cbor_for_worker_sig(
+    record: dict,
+    attestation_evidence=None,
+) -> bytes:
     """Build canonical CBOR bytes for the worker-signature pre-image.
 
+    v2 (default — no `attestation_evidence`):
         [ "compute_metering_v2", worker_id, tenant_id, period_start_ms,
           period_end_ms, metrics, hardware_spec_full, worker_pubkey_bytes ]
+
+    v2.1 (when `attestation_evidence` is non-empty):
+        [ "compute_metering_v2.1", worker_id, tenant_id, period_start_ms,
+          period_end_ms, metrics, hardware_spec_full, worker_pubkey_bytes,
+          attestation_evidence_array ]   # 9th element, sorted by EvidenceType
+
+    Backwards compat: when `attestation_evidence` is omitted, None, or an
+    empty list, the schema literal stays `compute_metering_v2` and the bytes
+    are byte-identical to today's v2 — full backwards compatibility (PINNED).
 
     The observer signature, when present, signs THESE EXACT BYTES under the
     observer pubkey — never re-encode for the observer.
@@ -398,10 +429,20 @@ def canonical_cbor_for_worker_sig(record: dict) -> bytes:
     Args:
         record: A dict with all required v2 fields. `worker_signature` is
             ignored; `observer` is ignored. `worker_pubkey` is hex64.
+        attestation_evidence: Optional list of evidence-entry dicts, each
+            with shape {"evidence_type": str, "nonce": hex64,
+            "payload": dict}. Sorted by EvidenceType discriminant before
+            encoding. Backwards-compatible default is None.
 
     Returns:
         Canonical CBOR-encoded bytes, deterministic per RFC 8949 §4.2.1.
     """
+    # Allow the caller to pass evidence inline as `record["attestation_evidence"]`
+    # (matches the wire JSON shape) — that overload exists so the worker SDK
+    # doesn't have to split fields across two args.
+    if attestation_evidence is None:
+        attestation_evidence = record.get("attestation_evidence")
+    has_evidence = bool(attestation_evidence)
     required = (
         "worker_id",
         "tenant_id",
@@ -414,20 +455,20 @@ def canonical_cbor_for_worker_sig(record: dict) -> bytes:
     for k in required:
         if k not in record:
             raise KeyError(f"canonical_cbor_for_worker_sig: missing '{k}'")
-    return _v2_encode_cbor(
-        _v2_cbor_array(
-            [
-                _v2_cbor_text(SCHEMA_VERSION_V2),
-                _v2_cbor_text(record["worker_id"]),
-                _v2_cbor_text(record["tenant_id"]),
-                _v2_cbor_int(record["period_start_ms"]),
-                _v2_cbor_int(record["period_end_ms"]),
-                _v2_metrics_to_cbor(record["metrics"]),
-                _v2_hardware_spec_full_to_cbor(record["hardware_spec"]),
-                _v2_cbor_bytes(_v2_hex_to_bytes(record["worker_pubkey"])),
-            ]
-        )
-    )
+
+    elements = [
+        _v2_cbor_text(SCHEMA_VERSION_V2_1 if has_evidence else SCHEMA_VERSION_V2),
+        _v2_cbor_text(record["worker_id"]),
+        _v2_cbor_text(record["tenant_id"]),
+        _v2_cbor_int(record["period_start_ms"]),
+        _v2_cbor_int(record["period_end_ms"]),
+        _v2_metrics_to_cbor(record["metrics"]),
+        _v2_hardware_spec_full_to_cbor(record["hardware_spec"]),
+        _v2_cbor_bytes(_v2_hex_to_bytes(record["worker_pubkey"])),
+    ]
+    if has_evidence:
+        elements.append(_v2_evidence_array_to_cbor(attestation_evidence))
+    return _v2_encode_cbor(_v2_cbor_array(elements))
 
 
 # Observer signs the EXACT SAME bytes as the worker (per the v2 spec — observer
@@ -437,8 +478,210 @@ def canonical_cbor_for_worker_sig(record: dict) -> bytes:
 canonical_cbor_for_observer_sig = canonical_cbor_for_worker_sig
 
 
-def canonical_content_hash_v2(record: dict) -> str:
+def canonical_content_hash_v2(record: dict, attestation_evidence=None) -> str:
     """SHA-256 hex of the worker-signature pre-image. The upstream
-    `content_hash` for the v2 sponsored-receipt anchor.
+    `content_hash` for the v2 / v2.1 sponsored-receipt anchor.
+
+    `attestation_evidence` is an optional list — when present and non-empty,
+    the v2.1 pre-image is used (extended by one CBOR array element). When
+    None or empty, the v2 pre-image is used (byte-identical to today's v2).
     """
-    return hashlib.sha256(canonical_cbor_for_worker_sig(record)).hexdigest()
+    return hashlib.sha256(
+        canonical_cbor_for_worker_sig(record, attestation_evidence)
+    ).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Wave 3 Phase 2 — attestation_evidence canonical CBOR
+#
+# The mirror of the TS-side `evidenceArrayToCborValue` /
+# `attestationEvidenceHash` / `deriveEvidenceNonce` / `*_b64` payload encoder.
+# Pattern documented in services/blob-gateway/src/schemas/compute_metering_v2.ts.
+# Cross-language byte equality is enforced by the
+# `tests/test_v2_1_cross_lang.py` harness.
+# ---------------------------------------------------------------------------
+
+import re
+
+_HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+_BASE64_RE = re.compile(r"^[A-Za-z0-9+/]*={0,2}$")
+
+
+def _v2_decode_b64_strict(s: str) -> bytes:
+    """Strict RFC 4648 §4 base64 decoder.
+
+    `s` must use the standard alphabet (no URL-safe variant) with padding.
+    Mirrors the TS `decodeBase64Strict` rule: regex pre-check then standard
+    base64 decode. Throws `TypeError` (not `ValueError`) so that bad-payload
+    errors are uniform with the rest of the encoder's surface.
+    """
+    import base64
+
+    if not isinstance(s, str) or not _BASE64_RE.match(s):
+        raise TypeError(
+            f"evidence payload: value of *_b64 key must be RFC 4648 base64, "
+            f'got "{s[:32] if isinstance(s, str) else type(s).__name__}..."'
+        )
+    return base64.b64decode(s, validate=True)
+
+
+def _v2_payload_value_to_cbor(value, key_context=None):
+    """Recursively convert a JSON-shaped Python value to a tagged CBOR value.
+
+    The rules MUST match the TS `payloadJsonToCborValue` exactly:
+
+      * dict        -> CBOR map (sorted on encode)
+      * list/tuple  -> CBOR array
+      * str         -> CBOR text  (default), OR
+      * str under a key ending in `_b64` -> CBOR bytes (decoded base64)
+      * int (not bool) -> CBOR int
+      * float       -> CBOR float64 (8 bytes, never shortened)
+      * bool        -> REJECTED (Python's `True is 1` quirk)
+      * None        -> REJECTED
+    """
+    if value is None:
+        raise TypeError("evidence payload: None is not permitted")
+    if isinstance(value, bool):
+        raise TypeError("evidence payload: bool is not permitted")
+    if isinstance(value, int):
+        return _v2_cbor_int(value)
+    if isinstance(value, float):
+        if value != value:  # NaN
+            raise TypeError("evidence payload: NaN not permitted")
+        if value in (float("inf"), float("-inf")):
+            raise TypeError("evidence payload: Infinity not permitted")
+        return _v2_cbor_float(value)
+    if isinstance(value, str):
+        if isinstance(key_context, str) and key_context.endswith("_b64"):
+            return _v2_cbor_bytes(_v2_decode_b64_strict(value))
+        return _v2_cbor_text(value)
+    if isinstance(value, (list, tuple)):
+        # No key context for array elements (the `_b64` rule binds to the
+        # immediate parent dict key).
+        return _v2_cbor_array([_v2_payload_value_to_cbor(v, None) for v in value])
+    if isinstance(value, dict):
+        pairs = []
+        for k in value.keys():
+            if not isinstance(k, str):
+                raise TypeError(
+                    f"evidence payload: map keys must be str, got {type(k).__name__}"
+                )
+            pairs.append((k, _v2_payload_value_to_cbor(value[k], k)))
+        return _v2_cbor_map(pairs)
+    raise TypeError(
+        f"evidence payload: unsupported value type {type(value).__name__} "
+        "(must be str/int/float/list/dict)"
+    )
+
+
+def _v2_evidence_entry_to_cbor(entry: dict):
+    """Build the canonical-CBOR-tagged form of one evidence entry.
+
+    Entry shape (wire JSON):
+        {"evidence_type": str, "nonce": hex64, "payload": dict}
+
+    Encodes to a CBOR map with three keys: evidence_type (text), nonce
+    (32 bytes), payload (canonical-CBOR sub-map). Map keys are sorted on
+    encode, matching the v2 metrics-map sort.
+    """
+    if not isinstance(entry, dict):
+        raise TypeError(
+            f"evidence entry: must be a dict, got {type(entry).__name__}"
+        )
+    et = entry.get("evidence_type")
+    if et not in EVIDENCE_TYPES:
+        raise TypeError(
+            f'evidence entry: unknown evidence_type "{et}" '
+            f"(allowed: {EVIDENCE_TYPES})"
+        )
+    nonce = entry.get("nonce")
+    if not isinstance(nonce, str) or not _HEX64_RE.match(nonce):
+        raise TypeError(
+            f"evidence entry: nonce must be 64-char lowercase hex, got '{nonce}'"
+        )
+    payload = entry.get("payload")
+    if not isinstance(payload, dict):
+        raise TypeError("evidence entry: payload must be a JSON object (dict)")
+    return _v2_cbor_map(
+        [
+            ("evidence_type", _v2_cbor_text(et)),
+            ("nonce", _v2_cbor_bytes(bytes.fromhex(nonce))),
+            ("payload", _v2_payload_value_to_cbor(payload)),
+        ]
+    )
+
+
+def _v2_evidence_array_to_cbor(entries):
+    """Convert a list of evidence-entry dicts into a CBOR array (sorted).
+
+    Sort key (PR #34 M-2): (EVIDENCE_TYPE_DISCRIMINANT, attestor_pubkey_hex).
+    The pubkey is a metadata-only field — it's the canonical tiebreaker for
+    same-discriminant entries (matching the JS-side
+    `listReceiptEvidence` ORDER BY). When `attestor_pubkey` is absent (the
+    worker-side SDK case where evidence is single-source), it defaults to ""
+    so existing single-source vectors are byte-stable. Both sides use byte-lex
+    comparison on lowercase hex; Python's `sorted` is stable so the tuple key
+    pins the order regardless of insertion order.
+    """
+    if not isinstance(entries, (list, tuple)):
+        raise TypeError(
+            f"attestation_evidence must be a list, got {type(entries).__name__}"
+        )
+    sorted_entries = sorted(
+        entries,
+        key=lambda e: (
+            EVIDENCE_TYPE_DISCRIMINANT[e["evidence_type"]],
+            e.get("attestor_pubkey", ""),
+        ),
+    )
+    return _v2_cbor_array(
+        [_v2_evidence_entry_to_cbor(e) for e in sorted_entries]
+    )
+
+
+def derive_evidence_nonce(content_hash_hex: str, evidence_type: str) -> str:
+    """Compute nonce = sha256(content_hash_bytes || utf8(evidence_type)).
+
+    Mirrors the TS `deriveEvidenceNonce`. Returns 64-char lowercase hex.
+    """
+    cleaned = (
+        content_hash_hex[2:]
+        if content_hash_hex.startswith("0x")
+        else content_hash_hex
+    )
+    if not _HEX64_RE.match(cleaned):
+        raise TypeError(
+            f"derive_evidence_nonce: content_hash must be 32 bytes "
+            f"(64 hex chars), got '{content_hash_hex}'"
+        )
+    if evidence_type not in EVIDENCE_TYPES:
+        raise TypeError(
+            f"derive_evidence_nonce: unknown evidence_type '{evidence_type}'"
+        )
+    h = hashlib.sha256()
+    h.update(bytes.fromhex(cleaned))
+    h.update(evidence_type.encode("utf-8"))
+    return h.hexdigest()
+
+
+def attestation_evidence_hash(entries) -> str:
+    """SHA-256 hex of the canonical-CBOR encoding of an evidence array.
+
+    Empty-vec case: hash of CBOR-empty-array (single byte 0x80) — NOT zeros.
+    The empty-vec value is pinned in tests:
+        `76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71`
+    """
+    cbor_bytes = _v2_encode_cbor(_v2_evidence_array_to_cbor(entries))
+    return hashlib.sha256(cbor_bytes).hexdigest()
+
+
+def canonical_cbor_for_evidence_payload(payload: dict) -> bytes:
+    """Convenience: canonical CBOR bytes for a single evidence payload dict.
+
+    Used by the gateway route for verifying the attestor's signature: the
+    attestor signs canonical CBOR of the payload (NOT the full record), so
+    SDK consumers and gateway verify against the same bytes.
+    """
+    if not isinstance(payload, dict):
+        raise TypeError("payload must be a dict")
+    return _v2_encode_cbor(_v2_payload_value_to_cbor(payload))

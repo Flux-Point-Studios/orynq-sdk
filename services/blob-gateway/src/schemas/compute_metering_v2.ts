@@ -78,9 +78,26 @@ import { hexToU8a, u8aToHex } from "@polkadot/util";
 /** Exact schema version string. Anything else = reject. */
 export const SCHEMA_VERSION = "compute_metering_v2";
 
+/**
+ * Wave 3 Phase 2 schema bump literal. ADDITIVE — when an `attestation_evidence`
+ * array is present and non-empty on a record, the wire schema_version flips
+ * from `compute_metering_v2` to `compute_metering_v2.1` and the worker
+ * pre-image is extended by one CBOR array element (the sorted evidence array).
+ *
+ * When `attestation_evidence` is absent or empty, schema_version stays
+ * `compute_metering_v2` and the pre-image is byte-identical to today's v2 —
+ * full backwards compatibility. See § 3.1 / § 3.4 of the design doc.
+ */
+export const SCHEMA_VERSION_V2_1 = "compute_metering_v2.1";
+
 /** sha256 of the schema-version string — used as `schema_hash` upstream. */
 export const SCHEMA_HASH_HEX = createHash("sha256")
   .update(SCHEMA_VERSION, "utf-8")
+  .digest("hex");
+
+/** sha256 of the v2.1 schema literal — used as `schema_hash` for v2.1 records. */
+export const SCHEMA_HASH_V2_1_HEX = createHash("sha256")
+  .update(SCHEMA_VERSION_V2_1, "utf-8")
   .digest("hex");
 
 /** Tag string used as the array head of the fleet-op attestation pre-image. */
@@ -116,6 +133,91 @@ export const JS_SAFE_INT = Number.MAX_SAFE_INTEGER;
 /** Hex regex for 32-byte pubkey (64 chars) and 64-byte signature (128 chars). */
 const HEX64 = /^[0-9a-f]{64}$/;
 const HEX128 = /^[0-9a-f]{128}$/;
+
+// ---------------------------------------------------------------------------
+// Wave 3 Phase 2 — Polychain attestation evidence (compute_metering_v2.1)
+//
+// Discriminator for evidence types. PINNED ORDER — index = SCALE-encoded
+// discriminant on the parallel pallet-side enum. Adding a new variant is a
+// non-breaking change ONLY at the tail; never insert, never rename. (Same
+// hazard as pallet indices, see feedback_pallet_index_shift.md.)
+// ---------------------------------------------------------------------------
+
+/**
+ * Evidence-type discriminants. The numeric value is stable forever — these
+ * are the same indices used by the pallet-tee-attestation `EvidenceType`
+ * enum (§ 3.2 of the design doc) and by the canonical sort order of the
+ * v2.1 worker pre-image (§ 3.4).
+ */
+export const EVIDENCE_TYPES = [
+  "amd_sev_snp",         // 0 — AMD SEV-SNP TEE
+  "intel_tdx",           // 1 — Intel TDX TEE
+  "arm_trustzone",       // 2 — ARM TrustZone (Acurast / Android Key Attest.)
+  "reproducible_build",  // 3 — co-signed Nix-style reproducible build
+  "zkvm_execution",      // 4 — ZK-VM execution proof (Phase 4 placeholder)
+] as const;
+export type EvidenceType = (typeof EVIDENCE_TYPES)[number];
+
+/** Map evidence_type → discriminant. PINNED — load-bearing for sort order. */
+export const EVIDENCE_TYPE_DISCRIMINANT: Readonly<Record<EvidenceType, number>> = {
+  amd_sev_snp: 0,
+  intel_tdx: 1,
+  arm_trustzone: 2,
+  reproducible_build: 3,
+  zkvm_execution: 4,
+};
+
+const EVIDENCE_TYPE_SET: ReadonlySet<string> = new Set<string>(EVIDENCE_TYPES);
+
+/**
+ * One evidence entry on the wire. Payloads are evidence_type-specific maps
+ * (their inner shape is opaque to this schema; verifier-side code in the
+ * cert-daemon decodes them per § 4 of the design doc). The schema only
+ * pins:
+ *   - evidence_type: one of EVIDENCE_TYPES
+ *   - nonce: 64-char lowercase hex (32 raw bytes), MUST equal
+ *     sha256(content_hash || utf8(evidence_type)) — checked by the gateway
+ *     route, NOT by this validator (this validator is shape-only).
+ *   - payload: a JSON object. Encoded as a canonical-CBOR sub-map for the
+ *     pre-image (RFC 8949 §4.2.1 sorted keys), with binary leaf values
+ *     decoded from base64 before encoding to CBOR major-type-2 (matching
+ *     the existing v2 binary handling, see §3.1 of the design doc).
+ */
+export interface AttestationEvidenceEntry {
+  evidence_type: EvidenceType;
+  /** 64-char lowercase hex (32 raw bytes). */
+  nonce: string;
+  payload: Record<string, unknown>;
+}
+
+/** UTF-8 vendor-tag bytes used in the nonce derivation. */
+export function evidenceVendorTagBytes(t: EvidenceType): Uint8Array {
+  return new TextEncoder().encode(t);
+}
+
+/**
+ * Compute the canonical nonce binding for an evidence entry.
+ *
+ *   nonce = sha256(content_hash_bytes || utf8(evidence_type))
+ *
+ * `contentHashHex` is the upstream content_hash hex (32 bytes / 64 chars).
+ * Returns 64-char lowercase hex.
+ */
+export function deriveEvidenceNonce(
+  contentHashHex: string,
+  evidenceType: EvidenceType,
+): string {
+  const cleaned = contentHashHex.startsWith("0x") ? contentHashHex.slice(2) : contentHashHex;
+  if (!HEX64.test(cleaned)) {
+    throw new TypeError(
+      `deriveEvidenceNonce: content_hash must be 32 bytes (64 hex chars), got "${contentHashHex}"`,
+    );
+  }
+  return createHash("sha256")
+    .update(hexToU8a("0x" + cleaned))
+    .update(evidenceVendorTagBytes(evidenceType))
+    .digest("hex");
+}
 
 /**
  * Permitted `gpu_type` values. Closed set so future workers can't claim
@@ -431,6 +533,179 @@ export const cborMap = (v: Array<[string, CborValue]>): CborValue => ({
 });
 
 // ---------------------------------------------------------------------------
+// Wave 3 Phase 2 — JSON-payload to canonical-CBOR conversion.
+//
+// Each evidence entry's `payload` is an arbitrary JSON object on the wire.
+// We canonicalise it by:
+//   - dict       → CBOR map (sorted by encoded-key bytes)
+//   - list/array → CBOR array (preserves order)
+//   - string     → CBOR text   (default), OR
+//   - string with key ending in `_b64`  → CBOR bytes (decoded from base64)
+//   - integer    → CBOR int    (uses JS Number.isInteger)
+//   - float      → CBOR float64 (8 bytes, never shortened — same rule as v2 metrics)
+//   - boolean    → REJECTED — no booleans permitted in evidence payloads
+//                  (the discriminator types of CBOR maps differ across Python's
+//                   `True is 1` quirk; safer to forbid altogether)
+//   - null       → REJECTED — same reason
+//
+// The `_b64` key-suffix is the pinned binary marker. PINNED across both
+// languages — any key whose name ends with `_b64` has its value decoded from
+// RFC-4648 base64 to raw bytes before CBOR encoding. The key name keeps the
+// `_b64` suffix in the canonical map (so sort order is stable). Cross-language
+// determinism comes from this single rule.
+//
+// Why a key-suffix convention rather than per-evidence-type schemas? The
+// canonicaliser is shape-agnostic — it doesn't know that `arm_trustzone`
+// payloads carry `key_attestation_chain` etc. — so it can't know which fields
+// are binary without a marker. The `_b64` suffix is the marker. Every wire
+// payload that the cert-daemon eventually parses must follow this convention.
+// ---------------------------------------------------------------------------
+
+/**
+ * RFC 4648 §4 base64 alphabet (no URL-safe variant; no whitespace allowed).
+ * Padding `=` characters tolerated. Decoder is strict on character set.
+ */
+const BASE64_REGEX = /^[A-Za-z0-9+/]*={0,2}$/;
+
+function decodeBase64Strict(s: string): Uint8Array {
+  if (!BASE64_REGEX.test(s)) {
+    throw new TypeError(
+      `evidence payload: value of *_b64 key must be RFC 4648 base64, got "${s.slice(0, 32)}..."`,
+    );
+  }
+  // Buffer.from('...', 'base64') is lenient; for cross-language determinism
+  // we depend on the strict-regex pre-check and then defer to Node's decoder.
+  // (Strict checking up-front means a non-base64 character throws here, NOT
+  // during decode — keeping error sites predictable.)
+  const decoded = Buffer.from(s, "base64");
+  return new Uint8Array(decoded);
+}
+
+/**
+ * Convert a JSON-shaped payload value into a tagged CBOR value.
+ *
+ * `keyContext` is the parent key used for the `_b64` suffix check. At the
+ * top of a payload (or for array elements), `keyContext` is undefined and
+ * strings are treated as text.
+ */
+function payloadJsonToCborValue(value: unknown, keyContext?: string): CborValue {
+  if (value === null) {
+    throw new TypeError("evidence payload: null is not permitted");
+  }
+  if (typeof value === "boolean") {
+    throw new TypeError("evidence payload: boolean is not permitted");
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new TypeError(`evidence payload: number must be finite, got ${value}`);
+    }
+    if (Number.isInteger(value)) {
+      return cborInt(value);
+    }
+    return cborFloat(value);
+  }
+  if (typeof value === "string") {
+    if (keyContext !== undefined && keyContext.endsWith("_b64")) {
+      return cborBytes(decodeBase64Strict(value));
+    }
+    return cborText(value);
+  }
+  if (Array.isArray(value)) {
+    // Array elements have NO key context — `_b64` only applies via the
+    // immediate parent key. (If arrays-of-bytes are needed in the future,
+    // wrap them in a `{ items_b64: [...] }` map and the encoder will
+    // descend into the map, BUT individual array items don't get the
+    // suffix treatment. This matches the design doc's "opaque map" framing.)
+    return cborArray(value.map((v) => payloadJsonToCborValue(v, undefined)));
+  }
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const pairs: Array<[string, CborValue]> = [];
+    for (const k of Object.keys(obj)) {
+      pairs.push([k, payloadJsonToCborValue(obj[k], k)]);
+    }
+    return cborMap(pairs);
+  }
+  throw new TypeError(
+    `evidence payload: unsupported value type ${typeof value} (must be string/number/array/object)`,
+  );
+}
+
+/**
+ * Build the canonical CBOR-tagged form of one attestation_evidence entry.
+ * Binary subfields (keys ending in `_b64`) are base64-decoded into byte
+ * strings (CBOR major-type-2). The result is a CBOR map with three keys:
+ * `evidence_type`, `nonce`, `payload`. Map keys are sorted at encode time.
+ */
+export function evidenceEntryToCborValue(entry: AttestationEvidenceEntry): CborValue {
+  if (!EVIDENCE_TYPE_SET.has(entry.evidence_type)) {
+    throw new TypeError(
+      `evidence entry: unknown evidence_type "${entry.evidence_type}"`,
+    );
+  }
+  if (typeof entry.nonce !== "string" || !HEX64.test(entry.nonce)) {
+    throw new TypeError(
+      `evidence entry: nonce must be 64-char lowercase hex, got "${entry.nonce}"`,
+    );
+  }
+  if (entry.payload === null || typeof entry.payload !== "object" || Array.isArray(entry.payload)) {
+    throw new TypeError("evidence entry: payload must be a JSON object");
+  }
+  return cborMap([
+    ["evidence_type", cborText(entry.evidence_type)],
+    ["nonce", cborBytes(hexToU8a("0x" + entry.nonce))],
+    ["payload", payloadJsonToCborValue(entry.payload)],
+  ]);
+}
+
+/**
+ * Sort an evidence array IN PLACE by EvidenceType discriminant ascending.
+ * Returns the same array for chaining. Per § 3.4 of the design doc, the
+ * worker MUST sort before signing and the gateway MUST reject out-of-order
+ * arrays in a future enforcement pass (this codebase doesn't reject
+ * out-of-order today; the canonicaliser sorts deterministically regardless,
+ * and the route's nonce check binds each entry to its content_hash).
+ */
+export function sortEvidenceByDiscriminant(
+  entries: AttestationEvidenceEntry[],
+): AttestationEvidenceEntry[] {
+  entries.sort(
+    (a, b) =>
+      EVIDENCE_TYPE_DISCRIMINANT[a.evidence_type] -
+      EVIDENCE_TYPE_DISCRIMINANT[b.evidence_type],
+  );
+  return entries;
+}
+
+/**
+ * Build the canonical CBOR array for the `attestation_evidence` array.
+ * Entries are sorted by EvidenceType discriminant ascending (a non-mutating
+ * shallow copy is sorted; the input array is not modified).
+ */
+export function evidenceArrayToCborValue(
+  entries: AttestationEvidenceEntry[],
+): CborValue {
+  const sorted = entries.slice();
+  sortEvidenceByDiscriminant(sorted);
+  return cborArray(sorted.map(evidenceEntryToCborValue));
+}
+
+/**
+ * SHA-256 of the canonical-CBOR encoding of an evidence array. This is the
+ * `attestation_evidence_hash` returned by the gateway endpoint after the
+ * receipt's stored evidence vector is updated.
+ *
+ * The empty-vec case is the canonical-CBOR-hash of an empty CBOR array
+ * (single byte 0x80, major type 4 with length 0), per § E in the spec.
+ */
+export function attestationEvidenceHash(
+  entries: AttestationEvidenceEntry[],
+): string {
+  const cborBytes = encodeCbor(evidenceArrayToCborValue(entries));
+  return createHash("sha256").update(cborBytes).digest("hex");
+}
+
+// ---------------------------------------------------------------------------
 // Pre-image builders.
 // ---------------------------------------------------------------------------
 
@@ -513,27 +788,42 @@ export function canonicalCborForFleetOpSig(
 /**
  * Build the canonical CBOR bytes for the worker-signature pre-image.
  *
+ * v2 (default — no `attestation_evidence`):
  *   [ "compute_metering_v2", worker_id, tenant_id, period_start_ms,
  *     period_end_ms, metrics, hardware_spec_full, worker_pubkey_bytes ]
  *
+ * v2.1 (when `attestation_evidence` is non-empty):
+ *   [ "compute_metering_v2.1", worker_id, tenant_id, period_start_ms,
+ *     period_end_ms, metrics, hardware_spec_full, worker_pubkey_bytes,
+ *     attestation_evidence_array ]   // 9th element, sorted by EvidenceType
+ *
+ * Backwards compatibility (PINNED): when `attestation_evidence` is omitted
+ * (or supplied as an empty array), the schema literal stays
+ * `compute_metering_v2` and the bytes are byte-identical to today's v2.
+ *
  * The observer signature (when present) signs THESE EXACT BYTES under the
- * observer pubkey.
+ * observer pubkey — for v2 records that's the 8-element v2 array, for v2.1
+ * records that's the 9-element v2.1 array.
  */
 export function canonicalCborForWorkerSig(
   rec: Omit<ComputeMeteringV2, "worker_signature" | "observer">,
+  evidence?: AttestationEvidenceEntry[],
 ): Uint8Array {
-  return encodeCbor(
-    cborArray([
-      cborText(SCHEMA_VERSION),
-      cborText(rec.worker_id),
-      cborText(rec.tenant_id),
-      cborInt(rec.period_start_ms),
-      cborInt(rec.period_end_ms),
-      metricsToCbor(rec.metrics),
-      hardwareSpecFullToCbor(rec.hardware_spec),
-      cborBytes(hexToU8a("0x" + rec.worker_pubkey)),
-    ]),
-  );
+  const hasEvidence = evidence !== undefined && evidence.length > 0;
+  const baseElements: CborValue[] = [
+    cborText(hasEvidence ? SCHEMA_VERSION_V2_1 : SCHEMA_VERSION),
+    cborText(rec.worker_id),
+    cborText(rec.tenant_id),
+    cborInt(rec.period_start_ms),
+    cborInt(rec.period_end_ms),
+    metricsToCbor(rec.metrics),
+    hardwareSpecFullToCbor(rec.hardware_spec),
+    cborBytes(hexToU8a("0x" + rec.worker_pubkey)),
+  ];
+  if (hasEvidence) {
+    baseElements.push(evidenceArrayToCborValue(evidence));
+  }
+  return encodeCbor(cborArray(baseElements));
 }
 
 /**
@@ -542,9 +832,10 @@ export function canonicalCborForWorkerSig(
  */
 export function canonicalContentHash(
   rec: Omit<ComputeMeteringV2, "worker_signature" | "observer">,
+  evidence?: AttestationEvidenceEntry[],
 ): string {
   return createHash("sha256")
-    .update(canonicalCborForWorkerSig(rec))
+    .update(canonicalCborForWorkerSig(rec, evidence))
     .digest("hex");
 }
 
