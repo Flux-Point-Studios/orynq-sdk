@@ -612,14 +612,27 @@ def _v2_evidence_entry_to_cbor(entry: dict):
 
 
 def _v2_evidence_array_to_cbor(entries):
-    """Convert a list of evidence-entry dicts into a CBOR array (sorted)."""
+    """Convert a list of evidence-entry dicts into a CBOR array (sorted).
+
+    Sort key (PR #34 M-2): (EVIDENCE_TYPE_DISCRIMINANT, attestor_pubkey_hex).
+    The pubkey is a metadata-only field — it's the canonical tiebreaker for
+    same-discriminant entries (matching the JS-side
+    `listReceiptEvidence` ORDER BY). When `attestor_pubkey` is absent (the
+    worker-side SDK case where evidence is single-source), it defaults to ""
+    so existing single-source vectors are byte-stable. Both sides use byte-lex
+    comparison on lowercase hex; Python's `sorted` is stable so the tuple key
+    pins the order regardless of insertion order.
+    """
     if not isinstance(entries, (list, tuple)):
         raise TypeError(
             f"attestation_evidence must be a list, got {type(entries).__name__}"
         )
     sorted_entries = sorted(
         entries,
-        key=lambda e: EVIDENCE_TYPE_DISCRIMINANT[e["evidence_type"]],
+        key=lambda e: (
+            EVIDENCE_TYPE_DISCRIMINANT[e["evidence_type"]],
+            e.get("attestor_pubkey", ""),
+        ),
     )
     return _v2_cbor_array(
         [_v2_evidence_entry_to_cbor(e) for e in sorted_entries]

@@ -190,14 +190,21 @@ export function insertReceiptEvidence(
 }
 
 /**
- * Read all evidence rows for a receipt, sorted by EvidenceType discriminant
- * ascending. Used for recomputing the canonical evidence vector + hash.
+ * Read all evidence rows for a receipt, sorted by
+ *   (1) EvidenceType discriminant ASC (the canonical primary order), and
+ *   (2) attestor_pubkey_hex ASC byte-lex (the deterministic tiebreaker for
+ *       same-discriminant entries).
  *
- * Sort happens in JS (not SQL) because the discriminant ordering is
+ * Sort happens in JS (not solely in SQL) because the discriminant ordering is
  * pinned in `EVIDENCE_TYPE_DISCRIMINANT` rather than the alphabetical order
- * SQL would give. The pinned-discriminant rule is what guarantees the
- * evidence vector hash matches across TS encoders + the Python encoder + the
- * pallet-side Rust decoder.
+ * SQL would give. The pinned-discriminant rule + lower-pubkey tiebreak
+ * together guarantee the evidence vector hash matches across TS encoders +
+ * the Python encoder + the pallet-side Rust decoder, AND across replicas
+ * regardless of physical row order (rowid drifts after vacuum / restore).
+ *
+ * The SQL `ORDER BY ... attestor_pubkey_hex ASC` is added so any consumer
+ * that bypasses this JS sort (or runs SQL directly for inspection) still
+ * sees the deterministic order. PR #34 M-2.
  */
 export function listReceiptEvidence(receipt_id: string): ReceiptEvidenceRow[] {
   if (!db) return [];
@@ -207,14 +214,25 @@ export function listReceiptEvidence(receipt_id: string): ReceiptEvidenceRow[] {
       `SELECT id, receipt_id, evidence_type, nonce_hex, payload_json,
               attestor_pubkey_hex, signature_hex, submitted_at_ms
          FROM receipt_attestation_evidence
-        WHERE receipt_id = ?`,
+        WHERE receipt_id = ?
+        ORDER BY evidence_type ASC, attestor_pubkey_hex ASC`,
     )
     .all(id) as ReceiptEvidenceRow[];
-  rows.sort(
-    (a, b) =>
+  // JS-side primary sort by discriminant (SQL ORDER BY evidence_type sorts
+  // alphabetically, which is NOT the canonical order — e.g. amd_sev_snp(0)
+  // alphabetises BEFORE arm_trustzone(2) by accident, but intel_tdx(1)
+  // alphabetises AFTER arm_trustzone(2)). Then byte-lex tiebreak on
+  // attestor_pubkey_hex (already lowercase from insert). Direct `< / >`
+  // comparison on lowercase hex strings is locale-independent.
+  rows.sort((a, b) => {
+    const d =
       EVIDENCE_TYPE_DISCRIMINANT[a.evidence_type] -
-      EVIDENCE_TYPE_DISCRIMINANT[b.evidence_type],
-  );
+      EVIDENCE_TYPE_DISCRIMINANT[b.evidence_type];
+    if (d !== 0) return d;
+    if (a.attestor_pubkey_hex < b.attestor_pubkey_hex) return -1;
+    if (a.attestor_pubkey_hex > b.attestor_pubkey_hex) return 1;
+    return 0;
+  });
   return rows;
 }
 

@@ -769,6 +769,174 @@ describe("POST /v2/attestation_evidence — multi-attestor multi-type", () => {
 });
 
 // ===========================================================================
+// PR #34 M-2 — pinned secondary sort key on same-discriminant entries.
+// Two attestors submit the SAME evidence_type for the same receipt;
+// attestation_evidence_hash MUST be deterministic regardless of insertion
+// order, pinned on (discriminant, attestor_pubkey_hex) lex-ascending.
+// ===========================================================================
+
+describe("POST /v2/attestation_evidence — multi-attestor SAME-type tiebreak", () => {
+  let ctx: Ctx;
+  beforeEach(async () => {
+    ctx = await setupApp();
+  });
+  afterEach(async () => {
+    await teardown(ctx);
+  });
+
+  test("multi_attestor_same_evidence_type_hash_is_deterministic_by_pubkey_order", async () => {
+    // ----- Pass 1: register A (//AttA), submit; register B (//AttB), submit. -----
+    const { contentHash, receiptIdClean } = await mintV2Manifest({
+      content_hash: SYNTH_CONTENT_HASH,
+    });
+    const aBody = buildSignedEvidence({
+      receiptIdClean,
+      contentHash,
+      evidenceType: "arm_trustzone",
+      payload: { device_model: "Pixel-8" },
+      attestorUri: "//AttA",
+    });
+    const bBody = buildSignedEvidence({
+      receiptIdClean,
+      contentHash,
+      evidenceType: "arm_trustzone",
+      payload: { device_model: "Galaxy-S24" },
+      attestorUri: "//AttB",
+    });
+    registerAttestationEvidenceAttestor({ pubkey: aBody.attestorPubHex });
+    registerAttestationEvidenceAttestor({ pubkey: bBody.attestorPubHex });
+
+    // Submit A first, then B.
+    const r1a = await postJson(
+      ctx.app,
+      "/v2/attestation_evidence",
+      aBody,
+      { headers: { authorization: `Bearer ${ctx.bearerToken}` } },
+    );
+    expect(r1a.status).toBe(200);
+    const r1b = await postJson(
+      ctx.app,
+      "/v2/attestation_evidence",
+      bBody,
+      { headers: { authorization: `Bearer ${ctx.bearerToken}` } },
+    );
+    expect(r1b.status).toBe(200);
+    const hashAB = (r1b.body as { attestation_evidence_hash: string })
+      .attestation_evidence_hash;
+    expect((r1b.body as { evidence_count: number }).evidence_count).toBe(2);
+
+    // ----- Pass 2: Drop the evidence DB; register B first, then A; submit B then A. -----
+    // Replicates the cross-instance scenario the security review flagged: same
+    // logical evidence set, different on-disk insertion order, must hash same.
+    ctx.evidenceDb.close();
+    const evidenceDb2 = new Database(":memory:");
+    initReceiptAttestationEvidenceDb(evidenceDb2);
+    setReceiptAttestationEvidenceDbForTests(evidenceDb2);
+    ctx.evidenceDb = evidenceDb2;
+
+    const r2b = await postJson(
+      ctx.app,
+      "/v2/attestation_evidence",
+      bBody,
+      { headers: { authorization: `Bearer ${ctx.bearerToken}` } },
+    );
+    expect(r2b.status).toBe(200);
+    const r2a = await postJson(
+      ctx.app,
+      "/v2/attestation_evidence",
+      aBody,
+      { headers: { authorization: `Bearer ${ctx.bearerToken}` } },
+    );
+    expect(r2a.status).toBe(200);
+    const hashBA = (r2a.body as { attestation_evidence_hash: string })
+      .attestation_evidence_hash;
+    expect((r2a.body as { evidence_count: number }).evidence_count).toBe(2);
+
+    // The KEY assertion: hashes must match across reversed insertion orders.
+    expect(hashBA).toBe(hashAB);
+  });
+
+  // PINNED VECTOR — locks the convention "(discriminant, attestor_pubkey_hex)
+  // lex-ascending" forever. If anyone ever flips the comparator, this test
+  // catches it on first PR.
+  test("multi_attestor_same_type_pinned_vector", async () => {
+    // Two evidence entries, identical evidence_type=arm_trustzone, different
+    // pubkeys/payloads. We KNOW the pubkeys for //AttA and //AttB are stable
+    // sr25519 derivations of those URIs.
+    const { contentHash, receiptIdClean } = await mintV2Manifest({
+      content_hash: SYNTH_CONTENT_HASH,
+    });
+    const aBody = buildSignedEvidence({
+      receiptIdClean,
+      contentHash,
+      evidenceType: "arm_trustzone",
+      payload: { device_model: "Pixel-8" },
+      attestorUri: "//AttA",
+    });
+    const bBody = buildSignedEvidence({
+      receiptIdClean,
+      contentHash,
+      evidenceType: "arm_trustzone",
+      payload: { device_model: "Galaxy-S24" },
+      attestorUri: "//AttB",
+    });
+    registerAttestationEvidenceAttestor({ pubkey: aBody.attestorPubHex });
+    registerAttestationEvidenceAttestor({ pubkey: bBody.attestorPubHex });
+
+    // Submit them in REVERSE pubkey-lex order to prove the route's recompute
+    // applies the pinned tiebreak (and not insertion order).
+    const lowerPubFirst = aBody.attestorPubHex < bBody.attestorPubHex
+      ? aBody
+      : bBody;
+    const higherPubFirst = aBody.attestorPubHex < bBody.attestorPubHex
+      ? bBody
+      : aBody;
+
+    const insertHigherFirst = await postJson(
+      ctx.app,
+      "/v2/attestation_evidence",
+      higherPubFirst,
+      { headers: { authorization: `Bearer ${ctx.bearerToken}` } },
+    );
+    expect(insertHigherFirst.status).toBe(200);
+
+    const insertLowerSecond = await postJson(
+      ctx.app,
+      "/v2/attestation_evidence",
+      lowerPubFirst,
+      { headers: { authorization: `Bearer ${ctx.bearerToken}` } },
+    );
+    expect(insertLowerSecond.status).toBe(200);
+
+    const apiHash = (insertLowerSecond.body as {
+      attestation_evidence_hash: string;
+    }).attestation_evidence_hash;
+
+    // Recompute by hand, in the canonical pinned order: lower pubkey first.
+    const lowerPub = aBody.attestorPubHex < bBody.attestorPubHex
+      ? aBody
+      : bBody;
+    const higherPub = aBody.attestorPubHex < bBody.attestorPubHex
+      ? bBody
+      : aBody;
+
+    const expected = attestationEvidenceHash([
+      {
+        evidence_type: "arm_trustzone",
+        nonce: deriveEvidenceNonce(contentHash, "arm_trustzone"),
+        payload: lowerPub.payload,
+      },
+      {
+        evidence_type: "arm_trustzone",
+        nonce: deriveEvidenceNonce(contentHash, "arm_trustzone"),
+        payload: higherPub.payload,
+      },
+    ]);
+    expect(apiHash).toBe(expected);
+  });
+});
+
+// ===========================================================================
 // Empty-vec hash spec pin (route returns the canonical empty-vec hash for
 // receipts that have no evidence yet).
 // ===========================================================================

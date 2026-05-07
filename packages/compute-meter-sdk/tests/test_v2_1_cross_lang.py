@@ -333,6 +333,96 @@ def test_evidence_type_discriminant_pinned():
     }
 
 
+# ---------------------------------------------------------------------------
+# PR #34 M-2 — same-discriminant tiebreak pinned to attestor_pubkey ASC.
+#
+# Mirrors the JS-side fix in services/blob-gateway/src/receipt_attestation_evidence.ts.
+# When two attestors submit the SAME evidence_type, the canonical sort
+# key is (discriminant, attestor_pubkey_hex) byte-lex. With the secondary
+# key pinned, the resulting CBOR (and its hash) must NOT depend on insertion
+# order.
+# ---------------------------------------------------------------------------
+
+
+# Two synthetic attestor pubkeys whose lex order is fixed.
+ATT_LO = "11" * 32  # lexicographically lower
+ATT_HI = "22" * 32  # lexicographically higher
+
+
+def test_same_discriminant_pubkey_tiebreak_pinned():
+    """Two arm_trustzone entries with different attestor_pubkeys must hash
+    identically regardless of insertion order. Pubkey-asc breaks the tie.
+    """
+    nonce_arm = derive_evidence_nonce(BASE_V2_CONTENT_HASH, "arm_trustzone")
+    a = {
+        "evidence_type": "arm_trustzone",
+        "nonce": nonce_arm,
+        "payload": {"device_model": "Pixel-8"},
+        "attestor_pubkey": ATT_LO,
+    }
+    b = {
+        "evidence_type": "arm_trustzone",
+        "nonce": nonce_arm,
+        "payload": {"device_model": "Galaxy-S24"},
+        "attestor_pubkey": ATT_HI,
+    }
+
+    # Hash with [A, B] vs [B, A]. Stable-sort with a tuple key including
+    # pubkey gives the SAME order regardless of input.
+    h_ab = attestation_evidence_hash([a, b])
+    h_ba = attestation_evidence_hash([b, a])
+    assert h_ab == h_ba, (
+        "attestation_evidence_hash must be insertion-order-independent when the "
+        "secondary sort key (attestor_pubkey) is pinned"
+    )
+
+
+def test_same_discriminant_pubkey_tiebreak_matches_pinned_vector():
+    """Pin the canonical hash for two same-type entries with known pubkeys.
+    If anyone flips the comparator, this test catches it on first PR.
+    """
+    nonce_arm = derive_evidence_nonce(BASE_V2_CONTENT_HASH, "arm_trustzone")
+    lo = {
+        "evidence_type": "arm_trustzone",
+        "nonce": nonce_arm,
+        "payload": {"device_model": "Pixel-8"},
+        "attestor_pubkey": ATT_LO,
+    }
+    hi = {
+        "evidence_type": "arm_trustzone",
+        "nonce": nonce_arm,
+        "payload": {"device_model": "Galaxy-S24"},
+        "attestor_pubkey": ATT_HI,
+    }
+    # The canonical encoder must put the lo-pubkey entry FIRST. Reproduce that
+    # ordering by hand and hash.
+    expected = attestation_evidence_hash(
+        [
+            # explicit canonical order: lo before hi
+            {
+                "evidence_type": "arm_trustzone",
+                "nonce": nonce_arm,
+                "payload": {"device_model": "Pixel-8"},
+            },
+            {
+                "evidence_type": "arm_trustzone",
+                "nonce": nonce_arm,
+                "payload": {"device_model": "Galaxy-S24"},
+            },
+        ]
+    )
+    # Both insertion orders feed identical canonical bytes.
+    assert attestation_evidence_hash([lo, hi]) == expected
+    assert attestation_evidence_hash([hi, lo]) == expected
+    # Pinned vector — locks the convention forever. If anyone flips the
+    # comparator, this test catches it on first PR. Computed under
+    # ATT_LO=11..11 (32 bytes) lex-before ATT_HI=22..22 (32 bytes) with the
+    # canonical pre-image being `[lo_payload, hi_payload]` in that order.
+    assert expected == (
+        "74fd7d37719defa9e6891c084a0f7a71ef80a926f0718e78252e44a5326c7651"
+    ), f"pinned vector drift: got {expected}"
+
+
 # ===========================================================================
 # Cross-language tests — Python encoder vs TS encoder via tsx harness.
 # ===========================================================================
