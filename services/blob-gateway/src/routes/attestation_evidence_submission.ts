@@ -27,26 +27,35 @@
  *
  * Auth
  * ----
- * Both routes accept the same `SPONSORED_RECEIPT_SUBMITTER_TOKEN` Bearer
- * that's already shared with the receipt-submitter (and recognised by the
- * privileged GET `/blobs/:contentHash/manifest` path — see
- * `routes/blobs.ts` `isSponsoredReceiptSubmitterToken`). Rationale:
+ * Both routes consult `config.evidenceSubmitterToken`, which is read from
+ * the `EVIDENCE_SUBMITTER_TOKEN` env var. If that env var is unset, the
+ * config falls back to `SPONSORED_RECEIPT_SUBMITTER_TOKEN` so day-one
+ * operators don't need to mint a second secret — the cert-daemon's
+ * existing submitter Bearer keeps working. Operators who want to split
+ * the privileged paths just set `EVIDENCE_SUBMITTER_TOKEN` to an
+ * independent value. Rationale:
  *
- *   - The cert-daemon already holds that token (it's the same trust
- *     boundary as the receipt-submitter — same operator, same node).
- *   - Adding ANOTHER shared secret would just expand the leak surface.
+ *   - The cert-daemon's evidence_submitter and receipt-submitter share a
+ *     trust boundary today (same operator, same node), so a shared default
+ *     is operationally simpler.
+ *   - Splitting the secret is forward-compatible: the routes here only
+ *     read `evidenceSubmitterToken`, so flipping the env var is a one-line
+ *     change with no code redeploy.
  *   - Both endpoints are scoped to the chain-submission lifecycle ONLY:
  *     `pending` is read-only, `mark_submitted` mutates a single row's
  *     bookkeeping fields. Neither can be used to forge new evidence rows.
  *
- * If `config.sponsoredReceiptSubmitterToken` is empty the routes 503 to
- * mirror the existing admin-route safety net.
+ * If `config.evidenceSubmitterToken` is empty (i.e. NEITHER env var is
+ * set) the routes return 401 for every request — the safe default when no
+ * privileged token has been wired up. This is NOT a 503: the service is
+ * up, the request is just not authorised.
  *
  * HTTP status mapping
  * -------------------
- *   401 — auth missing/invalid
+ *   401 — auth missing/invalid (or no token configured at all)
  *   400 — body shape (`row_id` not an integer, `chain_extrinsic_hash`
- *         not 32-byte hex)
+ *         not 32-byte hex), or `since` overflowing safe integer, or
+ *         `limit` exceeding the page-size cap
  *   404 — `mark_submitted` against a row id that doesn't exist
  *   200 status:marked         — first-time ack
  *   200 status:already-marked — retry (idempotent)
@@ -67,13 +76,18 @@ import {
 export const attestationEvidenceSubmissionRouter = Router();
 
 /**
- * Bearer-token guard sized for the cert-daemon's submitter role. Mirrors
- * `isSponsoredReceiptSubmitterToken` in `routes/blobs.ts` (same auth model,
- * same constant-time comparison). Defined locally rather than imported so
- * this file can move independently of the manifest GET path's evolution.
+ * Bearer-token guard sized for the cert-daemon's evidence_submitter role.
+ * Mirrors `isSponsoredReceiptSubmitterToken` in `routes/blobs.ts` (same
+ * auth model, same constant-time comparison). Defined locally rather than
+ * imported so this file can move independently of the manifest GET path's
+ * evolution.
+ *
+ * Reads `config.evidenceSubmitterToken` at request time — the config layer
+ * handles the EVIDENCE_SUBMITTER_TOKEN → SPONSORED_RECEIPT_SUBMITTER_TOKEN
+ * fallback. Empty token rejects every request (401).
  */
 function isAuthorizedSubmitter(req: Request): boolean {
-  const expected = (config.sponsoredReceiptSubmitterToken ?? "").trim();
+  const expected = (config.evidenceSubmitterToken ?? "").trim();
   if (expected.length === 0) return false;
   const header =
     (req.headers.authorization ||
@@ -90,6 +104,15 @@ function isAuthorizedSubmitter(req: Request): boolean {
 }
 
 const HEX64_LOOSE = /^(0x)?[0-9a-fA-F]{64}$/;
+
+/**
+ * Maximum rows the daemon may request per /pending call. Matches the
+ * billing route's page-size cap so operators don't have to learn a second
+ * limit. Requests over this cap are REJECTED (400), NOT silently clamped
+ * — silent clamping hides daemon bugs (e.g. a misconfigured cursor that
+ * tries to drain the entire backlog in one call instead of paging).
+ */
+const MAX_PAGE_SIZE = 500;
 
 /**
  * Marshal a row for the wire — payload_json is a TEXT column so the daemon
@@ -130,8 +153,11 @@ function rowToPendingJson(row: ReceiptEvidenceRow): Record<string, unknown> {
  * GET /v2/attestation_evidence/pending
  *
  * Query params:
- *   since=<rowid>  (default 0)   — return rows with id > since
- *   limit=<N>      (default 100, max 1000)
+ *   since=<rowid>  (default 0)   — return rows with id > since. Must fit
+ *                                  in a JS safe integer (< 2^53).
+ *   limit=<N>      (default 100, max MAX_PAGE_SIZE = 500)
+ *                                  Over the cap returns 400 instead of
+ *                                  silently clamping — see MAX_PAGE_SIZE.
  *
  * Response:
  *   { ok: true, rows: [...], next_since: <max id in this batch | since> }
@@ -149,10 +175,21 @@ attestationEvidenceSubmissionRouter.get(
     let since = 0;
     if (typeof req.query.since === "string" && req.query.since !== "") {
       const n = Number.parseInt(req.query.since, 10);
-      if (!Number.isFinite(n) || n < 0) {
-        res
-          .status(400)
-          .json({ ok: false, error: "since must be a non-negative integer" });
+      // Reject NaN, negatives, AND values that overflow the JS safe-int
+      // range. `parseInt('999999999999999999999')` returns 1e21, which
+      // passes `Number.isFinite` but not `Number.isSafeInteger` — so an
+      // attacker (or a misencoded daemon) can't slip a giant cursor past
+      // this guard and force the SQLite layer to truncate silently.
+      if (
+        !Number.isFinite(n) ||
+        n < 0 ||
+        n > Number.MAX_SAFE_INTEGER ||
+        !Number.isSafeInteger(n)
+      ) {
+        res.status(400).json({
+          ok: false,
+          error: "since must be a non-negative safe integer",
+        });
         return;
       }
       since = n;
@@ -164,6 +201,14 @@ attestationEvidenceSubmissionRouter.get(
         res
           .status(400)
           .json({ ok: false, error: "limit must be a positive integer" });
+        return;
+      }
+      // Loud rejection over the cap — silent clamping hides daemon bugs.
+      if (n > MAX_PAGE_SIZE) {
+        res.status(400).json({
+          ok: false,
+          error: `limit must not exceed ${MAX_PAGE_SIZE}`,
+        });
         return;
       }
       limit = n;

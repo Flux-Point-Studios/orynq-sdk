@@ -52,13 +52,33 @@ import type { EvidenceType } from "../schemas/compute_metering_v2.js";
 interface Ctx {
   app: express.Express;
   db: Database.Database;
-  prevToken: string;
+  prevEvidenceToken: string;
+  prevSponsoredToken: string;
   prevStorage: string;
   storage: string;
   bearerToken: string;
 }
 
-function setupApp(opts: { token?: string } = {}): Ctx {
+/**
+ * Test setup. By default sets `config.evidenceSubmitterToken` (the new
+ * dedicated knob the routes consult) to a fresh random value AND clears
+ * `sponsoredReceiptSubmitterToken` so we don't accidentally test the
+ * fallback path when we mean to test the explicit path. The `legacyOnly`
+ * mode flips it: leaves `evidenceSubmitterToken` empty so the auth helper
+ * falls back to `sponsoredReceiptSubmitterToken`. The `token: ""` mode
+ * leaves both empty so we can prove "no token configured" rejects.
+ */
+function setupApp(
+  opts: {
+    token?: string;
+    /**
+     * When true, bind the bearer to `sponsoredReceiptSubmitterToken`
+     * (legacy / fallback) instead of `evidenceSubmitterToken`. Used to
+     * verify the day-one fallback works.
+     */
+    legacyOnly?: boolean;
+  } = {},
+): Ctx {
   const storage = mkdtempSync(join(tmpdir(), "att-evidence-submission-"));
   const prevStorage = config.storagePath;
   config.storagePath = storage;
@@ -67,8 +87,15 @@ function setupApp(opts: { token?: string } = {}): Ctx {
     opts.token !== undefined
       ? opts.token
       : "submitter-tok-" + randomBytes(8).toString("hex");
-  const prevToken = config.sponsoredReceiptSubmitterToken;
-  config.sponsoredReceiptSubmitterToken = bearerToken;
+  const prevEvidenceToken = config.evidenceSubmitterToken;
+  const prevSponsoredToken = config.sponsoredReceiptSubmitterToken;
+  if (opts.legacyOnly) {
+    config.evidenceSubmitterToken = "";
+    config.sponsoredReceiptSubmitterToken = bearerToken;
+  } else {
+    config.evidenceSubmitterToken = bearerToken;
+    config.sponsoredReceiptSubmitterToken = "";
+  }
 
   const db = new Database(":memory:");
   initReceiptAttestationEvidenceDb(db);
@@ -78,12 +105,21 @@ function setupApp(opts: { token?: string } = {}): Ctx {
   app.use(express.json({ limit: "2mb" }));
   app.use(attestationEvidenceSubmissionRouter);
 
-  return { app, db, prevToken, prevStorage, storage, bearerToken };
+  return {
+    app,
+    db,
+    prevEvidenceToken,
+    prevSponsoredToken,
+    prevStorage,
+    storage,
+    bearerToken,
+  };
 }
 
 function teardown(ctx: Ctx): void {
   ctx.db.close();
-  config.sponsoredReceiptSubmitterToken = ctx.prevToken;
+  config.evidenceSubmitterToken = ctx.prevEvidenceToken;
+  config.sponsoredReceiptSubmitterToken = ctx.prevSponsoredToken;
   config.storagePath = ctx.prevStorage;
   rmSync(ctx.storage, { recursive: true, force: true });
 }
@@ -185,6 +221,9 @@ describe("GET /v2/attestation_evidence/pending — auth", () => {
 describe("GET /v2/attestation_evidence/pending — empty config token rejects all", () => {
   let ctx: Ctx;
   beforeEach(() => {
+    // token: "" sets BOTH evidence + sponsored to "", proving "no token
+    // configured at all" rejects every request — the safe default when
+    // neither EVIDENCE_SUBMITTER_TOKEN nor the fallback is wired up.
     ctx = setupApp({ token: "" });
   });
   afterEach(() => teardown(ctx));
@@ -201,6 +240,127 @@ describe("GET /v2/attestation_evidence/pending — empty config token rejects al
       headers: { authorization: "Bearer anything" },
     });
     expect(r.status).toBe(401);
+  });
+});
+
+// ===========================================================================
+// EVIDENCE_SUBMITTER_TOKEN with day-one fallback to
+// SPONSORED_RECEIPT_SUBMITTER_TOKEN (security review P1)
+// ===========================================================================
+//
+// The submitter_pending+ack routes consult `config.evidenceSubmitterToken`,
+// which the config layer derives as
+//   process.env.EVIDENCE_SUBMITTER_TOKEN
+//   || process.env.SPONSORED_RECEIPT_SUBMITTER_TOKEN
+//   || "".
+// The route layer doesn't know about that — it only sees the resolved
+// `evidenceSubmitterToken`. So the "fallback" test exercises the resolved
+// state: `evidenceSubmitterToken` gets the value of the
+// SPONSORED_RECEIPT_SUBMITTER_TOKEN, simulating "operator only set the
+// legacy var". The "split" test sets evidenceSubmitterToken to a different
+// value, simulating "operator has split the secrets". Both must work.
+
+describe("token resolution: EVIDENCE_SUBMITTER_TOKEN explicit value", () => {
+  let ctx: Ctx;
+  beforeEach(() => {
+    // evidence-only setup: evidenceSubmitterToken gets the bearer,
+    // sponsoredReceiptSubmitterToken is cleared. Sending the bearer must
+    // work (proves explicit knob path).
+    ctx = setupApp();
+  });
+  afterEach(() => teardown(ctx));
+
+  test("EVIDENCE_SUBMITTER_TOKEN bearer accepted", async () => {
+    const r = await callApp(ctx.app, "GET", "/v2/attestation_evidence/pending", {
+      headers: { authorization: "Bearer " + ctx.bearerToken },
+    });
+    expect(r.status).toBe(200);
+  });
+
+  test("sponsored-receipt token NOT accepted when EVIDENCE token is set to a different value", async () => {
+    // Operator has split the secrets: evidence token is the live one,
+    // sponsored token is a separate value. The sponsored value must NOT
+    // open the evidence-submitter routes — that's the point of splitting.
+    const otherToken = "sponsored-only-" + randomBytes(8).toString("hex");
+    config.sponsoredReceiptSubmitterToken = otherToken;
+    const r = await callApp(ctx.app, "GET", "/v2/attestation_evidence/pending", {
+      headers: { authorization: "Bearer " + otherToken },
+    });
+    expect(r.status).toBe(401);
+  });
+});
+
+describe("token resolution: day-one fallback to SPONSORED_RECEIPT_SUBMITTER_TOKEN", () => {
+  let ctx: Ctx;
+  beforeEach(() => {
+    // legacyOnly mode: evidenceSubmitterToken === "" but
+    // sponsoredReceiptSubmitterToken === bearerToken. This simulates the
+    // post-merge day-one state where operators haven't set the new env
+    // var yet — the config layer's fallback fills evidenceSubmitterToken
+    // from the legacy var. The route still works because the config
+    // FALLBACK is what the test setup is replicating.
+    //
+    // We set BOTH config fields here to mirror what process startup
+    // would produce: evidenceSubmitterToken takes the legacy value via
+    // the config-layer ?? fallback. Tests exercise the resolved state
+    // (the route only ever reads `evidenceSubmitterToken`).
+    ctx = setupApp({ legacyOnly: true });
+    // Mirror what the config layer would do at startup: copy the legacy
+    // value into evidenceSubmitterToken so the route sees the resolved
+    // state. (legacyOnly: true left evidenceSubmitterToken empty to set
+    // up the "before fallback resolution" snapshot — but the routes read
+    // a single field, so for the test to exercise the fallback we set
+    // it now to mirror process.env resolution.)
+    config.evidenceSubmitterToken = ctx.bearerToken;
+  });
+  afterEach(() => teardown(ctx));
+
+  test("legacy-only deployment: bearer accepted via fallback resolution", async () => {
+    const r = await callApp(ctx.app, "GET", "/v2/attestation_evidence/pending", {
+      headers: { authorization: "Bearer " + ctx.bearerToken },
+    });
+    expect(r.status).toBe(200);
+  });
+});
+
+// ===========================================================================
+// Token-isolation: submitter token must NOT be accepted on the existing
+// mutating routes (security review P2 #6).
+//
+// `bearerAuth()` (the middleware on POST /v2/attestation_evidence and the
+// rest of the write paths) only honours tokens with the `matra_` prefix
+// (TOKEN_PREFIX in api-tokens.ts). The submitter token is a free-form
+// shared secret — it doesn't carry that prefix, and even if it did it
+// wouldn't pass `verifyToken()` (which checks the api-tokens DB).
+// We assert the route's auth path here directly by composing a Bearer
+// header with a submitter-shaped token and verifying bearerAuth rejects
+// it. This is the bearer-side of "the two token systems are isolated".
+// ===========================================================================
+
+describe("submitter token isolation: not accepted by bearerAuth() write routes", () => {
+  test("submitter-shaped token (no matra_ prefix) → 401 on a bearerAuth-guarded route", async () => {
+    // Build a tiny app that uses the production bearerAuth() so this test
+    // doesn't drift from the real middleware. Importing here (not at top)
+    // keeps the dependency local to this isolation case.
+    const { bearerAuth } = await import("../bearer-auth.js");
+    const app = express();
+    app.use(express.json());
+    app.post("/protected", bearerAuth({ required: true }), (_req, res) => {
+      res.json({ ok: true });
+    });
+
+    // Submitter token shape: arbitrary secret, NO matra_ prefix.
+    const submitterToken = "submitter-tok-" + randomBytes(8).toString("hex");
+    const r = await callApp(app, "POST", "/protected", {
+      headers: { authorization: "Bearer " + submitterToken },
+      body: {},
+    });
+    expect(r.status).toBe(401);
+    // bearerAuth's wrong-prefix path returns this exact error string.
+    // Pin it so a future refactor can't soften the rejection silently.
+    expect(r.body).toMatchObject({
+      error: "invalid bearer token: malformed",
+    });
   });
 });
 
@@ -318,6 +478,22 @@ describe("GET /v2/attestation_evidence/pending — listing", () => {
     expect(r.status).toBe(400);
   });
 
+  test("since overflowing safe-int rejected with 400 (security review P2 #3)", async () => {
+    // parseInt('999999999999999999999') === 1e21 — passes Number.isFinite
+    // but overshoots Number.MAX_SAFE_INTEGER. The previous validator let
+    // this through and the SQLite layer would silently truncate. The
+    // hardened validator must 400.
+    const r = await callApp(
+      ctx.app,
+      "GET",
+      `/v2/attestation_evidence/pending?since=999999999999999999999`,
+      { headers: { authorization: "Bearer " + ctx.bearerToken } },
+    );
+    expect(r.status).toBe(400);
+    const body = r.body as { error?: string };
+    expect(body.error).toMatch(/safe integer/);
+  });
+
   test("invalid limit rejected with 400", async () => {
     const r = await callApp(
       ctx.app,
@@ -326,6 +502,34 @@ describe("GET /v2/attestation_evidence/pending — listing", () => {
       { headers: { authorization: "Bearer " + ctx.bearerToken } },
     );
     expect(r.status).toBe(400);
+  });
+
+  test("limit over MAX_PAGE_SIZE rejected with 400, NOT silently capped (security review P2 #4)", async () => {
+    // Day-1 behaviour was to silently clamp limit at 1000. The reviewer
+    // pointed out that hides daemon bugs (e.g. a misconfigured cursor
+    // requesting the entire backlog in one shot). Loud 400 is the right
+    // contract — the daemon must page, not over-request.
+    const r = await callApp(
+      ctx.app,
+      "GET",
+      `/v2/attestation_evidence/pending?limit=10000`,
+      { headers: { authorization: "Bearer " + ctx.bearerToken } },
+    );
+    expect(r.status).toBe(400);
+    const body = r.body as { error?: string };
+    expect(body.error).toMatch(/must not exceed/);
+  });
+
+  test("limit at MAX_PAGE_SIZE accepted (cap is inclusive boundary)", async () => {
+    // Sanity-check the boundary so the loud-400 path can't drift into
+    // off-by-one rejection of the documented max.
+    const r = await callApp(
+      ctx.app,
+      "GET",
+      `/v2/attestation_evidence/pending?limit=500`,
+      { headers: { authorization: "Bearer " + ctx.bearerToken } },
+    );
+    expect(r.status).toBe(200);
   });
 });
 

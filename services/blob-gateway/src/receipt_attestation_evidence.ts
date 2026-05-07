@@ -328,6 +328,7 @@ export interface PendingChainSubmissionFilter {
  * Sorted by `id ASC` so the daemon's cursor advances monotonically.
  *
  * The route exposes this as `GET /v2/attestation_evidence/pending` (auth via
+ * EVIDENCE_SUBMITTER_TOKEN with day-one fallback to
  * SPONSORED_RECEIPT_SUBMITTER_TOKEN — see routes/attestation_evidence_submission.ts).
  * Rows already marked (`submitted_to_chain_at IS NOT NULL`) are excluded.
  */
