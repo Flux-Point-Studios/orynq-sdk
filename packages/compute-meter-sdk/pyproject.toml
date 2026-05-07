@@ -31,6 +31,18 @@ markers = [
     "integration: live preprod gateway test (requires network + API key)",
     "e2e: end-to-end pipeline test against live preprod (task #113, ≤15 min)",
     "slow: long-running E2E test (≤30 min, includes Cardano anchor wait)",
+    # Wave 3 Phase 2 — test-vector-driven polychain attestation smoke. The
+    # five tests in `tests/test_phase2_path_c_smoke.py` post a real
+    # Google-rooted Pixel StrongBox cert chain (vendored from
+    # pallets/tee-attestation/src/test_vectors.rs) to the gateway's
+    # /v2/attestation_evidence endpoint, watch the chain attest +
+    # Cardano-anchor it, and round-trip the attestation_evidence_hash
+    # back through Blockfrost. Gated behind this marker so it only runs
+    # when explicitly invoked: `pytest -m phase_2_smoke -v`. All five
+    # SKIP cleanly with a named-prereq message until the runtime
+    # upgrade for pallet-tee-attestation lands and the kill-switch is
+    # flipped via sudo set_disabled(false).
+    "phase_2_smoke: Wave 3 Phase 2 demo harness (Pixel test-vector chain)",
 ]
 
 [tool.hatch.build.targets.wheel]
