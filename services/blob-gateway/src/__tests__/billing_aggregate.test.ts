@@ -29,6 +29,9 @@ function rec(over: Partial<AggregatableRecord> = {}): AggregatableRecord {
     gpu_seconds: 0,
     attestation_status: "pending",
     cardano_anchor_tx: null,
+    // Default to null — "we didn't ask the chain" is the safest no-op
+    // value for fixtures. Tests that pin the trust-score path override.
+    composite_trust_score: null,
     ...over,
   };
 }
@@ -40,6 +43,7 @@ describe("aggregateRecords", () => {
       record_count: 0,
       certified_count: 0,
       anchored_count: 0,
+      tee_attested_count: 0,
       cpu_seconds_total: 0,
       ram_gb_hours_total: 0,
       disk_gb_hours_total: 0,
@@ -81,6 +85,47 @@ describe("aggregateRecords", () => {
     expect(out.record_count).toBe(4);
     expect(out.certified_count).toBe(2);
     expect(out.anchored_count).toBe(1);
+  });
+
+  test("tee_attested_count counts only records with composite_trust_score >= 1 (task #142)", () => {
+    // Pin the rule:
+    //   - >= 1: counted (single-vendor, multi-vendor, +build, +ZK)
+    //   - 0:    NOT counted (committee-attested baseline)
+    //   - null: NOT counted (chain query failed; we couldn't ask)
+    // The Path C harness `_wait_for_anchor` reads `composite_trust_score`
+    // and waits for it to become >= 1 — this aggregate counter mirrors
+    // that contract at the bulk level so customers can see "how many of
+    // my records have hardware-backed attestation" at a glance.
+    const records: AggregatableRecord[] = [
+      rec({ composite_trust_score: 0 }), // baseline — NOT counted
+      rec({ composite_trust_score: 1 }), // single-vendor — counted
+      rec({ composite_trust_score: 2 }), // multi-vendor — counted
+      rec({ composite_trust_score: 3 }), // multi+build — counted
+      rec({ composite_trust_score: 4 }), // full quorum — counted
+      rec({ composite_trust_score: null }), // chain failed — NOT counted
+      rec({ composite_trust_score: null }), // ditto
+    ];
+    const out = aggregateRecords(records);
+    expect(out.record_count).toBe(7);
+    expect(out.tee_attested_count).toBe(4);
+  });
+
+  test("tee_attested_count is zero when every record has score 0 or null", () => {
+    // The "production until task #143 ships" case: chain reachable but no
+    // submit_evidence calls yet → every score is 0. Aggregate must not
+    // claim any records are TEE-attested.
+    const allZero: AggregatableRecord[] = [
+      rec({ composite_trust_score: 0 }),
+      rec({ composite_trust_score: 0 }),
+      rec({ composite_trust_score: 0 }),
+    ];
+    expect(aggregateRecords(allZero).tee_attested_count).toBe(0);
+
+    const allNull: AggregatableRecord[] = [
+      rec({ composite_trust_score: null }),
+      rec({ composite_trust_score: null }),
+    ];
+    expect(aggregateRecords(allNull).tee_attested_count).toBe(0);
   });
 
   test("sums float fields with reasonable precision", () => {

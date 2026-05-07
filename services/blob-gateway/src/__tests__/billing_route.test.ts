@@ -77,6 +77,11 @@ vi.mock("../billing/chain_query.js", async (importOriginal) => {
   return {
     ...actual,
     queryReceiptStatuses: vi.fn(),
+    // Trust-score query is also mocked here. The dedicated wiring test
+    // (`billing_route_trust_score.test.ts`) pins the per-record / aggregate
+    // surface; in this file we just need the route to not crash when the
+    // function is called.
+    queryCompositeTrustScores: vi.fn(),
   };
 });
 
@@ -93,11 +98,13 @@ vi.mock("../billing/anchor_resolver.js", async (importOriginal) => {
 import { billingRouter } from "../routes/billing.js";
 import {
   queryReceiptStatuses,
+  queryCompositeTrustScores,
   type ChainStatus,
 } from "../billing/chain_query.js";
 import { resolveAnchorTxs } from "../billing/anchor_resolver.js";
 
 const queryReceiptStatusesMock = vi.mocked(queryReceiptStatuses);
+const queryCompositeTrustScoresMock = vi.mocked(queryCompositeTrustScores);
 const resolveAnchorTxsMock = vi.mocked(resolveAnchorTxs);
 
 let keyring: Keyring;
@@ -304,6 +311,16 @@ beforeEach(() => {
       status: "unknown",
       cert_hash: null,
     } satisfies ChainStatus)),
+  );
+  // Trust-score default: null (chain RPC degraded). Same shape as
+  // queryReceiptStatusesMock — the dedicated trust-score test file
+  // overrides per-test.
+  queryCompositeTrustScoresMock.mockImplementation(async (hashes) =>
+    hashes.map((h) => ({
+      content_hash: h,
+      receipt_id: "0x" + createHash("sha256").update(Buffer.from(h, "hex")).digest("hex"),
+      composite_trust_score: null,
+    })),
   );
   resolveAnchorTxsMock.mockImplementation(async (certs) =>
     certs.map(() => null),

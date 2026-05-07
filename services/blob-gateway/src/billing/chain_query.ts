@@ -184,6 +184,155 @@ export async function queryReceiptStatuses(
   return out;
 }
 
+/**
+ * Per-content-hash composite-trust-score lookup result. The chain stores a
+ * `CompositeTrustScore(u8)` (0..=4) per receipt_id under the
+ * `pallet-tee-attestation::CompositeTrustScores` storage map (ValueQuery,
+ * default = 0).
+ *
+ * Score levels:
+ *   0 = COMMITTEE_ATTESTED_BASELINE — default for any submitted receipt;
+ *       no TEE evidence on chain yet.
+ *   1 = SINGLE_VENDOR — one accepted TEE evidence record.
+ *   2 = MULTI_VENDOR — evidence from 2+ distinct vendors.
+ *   3 = MULTI_VENDOR_PLUS_BUILD — multi-vendor + reproducible-build
+ *       attestation.
+ *   4 = FULL_QUORUM — multi-vendor + build + ZK-proof attestation.
+ *
+ * IMPORTANT: `composite_trust_score === null` means "couldn't query the
+ * chain" (RPC down / decode failure). `composite_trust_score === 0` means
+ * "chain reachable, receipt has no TEE evidence yet". The two are
+ * semantically distinct — a downstream consumer waiting for the field to
+ * become non-zero (see Path C harness `_wait_for_anchor`) MUST NOT treat
+ * `null` as `0`.
+ */
+export interface ChainTrustScore {
+  content_hash: string;
+  receipt_id: string;
+  /** 0..=4 from chain; null only when RPC unreachable / query failed. */
+  composite_trust_score: number | null;
+}
+
+/**
+ * Bulk composite-trust-score lookup. Mirrors `queryReceiptStatuses` shape
+ * (one storage query per content_hash, run concurrently); the only delta
+ * is the storage map — `teeAttestation.compositeTrustScores(receipt_id)`
+ * vs `orinqReceipts.receipts(receipt_id)`.
+ *
+ * The two queries are independent so the route handler can issue both via
+ * `Promise.all` and only pay the latency of the slower one.
+ *
+ * If the API connection is down, every record gets
+ * `composite_trust_score: null` — the route surfaces that as null in the
+ * response so callers can distinguish "no TEE evidence yet" (= 0) from
+ * "couldn't ask the chain" (= null).
+ *
+ * `ValueQuery` semantics on the chain mean the storage map ALWAYS returns
+ * a value (0 default for missing keys). So `result.isEmpty` shouldn't fire
+ * here, but we handle it defensively for forward-compat with future
+ * pallet revisions that might switch to OptionQuery.
+ *
+ * Test hook: `apiOverride` lets unit tests inject a stub. Identical
+ * shape to `queryReceiptStatuses`.
+ */
+export async function queryCompositeTrustScores(
+  contentHashes: readonly string[],
+  apiOverride?: unknown,
+): Promise<ChainTrustScore[]> {
+  if (contentHashes.length === 0) return [];
+
+  const uniq = Array.from(new Set(contentHashes));
+  const ids: { content_hash: string; receipt_id: string }[] = uniq.map(
+    (contentHashHex) => ({
+      content_hash: contentHashHex,
+      receipt_id: receiptIdFromContentHash(contentHashHex),
+    }),
+  );
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let api: any = apiOverride;
+  if (api === undefined) {
+    const pending = getOrConnectApi();
+    if (!pending) {
+      // Connection unavailable — surface null per record (NOT 0). We must
+      // preserve the distinction between "chain says no evidence" and
+      // "couldn't ask chain".
+      return ids.map((x) => ({
+        content_hash: x.content_hash,
+        receipt_id: x.receipt_id,
+        composite_trust_score: null,
+      }));
+    }
+    try {
+      api = await pending;
+    } catch {
+      return ids.map((x) => ({
+        content_hash: x.content_hash,
+        receipt_id: x.receipt_id,
+        composite_trust_score: null,
+      }));
+    }
+  }
+
+  // Issue queries concurrently. A single failure (e.g. metadata mismatch
+  // from a forkless upgrade not yet picked up) degrades only that record,
+  // not the whole batch.
+  const out = await Promise.all(
+    ids.map(async ({ content_hash, receipt_id }): Promise<ChainTrustScore> => {
+      try {
+        // The pallet may not be present on chains that haven't received
+        // the spec-213/214 runtime upgrade — guard against undefined to
+        // avoid throwing inside the .map.
+        const teeQuery = api.query?.teeAttestation?.compositeTrustScores;
+        if (typeof teeQuery !== "function") {
+          return { content_hash, receipt_id, composite_trust_score: null };
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result: any = await teeQuery(receipt_id);
+        if (result?.isEmpty === true) {
+          // OptionQuery / forward-compat path: treat as "no evidence".
+          return { content_hash, receipt_id, composite_trust_score: 0 };
+        }
+        // `CompositeTrustScore(pub u8)` — substrate may decode this as a
+        // bare number, a `{ value: number }` shape, or a Codec with
+        // `.toNumber()`. Handle all three so the gateway doesn't rev-lock
+        // to a specific @polkadot/api version.
+        const raw = result?.toJSON?.() ?? result;
+        let score: number | null = null;
+        if (typeof raw === "number") {
+          score = raw;
+        } else if (raw && typeof raw === "object") {
+          const o = raw as Record<string, unknown>;
+          const cand = o.value ?? o[0] ?? o;
+          if (typeof cand === "number") {
+            score = cand;
+          } else if (cand && typeof (cand as { toNumber?: () => number }).toNumber === "function") {
+            score = (cand as { toNumber: () => number }).toNumber();
+          }
+        }
+        if (score === null && typeof (result as { toNumber?: () => number })?.toNumber === "function") {
+          score = (result as { toNumber: () => number }).toNumber();
+        }
+        if (score === null || !Number.isFinite(score)) {
+          return { content_hash, receipt_id, composite_trust_score: null };
+        }
+        // Clamp to the expected 0..=4 band — anything else is a decode
+        // bug, not a valid score, so surface null rather than confuse the
+        // consumer with a fabricated value.
+        const intScore = Math.trunc(score);
+        if (intScore < 0 || intScore > 4) {
+          return { content_hash, receipt_id, composite_trust_score: null };
+        }
+        return { content_hash, receipt_id, composite_trust_score: intScore };
+      } catch {
+        return { content_hash, receipt_id, composite_trust_score: null };
+      }
+    }),
+  );
+
+  return out;
+}
+
 /** Test hook: clear the cached ApiPromise so the next call re-connects. */
 export function resetChainQueryForTests(): void {
   apiPromise = null;
