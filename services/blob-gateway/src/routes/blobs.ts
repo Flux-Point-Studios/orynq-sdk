@@ -3,7 +3,7 @@
  */
 
 import { Router, type Request, type Response } from "express";
-import { createHash } from "crypto";
+import { createHash, timingSafeEqual } from "crypto";
 import { saveManifest, getManifest, saveChunk, getChunk, getStatus, markCertified, updateReceiptMeta } from "../storage.js";
 import { config } from "../config.js";
 import {
@@ -20,6 +20,44 @@ import {
 } from "../merkle.js";
 
 export const blobsRouter = Router();
+
+/**
+ * Read-only privileged-callback recogniser for GET /blobs/:contentHash/manifest.
+ *
+ * The sponsored-receipt-submitter (services/blob-gateway/src/sponsored-receipts.ts
+ * + the bespoke receipt-submitter daemon at materios-node/receipt-submitter.mjs)
+ * needs to GET the manifest after receiving the gateway's POST callback, so
+ * it can fill in the 14 sub-hashes required by `submit_receipt_v2`. The
+ * gateway already shares `SPONSORED_RECEIPT_SUBMITTER_TOKEN` with the
+ * submitter for the inbound POST direction; making the same token valid on
+ * this read-only GET keeps the trust boundary symmetric and avoids
+ * sprouting a new shared secret.
+ *
+ * Scope is intentionally narrow:
+ *   - Only this GET (manifest read). NEVER POST manifest, PUT chunk, or
+ *     PATCH certified — those mutate state and remain Bearer/api-key/sig-only.
+ *   - Token is read at request time (not module load) so tests + ops can
+ *     rotate the value via `config.sponsoredReceiptSubmitterToken`.
+ *   - An empty configured token is a hard-fail (never accepts any inbound
+ *     value) — guards against accidentally turning an unset env var into a
+ *     free pass.
+ *   - timingSafeEqual on the token bytes — defence in depth against any
+ *     downstream wedge that exposes route latency to untrusted callers.
+ */
+function isSponsoredReceiptSubmitterToken(req: Request): boolean {
+  const expected = (config.sponsoredReceiptSubmitterToken ?? "").trim();
+  if (expected.length === 0) return false;
+  const header = (req.headers.authorization || (req.headers as Record<string, unknown>)[
+    "Authorization"
+  ]) as string | undefined;
+  if (typeof header !== "string" || !header.startsWith("Bearer ")) return false;
+  const supplied = header.slice("Bearer ".length).trim();
+  if (supplied.length === 0) return false;
+  const expectedBuf = Buffer.from(expected, "utf8");
+  const suppliedBuf = Buffer.from(supplied, "utf8");
+  if (suppliedBuf.length !== expectedBuf.length) return false;
+  return timingSafeEqual(suppliedBuf, expectedBuf);
+}
 
 interface ManifestChunk {
   index: number;
@@ -216,9 +254,15 @@ blobsRouter.post("/blobs/:contentHash/manifest", async (req: Request, res: Respo
  * GET /blobs/:contentHash/manifest
  * Returns the stored manifest JSON for a blob.
  *
- * Auth (unified via resolveAuth): mirrors POST /blobs/:contentHash/manifest
- * — Bearer → x-api-key (legacy incl. SS58-as-key) → sr25519 upload signature.
- * Sig-only requests are balance-gated inside resolveAuth().
+ * Auth (in priority order):
+ *   1. SPONSORED_RECEIPT_SUBMITTER_TOKEN — read-only privileged service path
+ *      for the receipt-submitter callback enrichment. See
+ *      `isSponsoredReceiptSubmitterToken` above for trust-model rationale.
+ *      No identity is recorded for this tier (it's a service principal, not
+ *      an operator), and quota tracking does not apply (read-only).
+ *   2. unified resolveAuth — mirrors POST /blobs/:contentHash/manifest:
+ *      Bearer → x-api-key (legacy incl. SS58-as-key) → sr25519 upload signature.
+ *      Sig-only requests are balance-gated inside resolveAuth().
  *
  * Returns:
  *   200 + JSON manifest body if found
@@ -230,21 +274,28 @@ blobsRouter.post("/blobs/:contentHash/manifest", async (req: Request, res: Respo
  * sha256 digests, which are upload-attribution metadata; while the chunks
  * themselves are content-addressed and protected by SHA-256, exposing the
  * manifest list publicly would let unauthenticated callers enumerate which
- * blobs an operator has uploaded. Auth-gating matches the POST side and
- * keeps the surface symmetric.
+ * blobs an operator has uploaded. For compute_metering_v2 records the
+ * manifest also includes the full record (worker_pubkey, tenant_id,
+ * signatures, etc.), which is doubly sensitive. Auth-gating keeps the
+ * surface symmetric with the POST side.
  */
 blobsRouter.get("/blobs/:contentHash/manifest", async (req: Request, res: Response) => {
   try {
     const { contentHash } = req.params;
 
-    const auth = await resolveAuth(req, contentHash);
-    if (!auth.authenticated) {
-      if (auth.error && auth.error.toLowerCase().includes("below minimum balance")) {
-        res.status(403).json({ error: "Account does not meet minimum MATRA balance" });
+    // Priority 1 — privileged read for the sponsored-receipt-submitter.
+    // Short-circuits resolveAuth so a properly-tokened submitter doesn't
+    // depend on having a registered Bearer or x-api-key as well.
+    if (!isSponsoredReceiptSubmitterToken(req)) {
+      const auth = await resolveAuth(req, contentHash);
+      if (!auth.authenticated) {
+        if (auth.error && auth.error.toLowerCase().includes("below minimum balance")) {
+          res.status(403).json({ error: "Account does not meet minimum MATRA balance" });
+          return;
+        }
+        res.status(401).json({ error: auth.error ?? "authentication required" });
         return;
       }
-      res.status(401).json({ error: auth.error ?? "authentication required" });
-      return;
     }
 
     const manifest = await getManifest(contentHash);
