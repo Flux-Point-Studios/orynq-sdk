@@ -394,12 +394,18 @@ export async function handleV2Submit(
     submitted_at_ms: nowMs,
   });
 
+  // The v2 manifest is self-rooted (chunks=[], rootHash=content_hash). The
+  // submitter's safety check refuses to sign on-chain (503 unverifiable)
+  // when its manifest fetch fails AND the notification has no rootHash, so
+  // we MUST surface the root explicitly here — same contract the blob path
+  // already honours (services/blob-gateway/src/routes/blobs.ts).
   void notifySponsoredReceiptSubmitter({
     contentHash: content_hash,
     operator: operatorSs58,
     authTier: "bearer",
     schemaHash: schema_hash,
     source: METERING_V2_SOURCE,
+    rootHash: content_hash,
   });
 
   res.status(200).json({

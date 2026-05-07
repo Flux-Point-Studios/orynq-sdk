@@ -389,6 +389,25 @@ describe("POST /metering/submit v2 — happy path", () => {
     expect(body.contentHash).toBe((res.body as { content_hash: string }).content_hash);
   });
 
+  // Regression: chain-of-custody break shipped in Wave 1+2. The submitter
+  // refuses to sign on-chain (503 unverifiable) when its manifest fetch
+  // fails AND the notification body has no rootHash. The v2 manifest is
+  // self-rooted (chunks=[], rootHash=content_hash), so the route MUST pass
+  // rootHash explicitly — same contract the blob path already honours.
+  test("submitter_notified_with_v2_rootHash_for_self_rooted_manifest", async () => {
+    const rec = buildV2({ worker_id: "worker-roothash-test" });
+    const res = await postJson(ctx.app, "/metering/submit", rec);
+    expect(res.status).toBe(200);
+    await waitFor(() => ctx.fake.captured.length === 1, {
+      deadlineMs: 2000,
+      what: "submitter notify",
+    });
+    const captured = ctx.fake.captured[0]!;
+    const body = JSON.parse(captured.body) as Record<string, unknown>;
+    const contentHash = (res.body as { content_hash: string }).content_hash;
+    expect(body.rootHash).toBe(contentHash);
+  });
+
   test("valid_v2_record_with_observer_returns_200_observer_present_true", async () => {
     const rec = buildV2({
       worker_id: "worker-observer-test",
