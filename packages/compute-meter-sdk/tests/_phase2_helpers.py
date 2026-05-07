@@ -517,6 +517,12 @@ def probe_pallet_tee_attestation(
         return None
     try:
         metadata = si.metadata
+        # `SubstrateInterface(url=...)` returns a constructor success even
+        # when the RPC URL doesn't speak Substrate (the websocket connects
+        # but no metadata is fetched). In that case `metadata` is None and
+        # the caller should treat the chain as unreachable.
+        if metadata is None or not hasattr(metadata, "pallets"):
+            return None
         names = [
             getattr(p, "name", None) or p.value.get("name")
             for p in metadata.pallets
@@ -531,6 +537,10 @@ def probe_pallet_tee_attestation(
             except Exception:
                 disabled = None
         return PalletReadiness(metadata_present=present, disabled=disabled)
+    except Exception:
+        # Any exception walking metadata or querying storage means the
+        # chain isn't actually reachable in the way we need it to be.
+        return None
     finally:
         try:
             si.close()
