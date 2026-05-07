@@ -65,6 +65,7 @@ vi.mock("../billing/chain_query.js", async () => {
   return {
     ...actual,
     queryReceiptStatuses: vi.fn(async () => []),
+    queryCompositeTrustScores: vi.fn(async () => []),
   };
 });
 vi.mock("../billing/anchor_resolver.js", async () => {

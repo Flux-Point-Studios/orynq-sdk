@@ -76,8 +76,10 @@ import {
 } from "../billing/aggregate.js";
 import {
   queryReceiptStatuses,
+  queryCompositeTrustScores,
   receiptIdFromContentHash,
   type ChainStatus,
+  type ChainTrustScore,
 } from "../billing/chain_query.js";
 import { resolveAnchorTxs } from "../billing/anchor_resolver.js";
 import { SCHEMA_HASH_HEX } from "../schemas/compute_metering_v1.js";
@@ -123,13 +125,19 @@ function badRequest(
 }
 
 /**
- * Convert a stored row + chain status + anchor tx into the per-record
- * response shape. Pure — no IO. Exported for tests.
+ * Convert a stored row + chain status + anchor tx + composite-trust score
+ * into the per-record response shape. Pure — no IO. Exported for tests.
+ *
+ * `compositeTrustScore` is `number | null`. `null` means the chain query
+ * failed; `0` means the chain confirms no TEE evidence yet (committee-
+ * attested baseline). The two are semantically distinct — see
+ * `chain_query.ts::ChainTrustScore` for the full level table.
  */
 export function rowToRecordResponse(
   row: MeteringSubmissionRow,
   chain: ChainStatus,
   anchorTx: string | null,
+  compositeTrustScore: number | null,
 ): {
   worker_id: string;
   period_start_ms: number;
@@ -140,6 +148,7 @@ export function rowToRecordResponse(
   attestation_cert_hash: string | null;
   attestation_status: AttestationStatus;
   cardano_anchor_tx: string | null;
+  composite_trust_score: number | null;
   metrics: {
     cpu_seconds: number;
     ram_gb_hours: number;
@@ -175,6 +184,7 @@ export function rowToRecordResponse(
           ? anchorTx
           : "0x" + anchorTx
         : null,
+    composite_trust_score: compositeTrustScore,
     metrics: {
       cpu_seconds: row.cpu_seconds,
       ram_gb_hours: row.ram_gb_hours,
@@ -361,15 +371,26 @@ billingRouter.get(
       });
       const gateway_db_query_ms = Date.now() - dbStart;
 
-      // ---------- chain status ----------
+      // ---------- chain queries (status + composite trust score) ----------
+      // The two queries hit independent storage maps
+      // (`orinqReceipts.receipts` and `teeAttestation.compositeTrustScores`)
+      // and don't share data dependencies, so we issue them concurrently
+      // — total latency is max(status, trust) instead of sum. Substrate's
+      // WS connection multiplexes the requests fine.
       const chainStart = Date.now();
-      const chainStatuses = await queryReceiptStatuses(
-        rows.map((r) => r.content_hash),
-      );
+      const contentHashes = rows.map((r) => r.content_hash);
+      const [chainStatuses, trustScores] = await Promise.all([
+        queryReceiptStatuses(contentHashes),
+        queryCompositeTrustScores(contentHashes),
+      ]);
       const chain_query_ms = Date.now() - chainStart;
       // Build a content_hash → status map for O(1) merge below.
       const chainByContent = new Map<string, ChainStatus>();
       for (const cs of chainStatuses) chainByContent.set(cs.content_hash, cs);
+      // Same shape for the trust scores. Use the dedicated `trustByContent`
+      // so we don't conflate the two map types in the merge below.
+      const trustByContent = new Map<string, ChainTrustScore>();
+      for (const ts of trustScores) trustByContent.set(ts.content_hash, ts);
 
       // ---------- anchor resolution ----------
       const anchorStart = Date.now();
@@ -398,6 +419,13 @@ billingRouter.get(
           chain.status === "certified" && chain.cert_hash
             ? anchorByCert.get(chain.cert_hash) ?? null
             : null;
+        // Trust score: explicit `?? null` so a missing map entry (which
+        // shouldn't happen — every input content_hash gets a row in the
+        // dedup'd query result) collapses to "unknown" rather than
+        // throwing. Default-zero would be WRONG: it would lie that the
+        // chain confirmed no evidence when in fact we never asked.
+        const trustScore =
+          trustByContent.get(r.content_hash)?.composite_trust_score ?? null;
         return {
           worker_id: r.worker_id,
           tenant_id: r.tenant_id,
@@ -411,6 +439,7 @@ billingRouter.get(
           gpu_seconds: r.gpu_seconds,
           attestation_status: chain.status,
           cardano_anchor_tx: anchor,
+          composite_trust_score: trustScore,
         };
       });
 
@@ -430,7 +459,10 @@ billingRouter.get(
               chain.status === "certified" && chain.cert_hash
                 ? anchorByCert.get(chain.cert_hash) ?? null
                 : null;
-            return rowToRecordResponse(r, chain, anchor);
+            const trustScore =
+              trustByContent.get(r.content_hash)?.composite_trust_score ??
+              null;
+            return rowToRecordResponse(r, chain, anchor, trustScore);
           })
         : undefined;
 

@@ -47,6 +47,21 @@ export interface AggregatableRecord {
   attestation_status: AttestationStatus;
   /** Non-null cardano tx hash when anchor_resolver matched a checkpoint. */
   cardano_anchor_tx: string | null;
+  /**
+   * Composite trust score from `pallet-tee-attestation::CompositeTrustScores`
+   * (task #142). Range 0..=4:
+   *   0 = COMMITTEE_ATTESTED_BASELINE — no TEE evidence on chain yet.
+   *   1 = SINGLE_VENDOR
+   *   2 = MULTI_VENDOR
+   *   3 = MULTI_VENDOR_PLUS_BUILD
+   *   4 = FULL_QUORUM
+   *
+   * `null` means the chain query failed (RPC unreachable / pallet not
+   * present on a pre-spec-213 runtime) — semantically distinct from `0`,
+   * which means "chain reachable, no evidence yet". Downstream consumers
+   * (e.g. the Path C harness `_wait_for_anchor`) MUST NOT collapse the two.
+   */
+  composite_trust_score: number | null;
 }
 
 export type AttestationStatus = "certified" | "pending" | "unknown";
@@ -56,6 +71,15 @@ export interface BillingAggregate {
   record_count: number;
   certified_count: number;
   anchored_count: number;
+  /**
+   * Count of records with `composite_trust_score >= 1` — i.e. at least
+   * one TEE evidence record accepted on chain. Records with
+   * `composite_trust_score === 0` (committee-attested baseline) and
+   * `composite_trust_score === null` (chain query failed) do NOT count
+   * here. See `AggregatableRecord.composite_trust_score` for the level
+   * semantics.
+   */
+  tee_attested_count: number;
   cpu_seconds_total: number;
   ram_gb_hours_total: number;
   disk_gb_hours_total: number;
@@ -82,6 +106,7 @@ export function aggregateRecords(
     record_count: 0,
     certified_count: 0,
     anchored_count: 0,
+    tee_attested_count: 0,
     cpu_seconds_total: 0,
     ram_gb_hours_total: 0,
     disk_gb_hours_total: 0,
@@ -98,6 +123,16 @@ export function aggregateRecords(
     result.record_count += 1;
     if (r.attestation_status === "certified") result.certified_count += 1;
     if (r.cardano_anchor_tx !== null) result.anchored_count += 1;
+    // `composite_trust_score` is null when the chain query failed; only
+    // count records that POSITIVELY have at least one accepted TEE
+    // evidence record (>= 1). Baseline (=0) and unknown (null) are
+    // explicitly NOT counted.
+    if (
+      typeof r.composite_trust_score === "number" &&
+      r.composite_trust_score >= 1
+    ) {
+      result.tee_attested_count += 1;
+    }
     result.cpu_seconds_total += r.cpu_seconds;
     result.ram_gb_hours_total += r.ram_gb_hours;
     result.disk_gb_hours_total += r.disk_gb_hours;
