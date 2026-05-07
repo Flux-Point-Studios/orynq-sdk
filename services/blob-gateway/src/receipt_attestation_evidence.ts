@@ -83,8 +83,46 @@ export function initReceiptAttestationEvidenceDb(
     CREATE INDEX IF NOT EXISTS idx_rae_attestor
       ON receipt_attestation_evidence(attestor_pubkey_hex);
   `);
+  // Additive migration (task #143): track which rows the cert-daemon has
+  // already lifted to chain via TeeAttestation.submit_evidence. Two new
+  // columns, both nullable + default-NULL so existing rows + the original
+  // `INSERT` paths continue to work unchanged. The cert-daemon polls
+  // `submitted_to_chain_at IS NULL` rows and records the extrinsic hash
+  // here once the on-chain dispatch succeeds.
+  migrateChainSubmissionColumns(handle);
   if (!db) db = handle;
   return handle;
+}
+
+/**
+ * Add `submitted_to_chain_at` (INTEGER, NULL = pending) and
+ * `chain_extrinsic_hash` (TEXT, NULL = pending). Idempotent — safe to call
+ * on every startup. Mirrors the migrate*Columns pattern already used in
+ * `quota.ts`.
+ */
+function migrateChainSubmissionColumns(handle: Database.Database): void {
+  const cols = handle
+    .prepare(`PRAGMA table_info(receipt_attestation_evidence)`)
+    .all() as Array<{ name: string }>;
+  const colSet = new Set(cols.map((c) => c.name));
+  if (!colSet.has("submitted_to_chain_at")) {
+    handle.exec(
+      `ALTER TABLE receipt_attestation_evidence ADD COLUMN submitted_to_chain_at INTEGER`,
+    );
+  }
+  if (!colSet.has("chain_extrinsic_hash")) {
+    handle.exec(
+      `ALTER TABLE receipt_attestation_evidence ADD COLUMN chain_extrinsic_hash TEXT`,
+    );
+  }
+  // Partial index on the daemon's hot read path: newest-first scan of rows
+  // with NULL submitted_to_chain_at. Speeds up the per-poll
+  // `listReceiptEvidencePendingChainSubmission` query for big DBs.
+  handle.exec(
+    `CREATE INDEX IF NOT EXISTS idx_rae_pending_chain
+       ON receipt_attestation_evidence(id)
+     WHERE submitted_to_chain_at IS NULL`,
+  );
 }
 
 export interface ReceiptEvidenceRow {
@@ -96,6 +134,12 @@ export interface ReceiptEvidenceRow {
   attestor_pubkey_hex: string;
   signature_hex: string;
   submitted_at_ms: number;
+  /** Wall-clock ms when cert-daemon successfully submitted to chain.
+   *  NULL = not yet submitted. (Task #143 chain-submission tracking.) */
+  submitted_to_chain_at?: number | null;
+  /** Materios extrinsic hash from the successful TeeAttestation.submit_evidence
+   *  dispatch. NULL when `submitted_to_chain_at IS NULL`. */
+  chain_extrinsic_hash?: string | null;
 }
 
 function normalizeReceiptId(input: string): string {
@@ -261,4 +305,105 @@ export function recomputeReceiptEvidenceHash(receipt_id: string): {
   }));
   const hash = attestationEvidenceHash(entries);
   return { hash, count: rows.length, types: rows.map((r) => r.evidence_type) };
+}
+
+// ---------------------------------------------------------------------------
+// Chain-submission tracking helpers (task #143)
+//
+// The cert-daemon's `evidence_submitter` polls `listReceiptEvidencePending
+// ChainSubmission()` over HTTP, dispatches `TeeAttestation.submit_evidence`
+// for each row, and acks via `markReceiptEvidenceSubmittedToChain()`. The
+// helpers live here so the SQL stays close to the schema migration.
+// ---------------------------------------------------------------------------
+
+export interface PendingChainSubmissionFilter {
+  /** rowid floor — caller's last-seen cursor. Returns rows with id > since. */
+  since?: number;
+  /** Hard cap on rows returned per call. Default 100, max 1000. */
+  limit?: number;
+}
+
+/**
+ * Read evidence rows that the cert-daemon has NOT yet submitted to chain.
+ * Sorted by `id ASC` so the daemon's cursor advances monotonically.
+ *
+ * The route exposes this as `GET /v2/attestation_evidence/pending` (auth via
+ * EVIDENCE_SUBMITTER_TOKEN with day-one fallback to
+ * SPONSORED_RECEIPT_SUBMITTER_TOKEN — see routes/attestation_evidence_submission.ts).
+ * Rows already marked (`submitted_to_chain_at IS NOT NULL`) are excluded.
+ */
+export function listReceiptEvidencePendingChainSubmission(
+  filter: PendingChainSubmissionFilter = {},
+): ReceiptEvidenceRow[] {
+  if (!db) return [];
+  const since = Math.max(0, Math.floor(filter.since ?? 0));
+  const limitRaw = filter.limit ?? 100;
+  const limit = Math.max(1, Math.min(1000, Math.floor(limitRaw)));
+  const rows = db
+    .prepare(
+      `SELECT id, receipt_id, evidence_type, nonce_hex, payload_json,
+              attestor_pubkey_hex, signature_hex, submitted_at_ms,
+              submitted_to_chain_at, chain_extrinsic_hash
+         FROM receipt_attestation_evidence
+        WHERE id > ? AND submitted_to_chain_at IS NULL
+        ORDER BY id ASC
+        LIMIT ?`,
+    )
+    .all(since, limit) as ReceiptEvidenceRow[];
+  return rows;
+}
+
+/**
+ * Mark a row as successfully submitted to chain. Idempotent — re-marking is
+ * a no-op (the daemon ALREADY-SUBMITTED branch returns 200 with the existing
+ * timestamp + extrinsic hash so retries on a flaky network don't 500).
+ *
+ * Returns `{ status: "marked", row }` on first ack, or
+ * `{ status: "already-marked", row }` on retry. Returns `null` if the row id
+ * doesn't exist.
+ */
+export type MarkSubmittedOutcome =
+  | { status: "marked"; row: ReceiptEvidenceRow }
+  | { status: "already-marked"; row: ReceiptEvidenceRow };
+
+export function markReceiptEvidenceSubmittedToChain(input: {
+  row_id: number;
+  chain_extrinsic_hash: string;
+  submitted_at_ms?: number;
+}): MarkSubmittedOutcome | null {
+  if (!db) return null;
+  const submittedAt = input.submitted_at_ms ?? Date.now();
+  const txHash = normalizeHex(input.chain_extrinsic_hash);
+
+  const existing = db
+    .prepare(
+      `SELECT id, receipt_id, evidence_type, nonce_hex, payload_json,
+              attestor_pubkey_hex, signature_hex, submitted_at_ms,
+              submitted_to_chain_at, chain_extrinsic_hash
+         FROM receipt_attestation_evidence
+        WHERE id = ?`,
+    )
+    .get(input.row_id) as ReceiptEvidenceRow | undefined;
+  if (!existing) return null;
+
+  if (existing.submitted_to_chain_at != null) {
+    return { status: "already-marked", row: existing };
+  }
+
+  db.prepare(
+    `UPDATE receipt_attestation_evidence
+        SET submitted_to_chain_at = ?, chain_extrinsic_hash = ?
+      WHERE id = ? AND submitted_to_chain_at IS NULL`,
+  ).run(submittedAt, txHash, input.row_id);
+
+  const updated = db
+    .prepare(
+      `SELECT id, receipt_id, evidence_type, nonce_hex, payload_json,
+              attestor_pubkey_hex, signature_hex, submitted_at_ms,
+              submitted_to_chain_at, chain_extrinsic_hash
+         FROM receipt_attestation_evidence
+        WHERE id = ?`,
+    )
+    .get(input.row_id) as ReceiptEvidenceRow;
+  return { status: "marked", row: updated };
 }

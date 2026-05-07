@@ -34,6 +34,7 @@ import { registerFleetOperatorRoutes } from "./routes/fleet_operators.js";
 import { registerObserverRoutes } from "./routes/observers.js";
 import { registerAttestationEvidenceAttestorRoutes } from "./routes/attestation_evidence_attestors.js";
 import { attestationEvidenceRouter } from "./routes/attestation_evidence.js";
+import { attestationEvidenceSubmissionRouter } from "./routes/attestation_evidence_submission.js";
 // initChainInfoPoller is re-exported for consumers that want to pre-warm the
 // cache at startup; we also call it in start() so the first /chain-info hit
 // after cold-start returns 200 instead of 503.
@@ -75,6 +76,7 @@ app.use(faucetRouter);      // Public: /faucet/drip — operator onboarding (MAT
 app.use(meteringRouter);    // Task #109: POST /metering/submit — compute_metering_v1 ingestion + sponsored-receipt forwarding.
 app.use(billingRouter);     // Task #112: GET /billing/usage — verifiable compute-metering billing query.
 app.use(attestationEvidenceRouter); // Wave 3 Phase 2: POST /v2/attestation_evidence — TEE-attestor evidence sink (worker bearer auth).
+app.use(attestationEvidenceSubmissionRouter); // Task #143: GET pending / POST mark_submitted — cert-daemon's chain-submission feeder.
 registerTokenRoutes(app);   // Bearer-token lifecycle (admin-only)
 registerAdminKeysRoutes(app); // Task #94: api_keys.bound_validator_aura get/set/clear (admin-only)
 registerFleetOperatorRoutes(app); // Wave 1+2: compute_metering_v2 hardware-attestor registry (admin-only)

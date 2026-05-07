@@ -62,4 +62,19 @@ export const config = {
   sponsoredReceiptSubmitterUrl: process.env.SPONSORED_RECEIPT_SUBMITTER_URL || "",
   sponsoredReceiptSubmitterToken: process.env.SPONSORED_RECEIPT_SUBMITTER_TOKEN || "",
   sponsoredReceiptNotifyTimeoutMs: parseInt(process.env.SPONSORED_RECEIPT_NOTIFY_TIMEOUT_MS || "5000"),
+  // Evidence-submitter Bearer for the daemon-facing chain-submission routes
+  // (`GET /v2/attestation_evidence/pending` + `POST .../mark_submitted` —
+  // see routes/attestation_evidence_submission.ts). Day-one fallback to the
+  // sponsored-receipt submitter token preserves operational simplicity
+  // (operators don't need to set a second secret to roll out task #143);
+  // operators that want to split the privileged paths can set
+  // EVIDENCE_SUBMITTER_TOKEN to an independent value at any point.
+  // The fallback is RUNTIME — read at call time — so a flip in env between
+  // process restarts is honoured. Empty string here means "no token wired
+  // up", and the auth helper will reject every request (401), which is the
+  // safe default if neither env var is set.
+  evidenceSubmitterToken:
+    process.env.EVIDENCE_SUBMITTER_TOKEN ||
+    process.env.SPONSORED_RECEIPT_SUBMITTER_TOKEN ||
+    "",
 };
