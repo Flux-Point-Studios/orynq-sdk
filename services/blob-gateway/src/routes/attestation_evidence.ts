@@ -158,9 +158,15 @@ async function lookupV2Manifest(contentHashHex: string): Promise<
     | { schema?: string; rootHash?: string; record?: unknown }
     | null;
   if (!m) return null;
-  // Both v2 (schema = "compute_metering_v2") AND v2.1 manifests are valid
-  // attest targets. v2.1 manifests would carry their evidence inline already,
-  // but it's a no-op to add additional attestor evidence as well.
+  // Gate on schema field. Only v2 ("compute_metering_v2") and v2.1
+  // ("compute_metering_v2.1") manifests are valid attest targets — plain
+  // blob manifests (no `schema` field) MUST NOT be accepted, otherwise an
+  // attestor could append TEE evidence to an arbitrary uploaded blob and
+  // pollute the receipt-evidence DB. PR #34 M-1.
+  const schema = (m as { schema?: string } | null)?.schema;
+  if (schema !== "compute_metering_v2" && schema !== "compute_metering_v2.1") {
+    return null;
+  }
   return { contentHash: contentHashHex };
 }
 

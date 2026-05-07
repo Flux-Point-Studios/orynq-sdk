@@ -199,6 +199,27 @@ async function mintV2Manifest(opts: {
 }
 
 /**
+ * Mint a PLAIN BLOB manifest at a fixed content_hash — what `POST
+ * /blobs/:contentHash/manifest` writes. NO `schema` field. Used to verify
+ * the v2-schema gate in `lookupV2Manifest`: a plain blob manifest must
+ * NOT be accepted as an attestation_evidence target.
+ */
+async function mintPlainBlobManifest(opts: {
+  content_hash: string;
+}): Promise<{ contentHash: string; receiptIdClean: string }> {
+  const manifest = {
+    chunks: [],
+    rootHash: opts.content_hash,
+  };
+  await saveManifest(opts.content_hash, manifest);
+  const receiptId = computeReceiptId(opts.content_hash);
+  const receiptIdClean = receiptId.startsWith("0x")
+    ? receiptId.slice(2)
+    : receiptId;
+  return { contentHash: opts.content_hash, receiptIdClean };
+}
+
+/**
  * Build a signed evidence-submit body. The attestor signs canonical CBOR
  * of the payload (NOT the wrapping evidence map).
  */
@@ -380,6 +401,35 @@ describe("POST /v2/attestation_evidence — receipt_not_found", () => {
       evidenceType: "arm_trustzone",
       payload: { device_model: "Pixel-8" },
       attestorUri: "//Attestor0",
+    });
+    registerAttestationEvidenceAttestor({ pubkey: body.attestorPubHex });
+    const res = await postJson(
+      ctx.app,
+      "/v2/attestation_evidence",
+      body,
+      { headers: { authorization: `Bearer ${ctx.bearerToken}` } },
+    );
+    expect(res.status).toBe(404);
+    expect((res.body as { code: string }).code).toBe("RECEIPT_NOT_FOUND");
+  });
+
+  // PR #34 M-1: lookupV2Manifest must check the manifest's schema field.
+  // A plain blob manifest (no `schema` field) must NOT be accepted as a
+  // target for /v2/attestation_evidence — the docstring + inline comment
+  // claim only v2/v2.1 manifests pass.
+  test("submit_evidence_for_non_v2_manifest_returns_404", async () => {
+    // Note: deliberately uses a DIFFERENT content_hash than SYNTH_CONTENT_HASH
+    // so that prior tests' state can't leak. Plain blob manifest = no `schema`.
+    const PLAIN_HASH = "cd".repeat(32);
+    const { contentHash, receiptIdClean } = await mintPlainBlobManifest({
+      content_hash: PLAIN_HASH,
+    });
+    const body = buildSignedEvidence({
+      receiptIdClean,
+      contentHash,
+      evidenceType: "arm_trustzone",
+      payload: { device_model: "Pixel-8" },
+      attestorUri: "//AttestorPlainBlob",
     });
     registerAttestationEvidenceAttestor({ pubkey: body.attestorPubHex });
     const res = await postJson(
