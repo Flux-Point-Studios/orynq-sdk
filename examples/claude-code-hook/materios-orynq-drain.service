@@ -1,0 +1,38 @@
+# Materios orynq drain daemon — systemd unit template.
+#
+# Copy to /etc/systemd/system/materios-orynq-drain.service after substituting
+# the four placeholders below for your install:
+#
+#   __USER__         e.g. deci
+#   __GROUP__        e.g. deci  (usually same as user)
+#   __INSTALL_DIR__  absolute path to the checked-out examples/claude-code-hook/
+#                    e.g. /home/deci/orynq-sdk/examples/claude-code-hook
+#   __NODE_BIN__     absolute path to a Node ≥20 binary
+#                    e.g. /home/deci/.nvm/versions/node/v24.15.0/bin/node
+#
+# Then: sudo systemctl daemon-reload && sudo systemctl enable --now materios-orynq-drain
+#
+# Drop-ins under /etc/systemd/system/materios-orynq-drain.service.d/ are the
+# right place to set ORYNQ_SDK_PATH, ORYNQ_DRAIN_ANCHOR_DISABLED, and other
+# per-host config — keeps this unit file portable.
+
+[Unit]
+Description=Materios orynq drain daemon (per-task certified-receipt anchor)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__GROUP__
+WorkingDirectory=__INSTALL_DIR__
+Environment=PATH=__NODE_BIN__:/usr/bin:/bin
+Environment=NODE_ENV=production
+ExecStart=__NODE_BIN__/node drain.mjs
+Restart=always
+RestartSec=5
+StandardOutput=append:__INSTALL_DIR__/drain.log
+StandardError=append:__INSTALL_DIR__/drain.log
+
+[Install]
+WantedBy=multi-user.target
