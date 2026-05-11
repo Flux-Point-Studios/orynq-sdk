@@ -15,8 +15,9 @@
  * Env:
  *   ORYNQ_FLUSH_DRY_RUN=1 — count events but write nothing
  *
- * Default sessionId is the active session (93582ed9-742f-45d3-9e79-74b6bf1ef9fa)
- * to make the recovery path one command for the user.
+ * Usage: pass the Claude Code sessionId as the first positional argument.
+ *   node flush-session.mjs 93582ed9-742f-45d3-9e79-74b6bf1ef9fa
+ *   node flush-session.mjs <session-id> --dry-run
  */
 
 import fs from "node:fs/promises";
@@ -24,16 +25,20 @@ import path from "node:path";
 import crypto from "node:crypto";
 import os from "node:os";
 
-const HOME = process.env.HOME || process.env.USERPROFILE || "/home/deci";
+const HOME = process.env.HOME || process.env.USERPROFILE || "";
 const STATE_DIR = path.join(HOME, ".local/state/materios-orynq-hook");
 const QUEUE_DIR = path.join(STATE_DIR, "queue");
-const DEFAULT_SESSION = "93582ed9-742f-45d3-9e79-74b6bf1ef9fa";
 
 const args = process.argv.slice(2);
 const FORCE = args.includes("--force");
 const DRY_RUN = args.includes("--dry-run") || process.env.ORYNQ_FLUSH_DRY_RUN === "1";
 const positional = args.filter((a) => !a.startsWith("--"));
-const SESSION_ID = positional[0] || DEFAULT_SESSION;
+const SESSION_ID = positional[0];
+if (!SESSION_ID) {
+  console.error("usage: flush-session.mjs <sessionId> [--force] [--dry-run]");
+  console.error("       Pass the Claude Code session UUID as the first positional arg.");
+  process.exit(2);
+}
 
 function sha256Hex(s) {
   return crypto.createHash("sha256").update(s, "utf-8").digest("hex");

@@ -12,16 +12,19 @@
  * Default mode is DRY-RUN. Set BACKLOG_APPLY=1 to actually POST.
  *
  * IMPORTANT: this script imports @polkadot/api from the anchor-worker's
- * node_modules. Run from /home/deci/materios-anchor-worker:
+ * node_modules. Either run it with the anchor-worker dir as cwd, or set
+ * `ANCHOR_WORKER_DIR` so the fallback import can find @polkadot/api:
  *
- *   cd /home/deci/materios-anchor-worker
- *   node /home/deci/materios-orynq-hook/backlog-drain.mjs            # dry-run
- *   BACKLOG_APPLY=1 node /home/deci/materios-orynq-hook/backlog-drain.mjs   # apply
+ *   cd $ANCHOR_WORKER_DIR
+ *   node /path/to/examples/claude-code-hook/backlog-drain.mjs                       # dry-run
+ *   BACKLOG_APPLY=1 node /path/to/examples/claude-code-hook/backlog-drain.mjs       # apply
  *
  * Config:
  *   MATERIOS_RPC_URL                 — substrate WS endpoint (default = SDK default)
  *   ANCHOR_WORKER_URL=http://127.0.0.1:3333
- *   ANCHOR_WORKER_TOKEN_FILE=/home/deci/materios-anchor-worker/.anchor-worker-token
+ *   ANCHOR_WORKER_DIR                — directory with @polkadot/api in node_modules
+ *                                      (default $HOME/materios-anchor-worker)
+ *   ANCHOR_WORKER_TOKEN_FILE         — default $ANCHOR_WORKER_DIR/.anchor-worker-token
  *   CERT_DAEMON_HISTORY=/data/checkpoint-history.json   inside the docker container
  *   BACKLOG_APPLY=1                  — flip from dry-run to real POSTs
  *   BACKLOG_LIMIT=N                  — cap to N receipts (debug)
@@ -29,11 +32,14 @@
  */
 import { readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
+import path from "node:path";
 
+const HOME = process.env.HOME || process.env.USERPROFILE || "";
+const AW_DIR = process.env.ANCHOR_WORKER_DIR || path.join(HOME, "materios-anchor-worker");
 const MAT_RPC = process.env.MATERIOS_RPC_URL || "wss://materios.fluxpointstudios.com/preprod-rpc";
 const AW_URL = process.env.ANCHOR_WORKER_URL || "http://127.0.0.1:3333";
 const AW_TOKEN_FILE = process.env.ANCHOR_WORKER_TOKEN_FILE
-  || "/home/deci/materios-anchor-worker/.anchor-worker-token";
+  || path.join(AW_DIR, ".anchor-worker-token");
 const APPLY = process.env.BACKLOG_APPLY === "1";
 const LIMIT = process.env.BACKLOG_LIMIT ? Number(process.env.BACKLOG_LIMIT) : Infinity;
 const THROTTLE_MS = Number(process.env.BACKLOG_THROTTLE_MS || 2000);
@@ -45,11 +51,11 @@ function log(msg) {
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function loadPolkadotApi() {
-  // Try cwd first (works when invoked from /home/deci/materios-anchor-worker)
-  // then fall back to absolute path (works from anywhere).
+  // Try cwd first (works when invoked from inside the anchor-worker dir),
+  // then fall back to ANCHOR_WORKER_DIR/node_modules.
   try { return await import("@polkadot/api"); } catch { /* fall through */ }
   const { pathToFileURL } = await import("node:url");
-  const abs = "/home/deci/materios-anchor-worker/node_modules/@polkadot/api/index.js";
+  const abs = path.join(AW_DIR, "node_modules", "@polkadot", "api", "index.js");
   return await import(pathToFileURL(abs).href);
 }
 

@@ -101,7 +101,7 @@ const SCHEMA_HASH_ORYNQ_TRACE_V1 =
 // Anchor backstop config
 const ANCHOR_WORKER_URL = process.env.ANCHOR_WORKER_URL || "http://127.0.0.1:3333";
 const ANCHOR_WORKER_TOKEN_FILE = process.env.ANCHOR_WORKER_TOKEN_FILE
-  || "/home/deci/materios-anchor-worker/.anchor-worker-token";
+  || path.join(HOME, "materios-anchor-worker", ".anchor-worker-token");
 const ANCHOR_BACKSTOP_MS = Number(process.env.ORYNQ_DRAIN_ANCHOR_BACKSTOP_MS || 600_000);
 const ANCHOR_BACKSTOP_DISABLED = process.env.ORYNQ_DRAIN_ANCHOR_DISABLED === "1";
 const ANCHOR_BACKSTOP_SWEEP_MS = 60_000;
