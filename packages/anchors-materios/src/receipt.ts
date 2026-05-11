@@ -71,19 +71,50 @@ export async function submitReceipt(
         .update(Buffer.from(contentHex, "hex"))
         .digest("hex");
 
+  // Positional arg order MUST track live runtime metadata exactly. Two
+  // drift hazards that have bitten us before (task #115; observed again
+  // 2026-05-11 when every orynq_trace_v1 + compute_metering_v2 receipt
+  // landed with schema_hash=0x00…):
+  //
+  //   1. arg ordering — fields 5-10 changed shape and the SDK was sending
+  //      schemaHash in the slot the runtime now decodes as
+  //      baseManifestHash. The verifier read schema_hash=0, fell through
+  //      to the legacy chunk-Merkle path, computed against the wrong
+  //      field, and rejected every receipt.
+  //   2. Option<[u8;32]> on zkRootPoseidon + poseidonParamsHash — passing
+  //      a raw 32-byte buffer for an Option<> arg corrupts SCALE encoding
+  //      because polkadot-js takes the first byte as the Option tag.
+  //      Pass `null` for None; pass the bytes directly only if Some is
+  //      genuinely intended.
+  //
+  // Live metadata as of 2026-05-11 (queried via api.tx.orinqReceipts.submitReceipt.meta):
+  //   0  receipt_id              : H256
+  //   1  content_hash            : H256
+  //   2  base_root_sha256        : [u8;32]
+  //   3  zk_root_poseidon        : Option<[u8;32]>
+  //   4  poseidon_params_hash    : Option<[u8;32]>
+  //   5  base_manifest_hash      : [u8;32]
+  //   6  safety_manifest_hash    : [u8;32]
+  //   7  monitor_config_hash     : [u8;32]
+  //   8  attestation_evidence_hash : [u8;32]
+  //   9  storage_locator_hash    : [u8;32]
+  //   10 schema_hash             : [u8;32]
+  //
+  // If you change this, add a regression test that fetches live metadata
+  // and asserts the name + type of each positional arg.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tx = (api.tx as any).orinqReceipts.submitReceipt(
-    ensureHex(receiptId), // receipt_id: H256
-    toBytes32(contentHex), // content_hash: [u8; 32]
-    toBytes32(rootHex), // base_root_sha256: [u8; 32]
-    toBytes32("00".repeat(32)), // zk_root_poseidon: [u8; 32]
-    toBytes32("00".repeat(32)), // poseidon_params_hash: [u8; 32]
-    toBytes32(schemaHex), // schema_hash: [u8; 32]
-    toBytes32("00".repeat(32)), // storage_locator_hash: [u8; 32]
-    toBytes32(manifestHex), // base_manifest_hash: [u8; 32]
-    toBytes32("00".repeat(32)), // safety_manifest_hash: [u8; 32]
-    toBytes32("00".repeat(32)), // monitor_config_hash: [u8; 32]
-    toBytes32("00".repeat(32)), // attestation_evidence_hash: [u8; 32]
+    ensureHex(receiptId),         // 0  receipt_id
+    ensureHex(contentHex),        // 1  content_hash (H256)
+    toBytes32(rootHex),           // 2  base_root_sha256
+    null,                         // 3  zk_root_poseidon: Option<None>
+    null,                         // 4  poseidon_params_hash: Option<None>
+    toBytes32(manifestHex),       // 5  base_manifest_hash
+    toBytes32("00".repeat(32)),   // 6  safety_manifest_hash
+    toBytes32("00".repeat(32)),   // 7  monitor_config_hash
+    toBytes32("00".repeat(32)),   // 8  attestation_evidence_hash
+    toBytes32("00".repeat(32)),   // 9  storage_locator_hash
+    toBytes32(schemaHex),         // 10 schema_hash
   );
 
   // Sign the extrinsic first so dry-run can simulate the fully signed payload
