@@ -1,0 +1,67 @@
+# Materios orynq drain daemon — systemd unit template.
+#
+# Copy to /etc/systemd/system/materios-orynq-drain.service after substituting
+# the placeholders below for your install:
+#
+#   __USER__         e.g. alice
+#   __GROUP__        e.g. alice  (usually same as user)
+#   __INSTALL_DIR__  absolute path to the checked-out examples/claude-code-hook/
+#                    e.g. /home/alice/orynq-sdk/examples/claude-code-hook
+#   __NODE_BIN__     absolute path to the dir containing the Node ≥20 binary
+#                    e.g. /home/alice/.nvm/versions/node/v24.15.0/bin
+#   __STATE_DIR__    durable state dir for the queue/done/failed trees
+#                    e.g. /home/alice/.local/state/materios-orynq-hook
+#
+# Then: sudo systemctl daemon-reload && sudo systemctl enable --now materios-orynq-drain
+#
+# Drop-ins under /etc/systemd/system/materios-orynq-drain.service.d/ are the
+# right place to set ORYNQ_SDK_PATH, ORYNQ_DRAIN_ANCHOR_DISABLED, and other
+# per-host config — keeps this unit file portable.
+
+[Unit]
+Description=Materios orynq drain daemon (per-task certified-receipt anchor)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__GROUP__
+WorkingDirectory=__INSTALL_DIR__
+Environment=PATH=__NODE_BIN__:/usr/bin:/bin
+Environment=NODE_ENV=production
+ExecStart=__NODE_BIN__/node drain.mjs
+Restart=always
+RestartSec=5
+
+# Log to journal so the install dir can be mounted read-only (see ProtectHome
+# below). Tail with `journalctl -u materios-orynq-drain -f`.
+StandardOutput=journal
+StandardError=journal
+
+# ─── Sandboxing ────────────────────────────────────────────────────────────
+# The daemon needs: network egress, read access to its own scripts, and
+# read/write access to its queue/done/failed directories. Everything else
+# is locked down.
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__STATE_DIR__
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+# AF_INET/AF_INET6 for blob-gateway + RPC; AF_UNIX kept for nodejs internals.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
