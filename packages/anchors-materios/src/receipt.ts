@@ -57,6 +57,16 @@ export async function submitReceipt(
   const schemaHex = input.schemaHash
     ? stripPrefix(input.schemaHash)
     : "00".repeat(32);
+  // Reject silently-truncated / silently-padded discriminator inputs.
+  // toBytes32 will pad short input or read only the first 64 chars of long
+  // input, both of which silently produce the wrong on-chain value. A
+  // discriminator must be exactly 32 bytes (64 hex chars) — anything else
+  // is operator error.
+  if (!/^[0-9a-fA-F]{64}$/.test(schemaHex)) {
+    throw new Error(
+      `schemaHash must be exactly 32 hex bytes (64 chars); got ${schemaHex.length} chars`,
+    );
+  }
 
   // Derive receipt_id from contentHash if not provided
   const receiptId =
