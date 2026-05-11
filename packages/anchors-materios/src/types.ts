@@ -70,6 +70,24 @@ export interface ReceiptInput {
   manifestHash: string;
   /** Optional pre-computed receipt ID. If omitted, derived from contentHash. */
   receiptId?: string;
+  /**
+   * Optional schema discriminator hash (32 bytes hex). Identifies the receipt
+   * class to cert-daemon's verifier. Default (omitted/zero) = legacy blob
+   * (chunk-Merkle must equal `rootHash`).
+   *
+   * Set to one of the registered discriminator values when the receipt's
+   * `base_root_sha256` is a *semantic* root (not the chunk-Merkle of the
+   * uploaded bytes):
+   *
+   *   sha256("compute_metering_v2")    — Wave 1+2 metering envelopes
+   *   sha256("compute_metering_v2_1")  — Wave 3 Phase 2 (with attestation_evidence)
+   *   sha256("orynq_trace_v1")         — orynq trace receipts (drain.mjs)
+   *
+   * The cert-daemon's TRUSTED_DISCRIMINATOR_SCHEMAS set (operator-kit
+   * daemon/schemas/__init__.py) enumerates accepted values. Receipts with
+   * unknown schemaHash are rejected by the verifier.
+   */
+  schemaHash?: string;
 }
 
 /** Result of a receipt submission. */

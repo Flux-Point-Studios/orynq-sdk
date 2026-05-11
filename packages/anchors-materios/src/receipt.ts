@@ -48,6 +48,15 @@ export async function submitReceipt(
   const contentHex = stripPrefix(input.contentHash);
   const rootHex = stripPrefix(input.rootHash);
   const manifestHex = stripPrefix(input.manifestHash);
+  // schemaHash defaults to legacy (32 zero bytes) when caller omits it,
+  // preserving the prior behaviour for plain blob receipts. Callers using
+  // semantic-root receipt classes (compute_metering_v2*, orynq_trace_v1)
+  // MUST pass the matching discriminator from
+  // operator-kit daemon/schemas/, otherwise cert-daemon rejects the
+  // receipt with a Merkle mismatch.
+  const schemaHex = input.schemaHash
+    ? stripPrefix(input.schemaHash)
+    : "00".repeat(32);
 
   // Derive receipt_id from contentHash if not provided
   const receiptId =
@@ -64,7 +73,7 @@ export async function submitReceipt(
     toBytes32(rootHex), // base_root_sha256: [u8; 32]
     toBytes32("00".repeat(32)), // zk_root_poseidon: [u8; 32]
     toBytes32("00".repeat(32)), // poseidon_params_hash: [u8; 32]
-    toBytes32("00".repeat(32)), // schema_hash: [u8; 32]
+    toBytes32(schemaHex), // schema_hash: [u8; 32]
     toBytes32("00".repeat(32)), // storage_locator_hash: [u8; 32]
     toBytes32(manifestHex), // base_manifest_hash: [u8; 32]
     toBytes32("00".repeat(32)), // safety_manifest_hash: [u8; 32]
@@ -443,11 +452,19 @@ export async function submitCertifiedReceipt(
     throw new Error(`Blob upload failed: ${uploadResult.error}`);
   }
 
-  // 3. Submit receipt on-chain
+  // 3. Submit receipt on-chain. Forward `schemaHash` and `receiptId`
+  // from the caller's input so semantic-root receipt classes
+  // (compute_metering_v2*, orynq_trace_v1) land on chain with the right
+  // discriminator. Omitting schemaHash falls back to legacy (zero bytes)
+  // = chunk-Merkle path, preserving pre-existing behaviour.
   const receiptInput: ReceiptInput = {
     contentHash: effectiveContentHash,
     rootHash: input.rootHash || contentHashHex,
     manifestHash: uploadResult.storageLocatorHash || input.manifestHash || contentHashHex,
+    // Spread optional fields only when defined — exactOptionalPropertyTypes
+    // forbids assigning `undefined` to an omitted optional property.
+    ...(input.receiptId !== undefined ? { receiptId: input.receiptId } : {}),
+    ...(input.schemaHash !== undefined ? { schemaHash: input.schemaHash } : {}),
   };
   const submitResult = await submitReceipt(provider, receiptInput);
 
