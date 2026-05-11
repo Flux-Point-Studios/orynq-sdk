@@ -55,7 +55,7 @@
  *   leafBlockNum} but txHash is null.
  *
  *   ANCHOR_WORKER_URL=http://127.0.0.1:3333 (default)
- *   ANCHOR_WORKER_TOKEN_FILE=/home/deci/materios-anchor-worker/.anchor-worker-token (default)
+ *   ANCHOR_WORKER_TOKEN_FILE=$HOME/materios-anchor-worker/.anchor-worker-token (default)
  *   ANCHOR_WORKER_TOKEN=<token>                       — overrides the token file
  *   ORYNQ_DRAIN_ANCHOR_BACKSTOP_MS=600000             — backstop delay (10 min)
  *   ORYNQ_DRAIN_ANCHOR_DISABLED=1                     — disable backstop entirely
