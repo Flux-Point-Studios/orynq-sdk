@@ -19,7 +19,7 @@ import type {
   CertifiedReceiptResult,
 } from "./types.js";
 import { waitForCertification, waitForAnchor } from "./polling.js";
-import { stripPrefix, ensureHex, isZeroHash } from "./hex.js";
+import { stripPrefix, ensureHex, isZeroHash, assertHex32 } from "./hex.js";
 import { u8aToHex, stringToU8a } from "@polkadot/util";
 
 /**
@@ -45,9 +45,14 @@ export async function submitReceipt(
   const api = provider.getApi();
   const keypair = provider.getKeypair();
 
-  const contentHex = stripPrefix(input.contentHash);
-  const rootHex = stripPrefix(input.rootHash);
-  const manifestHex = stripPrefix(input.manifestHash);
+  // Validate at the SDK boundary. `toBytes32` will silently pad short
+  // input and silently truncate long input — both produce a different
+  // on-chain value than the caller intended. Surfacing format errors
+  // here as Error throws (not silent on-chain corruption) is the
+  // operator-friendly default.
+  const contentHex = assertHex32(input.contentHash, "contentHash");
+  const rootHex = assertHex32(input.rootHash, "rootHash");
+  const manifestHex = assertHex32(input.manifestHash, "manifestHash");
   // schemaHash defaults to legacy (32 zero bytes) when caller omits it,
   // preserving the prior behaviour for plain blob receipts. Callers using
   // semantic-root receipt classes (compute_metering_v2*, orynq_trace_v1)
@@ -55,18 +60,8 @@ export async function submitReceipt(
   // operator-kit daemon/schemas/, otherwise cert-daemon rejects the
   // receipt with a Merkle mismatch.
   const schemaHex = input.schemaHash
-    ? stripPrefix(input.schemaHash)
+    ? assertHex32(input.schemaHash, "schemaHash")
     : "00".repeat(32);
-  // Reject silently-truncated / silently-padded discriminator inputs.
-  // toBytes32 will pad short input or read only the first 64 chars of long
-  // input, both of which silently produce the wrong on-chain value. A
-  // discriminator must be exactly 32 bytes (64 hex chars) — anything else
-  // is operator error.
-  if (!/^[0-9a-fA-F]{64}$/.test(schemaHex)) {
-    throw new Error(
-      `schemaHash must be exactly 32 hex bytes (64 chars); got ${schemaHex.length} chars`,
-    );
-  }
 
   // Derive receipt_id from contentHash if not provided
   const receiptId =
@@ -442,14 +437,22 @@ export async function submitCertifiedReceipt(
   // Use contentHash from input if provided, otherwise derive
   const effectiveContentHash = input.contentHash || contentHashHex;
 
-  // Derive receiptId
-  const receiptIdHex = ensureHex(
+  // Derive the *default* receiptId from contentHash. If the caller passed
+  // their own `input.receiptId`, honor it for BOTH the blob-storage path
+  // (prepareBlobData) AND the on-chain submit, so the gateway and chain
+  // agree on the key. Letting these diverge — derive for blob, caller-
+  // value for chain — strands the blob: cert-daemon looks up the manifest
+  // under the on-chain receiptId, doesn't find it, fails verification.
+  const derivedReceiptIdHex = ensureHex(
     createHash("sha256")
       .update(Buffer.from(stripPrefix(effectiveContentHash), "hex"))
       .digest("hex"),
   );
+  const effectiveReceiptIdHex = input.receiptId
+    ? ensureHex(input.receiptId)
+    : derivedReceiptIdHex;
 
-  const { manifest, chunks } = prepareBlobData(receiptIdHex, content);
+  const { manifest, chunks } = prepareBlobData(effectiveReceiptIdHex, content);
 
   // 2. Upload blobs to gateway
   const uploadResult = await uploadBlobs(
@@ -471,9 +474,12 @@ export async function submitCertifiedReceipt(
     contentHash: effectiveContentHash,
     rootHash: input.rootHash || contentHashHex,
     manifestHash: uploadResult.storageLocatorHash || input.manifestHash || contentHashHex,
-    // Spread optional fields only when defined — exactOptionalPropertyTypes
-    // forbids assigning `undefined` to an omitted optional property.
-    ...(input.receiptId !== undefined ? { receiptId: input.receiptId } : {}),
+    // Always pass effectiveReceiptIdHex (derived OR caller-supplied) so
+    // the gateway-side blob path and the on-chain receipt agree on the
+    // key. submitReceipt's own derivation would re-derive from
+    // contentHash and ignore the override — pass it explicitly.
+    receiptId: effectiveReceiptIdHex,
+    // exactOptionalPropertyTypes forbids assigning `undefined`, so spread.
     ...(input.schemaHash !== undefined ? { schemaHash: input.schemaHash } : {}),
   };
   const submitResult = await submitReceipt(provider, receiptInput);
