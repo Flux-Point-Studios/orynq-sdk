@@ -35,6 +35,8 @@ import type {
 } from "../billing/chain_query.js";
 import { getApiTokensDb } from "../api-tokens.js";
 import { verifyToken } from "../api-tokens.js";
+import { billingMiddlewareErrorTotal } from "../metrics.js";
+import { warnThrottled } from "./warn-throttle.js";
 
 const X402_HEADER_NAME = "X-402-Payment-Required";
 const X402_SIGNATURE_HEADER = "x-402-payment-signature";
@@ -165,14 +167,13 @@ export function classifyEndpoint(req: Request): EndpointClass {
   // new route without it showing up in audit.
   // -----------------------------------------------------------------------
   if (m !== "GET") {
-    // eslint-disable-next-line no-console
-    console.warn(
-      JSON.stringify({
-        log: "billing.unclassified_route",
-        method: m,
-        path: p,
-      }),
-    );
+    // Throttled to once per minute per (method, path) so a misconfigured
+    // route under load can't flood the structured-log stream (#227 Part 2).
+    warnThrottled(`billing.unclassified_route:${m} ${p}`, {
+      log: "billing.unclassified_route",
+      method: m,
+      path: p,
+    });
   }
   return assertEndpointClass("free");
 }
@@ -556,6 +557,13 @@ export function billing402Middleware(
       // 500 the underlying request. Log and pass through.
       // eslint-disable-next-line no-console
       console.error("billing-402 internal error", err);
+      // #227 Part 1: bump the Prom counter so ops can alert on sustained
+      // fail-open in `live` mode (silent revenue leak). Labelled by phase
+      // so the alert rule can ignore `off` (intentional bypass) and
+      // focus on `live` (regression).
+      billingMiddlewareErrorTotal
+        .labels({ phase: config.billingEnforcementPhase })
+        .inc();
       return next();
     }
   };
