@@ -23,6 +23,7 @@ export default defineConfig({
       '@fluxpointstudios/orynq-sdk-payer-cardano-node': resolve(__dirname, 'packages/payer-cardano-node/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-payer-evm-direct': resolve(__dirname, 'packages/payer-evm-direct/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-payer-evm-x402': resolve(__dirname, 'packages/payer-evm-x402/src/index.ts'),
+      '@fluxpointstudios/orynq-sdk-payer-materios-x402': resolve(__dirname, 'packages/payer-materios-x402/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-process-trace': resolve(__dirname, 'packages/process-trace/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-server-middleware': resolve(__dirname, 'packages/server-middleware/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-transport-flux': resolve(__dirname, 'packages/transport-flux/src/index.ts'),
