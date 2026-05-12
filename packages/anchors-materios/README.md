@@ -8,6 +8,14 @@ Materios blockchain anchor support for the Orynq SDK. Submits and verifies data 
 npm install @fluxpointstudios/orynq-sdk-anchors-materios
 ```
 
+> **⚠️ Upgrade from 0.3.1**: `0.3.1` shipped with a positional-argument bug
+> that caused `submitReceipt` to land receipts on chain with `schema_hash =
+> 0x00…00` and `base_root_sha256` in the wrong slot — silently. The
+> on-chain transaction succeeded; cert-daemons rejected the receipt with
+> `Merkle root mismatch`; receipts already submitted under 0.3.1 are
+> unrecoverable. Upgrade to **`0.3.2` or later** to fix. See CHANGELOG.md
+> for the full post-mortem.
+
 Peer dependencies are included automatically:
 
 - `@polkadot/api` ^14.0.0
