@@ -77,4 +77,39 @@ export const config = {
     process.env.EVIDENCE_SUBMITTER_TOKEN ||
     process.env.SPONSORED_RECEIPT_SUBMITTER_TOKEN ||
     "",
+
+  // Phase 2.A — pay-per-use billing enforcement (HTTP 402 via pallet-billing).
+  //
+  // Staged rollout across three modes:
+  //   "off"         — middleware bypasses entirely (no chain reads, no logs).
+  //                   Default; safe even before pallet-billing is wired into
+  //                   the runtime. No behavior change vs Phase 1.
+  //   "measurement" — middleware reads balance/price, logs every request
+  //                   that WOULD 402 (`would_402: true` audit line + Prom
+  //                   counter), but lets the request through. Used to size
+  //                   the FPS treasury budget against real traffic before
+  //                   actual charges go live.
+  //   "live"        — middleware returns 402 + x402 headers when balance <
+  //                   price. After 2.A part 4 (sdk-payer-materios-x402)
+  //                   ships, clients can retry with payment. Note: even in
+  //                   "live" mode the pallet's own `DebitsEnabled` switch
+  //                   can be `false`, in which case the gateway-side 402
+  //                   gating is real but no MATRA is actually debited yet
+  //                   (pallet's pay_request dry-run). The two layers are
+  //                   independent — gateway shapes the wire protocol, pallet
+  //                   shapes the on-chain effect.
+  //
+  // Toggle via `BILLING_ENFORCEMENT_PHASE` env. Misconfigured value falls
+  // back to "off" (fail-open is the right default for billing).
+  billingEnforcementPhase: (() => {
+    const raw = (process.env.BILLING_ENFORCEMENT_PHASE || "off").toLowerCase();
+    return raw === "measurement" || raw === "live" ? raw : "off";
+  })() as "off" | "measurement" | "live",
+
+  // FPS treasury SS58 — the account whose pallet-billing::Balances is
+  // debited for every api-key-authed request. Set via env at deploy.
+  // Empty string means "treasury sponsorship is disabled" — every
+  // api-key-authed request will be treated as if the treasury balance
+  // were zero (and 402'd in "live" mode). Self-pay clients are unaffected.
+  fpsTreasurySs58: process.env.FPS_TREASURY_SS58 || "",
 };
