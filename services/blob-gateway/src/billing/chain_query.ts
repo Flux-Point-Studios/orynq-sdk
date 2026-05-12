@@ -333,6 +333,143 @@ export async function queryCompositeTrustScores(
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// pallet-billing reads (Phase 2.A)
+// ---------------------------------------------------------------------------
+//
+// These are the gateway-side reads of the new pallet-billing storage that
+// Phase 2.A introduces. While the pallet is not yet wired into the runtime
+// (or while a chain reset has un-deployed it) ALL of these return `null` —
+// the 402 middleware then bypasses gating instead of failing closed. Once
+// the pallet is live, these return concrete values.
+//
+// Pricing model variants come from the pallet's `types::PricingModel`:
+//   PerCall(u128)
+//   PerByte { unit_price: u128 }
+// We don't import the pallet's TS types directly (there isn't a generated
+// binding yet); we shape-match the SCALE-decoded shape via @polkadot/api's
+// generic codec.
+
+export interface BillingBalanceResult {
+  ss58: string;
+  /** MATRA base units (15 decimals). `null` = pallet not present or RPC down. */
+  balance: bigint | null;
+}
+
+/** Read `pallet-billing::Balances[ss58]`. Returns null on any failure. */
+export async function queryBillingBalance(
+  ss58: string,
+): Promise<BillingBalanceResult> {
+  const pending = getOrConnectApi();
+  if (!pending) return { ss58, balance: null };
+  try {
+    const api = await pending;
+    // `query.billing` only exists after pallet-billing is wired into the
+    // runtime via `construct_runtime!`. Until then this throws.
+    const billing = (api.query as unknown as Record<string, unknown>).billing;
+    if (!billing || typeof (billing as { balances?: unknown }).balances !== "function") {
+      return { ss58, balance: null };
+    }
+    const raw = await (billing as {
+      balances: (who: string) => Promise<{ toBigInt(): bigint }>;
+    }).balances(ss58);
+    return { ss58, balance: raw.toBigInt() };
+  } catch {
+    return { ss58, balance: null };
+  }
+}
+
+export interface EndpointQuoteResult {
+  endpointClass: string;
+  /** MATRA base units (15 decimals). `null` = pallet not present. */
+  price: bigint | null;
+}
+
+/**
+ * Compute the MATRA charge for one request via pallet-billing's
+ * `quote_price` semantics: looks up `EndpointPrices[endpoint_class]`,
+ * dispatches PerCall vs PerByte.
+ *
+ * Implementation note: we read the raw enum from chain and discriminate
+ * here rather than calling a custom RPC (which would require building
+ * `pallet-billing-rpc` first). Reads two storage slots max.
+ */
+export async function queryEndpointPrice(
+  endpointClass: string,
+  requestBytes: number,
+): Promise<EndpointQuoteResult> {
+  const pending = getOrConnectApi();
+  if (!pending) return { endpointClass, price: null };
+  try {
+    const api = await pending;
+    const billing = (api.query as unknown as Record<string, unknown>).billing;
+    if (
+      !billing ||
+      typeof (billing as { endpointPrices?: unknown }).endpointPrices !==
+        "function"
+    ) {
+      return { endpointClass, price: null };
+    }
+    const raw = await (billing as {
+      endpointPrices: (k: Uint8Array | string) => Promise<unknown>;
+    }).endpointPrices(Buffer.from(endpointClass, "utf8"));
+    return {
+      endpointClass,
+      price: decodePricingModel(raw, requestBytes),
+    };
+  } catch {
+    return { endpointClass, price: null };
+  }
+}
+
+/**
+ * Translate a SCALE-decoded `PricingModel` enum into a u128 MATRA charge.
+ *
+ * @polkadot/api decodes enums as objects with `isPerCall` / `isPerByte`
+ * boolean getters and `asPerCall` / `asPerByte` accessors. We tolerate
+ * either that shape OR a plain JSON dict shape (test-mock compatibility).
+ *
+ * Saturation: a malicious or governance-set `PerByte` with huge unit_price
+ * can theoretically overflow `u128 * u64`. The pallet uses `saturating_mul`
+ * which clamps to `u128::MAX`. We mirror that here with bigint saturation.
+ */
+function decodePricingModel(raw: unknown, requestBytes: number): bigint {
+  const U128_MAX = (1n << 128n) - 1n;
+  const bytes = BigInt(Math.max(0, requestBytes));
+
+  // @polkadot/api codec shape
+  const codec = raw as {
+    isPerCall?: boolean;
+    isPerByte?: boolean;
+    asPerCall?: { toBigInt(): bigint };
+    asPerByte?: { unitPrice: { toBigInt(): bigint } };
+  };
+  if (codec && typeof codec.isPerCall === "boolean") {
+    if (codec.isPerCall && codec.asPerCall) {
+      return codec.asPerCall.toBigInt();
+    }
+    if (codec.isPerByte && codec.asPerByte) {
+      const unit = codec.asPerByte.unitPrice.toBigInt();
+      const product = unit * bytes;
+      return product > U128_MAX ? U128_MAX : product;
+    }
+  }
+
+  // Plain JSON dict shape (test mocks, or `toJSON()`-style readers).
+  const json = raw as { PerCall?: string | number; PerByte?: { unit_price?: string | number; unitPrice?: string | number } };
+  if (json && json.PerCall !== undefined) {
+    return BigInt(json.PerCall);
+  }
+  if (json && json.PerByte) {
+    const unit = BigInt(json.PerByte.unit_price ?? json.PerByte.unitPrice ?? 0);
+    const product = unit * bytes;
+    return product > U128_MAX ? U128_MAX : product;
+  }
+
+  // Unknown / unset → free, mirrors `PricingModel::FREE` default in the pallet.
+  return 0n;
+}
+
 /** Test hook: clear the cached ApiPromise so the next call re-connects. */
 export function resetChainQueryForTests(): void {
   apiPromise = null;

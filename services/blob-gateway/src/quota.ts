@@ -171,6 +171,18 @@ export function migrateUsageColumns(database: Database.Database): void {
     ["lifetime_bytes", "INTEGER NOT NULL DEFAULT 0"],
     ["lifetime_matra_debited", "INTEGER NOT NULL DEFAULT 0"],
     ["last_used_at", "TEXT"],
+    // Phase 2.A — per-key MATRA spend cap + daily rolling counter.
+    // `max_matra_per_day` caps how much the FPS treasury will sponsor for
+    // this key in one UTC day; 0 means "use the global default" (no cap),
+    // any positive value enforces. `matra_spent_today` accumulates the
+    // amount actually charged this day; `matra_day_bucket` is the YYYY-MM-DD
+    // (UTC) at which `matra_spent_today` started counting, used to roll the
+    // counter atomically (same pattern as `bytes_today` / `bytes_day_bucket`
+    // that the byte-quota path already uses). All are MATRA base units
+    // (15 decimals).
+    ["max_matra_per_day", "INTEGER NOT NULL DEFAULT 0"],
+    ["matra_spent_today", "INTEGER NOT NULL DEFAULT 0"],
+    ["matra_day_bucket", "TEXT"],
   ];
   for (const [name, type] of adds) {
     if (have.has(name)) continue;

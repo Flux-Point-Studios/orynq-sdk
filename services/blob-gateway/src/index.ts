@@ -25,6 +25,7 @@ import { faucetRouter } from "./routes/faucet.js";
 import { registerAdminKeysRoutes } from "./routes/admin-keys.js";
 import { meteringRouter } from "./routes/metering.js";
 import { billingRouter } from "./routes/billing.js";
+import { billing402Middleware } from "./middleware/billing-402.js";
 import { initWorkerBoundsDb } from "./worker_bounds.js";
 import { initFleetOperatorsDb } from "./fleet_operators.js";
 import { initObserversDb } from "./observers.js";
@@ -59,6 +60,11 @@ app.put("/blobs/:contentHash/chunks/:i", express.raw({ type: "*/*", limit: `${co
 
 // JSON parser for everything else
 app.use(express.json({ limit: "2mb" }));
+
+// Phase 2.A — pay-per-use billing admission control. No-op when
+// BILLING_ENFORCEMENT_PHASE=off (default). Always runs AFTER body parsers
+// so Content-Length is reliable for PerByte endpoints.
+app.use(billing402Middleware());
 
 // Public routes
 app.get("/health", healthHandler);
