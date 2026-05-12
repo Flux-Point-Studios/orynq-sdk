@@ -15,12 +15,21 @@
  * ```
  * canonical_preimage = concat(
  *   utf8("materios-x402-v1"),       // 16-byte fixed domain separator
+ *   u32_le(len(network_utf8)) || utf8(payload.network),  // network binding (preprod|mainnet)
  *   utf8_length_prefix_u32_le(endpointClass) || utf8(endpointClass),
  *   u128_le_bytes(BigInt(pricing.amount)),
  *   bytes32(payload.nonce),         // 32 raw bytes from `0x<64-hex>`
  *   u64_le_bytes(payload.expires)
  * )
  * ```
+ *
+ * The `network` field is bound into the preimage so a signature scoped to
+ * preprod CANNOT verify against mainnet (or any future network), even
+ * though both share the same `materios-x402-v1` protocol domain. Without
+ * this binding, a captured preprod signature could be replayed on mainnet
+ * if the same (endpointClass, amount, nonce, expires) tuple recurred.
+ * `validatePayload` enforces `network ∈ {"preprod", "mainnet"}` so the
+ * binding can't be sidestepped by submitting a junk network string.
  *
  * The signer hashes this with blake2-256 before signing, matching the
  * substrate convention used by `pallet-billing` extrinsics. Verifiers
@@ -203,6 +212,12 @@ export function buildMateriosPayPreimage(
   // Domain-sep prefix (16 bytes).
   const domain = PREIMAGE_DOMAIN_SEPARATOR;
 
+  // Length-prefixed network (u32 LE length || utf8 bytes). Binds the
+  // signature to a single network — a preprod sig can never verify on
+  // mainnet, even with otherwise-identical fields.
+  const networkBytes = new TextEncoder().encode(payload.network);
+  const networkLen = u32LeBytes(networkBytes.length);
+
   // Length-prefixed endpoint class (u32 LE length || utf8 bytes).
   const endpointBytes = new TextEncoder().encode(payload.endpointClass);
   const endpointLen = u32LeBytes(endpointBytes.length);
@@ -226,6 +241,8 @@ export function buildMateriosPayPreimage(
 
   return concatBytes(
     domain,
+    networkLen,
+    networkBytes,
     endpointLen,
     endpointBytes,
     amountBytes,

@@ -247,6 +247,15 @@ export function validatePayload(
       `materios-x402: unsupported scheme ${JSON.stringify(payload.scheme)} (expected "materios-x402")`,
     );
   }
+  // Network — must be a known Materios network. Enforced so the preimage's
+  // network binding (see preimage.ts wire-format contract) can't be
+  // sidestepped by submitting a junk string. Restrict to the canonical set
+  // we ship today; future networks need an SDK bump.
+  if (payload.network !== "preprod" && payload.network !== "mainnet") {
+    throw new Error(
+      `materios-x402: unsupported network ${JSON.stringify(payload.network)} (expected "preprod" or "mainnet")`,
+    );
+  }
   // Nonce shape
   if (
     typeof payload.nonce !== "string" ||

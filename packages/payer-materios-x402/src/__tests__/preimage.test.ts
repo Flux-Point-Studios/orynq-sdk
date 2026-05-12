@@ -97,6 +97,8 @@ describe("buildMateriosPayPreimage", () => {
   it("BYTE-PIN: matches the canonical layout for the fixed test vector", () => {
     // Layout assembly (LE everywhere except UTF-8 strings):
     //   domain        = "materios-x402-v1"                                            (16 bytes)
+    //   networkLen    = 0x07000000  (= 7 LE)
+    //   networkBytes  = "preprod"                                                     (7 bytes)
     //   endpointLen   = 0x0e000000  (= 14 LE)
     //   endpointBytes = "receipt_submit"                                              (14 bytes)
     //   amount(u128)  = 1000000  -> 40 42 0f 00 00 ... (16 bytes, LE)
@@ -105,6 +107,10 @@ describe("buildMateriosPayPreimage", () => {
     const expectedHex =
       // domain "materios-x402-v1"
       "6d6174657269" + "6f732d783430" + "322d7631" +
+      // u32 LE 7
+      "07000000" +
+      // "preprod" (7 bytes ASCII)
+      "70726570726f64" +
       // u32 LE 14
       "0e000000" +
       // "receipt_submit" (14 bytes ASCII)
@@ -119,8 +125,17 @@ describe("buildMateriosPayPreimage", () => {
     const got = toHex(buildMateriosPayPreimage(PAYLOAD_FIXED));
     expect(got).toBe(expectedHex);
 
-    // Sanity-check total length: 16 + 4 + 14 + 16 + 32 + 8 = 90 bytes = 180 hex chars.
-    expect(got.length).toBe(180);
+    // Sanity-check total length: 16 + 4 + 7 + 4 + 14 + 16 + 32 + 8 = 101 bytes = 202 hex chars.
+    expect(got.length).toBe(202);
+  });
+
+  it("produces a different preimage when network changes (cross-network replay defense)", () => {
+    const preprod = buildMateriosPayPreimage(PAYLOAD_FIXED);
+    const mainnet = buildMateriosPayPreimage({
+      ...PAYLOAD_FIXED,
+      network: "mainnet",
+    });
+    expect(toHex(preprod)).not.toBe(toHex(mainnet));
   });
 
   it("rejects a malformed nonce (not 0x + 64 hex)", () => {
