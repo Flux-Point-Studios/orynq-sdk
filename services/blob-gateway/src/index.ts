@@ -26,6 +26,10 @@ import { registerAdminKeysRoutes } from "./routes/admin-keys.js";
 import { meteringRouter } from "./routes/metering.js";
 import { billingRouter } from "./routes/billing.js";
 import { billing402Middleware } from "./middleware/billing-402.js";
+import {
+  metricsRegistry,
+  startDefaultMetricsCollection,
+} from "./metrics.js";
 import { initWorkerBoundsDb } from "./worker_bounds.js";
 import { initFleetOperatorsDb } from "./fleet_operators.js";
 import { initObserversDb } from "./observers.js";
@@ -68,6 +72,19 @@ app.use(billing402Middleware());
 
 // Public routes
 app.get("/health", healthHandler);
+
+// Prometheus exposition (#227). Public, unauthenticated — same posture as
+// /health, scraped by ops dashboards. Counters: see src/metrics.ts.
+app.get("/metrics", async (_req: Request, res: Response) => {
+  try {
+    res.setHeader("Content-Type", metricsRegistry.contentType);
+    res.end(await metricsRegistry.metrics());
+  } catch (err) {
+    console.error("[blob-gateway] /metrics serialization failed", err);
+    res.status(500).end();
+  }
+});
+
 app.use(statusRouter);
 
 // All routes — each handles its own auth (Phase 4)
@@ -118,6 +135,10 @@ async function start(): Promise<void> {
   // Start cleanup timers
   startCleanupTimer();
   startHeartbeatCleanup();
+
+  // Start default Node-process metrics collection (heap, event-loop lag,
+  // GC). Lazy-started here so unit tests don't leak the collection timer.
+  startDefaultMetricsCollection();
 
   // Pre-warm /chain-info cache so the first hit after cold-start returns 200
   // instead of 503. Fire-and-forget; errors are handled inside the poller.

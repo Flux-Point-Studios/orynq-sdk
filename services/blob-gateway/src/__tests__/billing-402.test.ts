@@ -27,12 +27,27 @@ import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import express from "express";
 import { config } from "../config.js";
 import { decodePricingModel } from "../billing/chain_query.js";
+import { resetWarnThrottleForTests } from "../middleware/warn-throttle.js";
+import {
+  billingMiddlewareErrorTotal,
+  resetMetricsForTests,
+} from "../metrics.js";
 
 // Mock api-tokens so identifyPayer doesn't need a real DB.
 vi.mock("../api-tokens.js", () => ({
   getApiTokensDb: vi.fn(() => null),
   verifyToken: vi.fn(() => ({ valid: false, reason: "not configured" })),
 }));
+
+// #227: reset hot-path warn-throttle + Prom counter state between tests
+// so each test sees a clean slate. The throttle reset matters for the
+// classifyEndpoint/decodePricingModel warn tests (suppressed-after-first
+// would otherwise be order-dependent); the metrics reset matters for the
+// M3-error → billing_middleware_error_total assertion.
+beforeEach(() => {
+  resetWarnThrottleForTests();
+  resetMetricsForTests();
+});
 
 import { billing402Middleware, __test__ } from "../middleware/billing-402.js";
 import type { BillingMiddlewareDeps } from "../middleware/billing-402.js";
@@ -720,7 +735,63 @@ describe("M3 (#224): internal error fails open", () => {
       errSpy.mockRestore();
     }
   });
+
+  test("#227: fail-open increments billing_middleware_error_total{phase=live}", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const deps: BillingMiddlewareDeps = {
+      queryEndpointPrice: vi.fn(async () => {
+        throw new Error("simulated boom");
+      }),
+      queryBillingBalance: vi.fn(async (ss58) => ({ ss58, balance: null })),
+    };
+    try {
+      // Baseline: counter should be zero (resetMetricsForTests in
+      // top-level beforeEach already zeroed it).
+      const baseline = await readCounter("live");
+      expect(baseline).toBe(0);
+
+      // Trigger one fail-open in `live` mode.
+      const res = await withPhase("live", () =>
+        harness({ method: "POST", path: "/metering/submit", deps }),
+      );
+      expect(res.status).toBe(200);
+
+      const afterOne = await readCounter("live");
+      expect(afterOne).toBe(1);
+
+      // Trigger a second fail-open in `live` — counter advances.
+      const res2 = await withPhase("live", () =>
+        harness({ method: "POST", path: "/metering/submit", deps }),
+      );
+      expect(res2.status).toBe(200);
+      const afterTwo = await readCounter("live");
+      expect(afterTwo).toBe(2);
+
+      // Trigger a fail-open in `measurement` — separate label series.
+      const res3 = await withPhase("measurement", () =>
+        harness({ method: "POST", path: "/metering/submit", deps }),
+      );
+      expect(res3.status).toBe(200);
+      // `live` label unchanged …
+      expect(await readCounter("live")).toBe(2);
+      // … and `measurement` got its own increment.
+      expect(await readCounter("measurement")).toBe(1);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
 });
+
+/**
+ * Read the current value of `billing_middleware_error_total{phase=…}`.
+ * prom-client `Counter.get()` returns the full series; we filter to the
+ * single label-set we care about.
+ */
+async function readCounter(phase: "off" | "measurement" | "live"): Promise<number> {
+  const snapshot = await billingMiddlewareErrorTotal.get();
+  const match = snapshot.values.find((v) => v.labels.phase === phase);
+  return match ? match.value : 0;
+}
 
 // ---------------------------------------------------------------------------
 // identifyPayer

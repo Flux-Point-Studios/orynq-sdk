@@ -32,6 +32,7 @@ import { ApiPromise, WsProvider } from "@polkadot/api";
 import { createHash } from "crypto";
 import { config } from "../config.js";
 import type { AttestationStatus } from "./aggregate.js";
+import { warnThrottled } from "../middleware/warn-throttle.js";
 
 const ZERO_HASH_NO_PREFIX = "00".repeat(32);
 const RECONNECT_COOLDOWN_MS = 30_000;
@@ -490,14 +491,18 @@ export function decodePricingModel(raw: unknown, requestBytes: number): bigint {
   // attention to the variant gap. Pair this with the runtime-upgrade
   // checklist: any new PricingModel variant requires a gateway bump in
   // lockstep.
-  // eslint-disable-next-line no-console
-  console.warn(
-    JSON.stringify({
-      log: "billing.unknown_pricing_variant",
-      raw_keys:
-        typeof raw === "object" && raw !== null ? Object.keys(raw) : [],
-    }),
-  );
+  //
+  // #227 Part 2: throttle the warn to once per minute per variant-key so
+  // a forkless-upgrade ahead of the gateway image doesn't write N warns/sec
+  // under load. The first occurrence per distinct variant still surfaces
+  // promptly; repeats are dropped until the throttle elapses.
+  const rawKeys =
+    typeof raw === "object" && raw !== null ? Object.keys(raw) : [];
+  const variantKey = rawKeys.join(",");
+  warnThrottled(`billing.unknown_pricing_variant:${variantKey}`, {
+    log: "billing.unknown_pricing_variant",
+    raw_keys: rawKeys,
+  });
   // Unknown / unset → free, mirrors `PricingModel::FREE` default in the pallet.
   return 0n;
 }
