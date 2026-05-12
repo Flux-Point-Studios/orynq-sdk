@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-payer-materios-x402",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Materios-native sr25519 x402 payer + api-key passthrough for Materios billing gateway.",
   "type": "module",
   "main": "./dist/index.cjs",

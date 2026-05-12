@@ -88,13 +88,17 @@ export class MateriosApiKeyPayer implements Payer {
   }
 
   /**
-   * No balance probe — see file docstring. Returns 0 rather than
-   * throwing because some callers query balance speculatively before
-   * `pay()` and a throw here would noise their logs without giving
-   * them any actionable information.
+   * No balance probe — the api-key path debits the FPS treasury account,
+   * whose balance is gateway-internal state not exposed over RPC.
+   * Throws to stay consistent with `MateriosSelfPayPayer.getBalance`
+   * (both paths legitimately can't read a balance without out-of-band
+   * info, and silently returning `0n` while `supports()` returns true
+   * is misleading to budget-tracker callers).
    */
   async getBalance(_chain: ChainId, _asset: string): Promise<bigint> {
-    return 0n;
+    throw new Error(
+      "MateriosApiKeyPayer.getBalance: api-key path doesn't expose payer balance — FPS treasury balance is gateway-internal, not client-readable; check gateway /billing/usage instead",
+    );
   }
 
   /**

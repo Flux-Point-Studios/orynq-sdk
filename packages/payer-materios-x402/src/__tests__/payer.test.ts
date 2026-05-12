@@ -174,6 +174,47 @@ describe("parseMateriosPaymentRequired / validatePayload", () => {
       /not valid JSON/,
     );
   });
+
+  // ---------------------------------------------------------------------------
+  // 0.1.1 polish (task #228) — additional validation coverage
+  // ---------------------------------------------------------------------------
+
+  it("[#228 L3] rejects a payload with a non-MATRA pricing.token", () => {
+    const payload = freshPayload({
+      pricing: { token: "USDC" as unknown as "MATRA", decimals: 15, amount: "1000000" },
+    });
+    expect(() => validatePayload(payload)).toThrow(
+      /unsupported token.*MATRA/,
+    );
+  });
+
+  it("[#228 L3] rejects a payload with pricing.decimals !== 15", () => {
+    const payload = freshPayload({
+      pricing: { token: "MATRA", decimals: 6 as 15, amount: "1000000" },
+    });
+    expect(() => validatePayload(payload)).toThrow(
+      /unsupported decimals.*15.*MATRA/,
+    );
+  });
+
+  it("[#228 L4] rejects a payload with empty endpointClass", () => {
+    const payload = freshPayload({ endpointClass: "" });
+    expect(() => validatePayload(payload)).toThrow(/empty endpointClass/);
+  });
+
+  it("[#228 L4] rejects a payload with non-canonical endpointClass casing/punctuation", () => {
+    const payload = freshPayload({ endpointClass: "Receipt-Submit" });
+    expect(() => validatePayload(payload)).toThrow(
+      /endpointClass must match/,
+    );
+  });
+
+  it("[#228 L5] rejects a payload with pricing.amount === '0' (zero-charge 402)", () => {
+    const payload = freshPayload({
+      pricing: { token: "MATRA", decimals: 15, amount: "0" },
+    });
+    expect(() => validatePayload(payload)).toThrow(/must be > 0/);
+  });
 });
 
 // ---------------------------------------------------------------------------

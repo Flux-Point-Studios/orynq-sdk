@@ -256,6 +256,37 @@ export function validatePayload(
       `materios-x402: unsupported network ${JSON.stringify(payload.network)} (expected "preprod" or "mainnet")`,
     );
   }
+  // endpointClass shape — must be a non-empty canonical-form string. The
+  // gateway-side classifier emits `/^[a-z0-9_]+$/` slugs (e.g.
+  // `receipt_submit`); rejecting anything else here keeps the preimage's
+  // endpointClass binding aligned with the gateway's canonical form and
+  // prevents stray casing / punctuation from sneaking past validation.
+  if (
+    typeof payload.endpointClass !== "string" ||
+    payload.endpointClass.length === 0
+  ) {
+    throw new Error(`materios-x402: empty endpointClass`);
+  }
+  if (!/^[a-z0-9_]+$/.test(payload.endpointClass)) {
+    throw new Error(
+      `materios-x402: endpointClass must match /^[a-z0-9_]+$/ (got ${JSON.stringify(payload.endpointClass)})`,
+    );
+  }
+  // Pricing token + decimals — MATRA is the only billable asset today
+  // (15 decimals, matches pallet-billing). Locking these here means a
+  // malformed 402 that swaps in a different token / decimals combination
+  // is rejected before we hash anything, instead of silently signing a
+  // preimage the gateway will then reject.
+  if (payload.pricing.token !== "MATRA") {
+    throw new Error(
+      `materios-x402: unsupported token ${JSON.stringify(payload.pricing.token)} (expected "MATRA")`,
+    );
+  }
+  if (payload.pricing.decimals !== 15) {
+    throw new Error(
+      `materios-x402: unsupported decimals ${payload.pricing.decimals} (expected 15 for MATRA)`,
+    );
+  }
   // Nonce shape
   if (
     typeof payload.nonce !== "string" ||
@@ -287,6 +318,15 @@ export function validatePayload(
   if (amount < 0n || amount > (1n << 128n) - 1n) {
     throw new Error(
       `materios-x402: pricing.amount out of u128 range: ${amount.toString()}`,
+    );
+  }
+  // Defensive zero-charge guard. The gateway never emits 402 for a free
+  // route in production, but a zero-charge 402 is structurally malformed —
+  // reject client-side so a misconfigured upstream surfaces immediately
+  // instead of generating a useless signature for a no-op debit.
+  if (amount === 0n) {
+    throw new Error(
+      `materios-x402: pricing.amount must be > 0 (zero-charge 402 is malformed)`,
     );
   }
   // Expires in future (with a tiny tolerance for clock skew).
@@ -372,16 +412,27 @@ export function unpackPaymentProofHeaders(packed: string): {
 
 /**
  * Verify an sr25519 signature against the canonical materios-x402 preimage
- * hash. Helper for tests + downstream verifiers that don't want to depend
- * on the gateway's verification path. Returns true iff the signature is
- * valid for `(preimage, publicKey)`.
+ * hash. Helper for tests + downstream verifiers (e.g. a gateway-side
+ * verifier wiring this directly) that don't want to depend on the
+ * gateway's full verification path.
+ *
+ * The payload is run through `validatePayload` first so semantic
+ * constraints (scheme, network, endpointClass shape, token+decimals,
+ * nonce shape, amount range, freshness window, ...) all reject BEFORE
+ * any signature work happens. Without this, a downstream verifier wiring
+ * this function as their only check would happily accept a signature
+ * over an `expires`-in-the-past or malformed-nonce payload.
+ *
+ * Returns true iff the signature is valid for `(preimage, publicKey)`.
+ * Throws on payload validation failure (same errors as `validatePayload`).
  */
 export function verifyMateriosPaymentSignature(opts: {
   payload: MateriosPaymentPayload;
   signatureHex: string;
   publicKey: Uint8Array;
 }): boolean {
-  const preimage = buildMateriosPayPreimage(opts.payload);
+  const validated = validatePayload(opts.payload);
+  const preimage = buildMateriosPayPreimage(validated);
   const message = blake2AsU8a(preimage, 256);
   const sig = hexToBytes(opts.signatureHex);
   return sr25519Verify(message, sig, opts.publicKey);
