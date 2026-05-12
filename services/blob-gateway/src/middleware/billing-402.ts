@@ -167,9 +167,22 @@ export function classifyEndpoint(req: Request): EndpointClass {
   // new route without it showing up in audit.
   // -----------------------------------------------------------------------
   if (m !== "GET") {
-    // Throttled to once per minute per (method, path) so a misconfigured
-    // route under load can't flood the structured-log stream (#227 Part 2).
-    warnThrottled(`billing.unclassified_route:${m} ${p}`, {
+    // Throttled to once per minute per (method, first-path-segment) so a
+    // misconfigured route under load can't flood the structured-log stream
+    // (#227 Part 2) AND an attacker spraying random POST /<uuid> URLs
+    // can't permanently bloat the in-process throttle Map.
+    //
+    // Why first-segment, not full path? The billing-402 middleware runs
+    // BEFORE auth, so `path` is fully attacker-controlled. Keying on full
+    // path makes `lastEmitted` Map grow unboundedly per unique URL — a
+    // memory-DoS lever found in PR #47 security review (HIGH). First-
+    // segment is bounded by the number of route roots we actually mount
+    // (/blobs, /metering, /v2, /batches, etc — a small constant).
+    //
+    // The full `path` still appears in the structured-log line itself
+    // (the JSON payload) — we just don't use it as the throttle key.
+    const firstSegment = p.split("/", 2)[1] ?? ""; // "" for "/", "blobs" for "/blobs/abc/manifest"
+    warnThrottled(`billing.unclassified_route:${m}:/${firstSegment}`, {
       log: "billing.unclassified_route",
       method: m,
       path: p,
