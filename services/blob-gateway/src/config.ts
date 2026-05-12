@@ -102,7 +102,12 @@ export const config = {
   // Toggle via `BILLING_ENFORCEMENT_PHASE` env. Misconfigured value falls
   // back to "off" (fail-open is the right default for billing).
   billingEnforcementPhase: (() => {
-    const raw = (process.env.BILLING_ENFORCEMENT_PHASE || "off").toLowerCase();
+    // L1 (#225): trim whitespace BEFORE lowercasing so an env value like
+    // `"  live  "` (common when an operator copy-pastes from a runbook)
+    // is honoured rather than silently falling back to the "off" default.
+    const raw = (process.env.BILLING_ENFORCEMENT_PHASE || "off")
+      .trim()
+      .toLowerCase();
     return raw === "measurement" || raw === "live" ? raw : "off";
   })() as "off" | "measurement" | "live",
 

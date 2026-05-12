@@ -57,6 +57,18 @@ let lastConnectAttempt = 0;
  * Returns null when we've recently failed to connect — callers degrade to
  * `status: "unknown"` rather than queueing waiters or blocking. A separate
  * cooldown timer governs the next connect attempt.
+ *
+ * NOTE (L3, #225): when the WS connection drops, `apiPromise` is reset
+ * inside the disconnect/error handlers but `lastConnectAttempt` is not
+ * touched. Until the cooldown elapses (`RECONNECT_COOLDOWN_MS`, 30s) the
+ * next `getOrConnectApi()` call returns `null` — which means during the
+ * 30s window after a WS flap, EVERY billing query (balance, endpoint
+ * price) returns `null`. In `live` mode the 402 middleware treats that
+ * as "pallet not present" via `priceRes.price === null` and bypasses
+ * gating, so the practical effect is a 30s billing-bypass window after
+ * a WS disconnect (NOT a 30s burst of 402 responses). This is the
+ * fail-open default we want — better to under-charge than 402-flood
+ * legitimate traffic — but it's worth knowing for ops dashboards.
  */
 function getOrConnectApi(): Promise<ApiPromise> | null {
   if (apiPromise) return apiPromise;
@@ -433,7 +445,7 @@ export async function queryEndpointPrice(
  * can theoretically overflow `u128 * u64`. The pallet uses `saturating_mul`
  * which clamps to `u128::MAX`. We mirror that here with bigint saturation.
  */
-function decodePricingModel(raw: unknown, requestBytes: number): bigint {
+export function decodePricingModel(raw: unknown, requestBytes: number): bigint {
   const U128_MAX = (1n << 128n) - 1n;
   const bytes = BigInt(Math.max(0, requestBytes));
 
@@ -466,6 +478,26 @@ function decodePricingModel(raw: unknown, requestBytes: number): bigint {
     return product > U128_MAX ? U128_MAX : product;
   }
 
+  // M2 (#223): the on-chain `PricingModel` is an open enum — a forkless
+  // runtime upgrade could introduce a new variant (e.g. `PerCallPerByte`,
+  // or a tiered-pricing dict). Both decode paths above would miss it and
+  // silently return 0n, turning every request priced under that variant
+  // into a free request without any operational signal. Emit a warn so
+  // ops sees the regression in the gateway's structured log stream.
+  //
+  // We still return 0n (fail-safe — better to under-charge than block
+  // legitimate traffic), but the warn line is the bell that calls
+  // attention to the variant gap. Pair this with the runtime-upgrade
+  // checklist: any new PricingModel variant requires a gateway bump in
+  // lockstep.
+  // eslint-disable-next-line no-console
+  console.warn(
+    JSON.stringify({
+      log: "billing.unknown_pricing_variant",
+      raw_keys:
+        typeof raw === "object" && raw !== null ? Object.keys(raw) : [],
+    }),
+  );
   // Unknown / unset → free, mirrors `PricingModel::FREE` default in the pallet.
   return 0n;
 }
