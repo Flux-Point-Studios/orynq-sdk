@@ -414,6 +414,34 @@ importers:
         specifier: ^1.2.0
         version: 1.6.1(@types/node@20.19.39)
 
+  packages/payer-materios-x402:
+    dependencies:
+      '@fluxpointstudios/orynq-sdk-core':
+        specifier: workspace:*
+        version: link:../core
+      '@fluxpointstudios/orynq-sdk-transport-x402':
+        specifier: workspace:*
+        version: link:../transport-x402
+      '@polkadot/keyring':
+        specifier: ^13.0.0
+        version: 13.5.9(@polkadot/util-crypto@13.5.9)(@polkadot/util@13.5.9)
+      '@polkadot/util':
+        specifier: ^13.0.0
+        version: 13.5.9
+      '@polkadot/util-crypto':
+        specifier: ^13.0.0
+        version: 13.5.9(@polkadot/util@13.5.9)
+    devDependencies:
+      tsup:
+        specifier: ^8.0.1
+        version: 8.5.1(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+      vitest:
+        specifier: ^1.2.0
+        version: 1.6.1(@types/node@20.19.39)
+
   packages/process-trace:
     dependencies:
       '@fluxpointstudios/orynq-sdk-core':
