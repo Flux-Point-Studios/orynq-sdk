@@ -116,6 +116,7 @@ describe("attestation_evidence_attestors: storage", () => {
       "pubkey_hex",
       "registered_at",
       "revoked_at",
+      "sig_algo",
     ]);
   });
 

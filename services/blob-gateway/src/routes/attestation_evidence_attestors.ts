@@ -20,8 +20,12 @@ import {
   revokeAttestationEvidenceAttestor,
   getAttestationEvidenceAttestor,
   listAttestationEvidenceAttestors,
+  SIG_ALGOS,
   type AttestationEvidenceAttestorRow,
+  type SigAlgo,
 } from "../attestation_evidence_attestors.js";
+
+const SIG_ALGO_SET: ReadonlySet<string> = new Set<string>(SIG_ALGOS);
 
 const HEX64_LOOSE = /^(0x)?[0-9a-fA-F]{64}$/;
 
@@ -38,6 +42,7 @@ function rowToJson(row: AttestationEvidenceAttestorRow): Record<string, unknown>
     registered_at: row.registered_at,
     revoked_at: row.revoked_at,
     notes: row.notes,
+    sig_algo: row.sig_algo,
   };
 }
 
@@ -69,6 +74,7 @@ export function registerAttestationEvidenceAttestorRoutes(
           pubkey?: unknown;
           label?: unknown;
           notes?: unknown;
+          sig_algo?: unknown;
         };
         if (typeof body.pubkey !== "string" || !HEX64_LOOSE.test(body.pubkey)) {
           res.status(400).json({
@@ -84,6 +90,20 @@ export function registerAttestationEvidenceAttestorRoutes(
           typeof body.notes === "string" && body.notes.trim()
             ? body.notes.trim()
             : null;
+        // sig_algo is optional — defaults to sr25519 to preserve the existing
+        // fleet-operator onboarding flow. Acurast Android phones MUST pass
+        // "ed25519" since that's the only TEE primitive their `_STD_.signers`
+        // runtime exposes.
+        let sigAlgo: SigAlgo = "sr25519";
+        if (body.sig_algo !== undefined) {
+          if (typeof body.sig_algo !== "string" || !SIG_ALGO_SET.has(body.sig_algo)) {
+            res.status(400).json({
+              error: `sig_algo must be one of [${SIG_ALGOS.join(", ")}]`,
+            });
+            return;
+          }
+          sigAlgo = body.sig_algo as SigAlgo;
+        }
 
         const existing = getAttestationEvidenceAttestor(body.pubkey);
         if (existing) {
@@ -98,10 +118,11 @@ export function registerAttestationEvidenceAttestorRoutes(
           pubkey: body.pubkey,
           label,
           notes,
+          sig_algo: sigAlgo,
         });
 
         console.log(
-          `[blob-gateway] attestation-evidence-attestor registered pubkey_prefix=${row.pubkey_hex.slice(0, 16)} label=${label ?? "-"}`,
+          `[blob-gateway] attestation-evidence-attestor registered pubkey_prefix=${row.pubkey_hex.slice(0, 16)} algo=${sigAlgo} label=${label ?? "-"}`,
         );
 
         res.status(200).json({
