@@ -33,10 +33,12 @@ import {
 import { initWorkerBoundsDb } from "./worker_bounds.js";
 import { initFleetOperatorsDb } from "./fleet_operators.js";
 import { initObserversDb } from "./observers.js";
+import { initWitnessTargetsDb } from "./witness_targets.js";
 import { initAttestationEvidenceAttestorsDb } from "./attestation_evidence_attestors.js";
 import { initReceiptAttestationEvidenceDb } from "./receipt_attestation_evidence.js";
 import { registerFleetOperatorRoutes } from "./routes/fleet_operators.js";
 import { registerObserverRoutes } from "./routes/observers.js";
+import { registerWitnessTargetRoutes } from "./routes/witness_targets.js";
 import { registerAttestationEvidenceAttestorRoutes } from "./routes/attestation_evidence_attestors.js";
 import { attestationEvidenceRouter } from "./routes/attestation_evidence.js";
 import { attestationEvidenceSubmissionRouter } from "./routes/attestation_evidence_submission.js";
@@ -105,6 +107,7 @@ registerAdminKeysRoutes(app); // Task #94: api_keys.bound_validator_aura get/set
 registerFleetOperatorRoutes(app); // Wave 1+2: compute_metering_v2 hardware-attestor registry (admin-only)
 registerObserverRoutes(app);      // Wave 1+2: compute_metering_v2 optional co-signer registry (admin-only)
 registerAttestationEvidenceAttestorRoutes(app); // Wave 3 Phase 2: TEE attestor pubkey registry (admin-only)
+registerWitnessTargetRoutes(app); // Witness Network: probe-target URL roster — public GET, admin POST/DELETE
 
 async function start(): Promise<void> {
   // Initialize sr25519/ed25519 WASM (required for signatureVerify)
@@ -128,6 +131,8 @@ async function start(): Promise<void> {
   // schema migrations stay isolated from operators.db / quota.db.
   initFleetOperatorsDb();
   initObserversDb();
+  // Witness Network: per-URL probe-target roster (witness_targets.db).
+  initWitnessTargetsDb();
   // Wave 3 Phase 2 — TEE attestor registry + per-receipt evidence vector.
   initAttestationEvidenceAttestorsDb();
   initReceiptAttestationEvidenceDb();
