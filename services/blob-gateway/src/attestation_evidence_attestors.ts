@@ -76,8 +76,22 @@ export function initAttestationEvidenceAttestorsDb(
   return handle;
 }
 
-/** Signature algorithms the gateway will accept on POST /v2/attestation_evidence. */
-export const SIG_ALGOS = ["sr25519", "ed25519"] as const;
+/** Signature algorithms the gateway will accept on POST /v2/attestation_evidence.
+ *
+ * Wire-format expectations per algo:
+ *   - sr25519:   attestor_pubkey = 32 bytes raw (64 hex chars); signature = 64 bytes raw (128 hex)
+ *   - ed25519:   attestor_pubkey = 32 bytes raw (64 hex chars); signature = 64 bytes raw (128 hex)
+ *   - secp256r1: attestor_pubkey = 33 bytes compressed P-256 point (66 hex chars);
+ *                signature = 64 bytes raw r||s (128 hex). Phone-side KeyMint DER sigs
+ *                must be converted before submission.
+ *
+ * secp256r1 is the canonical Android KeyMint algo (ECDSA over P-256). It's
+ * the one the Acurast Processor / phone TEE produces. Adding it here makes
+ * the gateway accept phone-TEE-direct-signed evidence — the same key whose
+ * Android Key Attestation chain ships in the payload is the key that signed
+ * the canonical-CBOR pre-image.
+ */
+export const SIG_ALGOS = ["sr25519", "ed25519", "secp256r1"] as const;
 export type SigAlgo = (typeof SIG_ALGOS)[number];
 const SIG_ALGO_SET: ReadonlySet<string> = new Set<string>(SIG_ALGOS);
 
@@ -110,6 +124,10 @@ export interface AttestationEvidenceAttestorRow {
 }
 
 const HEX64 = /^[0-9a-f]{64}$/;
+// 33-byte compressed P-256 point for secp256r1 attestors (KeyMint native).
+// sr25519 / ed25519 stay 32 bytes — the route-level dispatch enforces the
+// per-algo length match before signature verify.
+const HEX66 = /^[0-9a-f]{66}$/;
 
 function normalizePubkey(input: string): string {
   const stripped =
@@ -137,17 +155,23 @@ export function registerAttestationEvidenceAttestor(
 ): AttestationEvidenceAttestorRow {
   if (!db) throw new Error("attestation_evidence_attestors db not initialised");
   const normalized = normalizePubkey(input.pubkey);
-  if (!HEX64.test(normalized)) {
-    throw new TypeError(
-      `registerAttestationEvidenceAttestor: pubkey must be 32 bytes hex (64 chars), got "${input.pubkey}"`,
-    );
-  }
   const label = input.label ? String(input.label).slice(0, 256) : null;
   const notes = input.notes ? String(input.notes).slice(0, 1024) : null;
   const sigAlgo: SigAlgo = input.sig_algo ?? "sr25519";
   if (!SIG_ALGO_SET.has(sigAlgo)) {
     throw new TypeError(
       `registerAttestationEvidenceAttestor: sig_algo must be one of [${SIG_ALGOS.join(", ")}], got "${sigAlgo}"`,
+    );
+  }
+  // Per-algo pubkey length validation: 32B for sr/ed, 33B for secp256r1.
+  // Rejecting at the storage layer means the rest of the system can trust
+  // that getActiveAttestorSigAlgo() always returns rows whose pubkey size
+  // matches the verifier's expectation.
+  const expectedRegex = sigAlgo === "secp256r1" ? HEX66 : HEX64;
+  const expectedBytes = sigAlgo === "secp256r1" ? "33" : "32";
+  if (!expectedRegex.test(normalized)) {
+    throw new TypeError(
+      `registerAttestationEvidenceAttestor: pubkey for sig_algo=${sigAlgo} must be ${expectedBytes} bytes hex, got "${input.pubkey}" (${normalized.length} chars)`,
     );
   }
   const registeredAt = input.now ?? Math.floor(Date.now() / 1000);

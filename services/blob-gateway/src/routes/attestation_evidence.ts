@@ -68,6 +68,7 @@
 import { Router, type Request, type Response } from "express";
 import { ed25519Verify, sr25519Verify } from "@polkadot/util-crypto";
 import { hexToU8a } from "@polkadot/util";
+import { p256 } from "@noble/curves/p256";
 import { createHash } from "crypto";
 import { readFile } from "fs/promises";
 import { join } from "path";
@@ -98,6 +99,14 @@ export const attestationEvidenceRouter = Router();
 const HEX64 = /^[0-9a-f]{64}$/;
 const HEX64_LOOSE = /^(0x)?[0-9a-fA-F]{64}$/;
 const HEX128_LOOSE = /^(0x)?[0-9a-fA-F]{128}$/;
+
+/**
+ * Attestor pubkey can be:
+ *   - 32 bytes (64 hex) — sr25519, ed25519
+ *   - 33 bytes (66 hex) — secp256r1 compressed P-256 point (KeyMint native format)
+ * Length-mismatch-vs-algo is rejected post-lookup at the verifier dispatch.
+ */
+const HEX_PUBKEY_LOOSE = /^(0x)?[0-9a-fA-F]{64}$|^(0x)?[0-9a-fA-F]{66}$/;
 
 const EVIDENCE_TYPE_SET: ReadonlySet<string> = new Set<string>(EVIDENCE_TYPES);
 
@@ -221,9 +230,25 @@ function verifyAttestorSig(
     const sig = hexToU8a("0x" + sigHex);
     switch (algo) {
       case "sr25519":
+        // sr25519: 32-byte pubkey, 64-byte sig, native polkadot crypto.
+        if (pub.length !== 32 || sig.length !== 64) return false;
         return sr25519Verify(preimage, sig, pub);
       case "ed25519":
+        if (pub.length !== 32 || sig.length !== 64) return false;
         return ed25519Verify(preimage, sig, pub);
+      case "secp256r1":
+        // ECDSA over P-256 (a.k.a. prime256v1, secp256r1). Wire format:
+        //   pubkey = 33 bytes compressed point (matches Android KeyMint
+        //            native ECDSA pubkey output after compression)
+        //   sig    = 64 bytes raw r||s (NOT DER — phone-side strips the
+        //            DER ASN.1 wrapper before submission to match the
+        //            existing 64-byte sig regex used by sr25519/ed25519)
+        //   msg    = preimage hashed with SHA-256 inside p256.verify
+        // @noble/curves accepts either format; we use raw for the wire.
+        if (pub.length !== 33 || sig.length !== 64) return false;
+        return p256.verify(sig, preimage, pub, {
+          prehash: true, // hash the preimage with SHA-256 before verify
+        });
       default:
         // Compile-time exhaustiveness — adding a new SigAlgo without a case
         // here triggers TS2367 here, forcing the route author to wire it up.
@@ -314,12 +339,13 @@ attestationEvidenceRouter.post(
       }
       const payload = payloadRaw;
 
-      if (typeof attestorPubRaw !== "string" || !HEX64_LOOSE.test(attestorPubRaw)) {
+      if (typeof attestorPubRaw !== "string" || !HEX_PUBKEY_LOOSE.test(attestorPubRaw)) {
         reject(
           res,
           400,
           "HEX_FORMAT",
-          "attestor_pubkey must be 32 bytes hex (64 chars, optional 0x prefix)",
+          "attestor_pubkey must be 32 bytes hex (64 chars, sr25519/ed25519) " +
+            "or 33 bytes hex (66 chars, secp256r1 compressed P-256), optional 0x prefix",
           "attestor_pubkey",
         );
         return;

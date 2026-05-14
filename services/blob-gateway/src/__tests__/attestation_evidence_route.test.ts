@@ -1185,3 +1185,172 @@ describe("POST /v2/attestation_evidence — ed25519 attestor (task #242)", () =>
     expect(res.status).toBe(200);
   });
 });
+
+// ===========================================================================
+// secp256r1 attestor support (task #139 / Witness Network)
+//
+// Android KeyMint produces ECDSA over P-256 (a.k.a. secp256r1, prime256v1).
+// The Materios Witness Network MVP has phones direct-sign gateway POSTs with
+// the same KeyMint-attested key whose chain ships in the payload — the gateway
+// must accept that signature path natively.
+//
+// Wire format pinned:
+//   pubkey   = 33 bytes compressed P-256 point (66 hex chars)
+//   signature = 64 bytes raw r||s (128 hex chars; phone strips DER ASN.1)
+//   preimage = canonical-CBOR(payload), SHA-256 inside verify
+// ===========================================================================
+
+describe("POST /v2/attestation_evidence — secp256r1 (KeyMint) attestor", () => {
+  let ctx: Ctx;
+  beforeEach(async () => { ctx = await setupApp(); });
+  afterEach(async () => { await teardown(ctx); });
+
+  /**
+   * P-256 variant of buildSignedEvidence. Signs canonical-CBOR(payload) with
+   * a fresh ECDSA-P256 key and returns the 33-byte compressed pubkey + 64-byte
+   * raw r||s signature in the same wire shape sr25519/ed25519 use.
+   */
+  async function buildSignedEvidenceP256(opts: {
+    receiptIdClean: string;
+    contentHash: string;
+    evidenceType: EvidenceType;
+    payload: Record<string, unknown>;
+  }): Promise<{
+    receipt_id: string;
+    evidence_type: string;
+    nonce: string;
+    payload: Record<string, unknown>;
+    attestor_pubkey: string;
+    signature: string;
+    attestorPubHex: string;
+  }> {
+    const { p256 } = await import("@noble/curves/p256");
+    const priv = p256.utils.randomPrivateKey();
+    const pub33 = p256.getPublicKey(priv, true); // compressed
+    const tagged = evidenceEntryToCborValue({
+      evidence_type: opts.evidenceType,
+      nonce: deriveEvidenceNonce(opts.contentHash, opts.evidenceType),
+      payload: opts.payload,
+    });
+    if (tagged.type !== "map") throw new Error("encoder shape");
+    const payloadEntry = tagged.v.find(([k]) => k === "payload");
+    if (!payloadEntry) throw new Error("payload key missing");
+    const payloadBytes = encodeCbor(payloadEntry[1]);
+    const sigObj = p256.sign(payloadBytes, priv, { prehash: true });
+    const sigRaw = sigObj.toCompactRawBytes(); // 64-byte r||s
+    const pubHex = Buffer.from(pub33).toString("hex");
+    return {
+      receipt_id: opts.receiptIdClean,
+      evidence_type: opts.evidenceType,
+      nonce: deriveEvidenceNonce(opts.contentHash, opts.evidenceType),
+      payload: opts.payload,
+      attestor_pubkey: pubHex,
+      signature: Buffer.from(sigRaw).toString("hex"),
+      attestorPubHex: pubHex,
+    };
+  }
+
+  test("happy_path_secp256r1_accepted_when_attestor_registered_as_secp256r1", async () => {
+    const { contentHash, receiptIdClean } = await mintV2Manifest({
+      content_hash: "ee".repeat(32),
+    });
+    const signed = await buildSignedEvidenceP256({
+      receiptIdClean,
+      contentHash,
+      evidenceType: "arm_trustzone",
+      payload: { device: "keymint-p256-test", chain_chain_id: "preprod-001" },
+    });
+    registerAttestationEvidenceAttestor({
+      pubkey: signed.attestorPubHex,
+      label: "keymint-p256-witness-test",
+      sig_algo: "secp256r1",
+    });
+
+    const res = await postJson(
+      ctx.app,
+      "/v2/attestation_evidence",
+      {
+        receipt_id: signed.receipt_id,
+        evidence_type: signed.evidence_type,
+        nonce: signed.nonce,
+        payload: signed.payload,
+        attestor_pubkey: signed.attestor_pubkey,
+        signature: signed.signature,
+      },
+      { headers: { authorization: `Bearer ${ctx.bearerToken}` } },
+    );
+    expect(res.status).toBe(200);
+    const body = res.body as { status: string };
+    expect(body.status).toBe("accepted");
+  });
+
+  test("storage_layer_rejects_33_byte_pubkey_under_non_secp256r1_algo", async () => {
+    // Defense-in-depth: the storage layer rejects 33-byte (P-256) pubkeys
+    // when sig_algo != secp256r1. The route never even sees the wrong combo
+    // because registration throws first. This locks that contract in.
+    const { p256 } = await import("@noble/curves/p256");
+    const priv = p256.utils.randomPrivateKey();
+    const pub33 = Buffer.from(p256.getPublicKey(priv, true)).toString("hex");
+    expect(() =>
+      registerAttestationEvidenceAttestor({
+        pubkey: pub33,
+        label: "wrong-algo-p256",
+        sig_algo: "ed25519",
+      }),
+    ).toThrow(/32 bytes hex/);
+  });
+
+  test("secp256r1_rejects_tampered_payload", async () => {
+    const { contentHash, receiptIdClean } = await mintV2Manifest({
+      content_hash: "ec".repeat(32),
+    });
+    const signed = await buildSignedEvidenceP256({
+      receiptIdClean,
+      contentHash,
+      evidenceType: "arm_trustzone",
+      payload: { device: "original-payload" },
+    });
+    registerAttestationEvidenceAttestor({
+      pubkey: signed.attestorPubHex,
+      label: "tamper-test",
+      sig_algo: "secp256r1",
+    });
+
+    // Tamper: swap the payload but keep the original signature
+    const tamperedPayload = { device: "TAMPERED-payload" };
+    const res = await postJson(
+      ctx.app,
+      "/v2/attestation_evidence",
+      {
+        receipt_id: signed.receipt_id,
+        evidence_type: signed.evidence_type,
+        nonce: signed.nonce,
+        payload: tamperedPayload,
+        attestor_pubkey: signed.attestor_pubkey,
+        signature: signed.signature,
+      },
+      { headers: { authorization: `Bearer ${ctx.bearerToken}` } },
+    );
+    expect(res.status).toBe(401);
+    const body = res.body as { code: string };
+    expect(body.code).toBe("SIGNATURE_INVALID");
+  });
+
+  test("wire_format_pinned_33_byte_pubkey_64_byte_sig", async () => {
+    // Lock the wire-format constants: prevent a future change from silently
+    // breaking phone-side clients.
+    const { contentHash, receiptIdClean } = await mintV2Manifest({
+      content_hash: "eb".repeat(32),
+    });
+    const signed = await buildSignedEvidenceP256({
+      receiptIdClean,
+      contentHash,
+      evidenceType: "arm_trustzone",
+      payload: { device: "wire-format-check" },
+    });
+    // 33 bytes = 66 hex chars
+    expect(signed.attestor_pubkey.length).toBe(66);
+    // 64 bytes = 128 hex chars (r||s, NOT DER)
+    expect(signed.signature.length).toBe(128);
+  });
+});
