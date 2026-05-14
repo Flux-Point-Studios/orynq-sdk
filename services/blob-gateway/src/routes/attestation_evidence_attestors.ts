@@ -28,6 +28,12 @@ import {
 const SIG_ALGO_SET: ReadonlySet<string> = new Set<string>(SIG_ALGOS);
 
 const HEX64_LOOSE = /^(0x)?[0-9a-fA-F]{64}$/;
+// secp256r1 attestors use a 33-byte compressed P-256 pubkey (66 hex chars).
+// The admin POST route accepts EITHER 64 (sr25519/ed25519) OR 66 (secp256r1)
+// at the parse layer; the storage layer's `registerAttestationEvidenceAttestor`
+// enforces the exact per-algo length, so the wrong combo still gets rejected
+// — just with a more specific error (and after the algo is known).
+const HEX_PUBKEY_LOOSE = /^(0x)?[0-9a-fA-F]{64}$|^(0x)?[0-9a-fA-F]{66}$/;
 
 export interface RegisterAttestationEvidenceAttestorRoutesOpts {
   /** Admin shared secret (falls back to config.daemonNotifyToken if empty). */
@@ -76,9 +82,11 @@ export function registerAttestationEvidenceAttestorRoutes(
           notes?: unknown;
           sig_algo?: unknown;
         };
-        if (typeof body.pubkey !== "string" || !HEX64_LOOSE.test(body.pubkey)) {
+        if (typeof body.pubkey !== "string" || !HEX_PUBKEY_LOOSE.test(body.pubkey)) {
           res.status(400).json({
-            error: "pubkey is required and must be 32 bytes hex (64 chars, optional 0x prefix)",
+            error:
+              "pubkey is required and must be 32 bytes hex (64 chars, sr25519/ed25519) " +
+              "or 33 bytes hex (66 chars, secp256r1), optional 0x prefix",
           });
           return;
         }
@@ -146,9 +154,11 @@ export function registerAttestationEvidenceAttestorRoutes(
     (req: Request, res: Response) => {
       try {
         const pubkey = String(req.params.pubkey || "");
-        if (!HEX64_LOOSE.test(pubkey)) {
+        if (!HEX_PUBKEY_LOOSE.test(pubkey)) {
           res.status(400).json({
-            error: "invalid pubkey (expected 64 hex chars, optional 0x prefix)",
+            error:
+              "invalid pubkey (expected 64 hex chars sr25519/ed25519 or " +
+              "66 hex chars secp256r1, optional 0x prefix)",
           });
           return;
         }
