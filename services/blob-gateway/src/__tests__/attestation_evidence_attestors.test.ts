@@ -146,7 +146,37 @@ describe("attestation_evidence_attestors: storage", () => {
   test("register_throws_on_invalid_hex", () => {
     expect(() =>
       registerAttestationEvidenceAttestor({ pubkey: "not-hex" }),
-    ).toThrow(/64 chars/);
+    ).toThrow(/32 bytes hex/);
+  });
+
+  test("register_secp256r1_requires_33_byte_pubkey", () => {
+    // 32-byte hex pubkey registered under secp256r1 must be rejected —
+    // P-256 compressed points are 33 bytes.
+    expect(() =>
+      registerAttestationEvidenceAttestor({
+        pubkey: PUB_A,
+        sig_algo: "secp256r1",
+      }),
+    ).toThrow(/33 bytes hex/);
+  });
+
+  test("register_secp256r1_accepts_33_byte_pubkey", () => {
+    // 33-byte compressed point (66 hex chars) — valid for secp256r1, must
+    // be REJECTED for sr25519/ed25519 (which expect 32 bytes).
+    const pub33 = "02" + PUB_A; // 0x02 = compressed point prefix
+    const row = registerAttestationEvidenceAttestor({
+      pubkey: pub33,
+      sig_algo: "secp256r1",
+    });
+    expect(row.sig_algo).toBe("secp256r1");
+    expect(row.pubkey_hex).toBe(pub33);
+    // Same 33-byte pubkey rejected under ed25519
+    expect(() =>
+      registerAttestationEvidenceAttestor({
+        pubkey: "03" + PUB_B,
+        sig_algo: "ed25519",
+      }),
+    ).toThrow(/32 bytes hex/);
   });
 
   test("register_throws_on_duplicate", () => {
