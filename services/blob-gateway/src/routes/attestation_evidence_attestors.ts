@@ -27,10 +27,9 @@ import {
 
 const SIG_ALGO_SET: ReadonlySet<string> = new Set<string>(SIG_ALGOS);
 
-const HEX64_LOOSE = /^(0x)?[0-9a-fA-F]{64}$/;
 // secp256r1 attestors use a 33-byte compressed P-256 pubkey (66 hex chars).
-// The admin POST route accepts EITHER 64 (sr25519/ed25519) OR 66 (secp256r1)
-// at the parse layer; the storage layer's `registerAttestationEvidenceAttestor`
+// The admin routes accept EITHER 64 (sr25519/ed25519) OR 66 (secp256r1) at
+// the parse layer; the storage layer's `registerAttestationEvidenceAttestor`
 // enforces the exact per-algo length, so the wrong combo still gets rejected
 // — just with a more specific error (and after the algo is known).
 const HEX_PUBKEY_LOOSE = /^(0x)?[0-9a-fA-F]{64}$|^(0x)?[0-9a-fA-F]{66}$/;
