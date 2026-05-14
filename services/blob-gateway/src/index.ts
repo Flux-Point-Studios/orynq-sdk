@@ -39,6 +39,7 @@ import { initReceiptAttestationEvidenceDb } from "./receipt_attestation_evidence
 import { registerFleetOperatorRoutes } from "./routes/fleet_operators.js";
 import { registerObserverRoutes } from "./routes/observers.js";
 import { registerWitnessTargetRoutes } from "./routes/witness_targets.js";
+import { registerAttestorSelfRegisterRoutes } from "./routes/attestor_self_register.js";
 import { registerAttestationEvidenceAttestorRoutes } from "./routes/attestation_evidence_attestors.js";
 import { attestationEvidenceRouter } from "./routes/attestation_evidence.js";
 import { attestationEvidenceSubmissionRouter } from "./routes/attestation_evidence_submission.js";
@@ -108,6 +109,7 @@ registerFleetOperatorRoutes(app); // Wave 1+2: compute_metering_v2 hardware-atte
 registerObserverRoutes(app);      // Wave 1+2: compute_metering_v2 optional co-signer registry (admin-only)
 registerAttestationEvidenceAttestorRoutes(app); // Wave 3 Phase 2: TEE attestor pubkey registry (admin-only)
 registerWitnessTargetRoutes(app); // Witness Network: probe-target URL roster — public GET, admin POST/DELETE
+registerAttestorSelfRegisterRoutes(app); // Witness Network: POST /v2/attestor_self_register — phones self-onboard via Android Key Attestation cert chain
 
 async function start(): Promise<void> {
   // Initialize sr25519/ed25519 WASM (required for signatureVerify)
