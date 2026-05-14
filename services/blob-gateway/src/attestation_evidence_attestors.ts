@@ -71,8 +71,32 @@ export function initAttestationEvidenceAttestorsDb(
     CREATE INDEX IF NOT EXISTS idx_aea_active
       ON attestation_evidence_attestors(pubkey_hex) WHERE revoked_at IS NULL;
   `);
+  migrateSigAlgoColumn(handle);
   if (!db) db = handle;
   return handle;
+}
+
+/** Signature algorithms the gateway will accept on POST /v2/attestation_evidence. */
+export const SIG_ALGOS = ["sr25519", "ed25519"] as const;
+export type SigAlgo = (typeof SIG_ALGOS)[number];
+const SIG_ALGO_SET: ReadonlySet<string> = new Set<string>(SIG_ALGOS);
+
+/**
+ * Add `sig_algo` column to existing tables. Older rows default to "sr25519"
+ * so the existing SEV-SNP / TDX / cert-daemon attestors keep working without
+ * a re-register pass. New rows (Acurast phones, etc.) declare their algo
+ * explicitly via the admin POST.
+ */
+export function migrateSigAlgoColumn(handle: Database.Database): void {
+  const cols = handle
+    .prepare(`PRAGMA table_info(attestation_evidence_attestors)`)
+    .all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "sig_algo")) {
+    handle.exec(`
+      ALTER TABLE attestation_evidence_attestors
+      ADD COLUMN sig_algo TEXT NOT NULL DEFAULT 'sr25519'
+    `);
+  }
 }
 
 export interface AttestationEvidenceAttestorRow {
@@ -82,6 +106,7 @@ export interface AttestationEvidenceAttestorRow {
   registered_at: number;
   revoked_at: number | null;
   notes: string | null;
+  sig_algo: SigAlgo;
 }
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -96,6 +121,13 @@ export interface RegisterAttestorInput {
   pubkey: string;
   label?: string | null;
   notes?: string | null;
+  /**
+   * Signature algorithm the attestor will use on POST /v2/attestation_evidence.
+   * Defaults to "sr25519" so existing call sites and back-compat ALTER TABLE
+   * defaults agree. Acurast Android phones MUST pass "ed25519" — the only
+   * TEE primitive the Acurast `_STD_.signers` API exposes.
+   */
+  sig_algo?: SigAlgo;
   /** Unix seconds override; used in tests for determinism. */
   now?: number;
 }
@@ -112,14 +144,20 @@ export function registerAttestationEvidenceAttestor(
   }
   const label = input.label ? String(input.label).slice(0, 256) : null;
   const notes = input.notes ? String(input.notes).slice(0, 1024) : null;
+  const sigAlgo: SigAlgo = input.sig_algo ?? "sr25519";
+  if (!SIG_ALGO_SET.has(sigAlgo)) {
+    throw new TypeError(
+      `registerAttestationEvidenceAttestor: sig_algo must be one of [${SIG_ALGOS.join(", ")}], got "${sigAlgo}"`,
+    );
+  }
   const registeredAt = input.now ?? Math.floor(Date.now() / 1000);
 
   const info = db
     .prepare(
-      `INSERT INTO attestation_evidence_attestors (pubkey_hex, label, registered_at, notes)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT INTO attestation_evidence_attestors (pubkey_hex, label, registered_at, notes, sig_algo)
+       VALUES (?, ?, ?, ?, ?)`,
     )
-    .run(normalized, label, registeredAt, notes);
+    .run(normalized, label, registeredAt, notes, sigAlgo);
 
   return {
     id: Number(info.lastInsertRowid),
@@ -128,6 +166,7 @@ export function registerAttestationEvidenceAttestor(
     registered_at: registeredAt,
     revoked_at: null,
     notes,
+    sig_algo: sigAlgo,
   };
 }
 
@@ -154,7 +193,7 @@ export function getAttestationEvidenceAttestor(
   const normalized = normalizePubkey(pubkey);
   const row = db
     .prepare(
-      `SELECT id, pubkey_hex, label, registered_at, revoked_at, notes
+      `SELECT id, pubkey_hex, label, registered_at, revoked_at, notes, sig_algo
        FROM attestation_evidence_attestors WHERE pubkey_hex = ?`,
     )
     .get(normalized) as AttestationEvidenceAttestorRow | undefined;
@@ -178,6 +217,27 @@ export function isAttestationEvidenceAttestorActive(pubkey: string): boolean {
   return row !== undefined;
 }
 
+/**
+ * Hot-path lookup used by the v2/attestation_evidence route to decide which
+ * signature primitive to verify against. Returns the registered algo when
+ * the attestor is active, null when revoked or unregistered. Rows that
+ * pre-date the sig_algo migration default to "sr25519" via the ALTER TABLE
+ * column default, so this never returns an unrecognised string.
+ */
+export function getActiveAttestorSigAlgo(pubkey: string): SigAlgo | null {
+  if (!db) return null;
+  const normalized = normalizePubkey(pubkey);
+  const row = db
+    .prepare(
+      `SELECT sig_algo AS algo FROM attestation_evidence_attestors
+       WHERE pubkey_hex = ? AND revoked_at IS NULL`,
+    )
+    .get(normalized) as { algo: string } | undefined;
+  if (!row) return null;
+  if (!SIG_ALGO_SET.has(row.algo)) return null;
+  return row.algo as SigAlgo;
+}
+
 export interface ListAttestorsOpts {
   active?: boolean;
 }
@@ -189,7 +249,7 @@ export function listAttestationEvidenceAttestors(
   const where = opts.active ? "WHERE revoked_at IS NULL" : "";
   const rows = db
     .prepare(
-      `SELECT id, pubkey_hex, label, registered_at, revoked_at, notes
+      `SELECT id, pubkey_hex, label, registered_at, revoked_at, notes, sig_algo
        FROM attestation_evidence_attestors
        ${where}
        ORDER BY registered_at DESC, id DESC`,

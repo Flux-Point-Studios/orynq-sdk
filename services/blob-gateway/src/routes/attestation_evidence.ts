@@ -66,7 +66,7 @@
  */
 
 import { Router, type Request, type Response } from "express";
-import { signatureVerify } from "@polkadot/util-crypto";
+import { ed25519Verify, sr25519Verify } from "@polkadot/util-crypto";
 import { hexToU8a } from "@polkadot/util";
 import { createHash } from "crypto";
 import { readFile } from "fs/promises";
@@ -82,7 +82,11 @@ import {
   evidenceEntryToCborValue,
   type AttestationEvidenceEntry,
 } from "../schemas/compute_metering_v2.js";
-import { isAttestationEvidenceAttestorActive } from "../attestation_evidence_attestors.js";
+import {
+  isAttestationEvidenceAttestorActive,
+  getActiveAttestorSigAlgo,
+  type SigAlgo,
+} from "../attestation_evidence_attestors.js";
 import {
   insertReceiptEvidence,
   recomputeReceiptEvidenceHash,
@@ -106,6 +110,7 @@ export type AttestationEvidenceErrorCode =
   | "RECEIPT_NOT_FOUND"
   | "NONCE_MISMATCH"
   | "ATTESTOR_UNKNOWN"
+  | "ATTESTOR_ALGO_UNKNOWN"
   | "SIGNATURE_INVALID"
   | "INTERNAL";
 
@@ -195,19 +200,35 @@ async function lookupContentHashForReceiptId(
 }
 
 /**
- * Verify an sr25519 signature, swallowing any malformed-input throws as a
- * `false` return. Mirrors the helper in `metering_v2.ts`.
+ * Verify an attestor signature with the algorithm registered for that
+ * attestor. Dispatches to the appropriate primitive — sr25519 for the
+ * existing SEV-SNP/TDX/cert-daemon attestors that pre-date this change,
+ * ed25519 for Acurast Android-phone attestors (the Acurast `_STD_.signers`
+ * runtime only exposes ed25519 as a TEE primitive).
+ *
+ * Malformed inputs (wrong length, bad hex) and any panic inside the underlying
+ * verifier swallow to `false` — the route returns a single uniform 401 in
+ * those cases rather than leaking internals.
  */
-function verifySr25519(
+function verifyAttestorSig(
   preimage: Uint8Array,
   pubkeyHex: string,
   sigHex: string,
+  algo: SigAlgo,
 ): boolean {
   try {
     const pub = hexToU8a("0x" + pubkeyHex);
     const sig = hexToU8a("0x" + sigHex);
-    const r = signatureVerify(preimage, sig, pub);
-    return r.isValid;
+    switch (algo) {
+      case "sr25519":
+        return sr25519Verify(preimage, sig, pub);
+      case "ed25519":
+        return ed25519Verify(preimage, sig, pub);
+      default:
+        // Compile-time exhaustiveness — adding a new SigAlgo without a case
+        // here triggers TS2367 here, forcing the route author to wire it up.
+        return ((_x: never) => false)(algo);
+    }
   } catch {
     return false;
   }
@@ -376,15 +397,36 @@ attestationEvidenceRouter.post(
         return;
       }
 
-      // ---- 4. attestor registered ----
-      if (!isAttestationEvidenceAttestorActive(attestorPubHex)) {
-        reject(
-          res,
-          403,
-          "ATTESTOR_UNKNOWN",
-          "attestor_pubkey is not registered or has been revoked",
-          "attestor_pubkey",
-        );
+      // ---- 4. attestor registered (+ resolve algo for §5 dispatch) ----
+      // Single lookup pulls both presence and algo so the verifier in §5
+      // dispatches on the algorithm the operator registered for this
+      // attestor — sr25519 for the existing fleet, ed25519 for Acurast
+      // Android phones. `getActiveAttestorSigAlgo` returns null when the
+      // pubkey is revoked or never registered, so the existing 403 path
+      // still triggers for those.
+      const attestorAlgo = getActiveAttestorSigAlgo(attestorPubHex);
+      if (!attestorAlgo) {
+        // Fall back to the legacy presence check for the error message —
+        // mostly defensive (the two helpers would only disagree if a row's
+        // sig_algo got stored as some string outside the SIG_ALGOS set,
+        // which the register function rejects today).
+        if (!isAttestationEvidenceAttestorActive(attestorPubHex)) {
+          reject(
+            res,
+            403,
+            "ATTESTOR_UNKNOWN",
+            "attestor_pubkey is not registered or has been revoked",
+            "attestor_pubkey",
+          );
+        } else {
+          reject(
+            res,
+            403,
+            "ATTESTOR_ALGO_UNKNOWN",
+            "attestor_pubkey is registered but its sig_algo is not recognised by this gateway",
+            "attestor_pubkey",
+          );
+        }
         return;
       }
 
@@ -423,12 +465,19 @@ attestationEvidenceRouter.post(
         return;
       }
 
-      if (!verifySr25519(payloadCborBytes, attestorPubHex, signatureHex)) {
+      if (
+        !verifyAttestorSig(
+          payloadCborBytes,
+          attestorPubHex,
+          signatureHex,
+          attestorAlgo,
+        )
+      ) {
         reject(
           res,
           401,
           "SIGNATURE_INVALID",
-          "signature does not verify against attestor_pubkey over canonical(payload)",
+          `signature does not verify against attestor_pubkey (${attestorAlgo}) over canonical(payload)`,
           "signature",
         );
         return;

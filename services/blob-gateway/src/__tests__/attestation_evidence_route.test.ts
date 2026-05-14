@@ -962,3 +962,226 @@ describe("attestation_evidence_hash — empty vec spec pin", () => {
     expect(summary.types).toEqual([]);
   });
 });
+
+// ===========================================================================
+// ed25519 attestor support (task #242)
+//
+// Acurast Android phones expose only ed25519 as a TEE-protected signing
+// primitive (`_STD_.signers.ed25519.sign`). The gateway must accept
+// ed25519-attested evidence from registered attestors whose `sig_algo` is
+// `ed25519`. Existing sr25519 attestors stay green via the ALTER TABLE
+// default.
+//
+// These tests cover the polyalg dispatch in the route's verifier and the
+// new `sig_algo` field on the admin POST.
+// ===========================================================================
+
+describe("POST /v2/attestation_evidence — ed25519 attestor (task #242)", () => {
+  let ctx: Ctx;
+  let ed25519Keyring: Keyring;
+  beforeAll(async () => {
+    await cryptoWaitReady();
+    ed25519Keyring = new Keyring({ type: "ed25519" });
+  });
+  beforeEach(async () => {
+    ctx = await setupApp();
+  });
+  afterEach(async () => {
+    await teardown(ctx);
+  });
+
+  /**
+   * ed25519 variant of `buildSignedEvidence`. Same byte-pinned pre-image
+   * (canonical CBOR of the payload), but signs with an ed25519 keypair so
+   * the route's dispatch needs to verify with ed25519Verify, not sr25519Verify.
+   */
+  function buildSignedEvidenceEd25519(opts: {
+    receiptIdClean: string;
+    contentHash: string;
+    evidenceType: EvidenceType;
+    payload: Record<string, unknown>;
+    attestorUri: string;
+  }): {
+    receipt_id: string;
+    evidence_type: string;
+    nonce: string;
+    payload: Record<string, unknown>;
+    attestor_pubkey: string;
+    signature: string;
+    attestorPubHex: string;
+  } {
+    // ed25519 doesn't support soft-derivation paths (`//Foo` is soft); use
+    // a raw 32-byte seed derived from the attestorUri so each test gets a
+    // distinct, deterministic ed25519 keypair without needing a mnemonic.
+    const seed = createHash("sha256")
+      .update(Buffer.from(opts.attestorUri, "utf8"))
+      .digest();
+    const pair = ed25519Keyring.addFromSeed(seed);
+    const tagged = evidenceEntryToCborValue({
+      evidence_type: opts.evidenceType,
+      nonce: deriveEvidenceNonce(opts.contentHash, opts.evidenceType),
+      payload: opts.payload,
+    });
+    if (tagged.type !== "map") throw new Error("unexpected tagged shape");
+    const payloadEntry = tagged.v.find(([k]) => k === "payload");
+    if (!payloadEntry) throw new Error("payload key missing");
+    const payloadBytes = encodeCbor(payloadEntry[1]);
+    const sig = pair.sign(payloadBytes);
+    const pubHex = u8aToHex(pair.publicKey, undefined, false);
+    return {
+      receipt_id: opts.receiptIdClean,
+      evidence_type: opts.evidenceType,
+      nonce: deriveEvidenceNonce(opts.contentHash, opts.evidenceType),
+      payload: opts.payload,
+      attestor_pubkey: pubHex,
+      signature: u8aToHex(sig, undefined, false),
+      attestorPubHex: pubHex,
+    };
+  }
+
+  test("happy_path_ed25519_accepted_when_attestor_registered_as_ed25519", async () => {
+    const { contentHash, receiptIdClean } = await mintV2Manifest({
+      content_hash: "ed".repeat(32),
+    });
+    const signed = buildSignedEvidenceEd25519({
+      receiptIdClean,
+      contentHash,
+      evidenceType: "arm_trustzone",
+      payload: { device: "acurast-mock", chain_chain_id: "preprod-001" },
+      attestorUri: "//Acurast/Phone1",
+    });
+    registerAttestationEvidenceAttestor({
+      pubkey: signed.attestorPubHex,
+      label: "acurast-phone-test",
+      sig_algo: "ed25519",
+    });
+
+    const res = await postJson(
+      ctx.app,
+      "/v2/attestation_evidence",
+      {
+        receipt_id: signed.receipt_id,
+        evidence_type: signed.evidence_type,
+        nonce: signed.nonce,
+        payload: signed.payload,
+        attestor_pubkey: signed.attestor_pubkey,
+        signature: signed.signature,
+      },
+      { headers: { authorization: `Bearer ${ctx.bearerToken}` } },
+    );
+    expect(res.status).toBe(200);
+    const body = res.body as { status: string };
+    expect(body.status).toBe("accepted");
+  });
+
+  test("ed25519_sig_rejected_when_attestor_registered_as_sr25519", async () => {
+    // The pubkey is ed25519 but the registry says this attestor uses
+    // sr25519 — the dispatch should pick sr25519Verify, which will fail on
+    // the ed25519 signature. Single 401 SIGNATURE_INVALID, no algo leak.
+    const { contentHash, receiptIdClean } = await mintV2Manifest({
+      content_hash: "ec".repeat(32),
+    });
+    const signed = buildSignedEvidenceEd25519({
+      receiptIdClean,
+      contentHash,
+      evidenceType: "arm_trustzone",
+      payload: { device: "mismatched-algo" },
+      attestorUri: "//Acurast/Phone2",
+    });
+    registerAttestationEvidenceAttestor({
+      pubkey: signed.attestorPubHex,
+      label: "registered-as-wrong-algo",
+      // omit sig_algo → default sr25519
+    });
+
+    const res = await postJson(
+      ctx.app,
+      "/v2/attestation_evidence",
+      {
+        receipt_id: signed.receipt_id,
+        evidence_type: signed.evidence_type,
+        nonce: signed.nonce,
+        payload: signed.payload,
+        attestor_pubkey: signed.attestor_pubkey,
+        signature: signed.signature,
+      },
+      { headers: { authorization: `Bearer ${ctx.bearerToken}` } },
+    );
+    expect(res.status).toBe(401);
+    const body = res.body as { code: string };
+    expect(body.code).toBe("SIGNATURE_INVALID");
+  });
+
+  test("sr25519_sig_rejected_when_attestor_registered_as_ed25519", async () => {
+    // Mirror image of the above — sr25519 sig, registry says ed25519.
+    const { contentHash, receiptIdClean } = await mintV2Manifest({
+      content_hash: "eb".repeat(32),
+    });
+    const signed = buildSignedEvidence({
+      receiptIdClean,
+      contentHash,
+      evidenceType: "arm_trustzone",
+      payload: { device: "wrong-direction" },
+      attestorUri: "//SrToEd",
+    });
+    registerAttestationEvidenceAttestor({
+      pubkey: signed.attestorPubHex,
+      label: "ed25519-registered",
+      sig_algo: "ed25519",
+    });
+
+    const res = await postJson(
+      ctx.app,
+      "/v2/attestation_evidence",
+      {
+        receipt_id: signed.receipt_id,
+        evidence_type: signed.evidence_type,
+        nonce: signed.nonce,
+        payload: signed.payload,
+        attestor_pubkey: signed.attestor_pubkey,
+        signature: signed.signature,
+      },
+      { headers: { authorization: `Bearer ${ctx.bearerToken}` } },
+    );
+    expect(res.status).toBe(401);
+    const body = res.body as { code: string };
+    expect(body.code).toBe("SIGNATURE_INVALID");
+  });
+
+  test("sr25519_attestor_unchanged_by_polyalg_extension", async () => {
+    // Regression guard: a pre-migration sr25519 attestor (sig_algo set by
+    // the ALTER TABLE default) still verifies correctly. Locks in
+    // backward-compat for the existing fleet-operator deployments.
+    const { contentHash, receiptIdClean } = await mintV2Manifest({
+      content_hash: "ea".repeat(32),
+    });
+    const signed = buildSignedEvidence({
+      receiptIdClean,
+      contentHash,
+      evidenceType: "arm_trustzone",
+      payload: { device: "legacy-fleet-operator" },
+      attestorUri: "//LegacySr",
+    });
+    registerAttestationEvidenceAttestor({
+      pubkey: signed.attestorPubHex,
+      label: "legacy-sr25519",
+      // No sig_algo passed → registers as sr25519 (the default the
+      // ALTER TABLE migration writes for pre-existing rows).
+    });
+
+    const res = await postJson(
+      ctx.app,
+      "/v2/attestation_evidence",
+      {
+        receipt_id: signed.receipt_id,
+        evidence_type: signed.evidence_type,
+        nonce: signed.nonce,
+        payload: signed.payload,
+        attestor_pubkey: signed.attestor_pubkey,
+        signature: signed.signature,
+      },
+      { headers: { authorization: `Bearer ${ctx.bearerToken}` } },
+    );
+    expect(res.status).toBe(200);
+  });
+});
