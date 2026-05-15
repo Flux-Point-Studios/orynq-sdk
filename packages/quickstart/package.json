@@ -1,0 +1,77 @@
+{
+  "name": "@fluxpointstudios/orynq-sdk-quickstart",
+  "version": "0.1.0",
+  "description": "Solo-developer quickstart for orynq — sub-5-minute first trace. Generates identity, faucet-drips MATRA, anchors a sample trace on Materios, prints an explorer URL.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "bin": {
+    "orynq": "./bin/orynq.mjs"
+  },
+  "files": [
+    "dist",
+    "src",
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "clean": "rimraf dist"
+  },
+  "keywords": [
+    "orynq",
+    "quickstart",
+    "developer-experience",
+    "cli",
+    "ai-trace",
+    "materios"
+  ],
+  "author": "Flux Point Studios",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
+    "directory": "packages/quickstart"
+  },
+  "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
+  "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
+  "dependencies": {
+    "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-anchors-materios": "workspace:*",
+    "@polkadot/keyring": "^13.0.0",
+    "@polkadot/util": "^13.0.0",
+    "@polkadot/util-crypto": "^13.0.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "sideEffects": false
+}

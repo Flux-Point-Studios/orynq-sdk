@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "orynq-sdk"
-version = "0.1.0"
-description = "Dual-protocol commerce layer for Cardano/EVM payments"
+version = "0.2.0"
+description = "Cryptographic AI process tracing — chain-anchored receipts for AI agents. Includes solo-dev quickstart CLI."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
@@ -15,6 +15,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# `pip install orynq-sdk[materios]` enables the on-chain submission +
+# faucet bootstrap path. Without it, the trace primitives + payment
+# client still work — you just can't generate / load an sr25519 identity
+# or submit receipts on the Materios chain from Python.
+materios = ["substrate-interface>=1.8.0"]
 cardano = ["pycardano>=0.10.0"]
 aws = ["boto3>=1.34.0"]
 dev = [
@@ -22,7 +27,13 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
     "respx>=0.20.0",
+    "substrate-interface>=1.8.0",
 ]
+
+[project.scripts]
+# `orynq` parity with the `npx orynq` CLI shipped by
+# @fluxpointstudios/orynq-sdk-quickstart. Same env vars, same exit codes.
+orynq = "orynq_sdk.cli:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -2,7 +2,63 @@
 
 Cryptographic AI process tracing and blockchain anchoring. Create tamper-proof, verifiable records of AI agent actions.
 
-**Orynq** provides cryptographic receipts for AI—proving exactly what an AI did, when it did it, and in what order. Anchors are stored on the Cardano blockchain and can be verified by anyone.
+**Orynq** provides cryptographic receipts for AI—proving exactly what an AI did, when it did it, and in what order. Anchors are stored on the Cardano blockchain (independently verifiable by anyone) and the Materios Partner Chain (high-throughput committee-certified receipts that inherit Cardano L1 finality).
+
+## Quickstart — first trace in under 5 minutes
+
+The fastest path from `npm install` to a chain-anchored trace, measured end-to-end on Materios preprod (Gemtek hardware, 2026-05-14):
+
+```bash
+npm install --global @fluxpointstudios/orynq-sdk-quickstart
+orynq trace
+```
+
+That's it. The CLI auto-generates a fresh sr25519 identity, faucet-drips test MATRA, builds a one-event sample trace, uploads it to the blob gateway, submits the on-chain receipt, and prints a clickable explorer URL:
+
+```
+$ orynq trace
+[+  0.0s] identity created 5DAX5EwUmLm7osAh7V28ZV68bEHGkakhrZ5nKWmxvLAKjpgd
+[+ 26.8s] faucet dripped 1001000000 units (tx 0x943b38af...)
+[+ 37.7s] waiting for MOTRA fee currency to generate (~10-30s)...
+[+ 38.0s] MOTRA ready
+[+ 38.0s] trace built — runId 89d889ed rootHash 9f537487c4d3
+[+ 44.6s] receipt submitted — receiptId 0x1ba8b400a132 block 0xd3d2240a04
+[+167.9s] certified
+
+First trace anchored on Materios (167.9s)
+
+View your trace:
+  blob status   https://materios.fluxpointstudios.com/blobs/blobs/1ba8b400a132.../status
+  chain block   https://polkadot.js.org/apps/?rpc=wss%3A%2F%2F.../#/explorer/query/0xd3d2240a04...
+  chain info    https://materios.fluxpointstudios.com/chain-info
+  health        https://materios.fluxpointstudios.com/health
+```
+
+The identity persists at `~/.orynq/config.json` so subsequent `orynq trace` runs reuse the same address. To upgrade from the preprod free-tier identity to a production Materios-anchored identity, see `docs/identity-upgrade.md`.
+
+### Python
+
+```bash
+pip install orynq-sdk
+orynq init       # generate identity + faucet drip
+```
+
+Python parity for the on-chain submit step is queued for v0.2.1 (#176) — the trace primitives (`orynq_sdk.trace`) already produce byte-for-byte identical bundles, so `orynq init` + the Node `orynq trace` is the recommended bootstrap today.
+
+### Programmatic API
+
+```typescript
+import { bootstrapAndTrace } from "@fluxpointstudios/orynq-sdk-quickstart";
+
+const result = await bootstrapAndTrace({
+  // All defaults point at Materios preprod. Set any subset to override.
+  agentId: "my-agent",
+  summary: "anchored from my CI pipeline",
+});
+
+console.log("Trace URL:", result.urls.blobStatus);
+console.log("Cert hash:", result.certHash);
+```
 
 ## Features
 
@@ -13,6 +69,7 @@ Cryptographic AI process tracing and blockchain anchoring. Create tamper-proof, 
 - **Multi-Span Support** - Track nested operations and tool calls
 
 ### Blockchain Anchoring
+- **Solo-Dev Quickstart** - One command (`orynq trace`) from install to chain-anchored receipt
 - **Self-Hosted Anchoring** - Use your own wallet, no API fees (~0.2 ADA per anchor)
 - **Anchor-as-a-Service** - Managed API with pay-per-use or subscription plans
 - **Independent Verification** - Anyone can verify anchors using only the txHash
@@ -24,7 +81,7 @@ Cryptographic AI process tracing and blockchain anchoring. Create tamper-proof, 
 - **Flux Protocol** - Native Cardano payments
 - **Auto-Pay Client** - Automatic payment handling with budget controls
 
-## Quick Start
+## Advanced usage
 
 ### Option 1: Self-Hosted Anchoring (No API Fees)
 
@@ -196,6 +253,7 @@ curl -H "project_id: $BLOCKFROST_KEY" \
 
 | Package | Description |
 |---------|-------------|
+| `@fluxpointstudios/orynq-sdk-quickstart` | Solo-dev DX: `orynq init` / `orynq trace` CLI + one-call `bootstrapAndTrace()` API |
 | `@fluxpointstudios/orynq-sdk-process-trace` | Cryptographic process trace builder with hash chains and Merkle trees |
 | `@fluxpointstudios/orynq-sdk-anchors-cardano` | Cardano anchor builder, serializer, and verifier |
 | `@fluxpointstudios/orynq-sdk-anchors-materios` | Materios chain receipts, certification, blob uploads, and verification |
