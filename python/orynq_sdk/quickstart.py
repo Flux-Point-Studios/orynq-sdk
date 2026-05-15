@@ -158,9 +158,27 @@ def load_or_create_identity(
         "address": address,
         "generatedAt": generated_at,
     }
-    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    # Set umask so any file created in this region defaults to 0o600.
+    # The pre-fix code called `path.write_text(...)` (honors umask,
+    # typically 0o022 → file mode 0o644) and chmod'd to 0o600 AFTER
+    # the mnemonic was already on disk. For env-var paths whose parent
+    # dir pre-exists at 0o755, a co-tenant could race the chmod and
+    # read the mnemonic. Setting umask to 0o077 before write closes
+    # that window: 0o666 & ~0o077 = 0o600.
+    # Sec-review finding: PR #54, MEDIUM, 9/10 confidence.
     if os.name == "posix":
+        _previous_umask = os.umask(0o077)
+        try:
+            path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        finally:
+            os.umask(_previous_umask)
+        # Defensive: tighten in case a pre-existing file under the
+        # parent dir already had wider perms.
         os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)  # 0o600
+    else:
+        # Windows: no chmod semantics; rely on default ACL on
+        # %USERPROFILE%\.orynq\config.json which inherits user-only.
+        path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
     return OrynqIdentity(
         mnemonic=mnemonic,
