@@ -36,6 +36,11 @@ import { initObserversDb } from "./observers.js";
 import { initWitnessTargetsDb } from "./witness_targets.js";
 import { initAttestationEvidenceAttestorsDb } from "./attestation_evidence_attestors.js";
 import { initReceiptAttestationEvidenceDb } from "./receipt_attestation_evidence.js";
+import {
+  initMultisigSigsDb,
+  startMultisigSigsCleanup,
+} from "./multisig_sigs_store.js";
+import { registerMultisigSigsRoutes } from "./routes/multisig_sigs.js";
 import { registerFleetOperatorRoutes } from "./routes/fleet_operators.js";
 import { registerObserverRoutes } from "./routes/observers.js";
 import { registerWitnessTargetRoutes } from "./routes/witness_targets.js";
@@ -110,6 +115,7 @@ registerObserverRoutes(app);      // Wave 1+2: compute_metering_v2 optional co-s
 registerAttestationEvidenceAttestorRoutes(app); // Wave 3 Phase 2: TEE attestor pubkey registry (admin-only)
 registerWitnessTargetRoutes(app); // Witness Network: probe-target URL roster — public GET, admin POST/DELETE
 registerAttestorSelfRegisterRoutes(app); // Witness Network: POST /v2/attestor_self_register — phones self-onboard via Android Key Attestation cert chain
+registerMultisigSigsRoutes(app); // Task #286: GET/POST /v2/multisig_sigs/{kind}/{key} — cert-daemon M-of-N envelope coordination (settle/expire)
 
 async function start(): Promise<void> {
   // Initialize sr25519/ed25519 WASM (required for signatureVerify)
@@ -138,10 +144,17 @@ async function start(): Promise<void> {
   // Wave 3 Phase 2 — TEE attestor registry + per-receipt evidence vector.
   initAttestationEvidenceAttestorsDb();
   initReceiptAttestationEvidenceDb();
+  // Task #286 — ephemeral M-of-N sig bulletin board for settle_claim +
+  // expire_policy. Daemons publish per-pubkey sigs here so any one can
+  // assemble the full envelope before submitting the M-sig extrinsic.
+  initMultisigSigsDb();
 
   // Start cleanup timers
   startCleanupTimer();
   startHeartbeatCleanup();
+  // 24h hard TTL for multisig sig rows; on-chain SettlementRequestTtl is
+  // ~4h so this leaves margin for post-mortem queries.
+  startMultisigSigsCleanup();
 
   // Start default Node-process metrics collection (heap, event-loop lag,
   // GC). Lazy-started here so unit tests don't leak the collection timer.
