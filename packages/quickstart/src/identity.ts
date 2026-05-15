@@ -166,9 +166,19 @@ export async function loadOrCreateIdentity(
   };
 
   mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
-  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", { encoding: "utf-8" });
+  // Set the file mode at creation time via the `mode` option (POSIX
+  // O_CREAT honors it). The previous post-create `chmodSync` left the
+  // file briefly world-readable in the window between write and chmod —
+  // for the default `~/.orynq/config.json` path the 0o700 parent dir
+  // mitigates, but for env-var paths whose parent dir pre-exists at
+  // 0o755 (e.g. /tmp/devkey.json) a co-tenant could race the chmod
+  // and read the mnemonic. Setting mode at open(2) closes that window.
+  // Sec-review finding: PR #54, MEDIUM, 9/10 confidence.
+  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", { encoding: "utf-8", mode: 0o600 });
   if (process.platform !== "win32") {
-    // Best-effort tighten perms. chmod is a no-op on Windows.
+    // Defense-in-depth — handles the case where the file already existed
+    // and `writeFileSync` overwrote without re-applying mode. (Per Node
+    // docs, `mode` is ignored when the file already exists.)
     chmodSync(configPath, 0o600);
   }
 
