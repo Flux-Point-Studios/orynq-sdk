@@ -32,14 +32,26 @@ import Database from "better-sqlite3";
 import { join } from "path";
 import { config } from "./config.js";
 
-/** Settle vs expire — the two M-of-N flows that share this storage. */
-export const MULTISIG_KINDS = ["settle", "expire"] as const;
+/**
+ * The M-of-N flows that share this storage:
+ *  - `settle` — STCA attestation sigs over a `settle_claim`-bound digest
+ *    (cert-daemon's settle_claim_attestor path, spec-220).
+ *  - `expire` — EXPP attestation sigs over an `expire_policy_mirror`-bound
+ *    digest (cert-daemon's expire_policy_attestor path, spec-221).
+ *  - `slash` — FRAU attestation sigs over a `slash_bad_settlement_evidence`-
+ *    bound digest (cert-daemon's slash_watcher path, spec-225 / task #84).
+ * Each channel uses byte-distinct domain tags (STCA/EXPP/FRAU) so per-
+ * channel sigs cannot replay across channels — the gateway only namespaces
+ * the storage; payload-level domain separation is the on-chain pallet's
+ * job.
+ */
+export const MULTISIG_KINDS = ["settle", "expire", "slash"] as const;
 export type MultisigKind = (typeof MULTISIG_KINDS)[number];
 
 /** Stored sig entry. All hex fields lowercase, no `0x` prefix. */
 export interface MultisigSigRow {
   kind: MultisigKind;
-  key_hex: string;        // 64 hex (claim_id for settle, intent_id for expire)
+  key_hex: string;        // 64 hex (claim_id for settle/slash, intent_id for expire)
   digest_hex: string;     // 64 hex (the 32 bytes that were signed)
   pubkey_hex: string;     // 64 hex
   sig_hex: string;        // 128 hex

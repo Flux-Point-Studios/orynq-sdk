@@ -267,9 +267,12 @@ describe("multisig_sigs store", () => {
 });
 
 describe("isMultisigKind", () => {
-  test("settle + expire only", () => {
+  test("settle + expire + slash only", () => {
     expect(isMultisigKind("settle")).toBe(true);
     expect(isMultisigKind("expire")).toBe(true);
+    // spec-225 / task #84-watcher: FRAU channel for the
+    // slash_bad_settlement_evidence watcher path on cert-daemon.
+    expect(isMultisigKind("slash")).toBe(true);
     expect(isMultisigKind("batch")).toBe(false);
     expect(isMultisigKind("")).toBe(false);
   });
