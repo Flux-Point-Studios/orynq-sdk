@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-quickstart",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Solo-developer quickstart for orynq — sub-5-minute first trace. Generates identity, faucet-drips MATRA, anchors a sample trace on Materios, prints an explorer URL.",
   "type": "module",
   "main": "./dist/index.cjs",
