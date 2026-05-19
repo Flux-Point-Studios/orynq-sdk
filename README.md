@@ -1,8 +1,39 @@
-# Orynq SDK (orynq-sdk)
+# Orynq SDK
 
-Cryptographic AI process tracing and blockchain anchoring. Create tamper-proof, verifiable records of AI agent actions.
+[![npm version](https://img.shields.io/npm/v/@fluxpointstudios/orynq-sdk-process-trace?label=process-trace)](https://www.npmjs.com/package/@fluxpointstudios/orynq-sdk-process-trace)
+[![npm version](https://img.shields.io/npm/v/@fluxpointstudios/orynq-sdk-anchors-cardano?label=anchors-cardano)](https://www.npmjs.com/package/@fluxpointstudios/orynq-sdk-anchors-cardano)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/Flux-Point-Studios/orynq-sdk?style=social)](https://github.com/Flux-Point-Studios/orynq-sdk)
+[![Built for](https://img.shields.io/badge/Built%20for-EU%20AI%20Act%20%C2%B7%20NIST%20AI%20RMF%20%C2%B7%20ISO%2042001-success)](https://fluxpointstudios.com/materios/sdk)
 
-**Orynq** provides cryptographic receipts for AI—proving exactly what an AI did, when it did it, and in what order. Anchors are stored on the Cardano blockchain (independently verifiable by anyone) and the Materios Partner Chain (high-throughput committee-certified receipts that inherit Cardano L1 finality).
+> Orynq is a cryptographic AI process tracing SDK. Capture every span, event, decision, and tool call in your AI agent's execution as a rolling-hash chain, bundle into a Merkle tree, and anchor the root to Cardano L1 (metadata label 2222) or the Materios partner chain — for tamper-evident, third-party-verifiable proof of inference.
+
+## What is Orynq?
+
+Orynq is an open-source SDK that turns ordinary AI agent runs into cryptographic audit trails. As your agent executes, Orynq's `process-trace` library records each event — observations, decisions, tool calls, span open/close — into a **rolling SHA-256 hash chain**, so any retroactive edit breaks every downstream hash. At trace close, events are bundled into a **Merkle tree** whose root is a single 32-byte commitment representing the entire run.
+
+That Merkle root is then **anchored to a public blockchain**: either Cardano L1 directly (under transaction metadata label `2222`) for maximum decentralization, or the **Materios partner chain** for higher-throughput receipts with committee certification and periodic L1 checkpointing. Once anchored, the trace is tamper-evident and verifiable by any third party with only the transaction hash — no vendor login, no API key, no operator cooperation required.
+
+Orynq supports **selective disclosure**: you can publish per-event Merkle proofs to prove a specific decision happened without revealing the rest of the trace. Prompts, responses, and PII are never written on-chain — only cryptographic commitments.
+
+## Why this matters
+
+If a regulator or court audited your AI system in five years, what verifiable evidence could you produce to prove how a decision was made, who governed it, and that neither the data nor the model was altered over time? Application logs are not an audit trail — they are a database your team controls. Vendor observability dashboards (LangSmith, Langfuse, Datadog) require trust in the vendor and an active subscription; if the vendor or your account goes dark, the evidence goes with it.
+
+Orynq is designed to be the artifact you hand a regulator or counterparty. It is aligned with **EU AI Act Article 12** (automatic logging and traceability of high-risk AI systems over their lifetime), **NIST AI RMF** GOVERN-1.4 and MEASURE-2 (tamper-evident records for inventory and trustworthy-AI evaluation), and **ISO/IEC 42001** A.6.2 and A.7.4 (record maintenance of AI decisions and evidenced governance).
+
+## How Orynq compares
+
+|                                  | **Orynq**                              | LangSmith / Langfuse                | EQTY                              | Datadog LLM Observability         |
+| -------------------------------- | -------------------------------------- | ----------------------------------- | --------------------------------- | --------------------------------- |
+| **Who can verify?**              | Anyone with `txHash` (public L1)       | Vendor + customer (login required)  | Vendor-attested                   | Vendor + customer (login required)|
+| **Tamper-evidence**              | Cryptographic (rolling hash + Merkle)  | Vendor-attested only                | Vendor-attested                   | Vendor-attested only              |
+| **Survives operator going dark** | Yes — root lives on Cardano L1         | No                                  | No                                | No                                |
+| **Selective disclosure**         | Per-event Merkle proofs                | Dashboard-limited                   | Limited                           | Dashboard-limited                 |
+| **Model-state proof**            | `manifestHash` pinned per inference    | Vendor-recorded (trust required)    | Vendor-recorded (trust required)  | None                              |
+| **5-year cost**                  | ~0.2–0.3 ADA per anchor (one-time)     | ~$30k+/yr seat                      | Enterprise contract               | ~$30k+/yr seat                    |
+
+---
 
 ## Quickstart — first trace in under 5 minutes
 
@@ -80,6 +111,14 @@ console.log("Cert hash:", result.certHash);
 - **x402 Protocol** - Coinbase standard for EVM chains
 - **Flux Protocol** - Native Cardano payments
 - **Auto-Pay Client** - Automatic payment handling with budget controls
+
+## Three deployment paths
+
+Orynq is deliberately **un-opinionated about who pays for and submits the transaction**. Pick the trust model and operational profile that fits your stack:
+
+1. [**Self-host (own wallet)**](#option-1-self-hosted-anchoring-no-api-fees) — submit anchors directly from your own Cardano wallet. No API fees, no third-party dependency. Recommended for teams with existing Cardano infrastructure.
+2. [**Materios partner chain**](#option-2-materios-partner-chain) — high-throughput receipts with committee certification and periodic Cardano L1 anchoring. Use when you need sub-second receipt finality and many traces per minute.
+3. [**Anchor-as-a-Service (managed)**](#option-3-anchor-as-a-service-api) — call a managed HTTPS endpoint and pay per anchor via x402 (EVM) or Flux (Cardano). Zero infrastructure on your side.
 
 ## Advanced usage
 
@@ -303,9 +342,21 @@ Anchors are stored under Cardano metadata **label 2222**:
 
 ---
 
+## Open standards work
+
+Orynq is built in the open and we are actively proposing primitives we believe every AI audit-trail format should standardize on. Discussion and contributions welcome on the following tracking issues:
+
+- [#58 — Governance-attestation event kind](https://github.com/Flux-Point-Studios/orynq-sdk/issues/58): a standard `governance-attestation` event for recording approvals, sign-offs, and policy decisions inline with execution traces.
+- [#59 — Pre-execution manifest pinning](https://github.com/Flux-Point-Studios/orynq-sdk/issues/59): enforcing that the model/prompt/tool manifest is hashed and pinned *before* the run starts, so the model-state proof cannot be backfilled.
+- [#60 — Verifiable tool-call receipts](https://github.com/Flux-Point-Studios/orynq-sdk/issues/60): receipts that cryptographically link a tool invocation to its result, so external side effects can be audited the same way as in-process events.
+- [#61 — Long-term durable off-chain trace storage](https://github.com/Flux-Point-Studios/orynq-sdk/issues/61): durable storage patterns for the full trace body (the on-chain anchor only commits to the root) over 5–10 year retention windows.
+
+---
+
 ## Documentation
 
 - **Full Docs:** [docs.fluxpointstudios.com/proof-of-inference/orynq-sdk](https://docs.fluxpointstudios.com/proof-of-inference/orynq-sdk)
+- **SDK Page:** [fluxpointstudios.com/materios/sdk](https://fluxpointstudios.com/materios/sdk)
 - **Live Demo:** [fluxpointstudios.com/orynq](https://fluxpointstudios.com/orynq)
 - **Self-Anchor Example:** [examples/self-anchor](./examples/self-anchor)
 
