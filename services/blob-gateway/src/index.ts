@@ -22,6 +22,7 @@ import { initApiTokensDb } from "./api-tokens.js";
 import { registerTokenRoutes } from "./routes/tokens.js";
 import { chainInfoRouter, initChainInfoPoller } from "./routes/chain-info.js";
 import { explorerValidatorsRouter } from "./routes/explorer-validators.js";
+import { traceRouter } from "./routes/trace.js";
 import { faucetRouter } from "./routes/faucet.js";
 import { registerAdminKeysRoutes } from "./routes/admin-keys.js";
 import { meteringRouter } from "./routes/metering.js";
@@ -105,6 +106,7 @@ app.use(heartbeatsRouter);  // Handles own dual-mode auth (Phase 2)
 app.use(operatorsRouter);   // Invite-only operator registration
 app.use(chainInfoRouter);   // Public: /chain-info — used by flux1 explorer + cert-daemon auto-discovery
 app.use(explorerValidatorsRouter); // Task #337: GET /preprod-explorer/api/validators — public committee snapshot for SPO operators.
+app.use(traceRouter);       // Task #271: GET /trace/:contentHash — first-party trace-detail explorer page (HTML).
 app.use(faucetRouter);      // Public: /faucet/drip — operator onboarding (MATRA + MOTRA bootstrap). Volume-mounted overrides accepted; see ops compose templates.
 app.use(meteringRouter);    // Task #109: POST /metering/submit — compute_metering_v1 ingestion + sponsored-receipt forwarding.
 app.use(billingRouter);     // Task #112: GET /billing/usage — verifiable compute-metering billing query.
