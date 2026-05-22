@@ -1,0 +1,37 @@
+{
+  "0x44f3bafbc393f24fcfabbf57d4ca73a6a6b5df358cdaa9480a517a97f189964b": {
+    "label": "Gemtek",
+    "trust": "permissioned",
+    "cardano_pool_id": null
+  },
+  "0x8ed446c7114fbeb751866e6752dedf36fba9b3d2832a9fc50a005e00ed0ab124": {
+    "label": "Node-2",
+    "trust": "permissioned",
+    "cardano_pool_id": null
+  },
+  "0x20cdba0a5d368c5eb0ee119d25f440f8c261ebd50f2363dae4eb3ed607f64c08": {
+    "label": "MacBook",
+    "trust": "permissioned",
+    "cardano_pool_id": null
+  },
+  "0x64964344fff93f562d94488c5fc340408817de10c4a4783e5e0dde6c8a4ba53e": {
+    "label": "Hetzner",
+    "trust": "spo",
+    "cardano_pool_id": "pool15ff3v8y3m3c0rj3dksaqjy4qaj6j89s97qdnayugcjp6cp5z6ug"
+  },
+  "0xa43bc8672f04ad568968cad7ba444eb88583d72b271806ff705c82e4ad2ff263": {
+    "label": "TrueAiData",
+    "trust": "spo",
+    "cardano_pool_id": "pool18cwl8hgnu2q6q9nr3sjmyys7xj0jzgka29k74lztdzp7qrfhaww"
+  },
+  "0xd2b8899dc82477cccd8ea2513fd426cbe672a6221050a9707a743c293f5b8e01": {
+    "label": "Runir",
+    "trust": "spo",
+    "cardano_pool_id": "pool14jlfe9lkxz562gdauvv47d52gv6v6xeep03grxel9muevmq8npt"
+  },
+  "0x925fe8605fe32a53a7b391498fc1b0ab91d3af7319607bd70b850b4f5fa9d255": {
+    "label": "Node-3",
+    "trust": "spo",
+    "cardano_pool_id": "pool1y36kln27q6vrlpz72yyge72r3jjlxh82kr0fvqgafkn3psupp7c"
+  }
+}
