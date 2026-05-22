@@ -6,7 +6,7 @@
  * Without this guard the rewards tab can silently degrade to "0 ADA" rows
  * whenever someone introduces a bech32 typo (Node-3 history) or links a
  * partner-chain candidate that never submitted a Cardano pool_registration
- * cert (Runir history).
+ * cert (Draupnir history).
  *
  * Gated on LIVE_KOIOS=1 to keep CI offline-deterministic; the route's
  * unit suite (explorer-spo-rewards.test.ts) still exercises every code
@@ -21,11 +21,11 @@
  *   - exactly one row returned matching the queried bech32
  *   - pool_status === "registered"  (not "retired" / "retiring")
  *
- * For `null` entries (Runir post-fix, all permissioned operators) we
+ * For `null` entries (Draupnir post-fix, all permissioned operators) we
  * assert the ROUTE-LAYER contract: the JSON sent to the frontend keeps
  * `cardano_pool_id: null` (the route does not invent a pool) and we do
  * NOT call Koios for them. This is the test that would have failed
- * before the fix — Runir's old ID `pool14jlfe9l…` returned `[]` from
+ * before the fix — Draupnir's old ID `pool14jlfe9l…` returned `[]` from
  * /pool_info, which the test below catches as a hard fail.
  */
 
@@ -121,7 +121,7 @@ describeMaybe("spo-pools.json roster — LIVE Koios resolution", () => {
 
       for (const r of results) {
         // Empty array = pool bech32 is well-formed but no pool registration
-        // cert exists on chain — the exact failure that flagged Runir.
+        // cert exists on chain — the exact failure that flagged Draupnir.
         expect(
           r.rows.length,
           `Koios returned 0 rows for ${r.meta.label} pool ${r.poolId} — ` +
@@ -166,10 +166,10 @@ describeMaybe("spo-pools.json roster — LIVE Koios resolution", () => {
 
   test("SPO rows with null pool_id are intentional, not data drift", () => {
     // Document each null SPO so removing one is a deliberate diff. As of the
-    // task #341 fix this is exactly {"Runir"} — partner-chain candidate
+    // task #341 fix this is exactly {"Draupnir"} — partner-chain candidate
     // registered (tx 2fb1533d…) but the tx carries zero certificates, so
     // no Cardano pool_registration was ever submitted.
     const labels = spoWithoutPool.map(([, m]) => m.label).sort();
-    expect(labels).toEqual(["Runir"]);
+    expect(labels).toEqual(["Draupnir"]);
   });
 });

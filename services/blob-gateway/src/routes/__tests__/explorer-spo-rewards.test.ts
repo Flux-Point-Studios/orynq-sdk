@@ -365,12 +365,12 @@ describe("GET /preprod-explorer/api/spo-rewards", () => {
     const ops = (res.body as { operators: Array<Record<string, unknown>> }).operators;
     const labels = ops.map((o) => o.label).sort();
     expect(labels).toEqual([
+      "Draupnir",
       "Gemtek",
       "Hetzner",
       "MacBook",
       "Node-2",
       "Node-3",
-      "Runir",
       "TrueAiData",
     ]);
     // No "unknown" trust rows
@@ -406,11 +406,11 @@ describe("GET /preprod-explorer/api/spo-rewards", () => {
         trust: "spo",
         pool: "pool1y36klnfa4kc3hyggc3fujrm3j6zlgf9r8jhtyufzmgufz3k5pt2",
       },
-      // Runir submitted partner-chain reg (Cardano tx 2fb1533d…) but the
+      // Draupnir submitted partner-chain reg (Cardano tx 2fb1533d…) but the
       // tx carried zero certificates — no Cardano pool_registration ever
       // landed on L1. Until they register, the route MUST return null
       // so the frontend renders "Not registered" instead of "0 ADA".
-      Runir: { trust: "spo", pool: null },
+      Draupnir: { trust: "spo", pool: null },
       Gemtek: { trust: "permissioned", pool: null },
       Node_2: { trust: "permissioned", pool: null },
       MacBook: { trust: "permissioned", pool: null },

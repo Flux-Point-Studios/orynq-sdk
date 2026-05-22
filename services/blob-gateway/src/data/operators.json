@@ -5,5 +5,5 @@
   "0x02ec64822300713585d9b0c3eb1456bb99c3cc42d79f4ab8e53538e50c9bed0a61": { "label": "MacBook", "trust": "permissioned" },
   "0x0316acb17138d708413136b2b30b665bf7ac4a7bf4b6c215c3ea6279bb50e77494": { "label": "Hetzner", "trust": "spo" },
   "0x03fd3eebfad926c785f8ffe4b960e4565dd0b6a6ddd649f691e430358596a1cad7": { "label": "TrueAiData", "trust": "spo" },
-  "0x0369bf6533d1e58b853a5972c042dee640199313dee0f20177b17702ccfe31d7d0": { "label": "Runir", "trust": "spo" }
+  "0x0369bf6533d1e58b853a5972c042dee640199313dee0f20177b17702ccfe31d7d0": { "label": "Draupnir", "trust": "spo" }
 }
