@@ -3,7 +3,7 @@
  *
  * Public JSON snapshot of the Materios committee — current + next session,
  * with each member resolved to a human label and a "producing" probe over
- * the last 60 blocks. Used by external SPO candidates (Runir, TrueAiData,
+ * the last 60 blocks. Used by external SPO candidates (Draupnir, TrueAiData,
  * Hetzner, ...) to verify they're in the committee without ssh-ing into a
  * home-lab node.
  *
