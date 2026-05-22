@@ -3,7 +3,7 @@
  *
  * These types describe the JSON shape the gateway places in the
  * `X-402-Payment-Required` response header (see
- * `services/blob-gateway/src/middleware/billing-402.ts`).
+ * `materios-gateway src/middleware/billing-402.ts`).
  *
  * They are intentionally narrower than the generic `PaymentRequest` type in
  * `@fluxpointstudios/orynq-sdk-core` — this payer only handles the

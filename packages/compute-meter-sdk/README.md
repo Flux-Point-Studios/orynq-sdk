@@ -9,7 +9,7 @@ receipt to the Materios chain via the existing sponsored-receipt
 pipeline.
 
 This package lives inside the `orynq-sdk` monorepo so the Python SDK and
-the TypeScript gateway validator (`services/blob-gateway/src/schemas/
+the TypeScript gateway validator (`materios-gateway src/schemas/
 compute_metering_v1.ts`) stay byte-pinned together. CI verifies the
 canonical CBOR encoders agree across both languages on every PR.
 
@@ -274,7 +274,7 @@ Canonical CBOR rules for v2:
 - NaN / Infinity rejected.
 
 The Python encoder (`canonical.canonical_cbor_v2`) and the TypeScript
-encoder (`services/blob-gateway/src/schemas/compute_metering_v1.ts`'s
+encoder (`materios-gateway src/schemas/compute_metering_v1.ts`'s
 canonical body builder, plus `tests/_v2_ts_encoder.mjs` for v2-specific
 fields) produce byte-identical bytes for the same input — verified on
 every PR by `tests/test_v2_cross_language_bytes.py`.

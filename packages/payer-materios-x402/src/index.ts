@@ -3,7 +3,7 @@
  *
  * This package provides a Materios-native x402 payer implementation that
  * closes the client-side x402 loop for the Materios billing gateway. The
- * gateway 402 middleware (services/blob-gateway/src/middleware/billing-402.ts)
+ * gateway 402 middleware (materios-gateway src/middleware/billing-402.ts)
  * emits x402 headers when a request lacks sufficient `pallet-billing::Balances`
  * — this package generates the matching payment proof a client returns to
  * retry the request.
