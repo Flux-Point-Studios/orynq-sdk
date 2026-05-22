@@ -4,7 +4,7 @@
  * The api-key path conveys authorization via the existing
  * `Authorization: Bearer matra_…` header, NOT via the x402
  * `x-402-payment-signature` mechanism. The gateway's `identifyPayer`
- * (services/blob-gateway/src/middleware/billing-402.ts) treats the
+ * (materios-gateway src/middleware/billing-402.ts) treats the
  * api-key as proof that the FPS treasury sponsors the request.
  *
  * Therefore, when the gateway emits a 402 to a client that ALREADY

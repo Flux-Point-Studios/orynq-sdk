@@ -5,13 +5,13 @@ billing gateway.
 
 This package closes the client-side x402 loop for Materios billing. The
 gateway 402 middleware
-([services/blob-gateway/src/middleware/billing-402.ts][gw]) emits an
+([materios-gateway src/middleware/billing-402.ts][gw]) emits an
 `X-402-Payment-Required` header on requests that lack sufficient
 `pallet-billing::Balances`; this package generates the matching
 `x-402-payment-signature` + `x-402-payer-ss58` headers the client returns
 on the retry.
 
-[gw]: ../../services/blob-gateway/src/middleware/billing-402.ts
+[gw]: ../../materios-gateway src/middleware/billing-402.ts
 
 ## Install
 
