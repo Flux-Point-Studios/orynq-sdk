@@ -387,4 +387,53 @@ describe("GET /preprod-explorer/api/spo-rewards", () => {
       expect(p.length).toBe(66);
     }
   });
+
+  test("roster pool IDs match task #341 corrections (no drift)", async () => {
+    // Pinned values that survived live-Koios verification on 2026-05-22.
+    // Drift here means someone changed spo-pools.json without re-running
+    // the LIVE_KOIOS=1 suite — fail loudly so the rewards tab can't
+    // silently regress to "0 ADA" rows again.
+    const expected: Record<string, { trust: string; pool: string | null }> = {
+      Hetzner: {
+        trust: "spo",
+        pool: "pool15ff3v8y3m3c0rj3dksaqjy4qaj6j89s97qdnayugcjp6cp5z6ug",
+      },
+      TrueAiData: {
+        trust: "spo",
+        pool: "pool18cwl8hgnu2q6q9nr3sjmyys7xj0jzgka29k74lztdzp7qrfhaww",
+      },
+      Node_3: {
+        trust: "spo",
+        pool: "pool1y36klnfa4kc3hyggc3fujrm3j6zlgf9r8jhtyufzmgufz3k5pt2",
+      },
+      // Runir submitted partner-chain reg (Cardano tx 2fb1533d…) but the
+      // tx carried zero certificates — no Cardano pool_registration ever
+      // landed on L1. Until they register, the route MUST return null
+      // so the frontend renders "Not registered" instead of "0 ADA".
+      Runir: { trust: "spo", pool: null },
+      Gemtek: { trust: "permissioned", pool: null },
+      Node_2: { trust: "permissioned", pool: null },
+      MacBook: { trust: "permissioned", pool: null },
+    };
+
+    const app = express();
+    app.use(
+      createExplorerSpoRewardsRouter({
+        apiFactory: () => makeFakeMateriosApi({}),
+        koiosFetch: makeKoiosFetcher({}),
+        disableCache: true,
+      }),
+    );
+    const res = await callApp(app, "/preprod-explorer/api/spo-rewards");
+    expect(res.status).toBe(200);
+    const ops = (res.body as { operators: Array<Record<string, unknown>> }).operators;
+
+    for (const [labelKey, { trust, pool }] of Object.entries(expected)) {
+      const wantLabel = labelKey.replace("_", "-");
+      const row = ops.find((o) => o.label === wantLabel);
+      expect(row, `missing operator ${wantLabel}`).toBeDefined();
+      expect(row!.trust).toBe(trust);
+      expect(row!.cardano_pool_id).toBe(pool);
+    }
+  });
 });

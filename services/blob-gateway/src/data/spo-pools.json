@@ -27,11 +27,11 @@
   "0xd2b8899dc82477cccd8ea2513fd426cbe672a6221050a9707a743c293f5b8e01": {
     "label": "Runir",
     "trust": "spo",
-    "cardano_pool_id": "pool14jlfe9lkxz562gdauvv47d52gv6v6xeep03grxel9muevmq8npt"
+    "cardano_pool_id": null
   },
   "0x925fe8605fe32a53a7b391498fc1b0ab91d3af7319607bd70b850b4f5fa9d255": {
     "label": "Node-3",
     "trust": "spo",
-    "cardano_pool_id": "pool1y36kln27q6vrlpz72yyge72r3jjlxh82kr0fvqgafkn3psupp7c"
+    "cardano_pool_id": "pool1y36klnfa4kc3hyggc3fujrm3j6zlgf9r8jhtyufzmgufz3k5pt2"
   }
 }
