@@ -50,6 +50,7 @@ from .transport_flux import FLUX_HEADERS, is_flux_402, parse_flux_invoice
 # also live alongside but are imported on-demand so substrate-interface
 # is not pulled in unless someone actually calls into them.
 from . import trace  # noqa: F401  (re-export module)
+from . import schemas  # noqa: F401  (re-export module)
 
 __version__ = "0.2.0"
 
@@ -84,4 +85,5 @@ __all__ = [
     "parse_flux_invoice",
     # New in 0.2.0
     "trace",
+    "schemas",
 ]

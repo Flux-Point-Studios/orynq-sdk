@@ -58,6 +58,30 @@ export { stripPrefix, ensureHex, zeroHash, isZeroHash } from "./hex.js";
 // Merkle tree utilities
 export { merkleRoot, merkleInclusionProof, verifyMerkleProof } from "./merkle.js";
 
+// Schemas — canonical encoders + validators for receipt-class semantic roots.
+// Discriminator hash `SCHEMA_HASH_HEX` is the value caller passes as
+// `schemaHash` to `submitReceipt` for the matching receipt class.
+export {
+  SCHEMA_VERSION as AI_CAPABILITY_OBSERVATION_V1_SCHEMA_VERSION,
+  SCHEMA_HASH_HEX as AI_CAPABILITY_OBSERVATION_V1_SCHEMA_HASH_HEX,
+  TEE_TIERS,
+  SEVERITIES,
+  MAX_CONTEXT_LEN as AI_CAPABILITY_OBSERVATION_V1_MAX_CONTEXT_LEN,
+  canonicalCborPreImage as canonicalCborPreImageAiCapabilityObservationV1,
+  canonicalContentHash as canonicalContentHashAiCapabilityObservationV1,
+  validateAiCapabilityObservationV1,
+} from "./schemas/ai_capability_observation_v1.js";
+export type {
+  AiCapabilityObservationV1,
+  ModelV1,
+  CapabilityV1,
+  ObservationV1,
+  TeeAttestationV1,
+  ObserverV1,
+  TeeTier,
+  Severity,
+} from "./schemas/ai_capability_observation_v1.js";
+
 // Types
 export type {
   // Anchor types

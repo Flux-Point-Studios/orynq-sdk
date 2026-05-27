@@ -55,8 +55,8 @@ export async function submitReceipt(
   const manifestHex = assertHex32(input.manifestHash, "manifestHash");
   // schemaHash defaults to legacy (32 zero bytes) when caller omits it,
   // preserving the prior behaviour for plain blob receipts. Callers using
-  // semantic-root receipt classes (compute_metering_v2*, orynq_trace_v1)
-  // MUST pass the matching discriminator from
+  // semantic-root receipt classes (compute_metering_v2*, orynq_trace_v1,
+  // ai_capability_observation_v1) MUST pass the matching discriminator from
   // operator-kit daemon/schemas/, otherwise cert-daemon rejects the
   // receipt with a Merkle mismatch.
   const schemaHex = input.schemaHash
@@ -498,9 +498,10 @@ export async function submitCertifiedReceipt(
 
   // 3. Submit receipt on-chain. Forward `schemaHash` and `receiptId`
   // from the caller's input so semantic-root receipt classes
-  // (compute_metering_v2*, orynq_trace_v1) land on chain with the right
-  // discriminator. Omitting schemaHash falls back to legacy (zero bytes)
-  // = chunk-Merkle path, preserving pre-existing behaviour.
+  // (compute_metering_v2*, orynq_trace_v1, ai_capability_observation_v1)
+  // land on chain with the right discriminator. Omitting schemaHash falls
+  // back to legacy (zero bytes) = chunk-Merkle path, preserving
+  // pre-existing behaviour.
   const receiptInput: ReceiptInput = {
     contentHash: effectiveContentHash,
     rootHash: input.rootHash || contentHashHex,
