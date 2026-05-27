@@ -33,7 +33,7 @@ def _make_obs() -> Observation:
         taxonomy_id="AUTO-MONEY-001",
         severity="high",
         observer_context="test",
-        occurred_at=1_700_000_000_000,
+        occurred_at="2026-11-14T22:13:20Z",
     ).add_evidence(prompt="p", response="r")
 
 

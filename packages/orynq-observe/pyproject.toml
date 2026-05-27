@@ -12,8 +12,8 @@ license = "MIT"
 authors = [{ name = "Fluxpoint Studios" }]
 keywords = ["materios", "orynq", "ai", "observation", "attestation", "cardano"]
 dependencies = [
-    "cbor2>=5.4.0,<6",
     "httpx>=0.25.0",
+    "orynq-sdk>=0.2.0",
     "py-sr25519-bindings>=0.2.0",
     "substrate-interface>=1.7.0",
 ]

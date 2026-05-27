@@ -23,7 +23,7 @@ function makeObs(): Observation {
     taxonomyId: "AUTO-MONEY-001",
     severity: "high",
     observerContext: "test",
-    occurredAt: 1_700_000_000_000,
+    occurredAt: "2026-11-14T22:13:20Z",
   });
 }
 
@@ -51,6 +51,21 @@ describe("Observation builder", () => {
           // @ts-expect-error — intentional bad input
           severity: "catastrophic",
           observerContext: "x",
+        }),
+    ).toThrow(ObservationError);
+  });
+
+  it("rejects non-string occurredAt", () => {
+    expect(
+      () =>
+        new Observation({
+          modelName: "m",
+          modelVersion: "v",
+          taxonomyId: "t",
+          severity: "high",
+          observerContext: "x",
+          // @ts-expect-error — intentional bad input
+          occurredAt: 1_700_000_000_000,
         }),
     ).toThrow(ObservationError);
   });
@@ -97,12 +112,10 @@ describe("Observation builder", () => {
     const kp = await fixtureKp();
     const obs = makeObs()
       .addEvidence({ prompt: "p", response: "r" })
-      .attestTee({
-        tier: "Acurast",
-        evidence: new Uint8Array([1, 2, 3]),
-      });
+      .attestTee({ tier: "Acurast", evidence: "deadbeef" });
     const record = obs.toRecord(kp.ss58Address);
     expect(record.observer.teeAttestation?.tier).toBe("Acurast");
+    expect(record.observer.teeAttestation?.evidence).toBe("deadbeef");
   });
 
   it("addArtifact with opaque ref stores verbatim", async () => {
@@ -124,7 +137,7 @@ describe("Observation builder", () => {
     const kp = await fixtureKp();
     const h = makeObs()
       .addEvidence({ prompt: "p", response: "r" })
-      .attestTee({ tier: "Acurast", evidence: new Uint8Array([0]) })
+      .attestTee({ tier: "Acurast", evidence: "00" })
       .contentHash(kp.ss58Address);
     expect(h.length).toBe(64);
   });

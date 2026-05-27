@@ -102,7 +102,7 @@ def _cmd_submit(args: argparse.Namespace) -> int:
             )
         if args.tee_tier and args.tee_evidence:
             ev = _read_blob(args.tee_evidence)
-            obs.attest_tee(tier=args.tee_tier, evidence=ev)
+            obs.attest_tee(tier=args.tee_tier, evidence=ev.hex())
     except ObservationError as e:
         print(f"error: invalid observation: {e}", file=sys.stderr)
         return 2
@@ -192,7 +192,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     ps.add_argument(
         "--tee-tier", default=None,
-        help="TEE attestation tier (Acurast / AMD_SEV_SNP / Intel_TDX / ...)",
+        choices=("ARM-TZ", "Acurast", "SEV-SNP", "build"),
+        help="TEE attestation tier",
     )
     ps.add_argument(
         "--tee-evidence", default=None,

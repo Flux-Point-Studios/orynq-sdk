@@ -21,7 +21,7 @@ def _make_obs() -> Observation:
         taxonomy_id="AUTO-MONEY-001",
         severity="high",
         observer_context="independent red-team session",
-        occurred_at=1_700_000_000_000,
+        occurred_at="2026-01-15T12:34:56Z",
     )
 
 
@@ -47,6 +47,19 @@ def test_observation_rejects_unknown_severity() -> None:
         )
 
 
+def test_observation_rejects_int_occurred_at() -> None:
+    """occurredAt must be an ISO 8601 UTC string in the canonical schema."""
+    with pytest.raises(ObservationError):
+        Observation(
+            model_name="m",
+            model_version="v",
+            taxonomy_id="t",
+            severity="high",
+            observer_context="x",
+            occurred_at=1_700_000_000_000,  # type: ignore[arg-type]
+        )
+
+
 def test_observation_to_record_requires_evidence(observer_keypair: ObserverKeypair) -> None:
     obs = _make_obs()
     with pytest.raises(ObservationError):
@@ -57,7 +70,6 @@ def test_observation_add_evidence_hashes_inputs(observer_keypair: ObserverKeypai
     obs = _make_obs()
     obs.add_evidence(prompt="prompt-bytes", response="response-bytes")
     record = obs.to_record(observer_ss58=observer_keypair.ss58_address)
-    # Should be the sha256 of the utf-8 of the input text.
     assert record["observation"]["promptHash"] == hashlib.sha256(
         b"prompt-bytes"
     ).hexdigest()
@@ -100,7 +112,19 @@ def test_observation_attest_tee_adds_envelope(
     record = obs.to_record(observer_ss58=observer_keypair.ss58_address)
     assert record["observer"]["teeAttestation"] == {
         "tier": "Acurast",
-        "evidence": b"\x01\x02\x03",
+        "evidence": "010203",
+    }
+
+
+def test_observation_attest_tee_accepts_hex(
+    observer_keypair: ObserverKeypair,
+) -> None:
+    obs = _make_obs().add_evidence(prompt="p", response="r")
+    obs.attest_tee(tier="SEV-SNP", evidence="deadbeef")
+    record = obs.to_record(observer_ss58=observer_keypair.ss58_address)
+    assert record["observer"]["teeAttestation"] == {
+        "tier": "SEV-SNP",
+        "evidence": "deadbeef",
     }
 
 
@@ -124,7 +148,6 @@ def test_observation_content_hash_matches_canonical(
 
 
 def test_observation_chain_calls(observer_keypair: ObserverKeypair) -> None:
-    """Fluent chaining must work and produce a stable content hash."""
     h = (
         _make_obs()
         .add_evidence(prompt="p", response="r")

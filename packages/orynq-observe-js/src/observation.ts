@@ -10,11 +10,13 @@
  *     });
  *     obs.addEvidence({ prompt, response });
  *     obs.addArtifact("/path/to/transcript.json");
- *     obs.attestTee({ tier: "Acurast", evidence: "..." });
+ *     obs.attestTee({ tier: "Acurast", evidence: "deadbeef" });
  *     const receipt = await obs.submit({ wallet, network: "preprod" });
  *
- * Mirrors the Python builder field-for-field. The on-chain canonical bytes
- * are identical between the two SDKs.
+ * Mirrors the Python builder field-for-field. Builder output is the canonical
+ * `AiCapabilityObservationV1` wire shape — hex-string hashes / TEE evidence
+ * and ISO 8601 UTC `occurredAt` — so it feeds the schema codec without
+ * adaptation.
  */
 
 import { createHash } from "node:crypto";
@@ -25,6 +27,8 @@ import {
   SCHEMA_VERSION,
   SEVERITIES,
   type Severity,
+  TEE_TIERS,
+  type TeeTier,
   canonicalContentHash,
 } from "./canonical.js";
 import { ObserverKeypair } from "./keypair.js";
@@ -46,8 +50,10 @@ export interface ObservationConstructorOptions {
   taxonomyId: string;
   severity: Severity;
   observerContext: string;
-  modelHash?: string | Uint8Array | null;
-  occurredAt?: number;
+  /** sha256 hex of model weights (64 lowercase hex chars). Null/undefined = unknown. */
+  modelHash?: string | null;
+  /** ISO 8601 UTC (e.g. "2026-01-15T12:34:56Z"). Defaults to now(). */
+  occurredAt?: string;
 }
 
 export interface AddEvidenceOptions {
@@ -56,8 +62,10 @@ export interface AddEvidenceOptions {
 }
 
 export interface AddEvidenceHashesOptions {
-  promptHash: string | Uint8Array;
-  responseHash: string | Uint8Array;
+  /** sha256 hex (64 lowercase chars). */
+  promptHash: string;
+  /** sha256 hex (64 lowercase chars). */
+  responseHash: string;
 }
 
 export interface AddArtifactOptions {
@@ -67,8 +75,9 @@ export interface AddArtifactOptions {
 }
 
 export interface AttestTeeOptions {
-  tier: string;
-  evidence: string | Uint8Array;
+  tier: TeeTier;
+  /** Hex string (lowercase, even length). */
+  evidence: string;
 }
 
 export interface SubmitOptions {
@@ -87,21 +96,22 @@ function sha256Hex(b: Uint8Array | string): string {
   return createHash("sha256").update(b).digest("hex");
 }
 
-function nowMs(): number {
-  return Date.now();
+function nowIso(): string {
+  // Millisecond-precision UTC, matches schema's OCCURRED_AT_RE.
+  return new Date().toISOString();
 }
 
 export class Observation {
-  private model: { name: string; version: string; hash?: string | Uint8Array | null };
+  private model: { name: string; version: string; hash: string | null };
   private capability: { taxonomyId: string; severity: Severity };
   private observation: {
-    promptHash: string | Uint8Array | null;
-    responseHash: string | Uint8Array | null;
+    promptHash: string | null;
+    responseHash: string | null;
     artifactRef: string | null;
-    occurredAt: number;
+    occurredAt: string;
   };
   private observerContext: string;
-  private tee: { tier: string; evidence: string | Uint8Array } | null = null;
+  private tee: { tier: TeeTier; evidence: string } | null = null;
 
   constructor(opts: ObservationConstructorOptions) {
     if (typeof opts.modelName !== "string" || !opts.modelName) {
@@ -121,12 +131,8 @@ export class Observation {
     if (typeof opts.observerContext !== "string") {
       throw new ObservationError("observerContext must be a string");
     }
-    if (
-      opts.occurredAt !== undefined &&
-      (typeof opts.occurredAt !== "number" ||
-        !Number.isInteger(opts.occurredAt))
-    ) {
-      throw new ObservationError("occurredAt must be int (unix ms)");
+    if (opts.occurredAt !== undefined && typeof opts.occurredAt !== "string") {
+      throw new ObservationError("occurredAt must be an ISO 8601 UTC string");
     }
     this.model = {
       name: opts.modelName,
@@ -141,7 +147,7 @@ export class Observation {
       promptHash: null,
       responseHash: null,
       artifactRef: null,
-      occurredAt: opts.occurredAt ?? nowMs(),
+      occurredAt: opts.occurredAt ?? nowIso(),
     };
     this.observerContext = opts.observerContext;
   }
@@ -206,14 +212,15 @@ export class Observation {
   }
 
   attestTee(opts: AttestTeeOptions): Observation {
-    if (typeof opts.tier !== "string" || !opts.tier) {
-      throw new ObservationError("tier must be a non-empty string");
+    if (!(TEE_TIERS as readonly string[]).includes(opts.tier)) {
+      throw new ObservationError(
+        `tier must be one of ${TEE_TIERS.join(",")}, got ${opts.tier}`,
+      );
     }
-    if (
-      !(opts.evidence instanceof Uint8Array) &&
-      typeof opts.evidence !== "string"
-    ) {
-      throw new ObservationError("evidence must be bytes or hex string");
+    if (typeof opts.evidence !== "string" || opts.evidence.length === 0) {
+      throw new ObservationError(
+        "evidence must be a non-empty hex string",
+      );
     }
     this.tee = { tier: opts.tier, evidence: opts.evidence };
     return this;
