@@ -79,9 +79,10 @@ export interface ReceiptInput {
    * `base_root_sha256` is a *semantic* root (not the chunk-Merkle of the
    * uploaded bytes):
    *
-   *   sha256("compute_metering_v2")    — Wave 1+2 metering envelopes
-   *   sha256("compute_metering_v2_1")  — Wave 3 Phase 2 (with attestation_evidence)
-   *   sha256("orynq_trace_v1")         — orynq trace receipts (drain.mjs)
+   *   sha256("compute_metering_v2")          — Wave 1+2 metering envelopes
+   *   sha256("compute_metering_v2_1")        — Wave 3 Phase 2 (with attestation_evidence)
+   *   sha256("orynq_trace_v1")               — orynq trace receipts (drain.mjs)
+   *   sha256("ai_capability_observation_v1") — attested AI model observations
    *
    * The cert-daemon's TRUSTED_DISCRIMINATOR_SCHEMAS set (operator-kit
    * daemon/schemas/__init__.py) enumerates accepted values. Receipts with

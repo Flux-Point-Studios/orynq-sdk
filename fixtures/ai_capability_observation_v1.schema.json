@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orynq.io/schemas/ai_capability_observation_v1.json",
+  "title": "AI Capability Observation v1",
+  "description": "Cryptographically-verifiable schema for attested AI model observations. The canonical CBOR encoder and content_hash semantics are documented in packages/anchors-materios/src/schemas/ai_capability_observation_v1.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "model", "capability", "observation", "observer"],
+  "properties": {
+    "schemaVersion": {
+      "const": "ai_capability_observation_v1"
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "hash"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hash": {
+          "oneOf": [
+            { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            { "type": "null" }
+          ],
+          "description": "Hex (sha256) of the model-weights hash, or null when unknown."
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taxonomyId", "severity"],
+      "properties": {
+        "taxonomyId": {
+          "type": "string",
+          "pattern": "^[A-Z0-9_-]{1,64}$"
+        },
+        "severity": {
+          "enum": ["low", "medium", "high", "critical"]
+        }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["promptHash", "responseHash", "artifactRef", "occurredAt"],
+      "properties": {
+        "promptHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "responseHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "artifactRef": {
+          "oneOf": [
+            { "type": "string", "minLength": 1, "maxLength": 2048 },
+            { "type": "null" }
+          ],
+          "description": "URL / IPFS CID / blob hash for the full transcript, or null when absent."
+        },
+        "occurredAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$",
+          "description": "ISO 8601 UTC timestamp."
+        }
+      }
+    },
+    "observer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ss58", "context", "teeAttestation"],
+      "properties": {
+        "ss58": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{46,50}$",
+          "description": "Materios SS58 address (base58, 46-50 chars depending on prefix)."
+        },
+        "context": {
+          "type": "string",
+          "maxLength": 280
+        },
+        "teeAttestation": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["tier", "evidence"],
+              "properties": {
+                "tier": {
+                  "enum": ["ARM-TZ", "Acurast", "SEV-SNP", "build"]
+                },
+                "evidence": {
+                  "type": "string",
+                  "pattern": "^(?:[0-9a-f]{2})+$",
+                  "description": "Hex-encoded TEE evidence blob (non-empty, even length)."
+                }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  }
+}
