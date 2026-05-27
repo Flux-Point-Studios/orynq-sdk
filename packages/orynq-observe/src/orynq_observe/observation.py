@@ -47,9 +47,8 @@ def _sha256_hex(b: bytes) -> str:
 
 def _now_iso() -> str:
     # Millisecond-precision UTC, matches schema OCCURRED_AT_RE.
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + (
-        f"{datetime.now(timezone.utc).microsecond // 1000:03d}Z"
-    )
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
 
 
 class Observation:
