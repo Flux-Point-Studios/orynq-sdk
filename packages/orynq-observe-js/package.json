@@ -46,6 +46,7 @@
   "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk/tree/main/packages/orynq-observe-js#readme",
   "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
+    "@fluxpointstudios/orynq-sdk-anchors-materios": "workspace:*",
     "@polkadot/util": "^13.5.0",
     "@polkadot/util-crypto": "^13.5.0",
     "@polkadot/keyring": "^13.5.0"

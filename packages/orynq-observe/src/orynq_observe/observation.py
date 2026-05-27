@@ -11,25 +11,24 @@ The public surface mirrors the spec:
     )
     obs.add_evidence(prompt="...", response="...")
     obs.add_artifact("/path/to/transcript.json")  # optional, blob upload
-    obs.attest_tee(tier="Acurast", evidence=b"...")  # optional
+    obs.attest_tee(tier="Acurast", evidence="deadbeef")  # optional, hex
     receipt = obs.submit(wallet="path/to/key.json", network="preprod")
 
-The builder is a thin shell around a normalized dict. The canonical
-encoder lives in `canonical.py` and operates on that dict directly, so
-callers wanting to bypass the builder (advanced verifiers, batch tools)
-can do so with the same byte guarantees.
+The builder produces the canonical `ai_capability_observation_v1` wire
+shape — hex-string hashes / TEE evidence and ISO 8601 UTC `occurredAt` —
+so it feeds the schema codec without adaptation.
 """
 from __future__ import annotations
 
 import hashlib
 import os
-import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 from .canonical import (
     SCHEMA_VERSION,
     SEVERITIES,
-    canonical_cbor,
+    TEE_TIERS,
     canonical_content_hash,
 )
 from .keypair import ObserverKeypair
@@ -46,8 +45,10 @@ def _sha256_hex(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
-def _now_ms() -> int:
-    return time.time_ns() // 1_000_000
+def _now_iso() -> str:
+    # Millisecond-precision UTC, matches schema OCCURRED_AT_RE.
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
 
 
 class Observation:
@@ -72,8 +73,8 @@ class Observation:
         taxonomy_id: str,
         severity: str,
         observer_context: str,
-        model_hash: Optional[Union[bytes, str]] = None,
-        occurred_at: Optional[int] = None,
+        model_hash: Optional[str] = None,
+        occurred_at: Optional[str] = None,
     ) -> None:
         if not isinstance(model_name, str) or not model_name:
             raise ObservationError("model_name must be a non-empty string")
@@ -87,10 +88,14 @@ class Observation:
             )
         if not isinstance(observer_context, str):
             raise ObservationError("observer_context must be a string")
-        if occurred_at is not None and (
-            not isinstance(occurred_at, int) or isinstance(occurred_at, bool)
-        ):
-            raise ObservationError("occurred_at must be int (unix ms)")
+        if occurred_at is not None and not isinstance(occurred_at, str):
+            raise ObservationError(
+                "occurred_at must be an ISO 8601 UTC string (suffix Z)"
+            )
+        if model_hash is not None and not isinstance(model_hash, str):
+            raise ObservationError(
+                "model_hash must be a 64-char lowercase hex string or None"
+            )
 
         self._model: Dict[str, Any] = {
             "name": model_name,
@@ -105,7 +110,7 @@ class Observation:
             "promptHash": None,
             "responseHash": None,
             "artifactRef": None,
-            "occurredAt": occurred_at if occurred_at is not None else _now_ms(),
+            "occurredAt": occurred_at if occurred_at is not None else _now_iso(),
         }
         self._observer_context = observer_context
         self._tee: Optional[Dict[str, Any]] = None
@@ -147,10 +152,14 @@ class Observation:
         return self
 
     def add_evidence_hashes(
-        self, *, prompt_hash: Union[str, bytes], response_hash: Union[str, bytes]
+        self, *, prompt_hash: str, response_hash: str
     ) -> "Observation":
         """For callers that already have sha256 digests (e.g. hashes from an
-        external transcript store). Both must be 32 bytes / 64 hex chars."""
+        external transcript store). Both must be 64 lowercase hex chars."""
+        if not isinstance(prompt_hash, str) or not isinstance(response_hash, str):
+            raise ObservationError(
+                "prompt_hash and response_hash must be 64-char lowercase hex strings"
+            )
         self._observation["promptHash"] = prompt_hash
         self._observation["responseHash"] = response_hash
         return self
@@ -197,18 +206,24 @@ class Observation:
     ) -> "Observation":
         """Attach a TEE attestation envelope.
 
-        `tier` is a free-form short string identifying the TEE family
-        (Acurast / AMD_SEV_SNP / Intel_TDX / ARM_TrustZone / ReproducibleBuild).
-        `evidence` is opaque bytes — the TEE's quote / attestation document
-        in its native binary form. We hash + carry verbatim in the canonical
-        pre-image, then the cert-daemon (or downstream verifier) is responsible
-        for parsing the tier-specific format.
+        `tier` is one of the canonical schema tiers (ARM-TZ / Acurast /
+        SEV-SNP / build). `evidence` is the TEE's quote / attestation
+        document; accepted as raw bytes or lowercase hex string and
+        canonicalized to hex for the wire shape.
         """
-        if not isinstance(tier, str) or not tier:
-            raise ObservationError("tier must be a non-empty string")
-        if not isinstance(evidence, (bytes, bytearray, str)):
+        if tier not in TEE_TIERS:
+            raise ObservationError(
+                f"tier must be one of {TEE_TIERS}, got {tier!r}"
+            )
+        if isinstance(evidence, (bytes, bytearray)):
+            evidence_hex = bytes(evidence).hex()
+        elif isinstance(evidence, str):
+            evidence_hex = evidence[2:] if evidence.startswith("0x") else evidence
+        else:
             raise ObservationError("evidence must be bytes or hex str")
-        self._tee = {"tier": tier, "evidence": evidence}
+        if not evidence_hex:
+            raise ObservationError("evidence must be non-empty")
+        self._tee = {"tier": tier, "evidence": evidence_hex}
         return self
 
     # ---------------------- record assembly ------------------------------

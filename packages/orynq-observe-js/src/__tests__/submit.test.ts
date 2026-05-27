@@ -25,7 +25,7 @@ function makeObs(): Observation {
     taxonomyId: "AUTO-MONEY-001",
     severity: "high",
     observerContext: "test",
-    occurredAt: 1_700_000_000_000,
+    occurredAt: "2026-11-14T22:13:20Z",
   }).addEvidence({ prompt: "p", response: "r" });
 }
 

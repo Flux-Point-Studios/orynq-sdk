@@ -27,7 +27,9 @@ export {
   SCHEMA_VERSION,
   SCHEMA_HASH_HEX,
   SEVERITIES,
+  TEE_TIERS,
   type Severity,
+  type TeeTier,
   // Canonical encoder (advanced verifiers)
   canonicalCbor,
   canonicalContentHash,

@@ -29,6 +29,7 @@ from .canonical import (
     SCHEMA_HASH_HEX,
     SCHEMA_VERSION,
     SEVERITIES,
+    TEE_TIERS,
     canonical_cbor,
     canonical_content_hash,
 )
@@ -56,6 +57,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "SCHEMA_HASH_HEX",
     "SEVERITIES",
+    "TEE_TIERS",
     # Canonical encoder (advanced verifiers)
     "canonical_cbor",
     "canonical_content_hash",

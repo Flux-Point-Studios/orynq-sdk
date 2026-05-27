@@ -19,7 +19,7 @@ import { parseArgs } from "node:util";
 import { ObserverKeypair, InvalidKeyfileError } from "./keypair.js";
 import { Observation, ObservationError } from "./observation.js";
 import { GatewayError, SubmitError } from "./submit.js";
-import { type Severity, SEVERITIES } from "./canonical.js";
+import { type Severity, SEVERITIES, type TeeTier } from "./canonical.js";
 
 function fail(message: string, code: number): never {
   process.stderr.write(`error: ${message}\n`);
@@ -95,9 +95,13 @@ async function cmdSubmit(args: Record<string, string | undefined>) {
     }
     if (args["tee-tier"] && args["tee-evidence"]) {
       const ev = readFileSync(args["tee-evidence"]!);
+      let evHex = "";
+      for (let i = 0; i < ev.length; i++) {
+        evHex += ev[i].toString(16).padStart(2, "0");
+      }
       obs.attestTee({
-        tier: args["tee-tier"],
-        evidence: new Uint8Array(ev.buffer, ev.byteOffset, ev.byteLength),
+        tier: args["tee-tier"] as TeeTier,
+        evidence: evHex,
       });
     }
   } catch (e) {
