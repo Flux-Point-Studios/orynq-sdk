@@ -47,20 +47,28 @@ HARNESS_PATH = (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _have_tsx() -> bool:
-    return shutil.which("tsx") is not None or shutil.which("npx") is not None
+def _tsx_command() -> List[str] | None:
+    """Resolve a runnable `tsx <script>` command, or return None to skip.
+
+    Two paths are accepted: tsx on PATH, or the workspace's
+    `node_modules/.bin/tsx`. Python-only CI jobs that skip `pnpm install`
+    lack both and the test skips cleanly.
+    """
+    if shutil.which("tsx") is not None:
+        return ["tsx"]
+    local = REPO_ROOT / "node_modules" / ".bin" / "tsx"
+    if local.exists():
+        return [str(local)]
+    return None
 
 
 def _run_ts_harness(record: Dict) -> Dict[str, str]:
-    if not _have_tsx():
+    base = _tsx_command()
+    if base is None:
         pytest.skip(
-            "tsx/npx not available — install node deps to run cross-lang tests"
+            "tsx not reachable — install node deps (pnpm install) to run cross-lang tests"
         )
-    cmd: List[str]
-    if shutil.which("tsx") is not None:
-        cmd = ["tsx", str(HARNESS_PATH)]
-    else:
-        cmd = ["npx", "--no-install", "tsx", str(HARNESS_PATH)]
+    cmd: List[str] = [*base, str(HARNESS_PATH)]
 
     proc = subprocess.run(
         cmd,
