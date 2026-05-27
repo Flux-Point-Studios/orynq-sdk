@@ -323,6 +323,34 @@ importers:
         specifier: ^1.2.0
         version: 1.6.1(@types/node@20.19.39)
 
+  packages/orynq-observe-js:
+    dependencies:
+      '@polkadot/keyring':
+        specifier: ^13.5.0
+        version: 13.5.9(@polkadot/util-crypto@13.5.9)(@polkadot/util@13.5.9)
+      '@polkadot/util':
+        specifier: ^13.5.0
+        version: 13.5.9
+      '@polkadot/util-crypto':
+        specifier: ^13.5.0
+        version: 13.5.9(@polkadot/util@13.5.9)
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.39
+      rimraf:
+        specifier: ^5.0.5
+        version: 5.0.10
+      tsup:
+        specifier: ^8.0.1
+        version: 8.5.1(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+      vitest:
+        specifier: ^1.2.0
+        version: 1.6.1(@types/node@20.19.39)
+
   packages/payer-cardano-cip30:
     dependencies:
       '@fluxpointstudios/orynq-sdk-core':
