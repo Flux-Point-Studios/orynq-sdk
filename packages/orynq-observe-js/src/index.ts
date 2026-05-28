@@ -1,7 +1,7 @@
 /**
- * @fluxpointstudios/orynq-observe — SDK for attested AI model observations.
+ * @orynq/observe — SDK for attested AI model behavior observations.
  *
- *     import { Observation, ObserverKeypair } from "@fluxpointstudios/orynq-observe";
+ *     import { Observation, ObserverKeypair } from "@orynq/observe";
  *
  *     const obs = new Observation({
  *       modelName: "claude-opus-4-7",

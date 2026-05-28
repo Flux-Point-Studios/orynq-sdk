@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Command-line interface for @fluxpointstudios/orynq-observe.
+ * Command-line interface for @orynq/observe.
  *
  * Subcommands:
  *   keygen  — generate an sr25519 observer keyfile.

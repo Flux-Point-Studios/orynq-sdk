@@ -1,4 +1,4 @@
-# @fluxpointstudios/orynq-observe
+# @orynq/observe
 
 SDK for publishing attested AI model capability observations to chain-anchored receipts.
 
@@ -10,7 +10,7 @@ either runtime verifies on the gateway and on chain.
 
 ```bash
 # 1. Install
-npm install @fluxpointstudios/orynq-observe
+npm install @orynq/observe
 
 # 2. Generate an observer keyfile
 npx orynq-observe keygen --out ./observer.json
@@ -37,7 +37,7 @@ npx orynq-observe submit \
 ## Library usage
 
 ```typescript
-import { Observation } from "@fluxpointstudios/orynq-observe";
+import { Observation } from "@orynq/observe";
 
 const obs = new Observation({
   modelName: "claude-opus-4-7",

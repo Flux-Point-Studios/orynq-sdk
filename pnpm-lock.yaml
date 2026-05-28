@@ -326,7 +326,7 @@ importers:
   packages/orynq-observe-js:
     dependencies:
       '@fluxpointstudios/orynq-sdk-anchors-materios':
-        specifier: workspace:*
+        specifier: ^0.4.0
         version: link:../anchors-materios
       '@polkadot/keyring':
         specifier: ^13.5.0
