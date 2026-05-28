@@ -1,7 +1,7 @@
 {
-  "name": "@fluxpointstudios/orynq-observe",
+  "name": "@orynq/observe",
   "version": "0.1.0",
-  "description": "SDK for publishing attested AI model capability observations to Materios chain-anchored receipts.",
+  "description": "SDK for publishing attested AI model behavior observations to a chain-anchored public registry.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -46,7 +46,7 @@
   "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk/tree/main/packages/orynq-observe-js#readme",
   "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
-    "@fluxpointstudios/orynq-sdk-anchors-materios": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-anchors-materios": "^0.4.0",
     "@polkadot/util": "^13.5.0",
     "@polkadot/util-crypto": "^13.5.0",
     "@polkadot/keyring": "^13.5.0"

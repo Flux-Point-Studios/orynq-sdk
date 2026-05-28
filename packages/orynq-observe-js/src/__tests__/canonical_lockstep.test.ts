@@ -4,7 +4,7 @@
  *
  * The SDK is a thin wrapper around the canonical
  * `@fluxpointstudios/orynq-sdk-anchors-materios` codec; this test is the
- * harness that decides when the alignment is correct.
+ * harness that decides when the byte-equality holds.
  */
 
 import { describe, expect, it } from "vitest";
