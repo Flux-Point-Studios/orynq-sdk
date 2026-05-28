@@ -1,0 +1,18 @@
+{
+  "_doc": "Pinned lineage values used by test_verify.py. Generated from the canonical checkpoint-leaf formula in packages/anchors-materios/src/polling.ts.",
+  "chain_id_hex": "0x0e46e33f639a56cc8780fd871d9a15e16d99af248526f907cb560cb40849f7bf",
+  "receipt_id_hex": "0xc7dc93ba23aa1c0f95e5e5d8586bf3998e7de5b8e01bf60adf442b04198a0ca5",
+  "cert_hash_hex":  "0x431b3b3ca216366bd7e53095d66d89e3e301695c320bc5286c7b9c997dadc227",
+  "expected_leaf_hex": "0xa920d75239e81ee8dacf7c67ee60cebf8a6c7ef4cf65bbd1922c9e8ef0b47ff6",
+  "sample_anchor_metadata": {
+    "p": "materios",
+    "v": 2,
+    "chain": "0e46e33f639a56cc8780fd871d9a15e16d99af248526f907cb560cb40849f7bf",
+    "blocks": [50000, 50500],
+    "leaves": 4,
+    "root": "feedfacedeadbeeffeedfacedeadbeeffeedfacedeadbeeffeedfacedeadbeef",
+    "manifest": "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe"
+  },
+  "sample_receipt_block_number_in_range": 50250,
+  "sample_receipt_block_number_out_of_range": 60000
+}
