@@ -48,6 +48,8 @@ wheels/
 htmlcov/
 .tox/
 .nox/
+.venv/
+venv/
 .hypothesis/
 .mypy_cache/
 .ruff_cache/
