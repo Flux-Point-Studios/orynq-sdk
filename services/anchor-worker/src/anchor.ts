@@ -4,7 +4,7 @@
  * Location: services/anchor-worker/src/anchor.ts
  */
 
-import { Lucid, Blockfrost } from "lucid-cardano";
+import { Lucid, Blockfrost, type LucidEvolution } from "@lucid-evolution/lucid";
 import {
   buildAnchorMetadata,
   serializeForCbor,
@@ -27,12 +27,12 @@ const POI_METADATA_LABEL = 2222;
 /**
  * Lucid instance singleton.
  */
-let lucidInstance: Awaited<ReturnType<typeof Lucid.new>> | null = null;
+let lucidInstance: LucidEvolution | null = null;
 
 /**
  * Get or create Lucid instance.
  */
-async function getLucid(): Promise<Awaited<ReturnType<typeof Lucid.new>>> {
+async function getLucid(): Promise<LucidEvolution> {
   if (lucidInstance) {
     return lucidInstance;
   }
@@ -48,12 +48,12 @@ async function getLucid(): Promise<Awaited<ReturnType<typeof Lucid.new>>> {
     throw new Error(`Unsupported network: ${CARDANO_NETWORK}`);
   }
 
-  lucidInstance = await Lucid.new(
+  lucidInstance = await Lucid(
     new Blockfrost(baseUrl, BLOCKFROST_PROJECT_ID!),
     CARDANO_NETWORK === "mainnet" ? "Mainnet" : "Preprod"
   );
 
-  lucidInstance.selectWalletFromSeed(WALLET_SEED_PHRASE!);
+  lucidInstance.selectWallet.fromSeed(WALLET_SEED_PHRASE!);
 
   return lucidInstance;
 }
@@ -166,7 +166,7 @@ export async function anchorProcessTrace(
     .attachMetadata(POI_METADATA_LABEL, metadataPayload)
     .complete();
 
-  const signedTx = await tx.sign().complete();
+  const signedTx = await tx.sign.withWallet().complete();
   const txHash = await signedTx.submit();
 
   console.log(`[anchor] Transaction submitted: ${txHash}`);
