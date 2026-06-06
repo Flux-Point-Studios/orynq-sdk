@@ -157,7 +157,10 @@ export async function anchorProcessTrace(
 
   // Serialize for CBOR - handles 64-byte string limit by chunking long strings
   const cborMetadata = serializeForCbor(anchorResult);
-  const metadataPayload = cborMetadata[POI_METADATA_LABEL];
+  // serializeForCbor (orynq SDK) returns a loosely-typed (unknown-valued) but runtime-valid
+  // Cardano metadata structure; lucid-evolution's attachMetadata is strictly typed (lucid-cardano
+  // accepted it untyped), so cast at this lib boundary.
+  const metadataPayload = cborMetadata[POI_METADATA_LABEL] as any;
 
   // Build and sign transaction
   // NO explicit self-payment output - let Lucid handle change automatically
