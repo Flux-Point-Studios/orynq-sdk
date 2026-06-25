@@ -35,6 +35,28 @@ Orynq is designed to be the artifact you hand a regulator or counterparty. It is
 
 ---
 
+## Regulator-grade audit features
+
+Four capabilities make the "hand a regulator the trace in five years" claim
+concrete — *how* a decision was made, *who* governed it, that the model/data and
+the raw evidence are all still provable:
+
+- **Pre-execution model-manifest pinning** — pin a model/data fingerprint *before*
+  inference; model drift becomes cryptographically detectable. See
+  [`docs/model-manifest-pinning.md`](docs/model-manifest-pinning.md).
+- **Governance attestations** — a first-class `governance-attestation` event with
+  sr25519/ed25519/eip712 signers + verifiers answers "who governed it?". See
+  [`docs/governance-attestations.md`](docs/governance-attestations.md).
+- **Verifiable tool-call receipts** — prove a tool *actually* returned a response
+  (RFC 9421, Stripe/GitHub webhooks, JWS) via
+  `@fluxpointstudios/orynq-sdk-tool-receipts`. See
+  [`docs/anti-lie-tool-receipts.md`](docs/anti-lie-tool-receipts.md).
+- **Durable off-chain storage** — `pinTraceFor()` multi-backend redundancy, S3-WORM
+  retention, and `storageRefs[]` in the anchor so the trace is self-locating from
+  its txHash. See [`docs/durable-storage.md`](docs/durable-storage.md).
+
+---
+
 ## Quickstart — first trace in under 5 minutes
 
 The fastest path from `npm install` to a chain-anchored trace, measured end-to-end on Materios preprod (Gemtek hardware, 2026-05-14):

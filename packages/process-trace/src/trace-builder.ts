@@ -59,6 +59,11 @@ import {
   computeRootHash,
 } from "./rolling-hash.js";
 import { buildSpanMerkleTree, computeSpanHash } from "./merkle.js";
+import {
+  computeModelManifestHash,
+  validateModelManifest,
+  freezeModelManifest,
+} from "./model-manifest.js";
 
 // =============================================================================
 // TRACE CREATION
@@ -127,6 +132,28 @@ export async function createTrace(opts: CreateTraceOptions): Promise<TraceRun> {
       ...run.metadata,
       description: opts.description,
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // Pre-execution model-manifest pinning (issue #59)
+  // -------------------------------------------------------------------------
+  const strict = opts.strict ?? false;
+  if (strict) {
+    run.strict = true;
+  }
+
+  if (opts.manifest !== undefined) {
+    const manifest = validateModelManifest(opts.manifest);
+    // Pin the hash now, BEFORE any event is recorded — this is the enforcement
+    // point for "the model was not altered over the run".
+    run.modelManifestHash = await computeModelManifestHash(manifest);
+    // Freeze the object so any later mutation throws (ESM strict mode). The pin
+    // is the hash computed above, not the live object.
+    run.modelManifest = freezeModelManifest(manifest);
+  } else if (strict) {
+    throw new Error(
+      "createTrace: strict mode requires a `manifest` to be pinned before execution"
+    );
   }
 
   return run;
@@ -531,6 +558,24 @@ export async function finalizeTrace(run: TraceRun): Promise<TraceBundle> {
     throw new Error("Trace run is already finalized");
   }
 
+  // -------------------------------------------------------------------------
+  // Pre-execution manifest enforcement (issue #59)
+  // -------------------------------------------------------------------------
+  if (run.modelManifest === undefined) {
+    if (run.strict) {
+      throw new Error(
+        "finalizeTrace: strict mode requires a model manifest pinned at createTrace() time"
+      );
+    }
+    // Warn-only path for v0.x — surfaces the missing model-immutability guarantee.
+    // Becomes a hard error under strict-by-default in v1.0.
+    console.warn(
+      "[orynq] finalizeTrace: no model manifest was pinned — model/data immutability " +
+        "is NOT proven for this trace. Pass `manifest` to createTrace() (and " +
+        "`strict: true` to enforce). This will become an error in v1.0."
+    );
+  }
+
   // Close any open spans
   for (const span of run.spans) {
     if (span.status === "running") {
@@ -566,6 +611,14 @@ export async function finalizeTrace(run: TraceRun): Promise<TraceBundle> {
     merkleRoot: merkleTree.rootHash,
     rootHash,
   };
+
+  // Surface the pinned model manifest on the bundle (public-safe: hashes only).
+  if (run.modelManifestHash !== undefined) {
+    bundle.modelManifestHash = run.modelManifestHash;
+  }
+  if (run.modelManifest !== undefined) {
+    bundle.modelManifest = run.modelManifest;
+  }
 
   return bundle;
 }
@@ -648,6 +701,14 @@ function createPublicView(
     publicSpans,
     redactedSpanHashes,
   };
+
+  // Model-state commitment is public-safe (it is only a hash).
+  if (run.modelManifestHash !== undefined) {
+    publicView.modelManifestHash = run.modelManifestHash;
+  }
+  if (run.modelManifest !== undefined) {
+    publicView.modelManifest = run.modelManifest;
+  }
 
   return publicView;
 }

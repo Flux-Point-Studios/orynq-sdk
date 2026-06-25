@@ -47,9 +47,24 @@ import type {
   AnchorChainProvider,
   AnchorVerificationResult,
   AnchorParseResult,
+  StorageRef,
   TxInfo,
 } from "./types.js";
 import { POI_METADATA_LABEL, isAnchorMetadata } from "./types.js";
+
+/**
+ * Options for {@link verifyAnchor} (issue #61).
+ */
+export interface VerifyAnchorOptions {
+  /** Fetch the bundle from the anchor's storageRefs/storageUri and attach it to `result.bundle`. */
+  fetchBundle?: boolean;
+  /** Injectable fetch (edge runtimes / testing). Defaults to global fetch. */
+  fetchFn?: typeof fetch;
+  /** IPFS HTTP gateway base for ipfs:// URIs (default "https://ipfs.io/ipfs/"). */
+  ipfsGateway?: string;
+  /** Arweave HTTP gateway base for ar:// URIs (default "https://arweave.net/"). */
+  arweaveGateway?: string;
+}
 
 // =============================================================================
 // CONSTANTS
@@ -86,6 +101,7 @@ const OPTIONAL_ENTRY_FIELDS = [
   "itemCount",
   "agentId",
   "storageUri",
+  "storageRefs",
 ] as const;
 
 /**
@@ -324,6 +340,31 @@ function parseAnchorEntry(
     return { entry: null, warnings, errors };
   }
 
+  // Validate storageRefs (issue #61) — defensive: tolerate malformed entries.
+  let parsedStorageRefs: StorageRef[] | undefined;
+  if (raw.storageRefs !== undefined) {
+    if (!Array.isArray(raw.storageRefs)) {
+      errors.push(`${prefix}: storageRefs must be an array`);
+      return { entry: null, warnings, errors };
+    }
+    const refs: StorageRef[] = [];
+    for (let i = 0; i < raw.storageRefs.length; i++) {
+      const r = raw.storageRefs[i] as Record<string, unknown> | null;
+      if (typeof r !== "object" || r === null) {
+        warnings.push(`${prefix}: storageRefs[${i}] is not an object, skipped`);
+        continue;
+      }
+      if (typeof r.type !== "string" || typeof r.uri !== "string" || typeof r.hash !== "string") {
+        warnings.push(`${prefix}: storageRefs[${i}] missing type/uri/hash, skipped`);
+        continue;
+      }
+      const ref: StorageRef = { type: r.type, uri: r.uri, hash: r.hash };
+      if (typeof r.size === "number") ref.size = r.size;
+      refs.push(ref);
+    }
+    if (refs.length > 0) parsedStorageRefs = refs;
+  }
+
   // Build the validated entry
   const validEntry: AnchorEntry = {
     type: raw.type as AnchorEntry["type"],
@@ -345,6 +386,9 @@ function parseAnchorEntry(
   }
   if (raw.storageUri !== undefined) {
     validEntry.storageUri = raw.storageUri as string;
+  }
+  if (parsedStorageRefs !== undefined) {
+    validEntry.storageRefs = parsedStorageRefs;
   }
 
   return { entry: validEntry, warnings, errors };
@@ -507,7 +551,8 @@ export function parseAnchorMetadata(
 export async function verifyAnchor(
   provider: AnchorChainProvider,
   txHash: string,
-  expectedRootHash: string
+  expectedRootHash: string,
+  options: VerifyAnchorOptions = {}
 ): Promise<AnchorVerificationResult> {
   const warnings: string[] = [];
 
@@ -582,6 +627,14 @@ export async function verifyAnchor(
     // Fetch transaction info for confirmation details
     const txInfo = await provider.getTxInfo(txHash);
 
+    // Optionally fetch the raw bundle from storage refs (issue #61)
+    let bundle: unknown;
+    if (options.fetchBundle) {
+      const fetched = await fetchBundleFromAnchor(matchingAnchor, options);
+      warnings.push(...fetched.warnings);
+      bundle = fetched.bundle;
+    }
+
     if (txInfo === null) {
       warnings.push("Transaction metadata found but txInfo unavailable");
       return {
@@ -589,6 +642,7 @@ export async function verifyAnchor(
         anchor: matchingAnchor,
         errors: [],
         warnings,
+        ...(bundle !== undefined ? { bundle } : {}),
       };
     }
 
@@ -602,6 +656,7 @@ export async function verifyAnchor(
       anchor: matchingAnchor,
       errors: [],
       warnings,
+      ...(bundle !== undefined ? { bundle } : {}),
     };
   } catch (error) {
     // Handle network or provider errors
@@ -613,6 +668,88 @@ export async function verifyAnchor(
       warnings,
     };
   }
+}
+
+/**
+ * Resolve a storage URI to an HTTP(S) URL the verifier can fetch.
+ * Returns null for schemes that require credentials/SDKs (e.g. s3://).
+ */
+function resolveStorageUri(uri: string, options: VerifyAnchorOptions): string | null {
+  if (uri.startsWith("https://") || uri.startsWith("http://")) return uri;
+  if (uri.startsWith("ipfs://")) {
+    const base = (options.ipfsGateway ?? "https://ipfs.io/ipfs/").replace(/\/+$/, "/");
+    const cid = uri.slice("ipfs://".length).replace(/^ipfs\//, "");
+    return base.endsWith("/") ? base + cid : base + "/" + cid;
+  }
+  if (uri.startsWith("ar://")) {
+    const base = (options.arweaveGateway ?? "https://arweave.net/").replace(/\/+$/, "/");
+    const id = uri.slice("ar://".length);
+    return base.endsWith("/") ? base + id : base + "/" + id;
+  }
+  return null;
+}
+
+/**
+ * Fetch the trace bundle from an anchor's storage references (issue #61).
+ * Tries each storageRef (then storageUri) until one resolves; performs a light
+ * rootHash integrity check against the anchor and warns on mismatch.
+ */
+async function fetchBundleFromAnchor(
+  anchor: AnchorEntry,
+  options: VerifyAnchorOptions
+): Promise<{ bundle: unknown; warnings: string[] }> {
+  const warnings: string[] = [];
+  const fetchFn = options.fetchFn ?? globalThis.fetch;
+  if (typeof fetchFn !== "function") {
+    warnings.push("fetchBundle requested but no fetch implementation is available");
+    return { bundle: undefined, warnings };
+  }
+
+  const candidates: StorageRef[] = [...(anchor.storageRefs ?? [])];
+  if (anchor.storageUri) {
+    candidates.push({ type: "uri", uri: anchor.storageUri, hash: "" });
+  }
+  if (candidates.length === 0) {
+    warnings.push("fetchBundle requested but anchor has no storageRefs or storageUri");
+    return { bundle: undefined, warnings };
+  }
+
+  for (const ref of candidates) {
+    const url = resolveStorageUri(ref.uri, options);
+    if (!url) {
+      warnings.push(`Cannot resolve storage URI to HTTP (skipped): ${ref.uri}`);
+      continue;
+    }
+    try {
+      const res = await fetchFn(url);
+      if (!res.ok) {
+        warnings.push(`Fetch failed (HTTP ${res.status}): ${url}`);
+        continue;
+      }
+      const text = await res.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = text;
+      }
+      // Light integrity check: if the fetched content carries a rootHash, it
+      // must match the anchor's rootHash.
+      if (parsed && typeof parsed === "object") {
+        const rh = (parsed as Record<string, unknown>).rootHash;
+        if (typeof rh === "string" && normalizeHash(rh) !== normalizeHash(anchor.rootHash)) {
+          warnings.push(`Fetched bundle rootHash does not match anchor rootHash (${ref.uri})`);
+        }
+      }
+      return { bundle: parsed, warnings };
+    } catch (error) {
+      warnings.push(
+        `Fetch errored (${ref.uri}): ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  return { bundle: undefined, warnings };
 }
 
 /**

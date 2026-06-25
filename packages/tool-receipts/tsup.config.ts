@@ -14,12 +14,6 @@ export default defineConfig({
   external: [
     "@fluxpointstudios/orynq-sdk-core",
     "@fluxpointstudios/orynq-sdk-core/utils",
-    "@fluxpointstudios/orynq-sdk-core/types",
-    "@fluxpointstudios/orynq-sdk-core/chains",
-    // Optional peer deps — loaded via dynamic import() in governance verifiers.
-    // Kept external so base installs that never call governance verification
-    // do not need @polkadot installed.
-    "@polkadot/util",
-    "@polkadot/util-crypto",
+    "@fluxpointstudios/orynq-sdk-process-trace",
   ],
 });

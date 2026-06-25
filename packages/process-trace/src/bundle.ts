@@ -71,6 +71,44 @@ import {
 
 import { buildSpanMerkleTree, computeSpanHash } from "./merkle.js";
 
+import {
+  verifyGovernanceAttestations,
+  type VerifyGovernanceOptions,
+} from "./governance.js";
+
+// =============================================================================
+// VERIFY OPTIONS
+// =============================================================================
+
+/**
+ * Outcome shape returned by an injected tool-receipt verifier (provided by
+ * `@fluxpointstudios/orynq-sdk-tool-receipts` — passed in to avoid a circular
+ * dependency on that package from process-trace).
+ */
+export interface ToolReceiptVerifyOutcome {
+  valid: boolean;
+  errors: string[];
+}
+
+/** Options for {@link verifyBundle}. */
+export interface VerifyBundleOptions {
+  /**
+   * Verify `governance-attestation` events. `true` uses the built-in
+   * sr25519/ed25519 verifiers; pass {@link VerifyGovernanceOptions} to register
+   * a pluggable verifier (e.g. eip712). Any unverified attestation fails the
+   * bundle.
+   */
+  governance?: boolean | VerifyGovernanceOptions;
+  /**
+   * Verify `tool-receipt` events with an injected verifier from
+   * `@fluxpointstudios/orynq-sdk-tool-receipts`. Any failed receipt fails the
+   * bundle.
+   */
+  toolReceipts?: (
+    bundle: TraceBundle
+  ) => Promise<ToolReceiptVerifyOutcome> | ToolReceiptVerifyOutcome;
+}
+
 // =============================================================================
 // VISIBILITY HELPERS
 // =============================================================================
@@ -350,11 +388,12 @@ export function extractPublicView(bundle: TraceBundle): TraceBundlePublicView {
  * ```
  */
 export async function verifyBundle(
-  bundle: TraceBundle
+  bundle: TraceBundle,
+  options: VerifyBundleOptions = {}
 ): Promise<TraceVerificationResult> {
   const errors: string[] = [];
   const warnings: string[] = [];
-  const checks = {
+  const checks: TraceVerificationResult["checks"] = {
     rollingHashValid: false,
     rootHashValid: false,
     merkleRootValid: false,
@@ -474,14 +513,61 @@ export async function verifyBundle(
     );
   }
 
-  // Determine overall validity
+  // ---------------------------------------------------------------------------
+  // Verify Governance Attestations (issue #58, opt-in)
+  // ---------------------------------------------------------------------------
+
+  if (options.governance) {
+    try {
+      const govOpts: VerifyGovernanceOptions =
+        options.governance === true ? {} : options.governance;
+      const summaries = await verifyGovernanceAttestations(bundle, govOpts);
+      const failed = summaries.filter((s) => !s.verified);
+      checks.governanceValid = failed.length === 0;
+      for (const f of failed) {
+        errors.push(
+          `Governance attestation failed (${f.scheme}, role ${f.role}, attestor ${f.attestor})` +
+            (f.error ? `: ${f.error}` : "")
+        );
+      }
+    } catch (error) {
+      checks.governanceValid = false;
+      errors.push(
+        `Failed to verify governance attestations: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Verify Tool-Call Receipts (issue #60, opt-in, injected verifier)
+  // ---------------------------------------------------------------------------
+
+  if (options.toolReceipts) {
+    try {
+      const outcome = await options.toolReceipts(bundle);
+      checks.toolReceiptsValid = outcome.valid;
+      if (!outcome.valid) {
+        errors.push(...outcome.errors);
+      }
+    } catch (error) {
+      checks.toolReceiptsValid = false;
+      errors.push(
+        `Failed to verify tool receipts: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  // Determine overall validity. Optional checks only fail the bundle when
+  // explicitly run and false (undefined === "not checked").
   const valid =
     checks.rollingHashValid &&
     checks.rootHashValid &&
     checks.merkleRootValid &&
     checks.spanHashesValid &&
     checks.eventHashesValid &&
-    checks.sequenceValid;
+    checks.sequenceValid &&
+    checks.governanceValid !== false &&
+    checks.toolReceiptsValid !== false;
 
   return {
     valid,

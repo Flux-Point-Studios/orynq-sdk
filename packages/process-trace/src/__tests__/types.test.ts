@@ -33,6 +33,8 @@ describe('HASH_DOMAIN_PREFIXES', () => {
       'node',
       'manifest',
       'root',
+      'modelManifest',
+      'governance',
     ];
 
     const actualKeys = Object.keys(HASH_DOMAIN_PREFIXES);
@@ -46,8 +48,10 @@ describe('HASH_DOMAIN_PREFIXES', () => {
   it('has correct prefix format for all domains', () => {
     for (const [domain, prefix] of Object.entries(HASH_DOMAIN_PREFIXES)) {
       // All prefixes should follow pattern "poi-trace:<domain>:v1|"
-      expect(prefix).toMatch(/^poi-trace:[a-z]+:v1\|$/);
-      expect(prefix).toContain(domain);
+      // (domain segment may be kebab-cased, e.g. "model-manifest").
+      expect(prefix).toMatch(/^poi-trace:[a-z-]+:v1\|$/);
+      // The camelCase key maps to the (possibly kebab-cased) prefix segment.
+      expect(prefix.replace(/-/g, '')).toContain(domain.toLowerCase());
     }
   });
 
@@ -101,6 +105,8 @@ describe('DEFAULT_EVENT_VISIBILITY', () => {
       'observation',
       'error',
       'custom',
+      'governance-attestation',
+      'tool-receipt',
     ];
 
     const actualKinds = Object.keys(DEFAULT_EVENT_VISIBILITY);

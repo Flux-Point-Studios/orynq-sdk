@@ -1,7 +1,7 @@
 {
-  "name": "@fluxpointstudios/orynq-sdk-process-trace",
+  "name": "@fluxpointstudios/orynq-sdk-tool-receipts",
   "version": "0.1.0",
-  "description": "Cryptographic process trace library for Proof-of-Intent SDK - schemas, hashing, Merkle trees, bundles, and selective disclosure",
+  "description": "Verifiable tool-call receipts for the Orynq process-trace SDK — RFC 9421, webhook-signature, and JWS verifiers",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -29,7 +29,7 @@
     "lint:fix": "eslint src --ext .ts --fix",
     "clean": "rimraf dist"
   },
-  "keywords": ["poi", "proof-of-intent", "process-trace", "merkle", "cryptographic", "audit", "cardano"],
+  "keywords": ["poi", "proof-of-intent", "orynq", "tool-receipts", "tool-call", "rfc9421", "jws", "webhook", "verifiable", "audit"],
   "author": "Flux Point Studios",
   "license": "MIT",
   "publishConfig": {
@@ -39,28 +39,15 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
-    "directory": "packages/process-trace"
+    "directory": "packages/tool-receipts"
   },
   "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
   "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
-    "@fluxpointstudios/orynq-sdk-core": "workspace:*"
-  },
-  "peerDependencies": {
-    "@polkadot/util": "^13.0.0",
-    "@polkadot/util-crypto": "^13.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@polkadot/util": {
-      "optional": true
-    },
-    "@polkadot/util-crypto": {
-      "optional": true
-    }
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*"
   },
   "devDependencies": {
-    "@polkadot/util": "^13.5.0",
-    "@polkadot/util-crypto": "^13.5.0",
     "tsup": "^8.0.1",
     "typescript": "^5.3.3",
     "vitest": "^1.2.0"

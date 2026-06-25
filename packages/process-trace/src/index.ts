@@ -52,6 +52,11 @@ export type {
   ObservationEvent,
   ErrorTraceEvent,
   CustomEvent,
+  GovernanceAttestationEvent,
+  GovernanceSignatureScheme,
+  GovernanceEip712Binding,
+  ToolReceiptEvent,
+  ToolReceiptScheme,
   TraceEvent,
   TraceEventKind,
 } from "./types.js";
@@ -89,6 +94,9 @@ export type {
   Chunk,
   TraceManifest,
 } from "./types.js";
+
+// Model manifest types (pre-execution pinning, issue #59)
+export type { ModelManifest } from "./types.js";
 
 // Disclosure types
 export type {
@@ -214,6 +222,12 @@ export {
   countSpansByVisibility,
 } from "./bundle.js";
 
+// Bundle verification option types (governance + tool-receipt hooks)
+export type {
+  VerifyBundleOptions,
+  ToolReceiptVerifyOutcome,
+} from "./bundle.js";
+
 // ---------------------------------------------------------------------------
 // Disclosure Exports
 // ---------------------------------------------------------------------------
@@ -253,6 +267,60 @@ export {
   getChunkPath,
   parseChunkContent,
 } from "./manifest.js";
+
+// ---------------------------------------------------------------------------
+// Model Manifest Exports (pre-execution pinning, issue #59)
+// ---------------------------------------------------------------------------
+
+export {
+  // Hash + validation
+  computeModelManifestHash,
+  validateModelManifest,
+  freezeModelManifest,
+
+  // Framework builders
+  manifestFromHuggingFace,
+  manifestFromOpenAI,
+  manifestFromAnthropic,
+  manifestFromCheckpoint,
+} from "./model-manifest.js";
+
+export type {
+  HuggingFaceManifestOptions,
+  OpenAIManifestOptions,
+  AnthropicManifestOptions,
+  CheckpointManifestOptions,
+} from "./model-manifest.js";
+
+// ---------------------------------------------------------------------------
+// Governance Attestation Exports (issue #58)
+// ---------------------------------------------------------------------------
+
+export {
+  // Preimage + helper
+  governanceAttestationPreimage,
+  addGovernanceAttestation,
+
+  // Built-in signers (sr25519 / ed25519 via optional @polkadot peer dep)
+  createSr25519GovernanceSigner,
+  createEd25519GovernanceSigner,
+  SS58_PREFIX,
+
+  // Verification
+  verifyGovernanceAttestations,
+  createEip712GovernanceVerifier,
+} from "./governance.js";
+
+export type {
+  GovernanceSigner,
+  GovernanceSignContext,
+  GovernanceAttestationFields,
+  GovernanceVerifier,
+  SubstrateGovernanceSignerOptions,
+  AddGovernanceAttestationOptions,
+  GovernanceAttestationSummary,
+  VerifyGovernanceOptions,
+} from "./governance.js";
 
 // ---------------------------------------------------------------------------
 // Version

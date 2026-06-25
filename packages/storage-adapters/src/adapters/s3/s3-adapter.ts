@@ -8,9 +8,28 @@ import type {
   StorageRef,
   StorableManifest,
   S3AdapterConfig,
+  S3ObjectLockConfig,
 } from "../../types.js";
 import { StorageError, StorageException } from "../../types.js";
 import { sha256 } from "../../utils/content-addressing.js";
+
+const MS_PER_YEAR = 365.25 * 24 * 60 * 60 * 1000;
+
+/**
+ * Compute the Object Lock retain-until date for a WORM write: an explicit
+ * `retainUntilDate`, or `now + retentionYears`. Returns undefined when neither
+ * is set. Exported (pure) so retention math is testable without AWS.
+ */
+export function computeObjectLockRetainUntil(
+  objectLock: S3ObjectLockConfig,
+  nowMs: number = Date.now()
+): Date | undefined {
+  if (objectLock.retainUntilDate) return objectLock.retainUntilDate;
+  if (objectLock.retentionYears !== undefined) {
+    return new Date(nowMs + objectLock.retentionYears * MS_PER_YEAR);
+  }
+  return undefined;
+}
 
 /**
  * S3 client interface (minimal subset used).
@@ -32,6 +51,7 @@ export class S3Adapter implements StorageAdapter {
   private readonly endpoint: string | undefined;
   private readonly serverSideEncryption: boolean;
   private readonly presignedUrlExpiry: number;
+  private readonly objectLock: S3ObjectLockConfig | undefined;
 
   private s3Client: S3Client | undefined;
 
@@ -43,6 +63,16 @@ export class S3Adapter implements StorageAdapter {
     this.endpoint = config.endpoint;
     this.serverSideEncryption = config.serverSideEncryption ?? false;
     this.presignedUrlExpiry = config.presignedUrlExpiry ?? 3600;
+    this.objectLock = config.objectLock;
+  }
+
+  /**
+   * Resolve the Object Lock retain-until date for a write (now + retentionYears,
+   * or an explicit date). Returns undefined when WORM is not configured.
+   */
+  private resolveRetainUntil(): Date | undefined {
+    if (!this.objectLock) return undefined;
+    return computeObjectLockRetainUntil(this.objectLock);
   }
 
   /**
@@ -223,6 +253,8 @@ export class S3Adapter implements StorageAdapter {
         Body: Uint8Array;
         ContentType: string;
         ServerSideEncryption?: string;
+        ObjectLockMode?: string;
+        ObjectLockRetainUntilDate?: Date;
       }
 
       const params: PutObjectParams = {
@@ -234,6 +266,19 @@ export class S3Adapter implements StorageAdapter {
 
       if (this.serverSideEncryption) {
         params.ServerSideEncryption = "AES256";
+      }
+
+      // Apply WORM (Object Lock) retention when configured.
+      if (this.objectLock) {
+        const retainUntil = this.resolveRetainUntil();
+        if (!retainUntil) {
+          throw new StorageException(
+            StorageError.INVALID_CONFIG,
+            "S3 objectLock requires either retentionYears or retainUntilDate"
+          );
+        }
+        params.ObjectLockMode = this.objectLock.mode;
+        params.ObjectLockRetainUntilDate = retainUntil;
       }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -386,4 +431,31 @@ export class S3Adapter implements StorageAdapter {
  */
 export function createS3Adapter(config: S3AdapterConfig): S3Adapter {
   return new S3Adapter(config);
+}
+
+/** Config for {@link createS3WormAdapter}. */
+export interface S3WormAdapterConfig extends Omit<S3AdapterConfig, "objectLock"> {
+  /** Years of WORM retention (regulatory horizons are typically 5–7+). */
+  retentionYears: number;
+  /** Object Lock mode (default "COMPLIANCE" — strongest, non-overridable). */
+  mode?: "COMPLIANCE" | "GOVERNANCE";
+}
+
+/**
+ * Create an S3 adapter that writes every object under Object Lock (WORM)
+ * retention — regulatory-grade durable storage for long audit horizons.
+ *
+ * The target bucket MUST have Object Lock enabled at creation time.
+ *
+ * @example
+ * ```typescript
+ * const worm = createS3WormAdapter({ bucket: "audit", region: "us-east-1", retentionYears: 7 });
+ * ```
+ */
+export function createS3WormAdapter(config: S3WormAdapterConfig): S3Adapter {
+  const { retentionYears, mode, ...rest } = config;
+  return new S3Adapter({
+    ...rest,
+    objectLock: { mode: mode ?? "COMPLIANCE", retentionYears },
+  });
 }

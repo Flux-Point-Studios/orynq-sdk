@@ -29,6 +29,7 @@ import type {
   AnchorTxResult,
   AnchorType,
   CreateAnchorEntryOptions,
+  StorageRef,
 } from "./types.js";
 import { POI_METADATA_LABEL, isAnchorType } from "./types.js";
 import type { TraceBundle, TraceManifest } from "@fluxpointstudios/orynq-sdk-process-trace";
@@ -257,6 +258,11 @@ export function createAnchorEntryFromBundle(
     entry.storageUri = options.storageUri;
   }
 
+  // Include durable storage references (issue #61)
+  if (options?.storageRefs && options.storageRefs.length > 0) {
+    entry.storageRefs = options.storageRefs;
+  }
+
   return entry;
 }
 
@@ -288,7 +294,7 @@ export function createAnchorEntryFromBundle(
  */
 export function createAnchorEntryFromManifest(
   manifest: TraceManifest,
-  opts?: { storageUri?: string }
+  opts?: { storageUri?: string; storageRefs?: StorageRef[] }
 ): AnchorEntry {
   // Validate manifest has required manifestHash
   if (!manifest.manifestHash) {
@@ -324,6 +330,11 @@ export function createAnchorEntryFromManifest(
   // Include storageUri from options
   if (opts?.storageUri) {
     entry.storageUri = opts.storageUri;
+  }
+
+  // Include durable storage references (issue #61)
+  if (opts?.storageRefs && opts.storageRefs.length > 0) {
+    entry.storageRefs = opts.storageRefs;
   }
 
   return entry;
@@ -445,6 +456,31 @@ export function validateAnchorEntry(entry: AnchorEntry): ValidationResult {
       errors.push(
         "Invalid storageUri. Must start with ipfs://, ar://, or https://"
       );
+    }
+  }
+
+  if (entry.storageRefs !== undefined && entry.storageRefs !== null) {
+    if (!Array.isArray(entry.storageRefs)) {
+      errors.push("storageRefs must be an array");
+    } else {
+      entry.storageRefs.forEach((ref, i) => {
+        if (typeof ref !== "object" || ref === null) {
+          errors.push(`storageRefs[${i}] must be an object`);
+          return;
+        }
+        if (typeof ref.type !== "string" || ref.type.length === 0) {
+          errors.push(`storageRefs[${i}].type must be a non-empty string`);
+        }
+        if (typeof ref.uri !== "string" || ref.uri.length === 0) {
+          errors.push(`storageRefs[${i}].uri must be a non-empty string`);
+        }
+        if (typeof ref.hash !== "string" || ref.hash.length === 0) {
+          errors.push(`storageRefs[${i}].hash must be a non-empty string`);
+        }
+        if (ref.size !== undefined && typeof ref.size !== "number") {
+          errors.push(`storageRefs[${i}].size must be a number`);
+        }
+      });
     }
   }
 
