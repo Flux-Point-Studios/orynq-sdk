@@ -5,8 +5,10 @@
  * `receipt.signedPayload` for `receipt.signer`, per its scheme:
  *
  * - `http-message-signatures` — RFC 9421 (signature base provided as signedPayload)
- * - `stripe-webhook` — Stripe `Stripe-Signature` HMAC-SHA256
- * - `github-webhook` — GitHub `X-Hub-Signature-256` HMAC-SHA256
+ * - `stripe-webhook` — Stripe `Stripe-Signature` HMAC-SHA256 (timestamped; freshness-checked)
+ * - `github-webhook` — GitHub `X-Hub-Signature-256` HMAC-SHA256 (no signed
+ *   timestamp; freshness-checked only when `params.timestamp` is recorded,
+ *   otherwise anti-replay rests on the bundle Merkle commitment)
  * - `jws` — compact JWS / JWT (HS*, RS*, PS*, ES*, EdDSA)
  *
  * Symmetric secrets (webhooks, HS*) MUST be supplied out-of-band via the
@@ -219,6 +221,20 @@ export async function verifyGitHubReceipt(
     throw new Error(
       "github-webhook: signing secret not found — provide it via verify context (keys/resolveKey)"
     );
+  }
+  // GitHub's signature carries no timestamp, so freshness can't be enforced
+  // cryptographically — a timestamp-less receipt's anti-replay is the bundle
+  // Merkle commitment. When the recorder DID capture `params.timestamp`, hold it
+  // to the same tolerance window Stripe uses so a stale receipt is rejected.
+  const ts = event.receipt.params?.timestamp;
+  if (typeof ts === "string" || typeof ts === "number") {
+    const tsNum = Number(ts);
+    if (!Number.isFinite(tsNum)) throw new Error("github-webhook: invalid timestamp");
+    const toleranceSec = ctx?.toleranceSec ?? 300;
+    const now = ctx?.nowSec ?? Math.floor(Date.now() / 1000);
+    if (Math.abs(now - tsNum) > toleranceSec) {
+      throw new Error(`github-webhook: timestamp outside tolerance (${toleranceSec}s)`);
+    }
   }
   const provided = event.receipt.signature.startsWith("sha256=")
     ? event.receipt.signature.slice("sha256=".length)

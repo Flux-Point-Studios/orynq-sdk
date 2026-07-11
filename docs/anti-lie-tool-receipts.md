@@ -13,8 +13,8 @@ Verifiers live in `@fluxpointstudios/orynq-sdk-tool-receipts`.
 | Scheme | What it covers |
 | --- | --- |
 | `http-message-signatures` | RFC 9421 — any API that signs its responses |
-| `stripe-webhook` | Stripe `Stripe-Signature` HMAC-SHA256 |
-| `github-webhook` | GitHub `X-Hub-Signature-256` HMAC-SHA256 |
+| `stripe-webhook` | Stripe `Stripe-Signature` HMAC-SHA256 (signed timestamp → freshness enforced) |
+| `github-webhook` | GitHub `X-Hub-Signature-256` HMAC-SHA256 (no signed timestamp) |
 | `jws` | generic JWS/JWT (HS*, RS*, PS*, ES*, EdDSA) |
 
 Symmetric secrets (webhooks, HS*) are supplied **out-of-band** at verification time
@@ -55,6 +55,16 @@ result.valid;                       // includes tool-receipt verification
 result.checks.toolReceiptsValid;    // false if any receipt fails
 result.toolReceipts.results;        // per-receipt verdicts
 ```
+
+### Freshness / anti-replay
+
+Stripe signs a timestamp, so a stale receipt is rejected against `toleranceSec`
+(default 300s). GitHub's signature carries **no** timestamp — freshness cannot be
+enforced cryptographically, so a bare GitHub receipt's anti-replay rests on the
+enclosing bundle's Merkle commitment. If you record a `receipt.params.timestamp`
+alongside a GitHub receipt, the verifier holds it to the same tolerance window.
+Self-signed `jws` receipts additionally bind `{runId, requestHash}`, so lifting
+one into a different trace/request fails (`call-binding-mismatch`).
 
 ## Signing-proxy pattern (for tools that don't sign natively)
 
