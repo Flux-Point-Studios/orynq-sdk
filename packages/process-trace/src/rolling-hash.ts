@@ -284,30 +284,34 @@ function constantTimeCompare(a: string, b: string): boolean {
 // -----------------------------------------------------------------------------
 
 /**
- * Compute the final root hash from rolling hash and span hashes.
+ * Compute the final root hash from rolling hash, span hashes, and (when pinned)
+ * the model-manifest commitment.
  *
  * The root hash is computed as:
- * `H("poi-trace:root:v1|" + rollingHash + "|" + spanHash1 + "|" + spanHash2 + ...)`
+ * `H("poi-trace:root:v1|" + rollingHash + "|" + spanHash1 + "|" + ... [+ "|manifest:" + modelManifestHash])`
  *
  * Spans are sorted by their `spanSeq` field before joining to ensure
- * deterministic ordering. This creates a single commitment that covers
- * both the event sequence (via rolling hash) and the span structure.
+ * deterministic ordering. Folding `modelManifestHash` in binds the pinned
+ * model/data manifest to the committed root (issue #59): swapping the manifest
+ * after commitment changes the recomputed root and fails verification.
  *
  * @param rollingHash - The final rolling hash from all events
  * @param spans - Array of trace spans (must have hash field populated)
+ * @param modelManifestHash - Optional pre-execution model-manifest commitment to bind
  * @returns Promise resolving to the root hash as a hex string
  *
  * @example
  * ```typescript
  * const rollingHash = await computeRollingHash(events);
- * const rootHash = await computeRootHash(rollingHash, spans);
+ * const rootHash = await computeRootHash(rollingHash, spans, run.modelManifestHash);
  *
  * // rootHash can now be published as the trace commitment
  * ```
  */
 export async function computeRootHash(
   rollingHash: string,
-  spans: TraceSpan[]
+  spans: TraceSpan[],
+  modelManifestHash?: string
 ): Promise<string> {
   // Sort spans by spanSeq for deterministic ordering
   const sortedSpans = [...spans].sort((a, b) => a.spanSeq - b.spanSeq);
@@ -326,6 +330,11 @@ export async function computeRootHash(
 
   if (spanHashes.length > 0) {
     input += "|" + spanHashes.join("|");
+  }
+
+  // Bind the pinned model-manifest commitment into the committed root (#59).
+  if (modelManifestHash !== undefined && modelManifestHash.length > 0) {
+    input += "|manifest:" + modelManifestHash;
   }
 
   return sha256StringHex(input);

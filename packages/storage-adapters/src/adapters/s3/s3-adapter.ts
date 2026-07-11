@@ -8,9 +8,65 @@ import type {
   StorageRef,
   StorableManifest,
   S3AdapterConfig,
+  S3ObjectLockConfig,
 } from "../../types.js";
 import { StorageError, StorageException } from "../../types.js";
 import { sha256 } from "../../utils/content-addressing.js";
+
+const MS_PER_YEAR = 365.25 * 24 * 60 * 60 * 1000;
+
+/**
+ * Compute the Object Lock retain-until date for a WORM write: an explicit
+ * `retainUntilDate`, or `now + retentionYears`. Returns undefined when neither
+ * is set. Exported (pure) so retention math is testable without AWS.
+ */
+export function computeObjectLockRetainUntil(
+  objectLock: S3ObjectLockConfig,
+  nowMs: number = Date.now()
+): Date | undefined {
+  if (objectLock.retainUntilDate) {
+    const t = objectLock.retainUntilDate.getTime();
+    // An Invalid Date has getTime() === NaN, and `NaN <= nowMs` is false, so it
+    // would slip past the past-date guard and yield a bogus retention. Reject
+    // non-finite dates explicitly.
+    if (!Number.isFinite(t)) {
+      throw new StorageException(
+        StorageError.INVALID_CONFIG,
+        "S3 objectLock retainUntilDate is not a valid date"
+      );
+    }
+    // A retain-until in the past provides no WORM protection.
+    if (t <= nowMs) {
+      throw new StorageException(
+        StorageError.INVALID_CONFIG,
+        `S3 objectLock retainUntilDate must be in the future (got ${objectLock.retainUntilDate.toISOString()})`
+      );
+    }
+    return objectLock.retainUntilDate;
+  }
+  if (objectLock.retentionYears !== undefined) {
+    // 0 → retain-until == now (no protection); negative → a past date.
+    if (!(objectLock.retentionYears > 0)) {
+      throw new StorageException(
+        StorageError.INVALID_CONFIG,
+        `S3 objectLock retentionYears must be > 0 (got ${objectLock.retentionYears})`
+      );
+    }
+    return new Date(nowMs + objectLock.retentionYears * MS_PER_YEAR);
+  }
+  return undefined;
+}
+
+/**
+ * True when an S3 `GetObjectLockConfiguration` response reports Object Lock as
+ * ENABLED on the bucket. Anything else (disabled, absent, malformed) is false.
+ * Pure — testable without AWS.
+ */
+export function objectLockConfigEnabled(response: unknown): boolean {
+  const cfg = (response as { ObjectLockConfiguration?: { ObjectLockEnabled?: unknown } } | null)
+    ?.ObjectLockConfiguration;
+  return cfg?.ObjectLockEnabled === "Enabled";
+}
 
 /**
  * S3 client interface (minimal subset used).
@@ -25,6 +81,14 @@ export interface S3Client {
  */
 export class S3Adapter implements StorageAdapter {
   readonly type = "s3" as const;
+  /**
+   * True when Object Lock (WORM) retention is CONFIGURED. This is a producer
+   * asserted flag, not proof the bucket enforces Object Lock — a bucket without
+   * Object Lock enabled silently ignores per-object retention. Call
+   * {@link verifyWormEnabled} to confirm real enforcement before relying on the
+   * durability guarantee.
+   */
+  readonly isWorm: boolean;
   private readonly bucket: string;
   private readonly region: string;
   private readonly prefix: string;
@@ -32,6 +96,7 @@ export class S3Adapter implements StorageAdapter {
   private readonly endpoint: string | undefined;
   private readonly serverSideEncryption: boolean;
   private readonly presignedUrlExpiry: number;
+  private readonly objectLock: S3ObjectLockConfig | undefined;
 
   private s3Client: S3Client | undefined;
 
@@ -43,6 +108,45 @@ export class S3Adapter implements StorageAdapter {
     this.endpoint = config.endpoint;
     this.serverSideEncryption = config.serverSideEncryption ?? false;
     this.presignedUrlExpiry = config.presignedUrlExpiry ?? 3600;
+    this.objectLock = config.objectLock;
+    this.isWorm = config.objectLock !== undefined;
+    this.s3Client = config.s3Client;
+  }
+
+  /**
+   * Confirm the target bucket actually has S3 Object Lock ENABLED, so WORM
+   * retention is enforced (not silently ignored). Unlike {@link isWorm} — a
+   * producer-attested config flag — this performs a live `GetObjectLockConfiguration`
+   * check. Returns false when Object Lock is absent (including the
+   * "not found" error S3 raises for buckets created without it).
+   */
+  async verifyWormEnabled(): Promise<boolean> {
+    const client = await this.getS3Client();
+    let command: unknown;
+    try {
+      const { GetObjectLockConfigurationCommand } = await import("@aws-sdk/client-s3");
+      command = new GetObjectLockConfigurationCommand({ Bucket: this.bucket });
+    } catch {
+      // SDK not present (e.g. an injected/S3-compatible client): send a plain
+      // request the client can interpret.
+      command = { input: { Bucket: this.bucket } };
+    }
+    try {
+      const response = await client.send(command);
+      return objectLockConfigEnabled(response);
+    } catch {
+      // S3 raises ObjectLockConfigurationNotFoundError for buckets without it.
+      return false;
+    }
+  }
+
+  /**
+   * Resolve the Object Lock retain-until date for a write (now + retentionYears,
+   * or an explicit date). Returns undefined when WORM is not configured.
+   */
+  private resolveRetainUntil(): Date | undefined {
+    if (!this.objectLock) return undefined;
+    return computeObjectLockRetainUntil(this.objectLock);
   }
 
   /**
@@ -175,7 +279,7 @@ export class S3Adapter implements StorageAdapter {
 
   private async getS3Client(): Promise<S3Client> {
     if (this.s3Client) {
-      return this.s3Client;
+      return this.s3Client as S3Client;
     }
 
     try {
@@ -223,6 +327,8 @@ export class S3Adapter implements StorageAdapter {
         Body: Uint8Array;
         ContentType: string;
         ServerSideEncryption?: string;
+        ObjectLockMode?: string;
+        ObjectLockRetainUntilDate?: Date;
       }
 
       const params: PutObjectParams = {
@@ -234,6 +340,19 @@ export class S3Adapter implements StorageAdapter {
 
       if (this.serverSideEncryption) {
         params.ServerSideEncryption = "AES256";
+      }
+
+      // Apply WORM (Object Lock) retention when configured.
+      if (this.objectLock) {
+        const retainUntil = this.resolveRetainUntil();
+        if (!retainUntil) {
+          throw new StorageException(
+            StorageError.INVALID_CONFIG,
+            "S3 objectLock requires either retentionYears or retainUntilDate"
+          );
+        }
+        params.ObjectLockMode = this.objectLock.mode;
+        params.ObjectLockRetainUntilDate = retainUntil;
       }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -386,4 +505,31 @@ export class S3Adapter implements StorageAdapter {
  */
 export function createS3Adapter(config: S3AdapterConfig): S3Adapter {
   return new S3Adapter(config);
+}
+
+/** Config for {@link createS3WormAdapter}. */
+export interface S3WormAdapterConfig extends Omit<S3AdapterConfig, "objectLock"> {
+  /** Years of WORM retention (regulatory horizons are typically 5–7+). */
+  retentionYears: number;
+  /** Object Lock mode (default "COMPLIANCE" — strongest, non-overridable). */
+  mode?: "COMPLIANCE" | "GOVERNANCE";
+}
+
+/**
+ * Create an S3 adapter that writes every object under Object Lock (WORM)
+ * retention — regulatory-grade durable storage for long audit horizons.
+ *
+ * The target bucket MUST have Object Lock enabled at creation time.
+ *
+ * @example
+ * ```typescript
+ * const worm = createS3WormAdapter({ bucket: "audit", region: "us-east-1", retentionYears: 7 });
+ * ```
+ */
+export function createS3WormAdapter(config: S3WormAdapterConfig): S3Adapter {
+  const { retentionYears, mode, ...rest } = config;
+  return new S3Adapter({
+    ...rest,
+    objectLock: { mode: mode ?? "COMPLIANCE", retentionYears },
+  });
 }

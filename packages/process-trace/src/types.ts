@@ -125,6 +125,101 @@ export interface CustomEvent extends BaseTraceEvent {
 }
 
 /**
+ * Signature scheme used by a governance attestor.
+ * - "sr25519" / "ed25519": Substrate/Materios wallets (verified in-package)
+ * - "eip712": EVM typed-data signatures (verified via a pluggable verifier)
+ */
+export type GovernanceSignatureScheme = "sr25519" | "ed25519" | "eip712";
+
+/**
+ * EIP-712 typed-data binding, required to verify an `eip712` governance
+ * signature. Mirrors the shape consumed by viem's `verifyTypedData`.
+ */
+export interface GovernanceEip712Binding {
+  domain: Record<string, unknown>;
+  types: Record<string, Array<{ name: string; type: string }>>;
+  primaryType: string;
+  message?: Record<string, unknown>;
+}
+
+/**
+ * Governance attestation event — a verifiable, role-scoped sign-off recorded
+ * inside a trace (compliance review, release approval, data-steward sign-off).
+ *
+ * The signature is computed over a canonical, domain-separated preimage of
+ * `(runId || role || policyRef || decisionRef || signedAt)` (see
+ * `governanceAttestationPreimage`), so an auditor can verify *who* governed a
+ * decision without trusting the wrapper that recorded it, and a genuine
+ * attestation cannot be replayed into a different trace.
+ *
+ * Default visibility: "public" (governance provenance is meant to be auditable).
+ */
+export interface GovernanceAttestationEvent extends BaseTraceEvent {
+  kind: "governance-attestation";
+  /** Governance role; common values plus free-form extension. */
+  role: "compliance" | "release-authority" | "data-steward" | (string & {});
+  /** Hash or URI of the policy being attested to. */
+  policyRef: string;
+  /** Hash or id of the decision/event being governed. */
+  decisionRef: string;
+  /** The signing identity and scheme. */
+  attestor: { address: string; signatureScheme: GovernanceSignatureScheme };
+  /** Signature over the canonical preimage (hex, optionally `0x`-prefixed). */
+  signature: string;
+  /** ISO 8601 timestamp; part of the signed preimage. */
+  signedAt: string;
+  /** EIP-712 binding — required only when `attestor.signatureScheme === "eip712"`. */
+  eip712?: GovernanceEip712Binding;
+}
+
+/**
+ * Signature scheme for a tool-call receipt.
+ * - "http-message-signatures": RFC 9421 signed HTTP responses
+ * - "stripe-webhook" / "github-webhook": SaaS webhook HMAC signatures
+ * - "jws": generic JWS/JWT-signed responses
+ * - (string): forward-compatible custom schemes
+ */
+export type ToolReceiptScheme =
+  | "http-message-signatures"
+  | "stripe-webhook"
+  | "github-webhook"
+  | "jws"
+  | (string & {});
+
+/**
+ * Verifiable tool-call receipt event — proves "the tool actually returned this
+ * response", not merely "the agent says the tool returned this response".
+ *
+ * The wrapper records a signed receipt produced by (or about) the external
+ * system; a verifier independently re-checks `receipt.signature` over
+ * `receipt.signedPayload` against `receipt.signer`.
+ *
+ * Default visibility: "private" (responses may contain PII / secrets — only the
+ * hashes and signature are needed for verification).
+ */
+export interface ToolReceiptEvent extends BaseTraceEvent {
+  kind: "tool-receipt";
+  /** Identifier of the tool/endpoint that was called. */
+  toolId: string;
+  /** Commitment to the request (SHA-256 hex). */
+  request: { hash: string };
+  /** Commitment to the response, with an optional retained payload. */
+  response: { hash: string; payload?: unknown };
+  /** The independently-verifiable signed receipt. */
+  receipt: {
+    scheme: ToolReceiptScheme;
+    /** Verifier-resolvable identity: URL, DID, on-chain address, or keyId. */
+    signer: string;
+    /** Signature bytes (encoding depends on scheme: base64/hex/0x-hex). */
+    signature: string;
+    /** Canonicalized signed bytes the signature is computed over. */
+    signedPayload: string;
+    /** Scheme-specific verification material (headers, keyId, components, ...). */
+    params?: Record<string, unknown>;
+  };
+}
+
+/**
  * Discriminated union of all trace event types.
  */
 export type TraceEvent =
@@ -133,7 +228,9 @@ export type TraceEvent =
   | DecisionEvent
   | ObservationEvent
   | ErrorTraceEvent
-  | CustomEvent;
+  | CustomEvent
+  | GovernanceAttestationEvent
+  | ToolReceiptEvent;
 
 /**
  * Event kind string literals for type guards.
@@ -150,6 +247,10 @@ export const DEFAULT_EVENT_VISIBILITY: Record<TraceEventKind, Visibility> = {
   observation: "public",
   error: "private",
   custom: "private",
+  // Governance provenance is meant to be auditable by third parties.
+  "governance-attestation": "public",
+  // Tool responses may carry PII/secrets; only hashes + signature are required.
+  "tool-receipt": "private",
 };
 
 // =============================================================================
@@ -187,6 +288,41 @@ export interface TraceSpan {
 }
 
 // =============================================================================
+// MODEL MANIFEST (PRE-EXECUTION PINNING)
+// =============================================================================
+
+/**
+ * Fingerprint of the model/data state used during a trace run.
+ *
+ * Distinct from {@link TraceManifest} (which describes off-chain *storage*
+ * chunks). A `ModelManifest` is pinned at {@link CreateTraceOptions} time —
+ * *before* execution — and frozen, so the resulting trace can prove that
+ * "neither the data nor the model was altered" for a given inference.
+ *
+ * Two traces of "the same model" should produce the same `modelManifestHash`,
+ * so the field values must be deterministic fingerprints (see the
+ * `manifestFrom*` builders).
+ */
+export interface ModelManifest {
+  /** Model checkpoint fingerprint, e.g. "sha256:..." */
+  modelHash: string;
+  /** Tokenizer fingerprint. */
+  tokenizerHash?: string;
+  /** System-prompt fingerprint. */
+  systemPromptHash?: string;
+  /** Training-dataset manifest fingerprint. */
+  trainingDataManifest?: string;
+  /** Producing framework, e.g. "huggingface" | "openai" | "anthropic" | "checkpoint". */
+  framework?: string;
+  /** Model identifier (e.g. HF repo id, OpenAI/Anthropic model name). */
+  modelId?: string;
+  /** Revision / snapshot id, when applicable. */
+  revision?: string;
+  /** Free-form additional fingerprint inputs (hashed into manifestHash). */
+  metadata?: Record<string, unknown>;
+}
+
+// =============================================================================
 // TRACE RUN
 // =============================================================================
 
@@ -218,6 +354,18 @@ export interface TraceRun {
   rootHash?: string;
   nextSeq: number;
   nextSpanSeq: number;
+  /**
+   * Model/data manifest pinned at createTrace() time (frozen). When present,
+   * `modelManifestHash` is the cryptographic commitment to it.
+   */
+  modelManifest?: ModelManifest;
+  /** H("poi-trace:model-manifest:v1|" + canonical(modelManifest)), pinned at creation. */
+  modelManifestHash?: string;
+  /**
+   * Strict-mode flag (pinned at creation). When true, finalizeTrace() throws
+   * if no manifest was pinned. Default false (warn-only) for v0.x.
+   */
+  strict?: boolean;
 }
 
 // =============================================================================
@@ -301,6 +449,10 @@ export interface TraceBundlePublicView {
   redactedSpanHashes: Array<{ spanId: string; hash: string }>;
   redactionPolicyId?: string;
   redactionRulesHash?: string;
+  /** Model-state commitment (public-safe: it is only a hash). */
+  modelManifestHash?: string;
+  /** Pinned model manifest (hashes only — public-safe). */
+  modelManifest?: ModelManifest;
 }
 
 /**
@@ -323,6 +475,14 @@ export interface TraceBundle {
   merkleRoot: string;
   rootHash: string;
   manifestHash?: string;
+  /**
+   * Model/data manifest commitment pinned at createTrace() time. Distinct from
+   * `manifestHash` (the off-chain storage-manifest hash). Place this in on-chain
+   * anchor metadata to make model drift cryptographically detectable.
+   */
+  modelManifestHash?: string;
+  /** The pinned model manifest (hashes only — public-safe). */
+  modelManifest?: ModelManifest;
   signerId?: string;
   signature?: string;
 }
@@ -449,6 +609,22 @@ export interface TraceVerificationResult {
     spanHashesValid: boolean;
     eventHashesValid: boolean;
     sequenceValid: boolean;
+    /**
+     * Model-manifest pin binding (#59): the pinned manifest hashes to its
+     * recorded commitment AND that commitment is folded into the committed
+     * root. True when no manifest is pinned (nothing to bind).
+     */
+    modelManifestValid?: boolean;
+    /**
+     * Set only when governance verification is requested via
+     * verifyBundle(bundle, { governance }). Undefined means "not checked".
+     */
+    governanceValid?: boolean;
+    /**
+     * Set only when tool-receipt verification is requested via
+     * verifyBundle(bundle, { toolReceipts }). Undefined means "not checked".
+     */
+    toolReceiptsValid?: boolean;
   };
 }
 
@@ -478,6 +654,17 @@ export interface CreateTraceOptions {
   agentId: string;
   description?: string;
   metadata?: Record<string, unknown>;
+  /**
+   * Model/data manifest to pin *before* execution. Its hash is computed and
+   * frozen at createTrace() time; mutating the manifest afterwards throws.
+   */
+  manifest?: ModelManifest;
+  /**
+   * Strict mode. When true, createTrace() requires a `manifest` and
+   * finalizeTrace() refuses to finalize an unpinned trace. Default false
+   * (warn-only) for v0.x; planned strict-by-default in v1.0.
+   */
+  strict?: boolean;
 }
 
 /**
@@ -514,6 +701,10 @@ export const HASH_DOMAIN_PREFIXES = {
   node: "poi-trace:node:v1|",
   manifest: "poi-trace:manifest:v1|",
   root: "poi-trace:root:v1|",
+  /** Model/data manifest commitment (pre-execution pinning). */
+  modelManifest: "poi-trace:model-manifest:v1|",
+  /** Governance-attestation signing preimage. */
+  governance: "poi-trace:governance:v1|",
 } as const;
 
 /**

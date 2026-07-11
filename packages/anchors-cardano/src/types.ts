@@ -68,6 +68,31 @@ export type AnchorType = "process-trace" | "proof-of-intent" | "custom";
 export type CardanoNetwork = "mainnet" | "preprod" | "preview";
 
 // =============================================================================
+// STORAGE REFERENCES
+// =============================================================================
+
+/**
+ * Durable storage reference embedded in anchor metadata (issue #61).
+ *
+ * Lets a verifier re-fetch the raw trace bundle directly from the on-chain
+ * anchor — no out-of-band sidecar required. Shape-compatible with
+ * `StorageRef` from `@fluxpointstudios/orynq-sdk-storage-adapters` (kept as a
+ * local type to avoid a hard dependency on that package).
+ *
+ * @example { type: "arweave", uri: "ar://abc...", hash: "sha256:..." }
+ */
+export interface StorageRef {
+  /** Backend type: "ipfs" | "arweave" | "s3" | "local" | custom. */
+  type: string;
+  /** Resolvable URI: ipfs:// | ar:// | s3:// | https:// */
+  uri: string;
+  /** Content hash (integrity check after fetch). */
+  hash: string;
+  /** Optional content size in bytes. */
+  size?: number;
+}
+
+// =============================================================================
 // ANCHOR ENTRY
 // =============================================================================
 
@@ -171,6 +196,16 @@ export interface AnchorEntry {
    * @example "https://storage.example.com/traces/abc123"
    */
   storageUri?: string;
+
+  /**
+   * Optional durable storage references (issue #61).
+   *
+   * Multiple redundant locations (Arweave, IPFS, S3-WORM, ...) where the full
+   * trace bundle can be retrieved. Promoting these into the anchor makes the
+   * trace self-locating: a verifier can fetch + check the bundle from the
+   * txHash alone. Backward-compatible — older anchors simply omit it.
+   */
+  storageRefs?: StorageRef[];
 }
 
 // =============================================================================
@@ -345,6 +380,17 @@ export interface AnchorVerificationResult {
    * @example ["Low confirmation count (< 10)", "Missing optional merkleRoot"]
    */
   warnings: string[];
+
+  /**
+   * The anchor-COMMITTED subset of the fetched trace bundle, present only when
+   * verification ran with `{ fetchBundle: true }` and a storage ref both fetched
+   * AND hash-matched the on-chain anchor rootHash. It carries only what the
+   * anchor root binds — `privateRun` (events/spans/manifest pin) plus the
+   * independently recomputed `rootHash`/`merkleRoot`. The fetched `publicView`
+   * and any other top-level fields are excluded: the anchor does not commit to
+   * them, so they must not be read as anchor-verified.
+   */
+  bundle?: unknown;
 }
 
 /**
@@ -567,6 +613,14 @@ export interface CreateAnchorEntryOptions {
    * @default true
    */
   includeMerkleRoot?: boolean;
+
+  /**
+   * Optional durable storage references to embed (issue #61).
+   *
+   * Typically the `refs` returned by `pinTraceFor()` — redundant locations the
+   * verifier can fetch the bundle from. Self-locates the trace from the txHash.
+   */
+  storageRefs?: StorageRef[];
 }
 
 // =============================================================================
@@ -636,7 +690,8 @@ export function isAnchorEntry(value: unknown): value is AnchorEntry {
     (entry.merkleRoot === undefined || typeof entry.merkleRoot === "string") &&
     (entry.itemCount === undefined || typeof entry.itemCount === "number") &&
     (entry.agentId === undefined || typeof entry.agentId === "string") &&
-    (entry.storageUri === undefined || typeof entry.storageUri === "string")
+    (entry.storageUri === undefined || typeof entry.storageUri === "string") &&
+    (entry.storageRefs === undefined || Array.isArray(entry.storageRefs))
   );
 }
 

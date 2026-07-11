@@ -57,6 +57,7 @@ export type {
   AnchorEntry,
   AnchorMetadata,
   AnchorTxResult,
+  StorageRef,
   TxInfo,
 
   // Verification
@@ -119,6 +120,8 @@ export {
   isValidHashFormat,
   extractAnchorFromMetadata,
 } from "./anchor-verifier.js";
+
+export type { VerifyAnchorOptions } from "./anchor-verifier.js";
 
 // =============================================================================
 // PROVIDERS

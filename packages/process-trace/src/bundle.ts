@@ -69,7 +69,47 @@ import {
   computeRootHash,
 } from "./rolling-hash.js";
 
+import { computeModelManifestHash } from "./model-manifest.js";
+
 import { buildSpanMerkleTree, computeSpanHash } from "./merkle.js";
+
+import {
+  verifyGovernanceAttestations,
+  type VerifyGovernanceOptions,
+} from "./governance.js";
+
+// =============================================================================
+// VERIFY OPTIONS
+// =============================================================================
+
+/**
+ * Outcome shape returned by an injected tool-receipt verifier (provided by
+ * `@fluxpointstudios/orynq-sdk-tool-receipts` — passed in to avoid a circular
+ * dependency on that package from process-trace).
+ */
+export interface ToolReceiptVerifyOutcome {
+  valid: boolean;
+  errors: string[];
+}
+
+/** Options for {@link verifyBundle}. */
+export interface VerifyBundleOptions {
+  /**
+   * Verify `governance-attestation` events. `true` uses the built-in
+   * sr25519/ed25519 verifiers; pass {@link VerifyGovernanceOptions} to register
+   * a pluggable verifier (e.g. eip712). Any unverified attestation fails the
+   * bundle.
+   */
+  governance?: boolean | VerifyGovernanceOptions;
+  /**
+   * Verify `tool-receipt` events with an injected verifier from
+   * `@fluxpointstudios/orynq-sdk-tool-receipts`. Any failed receipt fails the
+   * bundle.
+   */
+  toolReceipts?: (
+    bundle: TraceBundle
+  ) => Promise<ToolReceiptVerifyOutcome> | ToolReceiptVerifyOutcome;
+}
 
 // =============================================================================
 // VISIBILITY HELPERS
@@ -350,11 +390,12 @@ export function extractPublicView(bundle: TraceBundle): TraceBundlePublicView {
  * ```
  */
 export async function verifyBundle(
-  bundle: TraceBundle
+  bundle: TraceBundle,
+  options: VerifyBundleOptions = {}
 ): Promise<TraceVerificationResult> {
   const errors: string[] = [];
   const warnings: string[] = [];
-  const checks = {
+  const checks: TraceVerificationResult["checks"] = {
     rollingHashValid: false,
     rootHashValid: false,
     merkleRootValid: false,
@@ -422,7 +463,13 @@ export async function verifyBundle(
   // ---------------------------------------------------------------------------
 
   try {
-    const computedRootHash = await computeRootHash(run.rollingHash, run.spans);
+    // Recompute the root binding the recorded model-manifest commitment (#59),
+    // so a manifest swapped after commitment fails here.
+    const computedRootHash = await computeRootHash(
+      run.rollingHash,
+      run.spans,
+      run.modelManifestHash
+    );
     if (computedRootHash === bundle.rootHash) {
       checks.rootHashValid = true;
     } else {
@@ -456,6 +503,105 @@ export async function verifyBundle(
   }
 
   // ---------------------------------------------------------------------------
+  // Verify Model-Manifest Pin Binding (issue #59)
+  // ---------------------------------------------------------------------------
+  // When a manifest is pinned it MUST (a) hash to the recorded commitment and
+  // (b) be bound into the committed root. (b) is enforced by folding
+  // modelManifestHash into computeRootHash above — a swapped hash breaks
+  // rootHashValid. Here we additionally recompute the commitment from the
+  // manifest itself so that swapping the manifest (while leaving the recorded
+  // hash) is caught, and reject a manifest present but not bound into the root.
+
+  const hasManifest = run.modelManifest !== undefined;
+  const hasManifestHash =
+    run.modelManifestHash !== undefined && run.modelManifestHash.length > 0;
+
+  if (!hasManifest && !hasManifestHash) {
+    // No manifest pinned — nothing to bind (warn-only path lives in finalizeTrace).
+    checks.modelManifestValid = true;
+  } else {
+    let manifestBindingValid = true;
+
+    if (hasManifest && !hasManifestHash) {
+      manifestBindingValid = false;
+      errors.push(
+        "Model manifest present but modelManifestHash (its commitment) is missing"
+      );
+    } else if (!hasManifest && hasManifestHash) {
+      manifestBindingValid = false;
+      errors.push(
+        "modelManifestHash present but the model manifest itself is missing"
+      );
+    } else if (run.modelManifest !== undefined) {
+      try {
+        const recomputed = await computeModelManifestHash(run.modelManifest);
+        if (recomputed !== run.modelManifestHash) {
+          manifestBindingValid = false;
+          errors.push(
+            `Model manifest hash mismatch: recorded ${run.modelManifestHash}, computed ${recomputed}`
+          );
+        }
+      } catch (error) {
+        manifestBindingValid = false;
+        errors.push(
+          `Failed to recompute model manifest hash: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+
+    // The manifest must actually be bound into the committed root. If the root
+    // recompute (with the manifest folded in) matched, rootHashValid is true;
+    // a manifest that is NOT bound produces a root mismatch above.
+    if (manifestBindingValid && !checks.rootHashValid) {
+      manifestBindingValid = false;
+      errors.push(
+        "Model manifest is not bound into the committed root hash"
+      );
+    }
+
+    checks.modelManifestValid = manifestBindingValid;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Verify PublicView Model-Manifest (issue #59)
+  // ---------------------------------------------------------------------------
+  // publicView.{modelManifest,modelManifestHash} is the shared artifact an
+  // EXTERNAL verifier reads. It must (a) equal the bound privateRun commitment
+  // and (b) recompute consistently from the publicView manifest itself — else an
+  // attacker can leave privateRun honest but fabricate the public fields.
+
+  const pvManifest = bundle.publicView.modelManifest;
+  const pvManifestHash = bundle.publicView.modelManifestHash;
+
+  if (pvManifestHash !== undefined && pvManifestHash !== run.modelManifestHash) {
+    checks.modelManifestValid = false;
+    errors.push(
+      `PublicView modelManifestHash (${pvManifestHash}) does not match the bound commitment (${run.modelManifestHash})`
+    );
+  }
+  if (pvManifest !== undefined && run.modelManifest === undefined) {
+    checks.modelManifestValid = false;
+    errors.push("PublicView carries a model manifest but the bound run has none");
+  }
+  if (pvManifest !== undefined) {
+    try {
+      const recomputed = await computeModelManifestHash(pvManifest);
+      const expected = pvManifestHash ?? run.modelManifestHash;
+      if (expected !== undefined && recomputed !== expected) {
+        checks.modelManifestValid = false;
+        errors.push(
+          `PublicView model manifest hash mismatch: recorded ${expected}, computed ${recomputed}`
+        );
+      }
+    } catch (error) {
+      checks.modelManifestValid = false;
+      errors.push(
+        `Failed to recompute publicView model manifest hash: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Additional Warnings
   // ---------------------------------------------------------------------------
 
@@ -474,14 +620,62 @@ export async function verifyBundle(
     );
   }
 
-  // Determine overall validity
+  // ---------------------------------------------------------------------------
+  // Verify Governance Attestations (issue #58, opt-in)
+  // ---------------------------------------------------------------------------
+
+  if (options.governance) {
+    try {
+      const govOpts: VerifyGovernanceOptions =
+        options.governance === true ? {} : options.governance;
+      const summaries = await verifyGovernanceAttestations(bundle, govOpts);
+      const failed = summaries.filter((s) => !s.verified);
+      checks.governanceValid = failed.length === 0;
+      for (const f of failed) {
+        errors.push(
+          `Governance attestation failed (${f.scheme}, role ${f.role}, attestor ${f.attestor})` +
+            (f.error ? `: ${f.error}` : "")
+        );
+      }
+    } catch (error) {
+      checks.governanceValid = false;
+      errors.push(
+        `Failed to verify governance attestations: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Verify Tool-Call Receipts (issue #60, opt-in, injected verifier)
+  // ---------------------------------------------------------------------------
+
+  if (options.toolReceipts) {
+    try {
+      const outcome = await options.toolReceipts(bundle);
+      checks.toolReceiptsValid = outcome.valid;
+      if (!outcome.valid) {
+        errors.push(...outcome.errors);
+      }
+    } catch (error) {
+      checks.toolReceiptsValid = false;
+      errors.push(
+        `Failed to verify tool receipts: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  // Determine overall validity. Optional checks only fail the bundle when
+  // explicitly run and false (undefined === "not checked").
   const valid =
     checks.rollingHashValid &&
     checks.rootHashValid &&
     checks.merkleRootValid &&
     checks.spanHashesValid &&
     checks.eventHashesValid &&
-    checks.sequenceValid;
+    checks.sequenceValid &&
+    checks.modelManifestValid !== false &&
+    checks.governanceValid !== false &&
+    checks.toolReceiptsValid !== false;
 
   return {
     valid,

@@ -1,0 +1,542 @@
+/**
+ * @fileoverview Signature-scheme verifiers for tool-call receipts (issue #60).
+ *
+ * Each verifier checks that `receipt.signature` is a valid signature over
+ * `receipt.signedPayload` for `receipt.signer`, per its scheme:
+ *
+ * - `http-message-signatures` — RFC 9421 (signature base provided as signedPayload)
+ * - `stripe-webhook` — Stripe `Stripe-Signature` HMAC-SHA256 (timestamped; freshness-checked)
+ * - `github-webhook` — GitHub `X-Hub-Signature-256` HMAC-SHA256 (no signed
+ *   timestamp; freshness-checked only when `params.timestamp` is recorded,
+ *   otherwise anti-replay rests on the bundle Merkle commitment)
+ * - `jws` — compact JWS / JWT (HS*, RS*, PS*, ES*, EdDSA)
+ *
+ * Symmetric secrets (webhooks, HS*) MUST be supplied out-of-band via the
+ * {@link ToolReceiptVerifyContext} — never embedded in the trace. Asymmetric
+ * *public* keys may be embedded in `receipt.params.publicKey`.
+ */
+
+import {
+  createHmac,
+  createPublicKey,
+  timingSafeEqual,
+  verify as cryptoVerify,
+  type KeyObject,
+} from "node:crypto";
+import type { ToolReceiptEvent } from "@fluxpointstudios/orynq-sdk-process-trace";
+import { sha256StringHex } from "@fluxpointstudios/orynq-sdk-core/utils";
+
+type MaybePromise<T> = T | Promise<T>;
+
+/** Key/secret resolution + policy context for receipt verification. */
+export interface ToolReceiptVerifyContext {
+  /** Verification keys/secrets keyed by `receipt.signer`. */
+  keys?: Record<string, string>;
+  /** Dynamic key/secret resolver (takes precedence over `keys`). */
+  resolveKey?: (event: ToolReceiptEvent) => MaybePromise<string | Uint8Array | undefined>;
+  /** Max age (seconds) for replay-protected schemes (Stripe). Default 300. */
+  toleranceSec?: number;
+  /** Epoch-seconds clock override (testing). */
+  nowSec?: number;
+  /**
+   * Optional per-signer expected-algorithm allow-list (defense-in-depth against
+   * algorithm confusion). When present for a signer, any receipt whose resolved
+   * `alg` is not listed is rejected — e.g. `{ "tee://oracle": ["EdDSA"] }` pins
+   * that signer to EdDSA so an attacker-set `alg:HS256` is refused.
+   */
+  keyAlgs?: Record<string, string[]>;
+  /**
+   * Accept a public key embedded in `receipt.params.publicKey` when no
+   * out-of-band key is configured. This is a CONVENIENCE for internal
+   * consistency checks only — it is NOT an authenticity guarantee, because the
+   * trace (and therefore the embedded key) is attacker-controlled. Default
+   * false; supply the signer's key via `keys`/`resolveKey` for a trustworthy
+   * verdict.
+   */
+  trustEmbeddedKeys?: boolean;
+}
+
+const textEncoder = new TextEncoder();
+
+function utf8(s: string): Buffer {
+  return Buffer.from(textEncoder.encode(s));
+}
+
+function constantTimeEqualHex(a: string, b: string): boolean {
+  const ab = Buffer.from(a.toLowerCase(), "hex");
+  const bb = Buffer.from(b.toLowerCase(), "hex");
+  if (ab.length === 0 || ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
+
+async function resolveKey(
+  event: ToolReceiptEvent,
+  ctx: ToolReceiptVerifyContext | undefined,
+  { allowEmbedded }: { allowEmbedded: boolean }
+): Promise<string | Uint8Array | undefined> {
+  if (ctx?.resolveKey) {
+    const k = await ctx.resolveKey(event);
+    if (k !== undefined) return k;
+  }
+  if (ctx?.keys && Object.prototype.hasOwnProperty.call(ctx.keys, event.receipt.signer)) {
+    return ctx.keys[event.receipt.signer];
+  }
+  // An embedded public key lives in the untrusted trace, so it is NOT trusted
+  // for a passing verdict unless the caller explicitly opts in. Prefer an
+  // out-of-band key via keys/resolveKey.
+  if (allowEmbedded && ctx?.trustEmbeddedKeys === true) {
+    const p = event.receipt.params;
+    if (p && typeof p.publicKey === "string") return p.publicKey;
+  }
+  return undefined;
+}
+
+function keyToString(key: string | Uint8Array): string {
+  return typeof key === "string" ? key : Buffer.from(key).toString("utf8");
+}
+
+/** Algorithm-OID DER byte sequences that appear inside a SubjectPublicKeyInfo. */
+const SPKI_ALG_OIDS: readonly (readonly number[])[] = [
+  // rsaEncryption 1.2.840.113549.1.1.1
+  [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01],
+  // id-ecPublicKey 1.2.840.10045.2.1
+  [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01],
+  // id-Ed25519 1.3.101.112
+  [0x2b, 0x65, 0x70],
+  // id-Ed448 1.3.101.113
+  [0x2b, 0x65, 0x71],
+];
+
+/**
+ * True when raw bytes are a DER-encoded SubjectPublicKeyInfo: an outer SEQUENCE
+ * (`0x30`) whose DER length header (short-form `< 0x80`, or long-form `0x81`/
+ * `0x82`) frames the whole buffer, carrying a known asymmetric algorithm OID.
+ * Covers Ed25519 (`30 2a`), EC P-256/P-384 (`30 59`/`30 76`), and RSA
+ * (`30 82 ..`). This catches a public key handed to the HMAC path as raw DER
+ * (Uint8Array/Buffer), which the PEM/JWK string checks above miss.
+ */
+function looksLikeDerPublicKey(bytes: Uint8Array): boolean {
+  if (bytes.length < 8 || bytes[0] !== 0x30) return false;
+  const lenByte = bytes[1]!;
+  let contentStart: number;
+  let contentLen: number;
+  if (lenByte < 0x80) {
+    contentStart = 2;
+    contentLen = lenByte;
+  } else if (lenByte === 0x81) {
+    contentStart = 3;
+    contentLen = bytes[2]!;
+  } else if (lenByte === 0x82) {
+    contentStart = 4;
+    contentLen = (bytes[2]! << 8) | bytes[3]!;
+  } else {
+    return false;
+  }
+  // The length header must frame exactly the remaining bytes — a genuine DER doc,
+  // not arbitrary secret bytes that happen to start with 0x30.
+  if (contentStart + contentLen !== bytes.length) return false;
+  return SPKI_ALG_OIDS.some((oid) => indexOfBytes(bytes, oid) !== -1);
+}
+
+/** Index of a byte subsequence in a byte array, or -1. */
+function indexOfBytes(haystack: Uint8Array, needle: readonly number[]): number {
+  outer: for (let i = 0; i + needle.length <= haystack.length; i++) {
+    for (let j = 0; j < needle.length; j++) {
+      if (haystack[i + j] !== needle[j]) continue outer;
+    }
+    return i;
+  }
+  return -1;
+}
+
+/**
+ * True when the resolved key material is an ASYMMETRIC PUBLIC key — a PEM
+ * SPKI/PKCS#1 public block, a JWK with an asymmetric `kty`, or raw DER-encoded
+ * SubjectPublicKeyInfo bytes. Such material is public (known to an attacker), so
+ * it must NEVER be fed into an HMAC branch: an attacker who sets `alg:HS256`
+ * could HMAC with the public key and forge a "valid" symmetric signature (JWT
+ * algorithm confusion).
+ */
+function looksLikeAsymmetricPublicKey(key: string | Uint8Array): boolean {
+  if (typeof key !== "string" && looksLikeDerPublicKey(key)) return true;
+  const s = keyToString(key).trim();
+  if (
+    s.includes("-----BEGIN PUBLIC KEY-----") ||
+    s.includes("-----BEGIN RSA PUBLIC KEY-----")
+  ) {
+    return true;
+  }
+  if (s.startsWith("{")) {
+    try {
+      const jwk = JSON.parse(s) as { kty?: unknown };
+      const kty = typeof jwk.kty === "string" ? jwk.kty.toUpperCase() : "";
+      return kty === "RSA" || kty === "EC" || kty === "OKP";
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * Guard an HMAC/symmetric verification against a key that is actually an
+ * asymmetric public key. Symmetric secrets are arbitrary bytes, so we only
+ * refuse material that is unambiguously a public key.
+ */
+function assertSymmetricSecret(key: string | Uint8Array, algLabel: string): void {
+  if (looksLikeAsymmetricPublicKey(key)) {
+    throw new Error(
+      `${algLabel}: refusing to HMAC with an asymmetric public key (algorithm confusion). ` +
+        "Provide the signer's symmetric secret out-of-band, or pin the asymmetric alg via keyAlgs."
+    );
+  }
+}
+
+/**
+ * Enforce the optional per-signer expected-algorithm allow-list (defense in
+ * depth). Throws when the signer is pinned and `alg` is not allowed.
+ */
+function assertAlgAllowed(
+  event: ToolReceiptEvent,
+  ctx: ToolReceiptVerifyContext | undefined,
+  alg: string
+): void {
+  const allow = ctx?.keyAlgs?.[event.receipt.signer];
+  if (allow && !allow.includes(alg)) {
+    throw new Error(
+      `alg "${alg}" is not in the expected-algorithm allow-list for signer "${event.receipt.signer}"`
+    );
+  }
+}
+
+// =============================================================================
+// Stripe webhook (HMAC-SHA256 over `${t}.${payload}`)
+// =============================================================================
+
+/** Parse a `t=...,v1=...` Stripe-Signature header (or fall back to a bare hex sig). */
+function parseStripeSignature(
+  raw: string,
+  params: Record<string, unknown> | undefined
+): { t?: string; v1: string[] } {
+  if (raw.includes("v1=") || raw.includes("t=")) {
+    const parts = raw.split(",").map((p) => p.trim());
+    let t: string | undefined;
+    const v1: string[] = [];
+    for (const part of parts) {
+      const eq = part.indexOf("=");
+      if (eq === -1) continue;
+      const k = part.slice(0, eq);
+      const v = part.slice(eq + 1);
+      if (k === "t") t = v;
+      else if (k === "v1") v1.push(v);
+    }
+    return t !== undefined ? { t, v1 } : { v1 };
+  }
+  // Bare signature: timestamp must come from params.
+  const t = typeof params?.timestamp === "string" ? (params.timestamp as string) : undefined;
+  return t !== undefined ? { t, v1: [raw] } : { v1: [raw] };
+}
+
+export async function verifyStripeReceipt(
+  event: ToolReceiptEvent,
+  ctx?: ToolReceiptVerifyContext
+): Promise<boolean> {
+  const secret = await resolveKey(event, ctx, { allowEmbedded: false });
+  if (secret === undefined) {
+    throw new Error(
+      "stripe-webhook: signing secret not found — provide it via verify context (keys/resolveKey), not the trace"
+    );
+  }
+  const { t, v1 } = parseStripeSignature(event.receipt.signature, event.receipt.params);
+  if (t === undefined) throw new Error("stripe-webhook: missing timestamp (t)");
+  if (v1.length === 0) throw new Error("stripe-webhook: missing v1 signature");
+
+  const toleranceSec = ctx?.toleranceSec ?? 300;
+  const now = ctx?.nowSec ?? Math.floor(Date.now() / 1000);
+  const ts = Number(t);
+  if (!Number.isFinite(ts)) throw new Error("stripe-webhook: invalid timestamp");
+  if (Math.abs(now - ts) > toleranceSec) {
+    throw new Error(`stripe-webhook: timestamp outside tolerance (${toleranceSec}s)`);
+  }
+
+  const signedBase = `${t}.${event.receipt.signedPayload}`;
+  const expected = createHmac("sha256", keyToString(secret)).update(signedBase).digest("hex");
+  return v1.some((candidate) => constantTimeEqualHex(expected, candidate));
+}
+
+// =============================================================================
+// GitHub webhook (HMAC-SHA256, `sha256=...`)
+// =============================================================================
+
+export async function verifyGitHubReceipt(
+  event: ToolReceiptEvent,
+  ctx?: ToolReceiptVerifyContext
+): Promise<boolean> {
+  const secret = await resolveKey(event, ctx, { allowEmbedded: false });
+  if (secret === undefined) {
+    throw new Error(
+      "github-webhook: signing secret not found — provide it via verify context (keys/resolveKey)"
+    );
+  }
+  // GitHub's signature carries no timestamp, so freshness can't be enforced
+  // cryptographically — a timestamp-less receipt's anti-replay is the bundle
+  // Merkle commitment. When the recorder DID capture `params.timestamp`, hold it
+  // to the same tolerance window Stripe uses so a stale receipt is rejected.
+  const ts = event.receipt.params?.timestamp;
+  if (typeof ts === "string" || typeof ts === "number") {
+    const tsNum = Number(ts);
+    if (!Number.isFinite(tsNum)) throw new Error("github-webhook: invalid timestamp");
+    const toleranceSec = ctx?.toleranceSec ?? 300;
+    const now = ctx?.nowSec ?? Math.floor(Date.now() / 1000);
+    if (Math.abs(now - tsNum) > toleranceSec) {
+      throw new Error(`github-webhook: timestamp outside tolerance (${toleranceSec}s)`);
+    }
+  }
+  const provided = event.receipt.signature.startsWith("sha256=")
+    ? event.receipt.signature.slice("sha256=".length)
+    : event.receipt.signature;
+  const expected = createHmac("sha256", keyToString(secret))
+    .update(event.receipt.signedPayload)
+    .digest("hex");
+  return constantTimeEqualHex(expected, provided);
+}
+
+// =============================================================================
+// JWS / JWT (compact)
+// =============================================================================
+
+interface JwsParts {
+  signingInput: string;
+  signature: Buffer;
+  header: { alg?: string; [k: string]: unknown };
+}
+
+function parseJws(event: ToolReceiptEvent): JwsParts {
+  const sp = event.receipt.signedPayload;
+  const segments = sp.split(".");
+  let signingInput: string;
+  let sigB64: string;
+  if (segments.length === 3) {
+    // signedPayload is the full compact JWS.
+    signingInput = `${segments[0]}.${segments[1]}`;
+    sigB64 = segments[2]!;
+  } else if (segments.length === 2) {
+    // signedPayload is the signing input; signature carried separately.
+    signingInput = sp;
+    sigB64 = event.receipt.signature;
+  } else {
+    throw new Error("jws: signedPayload must be a compact JWS (h.p.s) or signing input (h.p)");
+  }
+  const headerJson = Buffer.from(segments[0]!, "base64url").toString("utf8");
+  const header = JSON.parse(headerJson) as { alg?: string };
+  return { signingInput, signature: Buffer.from(sigB64, "base64url"), header };
+}
+
+export async function verifyJwsReceipt(
+  event: ToolReceiptEvent,
+  ctx?: ToolReceiptVerifyContext
+): Promise<boolean> {
+  const { signingInput, signature, header } = parseJws(event);
+  const alg = header.alg;
+  if (!alg || alg === "none") throw new Error(`jws: unsupported alg "${alg}"`);
+  assertAlgAllowed(event, ctx, alg);
+  const data = utf8(signingInput);
+
+  if (alg.startsWith("HS")) {
+    const secret = await resolveKey(event, ctx, { allowEmbedded: false });
+    if (secret === undefined) throw new Error(`jws(${alg}): HMAC secret not found in verify context`);
+    // The alg comes from the attacker-controlled JWS header. Refuse to HMAC with
+    // an asymmetric public key (JWT algorithm confusion).
+    assertSymmetricSecret(secret, `jws(${alg})`);
+    const hashAlg = `sha${alg.slice(2)}`;
+    const expected = createHmac(hashAlg, keyToString(secret)).update(data).digest();
+    return expected.length === signature.length && timingSafeEqual(expected, signature);
+  }
+
+  // Asymmetric — public key may be embedded.
+  const keyMaterial = await resolveKey(event, ctx, { allowEmbedded: true });
+  if (keyMaterial === undefined) throw new Error(`jws(${alg}): public key not found`);
+  const publicKey = toPublicKey(keyMaterial);
+
+  if (alg.startsWith("RS")) {
+    return cryptoVerify(`sha${alg.slice(2)}`, data, publicKey, signature);
+  }
+  if (alg.startsWith("PS")) {
+    const bits = alg.slice(2);
+    return cryptoVerify(
+      `sha${bits}`,
+      data,
+      { key: publicKey, padding: 6 /* RSA_PKCS1_PSS_PADDING */, saltLength: Number(bits) / 8 },
+      signature
+    );
+  }
+  if (alg.startsWith("ES")) {
+    // JWS ECDSA signatures are raw r||s (IEEE-P1363).
+    return cryptoVerify(
+      `sha${alg.slice(2)}`,
+      data,
+      { key: publicKey, dsaEncoding: "ieee-p1363" },
+      signature
+    );
+  }
+  if (alg === "EdDSA") {
+    return cryptoVerify(null, data, publicKey, signature);
+  }
+  throw new Error(`jws: unsupported alg "${alg}"`);
+}
+
+// =============================================================================
+// RFC 9421 — HTTP Message Signatures
+// =============================================================================
+
+/** RFC 9421 algorithm registry names we support. */
+const RFC9421_HASH: Record<string, string> = {
+  "rsa-pss-sha512": "sha512",
+  "rsa-v1_5-sha256": "sha256",
+  "ecdsa-p256-sha256": "sha256",
+  "ecdsa-p384-sha384": "sha384",
+};
+
+export async function verifyHttpMessageReceipt(
+  event: ToolReceiptEvent,
+  ctx?: ToolReceiptVerifyContext
+): Promise<boolean> {
+  const params = event.receipt.params ?? {};
+  const alg = typeof params.alg === "string" ? (params.alg as string) : undefined;
+  if (!alg) {
+    throw new Error("http-message-signatures: receipt.params.alg is required (RFC 9421 alg id)");
+  }
+  assertAlgAllowed(event, ctx, alg);
+  // The signature base is the canonical signed bytes.
+  const data = utf8(event.receipt.signedPayload);
+  const signature = decodeSignature(event.receipt.signature);
+
+  if (alg === "ed25519") {
+    const keyMaterial = await resolveKey(event, ctx, { allowEmbedded: true });
+    if (keyMaterial === undefined) throw new Error("http-message-signatures(ed25519): public key not found");
+    return cryptoVerify(null, data, toPublicKey(keyMaterial), signature);
+  }
+
+  if (alg === "hmac-sha256") {
+    const secret = await resolveKey(event, ctx, { allowEmbedded: false });
+    if (secret === undefined) throw new Error("http-message-signatures(hmac-sha256): secret not found");
+    // The alg is attacker-controlled — refuse to HMAC with an asymmetric public
+    // key (algorithm confusion).
+    assertSymmetricSecret(secret, "http-message-signatures(hmac-sha256)");
+    const expected = createHmac("sha256", keyToString(secret)).update(data).digest();
+    return expected.length === signature.length && timingSafeEqual(expected, signature);
+  }
+
+  const hash = RFC9421_HASH[alg];
+  if (!hash) throw new Error(`http-message-signatures: unsupported alg "${alg}"`);
+  const keyMaterial = await resolveKey(event, ctx, { allowEmbedded: true });
+  if (keyMaterial === undefined) throw new Error(`http-message-signatures(${alg}): public key not found`);
+  const publicKey = toPublicKey(keyMaterial);
+
+  if (alg === "rsa-pss-sha512") {
+    return cryptoVerify(hash, data, { key: publicKey, padding: 6, saltLength: 64 }, signature);
+  }
+  if (alg === "rsa-v1_5-sha256") {
+    return cryptoVerify(hash, data, publicKey, signature);
+  }
+  // ECDSA — RFC 9421 uses raw (IEEE-P1363) signatures.
+  return cryptoVerify(hash, data, { key: publicKey, dsaEncoding: "ieee-p1363" }, signature);
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+function toPublicKey(material: string | Uint8Array): KeyObject {
+  if (typeof material === "string") {
+    const trimmed = material.trim();
+    if (trimmed.startsWith("{")) {
+      return createPublicKey({ key: JSON.parse(trimmed), format: "jwk" });
+    }
+    return createPublicKey(material);
+  }
+  return createPublicKey(Buffer.from(material));
+}
+
+/**
+ * Decode a signature string that may be 0x-hex, base64url, or standard base64
+ * (the encodings used by RFC 9421 / JWS receipts in the wild).
+ */
+function decodeSignature(sig: string): Buffer {
+  if (sig.startsWith("0x")) return Buffer.from(sig.slice(2), "hex");
+  if (/[-_]/.test(sig)) return Buffer.from(sig, "base64url");
+  return Buffer.from(sig, "base64");
+}
+
+// =============================================================================
+// Response binding — the signed content must commit to the recorded response
+// =============================================================================
+
+/**
+ * The sha-256 hex the signed material commits to, or `null` when the scheme's
+ * signed bytes structurally cannot bind the response (e.g. an RFC 9421
+ * signature base with no `content-digest` component). A `null` MUST cause
+ * verification to fail: a valid signature that does not cover the recorded
+ * response proves nothing about it.
+ */
+export async function responseCommitmentHash(event: ToolReceiptEvent): Promise<string | null> {
+  const { scheme, signedPayload } = event.receipt;
+  switch (scheme) {
+    case "jws": {
+      // signedPayload is the JWS signing input `h.p[.s]`; the payload segment
+      // is the exact bytes the tool signed (canonical response body).
+      const segs = signedPayload.split(".");
+      if (segs.length < 2 || !segs[1]) return null;
+      const body = Buffer.from(segs[1], "base64url").toString("utf8");
+      return sha256StringHex(body);
+    }
+    case "stripe-webhook":
+    case "github-webhook":
+      // The signed webhook body IS the tool response.
+      return sha256StringHex(signedPayload);
+    case "http-message-signatures":
+      // RFC 9421 signs a signature base, not the body; the body is bound only
+      // via a `content-digest` component inside that base.
+      return contentDigestSha256Hex(signedPayload);
+    default:
+      return null;
+  }
+}
+
+/**
+ * Read the signed call-binding context ({runId, requestHash}) from a self-signed
+ * JWS receipt's header, or `null` when the receipt is not a bound JWS. Because
+ * the header is part of the JWS signing input, these values are covered by the
+ * signature — lifting the receipt into another trace/request breaks the match.
+ */
+export function jwsBindingContext(
+  event: ToolReceiptEvent
+): { runId: string; requestHash?: string } | null {
+  if (event.receipt.scheme !== "jws") return null;
+  const seg0 = event.receipt.signedPayload.split(".")[0];
+  if (!seg0) return null;
+  try {
+    const header = JSON.parse(Buffer.from(seg0, "base64url").toString("utf8")) as {
+      orynqBinding?: { runId?: unknown; requestHash?: unknown };
+    };
+    const b = header.orynqBinding;
+    if (!b || typeof b.runId !== "string") return null;
+    return typeof b.requestHash === "string"
+      ? { runId: b.runId, requestHash: b.requestHash }
+      : { runId: b.runId };
+  } catch {
+    return null;
+  }
+}
+
+/** Extract the sha-256 content-digest (hex) from an RFC 9421 signature base. */
+function contentDigestSha256Hex(signatureBase: string): string | null {
+  for (const line of signatureBase.split("\n")) {
+    const m = /^"content-digest":\s*(.+)$/i.exec(line.trim());
+    if (!m) continue;
+    const d = /sha-256=:([A-Za-z0-9+/=]+):/.exec(m[1]!);
+    if (!d || !d[1]) return null;
+    return Buffer.from(d[1], "base64").toString("hex");
+  }
+  return null;
+}

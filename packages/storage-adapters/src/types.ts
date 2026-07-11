@@ -32,6 +32,13 @@ export interface StorageAdapter {
   readonly type: StorageType;
 
   /**
+   * True when this backend writes under WORM / Object-Lock retention (tamper-
+   * proof for the retention window). Durable-pinning policies require the WORM
+   * backend specifically, so a non-WORM success cannot stand in for it.
+   */
+  readonly isWorm?: boolean;
+
+  /**
    * Store raw data.
    */
   store(data: Uint8Array): Promise<StorageRef>;
@@ -101,6 +108,22 @@ export interface PinningServiceConfig {
 
 // === S3 Configuration ===
 
+/**
+ * AWS S3 Object Lock (WORM) retention configuration. The bucket must have
+ * Object Lock enabled at creation; this sets per-object retention.
+ *
+ * - COMPLIANCE: no one (not even the root account) can delete/overwrite before
+ *   the retention date — regulatory-grade.
+ * - GOVERNANCE: users with the bypass permission can override.
+ */
+export interface S3ObjectLockConfig {
+  mode: "COMPLIANCE" | "GOVERNANCE";
+  /** Retain for N years from upload time (used to compute RetainUntilDate). */
+  retentionYears?: number;
+  /** Explicit retain-until date (overrides retentionYears when set). */
+  retainUntilDate?: Date;
+}
+
 export interface S3AdapterConfig {
   /**
    * S3 bucket name.
@@ -139,6 +162,24 @@ export interface S3AdapterConfig {
    * Presigned URL expiry in seconds (default: 3600).
    */
   presignedUrlExpiry?: number;
+
+  /**
+   * S3 Object Lock (WORM) retention. When set, every stored object is written
+   * with the given retention mode + retain-until date — regulatory-grade
+   * tamper-resistance for long audit horizons.
+   *
+   * NOTE: setting this asserts the bucket is Object-Lock-enabled; it does not by
+   * itself prove enforcement. Call `S3Adapter.verifyWormEnabled()` to confirm the
+   * bucket actually has Object Lock enabled.
+   */
+  objectLock?: S3ObjectLockConfig;
+
+  /**
+   * Pre-constructed S3 client (or S3-compatible / test double). When supplied,
+   * the adapter uses it instead of lazily constructing an `@aws-sdk/client-s3`
+   * client. Must implement `send(command)`.
+   */
+  s3Client?: { send(command: unknown): Promise<unknown> };
 }
 
 // === Arweave Configuration ===

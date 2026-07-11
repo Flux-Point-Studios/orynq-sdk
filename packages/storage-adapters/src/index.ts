@@ -41,6 +41,7 @@ export type {
   IpfsAdapterConfig,
   PinningServiceConfig,
   S3AdapterConfig,
+  S3ObjectLockConfig,
   ArweaveAdapterConfig,
   ArweaveWallet,
   BundlrConfig,
@@ -64,7 +65,11 @@ export {
 export {
   S3Adapter,
   createS3Adapter,
+  createS3WormAdapter,
+  computeObjectLockRetainUntil,
+  objectLockConfigEnabled,
   type S3Client,
+  type S3WormAdapterConfig,
 } from "./adapters/s3/index.js";
 
 // === Arweave Adapter ===
@@ -86,4 +91,8 @@ export {
   HASH_DOMAIN_PREFIXES,
   type HashDomain,
   ReplicatedStorageAdapter,
+  type ReplicationResult,
+  pinTraceFor,
+  type PinTraceOptions,
+  type PinTraceResult,
 } from "./utils/index.js";
