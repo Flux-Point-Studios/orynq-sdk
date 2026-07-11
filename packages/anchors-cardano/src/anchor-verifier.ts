@@ -657,18 +657,22 @@ export async function verifyAnchor(
     const txInfo = await provider.getTxInfo(txHash);
 
     // Optionally fetch the raw bundle from storage refs (issue #61) and verify
-    // its content hashes to the on-chain anchor rootHash.
+    // its content hashes to the on-chain anchor rootHash. When fetchBundle was
+    // requested but NO ref could be fetched AND integrity-verified, fail closed:
+    // an unverifiable fetch must not silently leave the verdict resting on the
+    // on-chain hash alone.
     let bundle: unknown;
     const errors: string[] = [];
     if (options.fetchBundle) {
       const fetched = await fetchBundleFromAnchor(matchingAnchor, options);
       warnings.push(...fetched.warnings);
-      if (fetched.integrityFailed) {
-        errors.push(
-          "Fetched bundle failed integrity check: its content does not hash to the on-chain anchor rootHash"
-        );
-      } else {
+      if (fetched.verified) {
         bundle = fetched.bundle;
+      } else {
+        errors.push(
+          "fetchBundle was requested but no storage ref could be fetched and integrity-verified " +
+            "against the on-chain anchor rootHash"
+        );
       }
     }
 
@@ -773,38 +777,15 @@ function isIpLiteral(host: string): boolean {
 }
 
 /**
- * Resolve a DNS hostname and return true if ANY resolved address is private/
- * blocked (post-resolution SSRF guard against DNS→private-IP). On resolution
- * failure, fails safe (returns true → blocked). Uses node:dns when available.
- */
-async function dnsResolvesToBlocked(hostname: string): Promise<boolean> {
-  let lookup: (h: string, opts: { all: true }) => Promise<Array<{ address: string }>>;
-  try {
-    const dns = await import("node:dns");
-    lookup = dns.promises.lookup as unknown as typeof lookup;
-  } catch {
-    // No resolver available (edge runtime) — cannot prove the host is safe.
-    return true;
-  }
-  try {
-    const records = await lookup(hostname, { all: true });
-    if (records.length === 0) return true;
-    return records.some((r) => isBlockedHost(r.address));
-  } catch {
-    return true;
-  }
-}
-
-/**
  * Resolve a storage URI to an HTTPS URL the verifier is allowed to fetch (#61).
  *
  * SSRF hardening: only https:// is honored (http:// is rejected); private/
  * link-local/loopback/ULA/metadata hosts are always rejected (incl. IPv4-mapped
  * IPv6). When `options.allowedHosts` is provided, the host must be on it. When
- * it is OMITTED, a bare IP literal must pass the private-range block, and a DNS
- * hostname is resolved and rejected if it maps to a private/blocked IP
- * (post-resolution guard against DNS→private-IP). Returns `{ url }` when
- * fetchable, or `{ reason }` describing why it was rejected.
+ * it is OMITTED, only a bare IP literal (already past the private-range block) is
+ * fetchable — a DNS hostname is rejected, because handing a hostname to fetch
+ * re-resolves it (DNS-rebind TOCTOU) and the metadata is untrusted. Returns
+ * `{ url }` when fetchable, or `{ reason }` describing why it was rejected.
  */
 async function resolveStorageUri(
   uri: string,
@@ -851,15 +832,22 @@ async function resolveStorageUri(
     return { url: resolved };
   }
 
-  // No allow-list: a DNS hostname could resolve to a private IP (DNS-rebind /
-  // metadata SSRF). Resolve it and block if any answer is private/blocked.
-  // Bare IP literals already passed isBlockedHost above.
+  // No allow-list. A DNS hostname resolved here, then handed to fetch as a
+  // hostname string, is re-resolved by fetch — a DNS-rebind TOCTOU window where
+  // the second resolution returns a private/metadata IP. Since the storage
+  // metadata is attacker-controlled and we cannot pin the connection to the
+  // checked IP without a custom fetch agent, require an explicit `allowedHosts`
+  // for any DNS name. Bare IP literals already passed the private-range block
+  // above and are not subject to re-resolution.
+  //
+  // Residual (documented): even with `allowedHosts`, the connection is not bound
+  // to a pre-resolved IP; an allow-listed host is trusted to resolve honestly.
+  // Pass IP literals, or a custom `fetchFn` that pins the resolved IP, to close
+  // the window entirely.
   if (!isIpLiteral(host)) {
-    if (await dnsResolvesToBlocked(host)) {
-      return {
-        reason: `host not in allow-list and resolves to a private/blocked or unresolvable address: ${host}`,
-      };
-    }
+    return {
+      reason: `host requires an explicit allowedHosts entry (DNS-rebinding guard): ${host}`,
+    };
   }
 
   return { url: resolved };
@@ -979,19 +967,24 @@ interface StreamReader {
  * SSRF-hardened (https-only, host allow-list, private-host block) and size-
  * capped. Integrity is established by recomputing the fetched bundle's rootHash
  * from its own bytes and requiring it equals the on-chain anchor rootHash — the
- * fetched document's self-declared `rootHash` field is NEVER trusted. On an
- * integrity mismatch the fetch fails hard (`integrityFailed`) so the caller
- * marks the whole verification invalid.
+ * fetched document's self-declared `rootHash` field is NEVER trusted.
+ *
+ * Redundancy is honored: EVERY outcome that isn't a verified match (SSRF block,
+ * HTTP error, size-cap, network error, rootHash mismatch, non-bundle document)
+ * is recorded and the next ref is tried — a poisoned first mirror never DoSes
+ * the honest remaining refs. `verified` is true only when some ref both fetched
+ * AND hash-matched the anchor root; the caller fails closed when the fetch was
+ * requested and nothing verified.
  */
 async function fetchBundleFromAnchor(
   anchor: AnchorEntry,
   options: VerifyAnchorOptions
-): Promise<{ bundle: unknown; warnings: string[]; integrityFailed: boolean }> {
+): Promise<{ bundle: unknown; warnings: string[]; verified: boolean }> {
   const warnings: string[] = [];
   const fetchFn = options.fetchFn ?? globalThis.fetch;
   if (typeof fetchFn !== "function") {
     warnings.push("fetchBundle requested but no fetch implementation is available");
-    return { bundle: undefined, warnings, integrityFailed: false };
+    return { bundle: undefined, warnings, verified: false };
   }
 
   const maxBytes = options.maxBundleBytes ?? DEFAULT_MAX_BUNDLE_BYTES;
@@ -1002,10 +995,19 @@ async function fetchBundleFromAnchor(
   }
   if (candidates.length === 0) {
     warnings.push("fetchBundle requested but anchor has no storageRefs or storageUri");
-    return { bundle: undefined, warnings, integrityFailed: false };
+    return { bundle: undefined, warnings, verified: false };
   }
 
   for (const ref of candidates) {
+    // `ref.size` is attacker-controlled, so it may ONLY reject early (a ref that
+    // declares more than the cap). It must NEVER reduce the read below maxBytes,
+    // or an under-declared size could truncate an otherwise-valid bundle and
+    // grief the hash check. maxBytes is the authoritative read cap.
+    if (typeof ref.size === "number" && ref.size > maxBytes) {
+      warnings.push(`Declared ref.size ${ref.size} exceeds size cap (${maxBytes} bytes): ${ref.uri}`);
+      continue;
+    }
+
     const resolved = await resolveStorageUri(ref.uri, options);
     if ("reason" in resolved) {
       warnings.push(resolved.reason);
@@ -1013,21 +1015,15 @@ async function fetchBundleFromAnchor(
     }
     const url = resolved.url;
 
-    // A storageRef may declare its own byte size; use the tighter of the two.
-    const refCap =
-      typeof ref.size === "number" && ref.size > 0
-        ? Math.min(ref.size, maxBytes)
-        : maxBytes;
-
     try {
       const res = await fetchFn(url);
       if (!res.ok) {
         warnings.push(`Fetch failed (HTTP ${res.status}): ${url}`);
         continue;
       }
-      const text = await readCapped(res, refCap);
+      const text = await readCapped(res, maxBytes);
       if (text === null) {
-        warnings.push(`Fetched content exceeds size cap (${refCap} bytes): ${url}`);
+        warnings.push(`Fetched content exceeds size cap (${maxBytes} bytes): ${url}`);
         continue;
       }
       let parsed: unknown;
@@ -1039,21 +1035,23 @@ async function fetchBundleFromAnchor(
 
       // Integrity: recompute the root from the ACTUAL bytes and require it to
       // equal the on-chain anchor rootHash. Never trust the self-declared field.
+      // A mismatch or non-bundle doc is a per-ref failure — record it and try the
+      // next redundant ref rather than aborting the whole verification.
       const recomputed = await recomputeBundleRootHash(parsed);
       if (recomputed === null) {
         warnings.push(
           `Fetched content is not a full trace bundle; cannot recompute rootHash to verify against the anchor (${ref.uri})`
         );
-        return { bundle: undefined, warnings, integrityFailed: true };
+        continue;
       }
       if (normalizeHash(recomputed) !== normalizeHash(anchor.rootHash)) {
         warnings.push(
           `Fetched bundle content hashes to ${recomputed} which does not match anchor rootHash ${anchor.rootHash} (${ref.uri})`
         );
-        return { bundle: undefined, warnings, integrityFailed: true };
+        continue;
       }
 
-      return { bundle: parsed, warnings, integrityFailed: false };
+      return { bundle: parsed, warnings, verified: true };
     } catch (error) {
       warnings.push(
         `Fetch errored (${ref.uri}): ${error instanceof Error ? error.message : String(error)}`
@@ -1061,7 +1059,7 @@ async function fetchBundleFromAnchor(
     }
   }
 
-  return { bundle: undefined, warnings, integrityFailed: false };
+  return { bundle: undefined, warnings, verified: false };
 }
 
 /**

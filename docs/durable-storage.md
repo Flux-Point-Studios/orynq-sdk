@@ -39,10 +39,22 @@ import { createAnchorEntryFromManifest, buildAnchorMetadata, verifyAnchor } from
 const entry = createAnchorEntryFromManifest(manifest, { storageRefs: refs });
 const meta = buildAnchorMetadata(entry); // anchors[].storageRefs[] is carried on-chain
 
-// Later, an auditor needs only the txHash:
-const result = await verifyAnchor(provider, txHash, rootHash, { fetchBundle: true });
+// Later, an auditor needs only the txHash. The storage host is attacker-
+// controlled, so DNS gateways must be allow-listed (DNS-rebinding guard); bare
+// IP literals that pass the private-range block don't need one.
+const result = await verifyAnchor(provider, txHash, rootHash, {
+  fetchBundle: true,
+  allowedHosts: ["ipfs.io", "arweave.net"],
+});
 result.bundle; // fetched + integrity-checked against the anchor rootHash
 ```
+
+`fetchBundle` fails **closed**: if it's requested but no storage ref can be
+fetched *and* integrity-verified against the on-chain rootHash (SSRF-blocked,
+HTTP error, size-cap, network error, or hash mismatch), `result.valid` is
+`false` with a hard error — a passing verdict never rests on an unverifiable
+fetch. Redundant refs are all tried; a poisoned mirror doesn't sink the honest
+ones.
 
 Backward compatible: `storageRefs` is optional everywhere; old anchors (with only
 `storageUri`, or neither) keep parsing and verifying.
