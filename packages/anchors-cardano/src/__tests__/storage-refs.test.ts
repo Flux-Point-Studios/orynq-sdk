@@ -134,7 +134,30 @@ describe("verifyAnchor fetchBundle", () => {
 
     expect(result.valid).toBe(true);
     expect(fetchFn).toHaveBeenCalledWith("https://gw.example/bundle.json");
-    expect(result.bundle).toEqual(bundle);
+    // result.bundle is the anchor-COMMITTED projection, not the raw fetched
+    // document: rootHash + merkleRoot recompute to the anchor, and only the
+    // root-bound run fields (events/spans/rollingHash/rootHash) are carried.
+    const attached = result.bundle as {
+      privateRun: {
+        events: unknown[];
+        rollingHash: string;
+        rootHash: string;
+        id?: unknown;
+        metadata?: unknown;
+      };
+      rootHash: string;
+      merkleRoot: string;
+      publicView?: unknown;
+    };
+    expect(attached.rootHash).toBe(bundle.rootHash);
+    expect(attached.merkleRoot).toBe(bundle.merkleRoot);
+    expect(attached.privateRun.events).toHaveLength(bundle.privateRun.events.length);
+    expect(attached.privateRun.rollingHash).toBe(bundle.privateRun.rollingHash);
+    expect(attached.privateRun.rootHash).toBe(bundle.rootHash);
+    // Uncommitted fields (top-level publicView, unbound run id/metadata) are gone.
+    expect(attached.publicView).toBeUndefined();
+    expect(attached.privateRun.id).toBeUndefined();
+    expect(attached.privateRun.metadata).toBeUndefined();
     expect(result.warnings.some((w) => /does not match/i.test(w))).toBe(false);
   });
 

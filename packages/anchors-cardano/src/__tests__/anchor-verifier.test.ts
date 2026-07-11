@@ -930,8 +930,23 @@ describe("verifyAnchor fetchBundle scopes result.bundle to committed data (#77 r
     const attached = result.bundle as Record<string, unknown>;
     expect(attached.attestation).toBeUndefined();
     expect(attached.signature).toBeUndefined();
-    // The committed data survives.
-    expect((attached.privateRun as { id?: string }).id).toBe(bundle.privateRun.id);
+    // The committed data survives (root-bound run fields), while the run's own
+    // UNBOUND fields (id, metadata, agentId, status…) are dropped: the root
+    // never committed to them, so they must not be readable as verified.
+    const run = attached.privateRun as {
+      id?: unknown;
+      metadata?: unknown;
+      agentId?: unknown;
+      status?: unknown;
+      events: unknown[];
+      rollingHash: string;
+    };
+    expect(run.events).toHaveLength(bundle.privateRun.events.length);
+    expect(run.rollingHash).toBe(bundle.privateRun.rollingHash);
+    expect(run.id).toBeUndefined();
+    expect(run.metadata).toBeUndefined();
+    expect(run.agentId).toBeUndefined();
+    expect(run.status).toBeUndefined();
     expect(attached.rootHash).toBe(anchorRoot);
   });
 
@@ -963,6 +978,116 @@ describe("verifyAnchor fetchBundle scopes result.bundle to committed data (#77 r
     expect(attached.rootHash).toBe(anchorRoot);
     expect(attached.merkleRoot).toBe(bundle.merkleRoot);
     expect(attached.privateRun).toBeDefined();
+  });
+});
+
+describe("verifyAnchor fetchBundle rejects unbound projected data (#77 round-5)", () => {
+  it("drops attacker-injected privateRun fields the root never committed to", async () => {
+    const bundle = await buildRealBundle();
+    const anchorRoot = bundle.rootHash;
+
+    // Events + spans stay honest (so the recomputed root still equals the
+    // anchor), but the attacker rewrites the run's UNBOUND fields. The root
+    // folds only rolling hash + spans + manifest pin, so these are free to
+    // forge; a projection that spread them would surface attacker data as
+    // anchor-verified.
+    const forged = JSON.parse(JSON.stringify(bundle)) as TraceBundle;
+    (forged.privateRun as Record<string, unknown>).metadata = {
+      approvedBy: "totally-legit",
+    };
+    (forged.privateRun as Record<string, unknown>).agentId = "impersonated";
+    (forged.privateRun as Record<string, unknown>).status = "failed";
+
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [
+        { type: "https", uri: "https://storage.example.com/b.json", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(forged));
+
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+    });
+
+    // Root still matches (unbound fields don't affect it) → valid, but the
+    // forged unbound fields must NOT be readable on the committed projection.
+    expect(result.valid).toBe(true);
+    const run = (result.bundle as { privateRun: Record<string, unknown> })
+      .privateRun;
+    expect(run.metadata).toBeUndefined();
+    expect(run.agentId).toBeUndefined();
+    expect(run.status).toBeUndefined();
+  });
+
+  it("rejects a bundle whose manifest content does not hash to the committed pin", async () => {
+    // A pinned-manifest bundle: rootHash folds the modelManifestHash STRING.
+    const run = await createTrace({
+      agentId: "agent-m59",
+      manifest: { modelHash: "sha256:" + "a".repeat(64) },
+    });
+    const span = addSpan(run, { name: "work", visibility: "public" });
+    await addEvent(run, span.id, {
+      kind: "command",
+      command: "do the thing",
+      visibility: "public",
+    });
+    await closeSpan(run, span.id);
+    const bundle = await finalizeTrace(run);
+    const anchorRoot = bundle.rootHash;
+    expect(bundle.privateRun.modelManifestHash).toBeDefined();
+
+    // Attacker swaps the manifest CONTENT (so it no longer hashes to the pin)
+    // while leaving modelManifestHash untouched — the root still equals the
+    // anchor, but the surfaced manifest would be attacker-chosen bytes.
+    const forged = JSON.parse(JSON.stringify(bundle)) as TraceBundle;
+    (
+      forged.privateRun.modelManifest as { modelHash: string }
+    ).modelHash = "sha256:" + "b".repeat(64);
+
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [
+        { type: "https", uri: "https://storage.example.com/b.json", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(forged));
+
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+    });
+
+    // Manifest content is unbound → the fetch cannot be independently
+    // recomputed → no bundle attached, and it must not read as verified.
+    expect(result.bundle).toBeUndefined();
+    expect(result.valid).toBe(false);
+
+    // Positive control: the untampered manifest bundle IS attached, with the
+    // verified manifest content surfaced.
+    const cleanFetch = vi.fn().mockResolvedValue(jsonResponse(bundle));
+    const cleanResult = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: cleanFetch as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+    });
+    expect(cleanResult.valid).toBe(true);
+    const cleanRun = (
+      cleanResult.bundle as {
+        privateRun: { modelManifest?: { modelHash: string }; modelManifestHash?: string };
+      }
+    ).privateRun;
+    expect(cleanRun.modelManifest?.modelHash).toBe("sha256:" + "a".repeat(64));
+    expect(cleanRun.modelManifestHash).toBe(bundle.privateRun.modelManifestHash);
   });
 });
 

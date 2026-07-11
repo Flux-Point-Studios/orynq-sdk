@@ -57,8 +57,14 @@ import {
   computeEventHash,
   computeSpanHash,
   buildSpanMerkleTree,
+  computeModelManifestHash,
 } from "@fluxpointstudios/orynq-sdk-process-trace";
-import type { TraceRun, TraceEvent, TraceSpan } from "@fluxpointstudios/orynq-sdk-process-trace";
+import type {
+  TraceRun,
+  TraceEvent,
+  TraceSpan,
+  ModelManifest,
+} from "@fluxpointstudios/orynq-sdk-process-trace";
 
 /**
  * Options for {@link verifyAnchor} (issue #61).
@@ -901,14 +907,35 @@ async function resolveHostAddresses(
 }
 
 /**
+ * The ONLY private-run fields the anchor rootHash structurally commits to: the
+ * events (via the recomputed rolling hash), the spans (rehashed into the root +
+ * Merkle tree), the rolling/root hashes themselves, and — only when its content
+ * hashes to the committed pin — the model manifest. Every other `TraceRun` field
+ * (id, agentId, status, metadata, timestamps, schemaVersion, strict, nextSeq…)
+ * is NOT folded into the root, so it is attacker-controllable in a fetched
+ * document and is deliberately absent from this type: an auditor cannot read an
+ * uncommitted field as anchor-verified because it is not here to read.
+ */
+export interface CommittedRun {
+  events: TraceEvent[];
+  spans: TraceSpan[];
+  rollingHash: string;
+  rootHash: string;
+  /** Present only when `modelManifestHash` matched the recomputed content hash. */
+  modelManifest?: ModelManifest;
+  /** The manifest commitment folded into `rootHash` (may be present without content). */
+  modelManifestHash?: string;
+}
+
+/**
  * The subset of a fetched trace bundle that the anchor rootHash actually commits
- * to: the private run (events/spans/manifest pin) plus the independently
- * recomputed rootHash + merkleRoot. `publicView` and any other top-level fields
- * are NOT bound by the anchor, so they are deliberately excluded — an auditor
- * must never read uncommitted, attacker-controllable fields as anchor-verified.
+ * to: the committed private-run projection plus the independently recomputed
+ * rootHash + merkleRoot. `publicView` and any other top-level fields are NOT
+ * bound by the anchor, so they are deliberately excluded — an auditor must never
+ * read uncommitted, attacker-controllable fields as anchor-verified.
  */
 export interface CommittedBundle {
-  privateRun: TraceRun;
+  privateRun: CommittedRun;
   rootHash: string;
   merkleRoot: string;
   modelManifestHash?: string;
@@ -922,8 +949,9 @@ export interface CommittedBundle {
  * spans, or the model-manifest pin changes the result; the returned rootHash and
  * merkleRoot are likewise recomputed, never trusted from the fetched document.
  * Returns null when the document is not a full bundle we can independently
- * recompute (e.g. a manifest with redacted spans) — in which case integrity
- * cannot be established from the fetch alone.
+ * recompute (e.g. a manifest with redacted spans), OR when it carries model-
+ * manifest content whose bytes do not hash to the committed pin — in which case
+ * integrity cannot be established from the fetch alone.
  */
 async function recomputeBundleRootHash(
   parsed: unknown
@@ -967,15 +995,40 @@ async function recomputeBundleRootHash(
     // independent of the fetched document's self-declared merkleRoot.
     const merkle = await buildSpanMerkleTree(rehashedSpans, rehashedEvents);
 
-    // Reconstruct the private run carrying ONLY recomputed hashes, so the
-    // attached committed subset reflects the anchor commitment, not fetched
-    // fields. Root/rolling hashes are pinned to the recomputed values.
-    const committedRun: TraceRun = {
-      ...(run as TraceRun),
+    // The rootHash folds run.modelManifestHash (the commitment STRING) but NOT
+    // the manifest CONTENT. A fetched document can therefore carry a manifest
+    // whose bytes do not hash to the committed pin: the root still matches the
+    // anchor, yet surfacing that content would hand an auditor attacker-chosen
+    // bytes as "anchor-verified". So when content is present it MUST recompute to
+    // the committed hash; a mismatch — or content with no committed hash to bind
+    // it — makes the manifest unverifiable from the fetch, and we reject the whole
+    // bundle rather than surface an unbound manifest.
+    let committedManifest: ModelManifest | undefined;
+    if (run.modelManifest !== undefined) {
+      const recomputedManifestHash = await computeModelManifestHash(run.modelManifest);
+      if (
+        run.modelManifestHash === undefined ||
+        recomputedManifestHash !== run.modelManifestHash
+      ) {
+        return null;
+      }
+      committedManifest = run.modelManifest;
+    }
+
+    // Carry ONLY the anchor-bound fields (see CommittedRun). Unbound TraceRun
+    // fields (id, agentId, status, metadata, timestamps, schemaVersion, strict,
+    // nextSeq…) are dropped — never spread — so they cannot be read back as
+    // verified. The manifest content appears only after the content-vs-pin check
+    // above; the pin string itself is surfaced whenever it was folded into root.
+    const committedRun: CommittedRun = {
       events: rehashedEvents,
       spans: rehashedSpans,
       rollingHash,
       rootHash,
+      ...(committedManifest !== undefined ? { modelManifest: committedManifest } : {}),
+      ...(run.modelManifestHash !== undefined
+        ? { modelManifestHash: run.modelManifestHash }
+        : {}),
     };
     const committed: CommittedBundle = {
       privateRun: committedRun,
