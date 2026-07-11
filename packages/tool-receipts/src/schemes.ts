@@ -95,14 +95,70 @@ function keyToString(key: string | Uint8Array): string {
   return typeof key === "string" ? key : Buffer.from(key).toString("utf8");
 }
 
+/** Algorithm-OID DER byte sequences that appear inside a SubjectPublicKeyInfo. */
+const SPKI_ALG_OIDS: readonly (readonly number[])[] = [
+  // rsaEncryption 1.2.840.113549.1.1.1
+  [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01],
+  // id-ecPublicKey 1.2.840.10045.2.1
+  [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01],
+  // id-Ed25519 1.3.101.112
+  [0x2b, 0x65, 0x70],
+  // id-Ed448 1.3.101.113
+  [0x2b, 0x65, 0x71],
+];
+
+/**
+ * True when raw bytes are a DER-encoded SubjectPublicKeyInfo: an outer SEQUENCE
+ * (`0x30`) whose DER length header (short-form `< 0x80`, or long-form `0x81`/
+ * `0x82`) frames the whole buffer, carrying a known asymmetric algorithm OID.
+ * Covers Ed25519 (`30 2a`), EC P-256/P-384 (`30 59`/`30 76`), and RSA
+ * (`30 82 ..`). This catches a public key handed to the HMAC path as raw DER
+ * (Uint8Array/Buffer), which the PEM/JWK string checks above miss.
+ */
+function looksLikeDerPublicKey(bytes: Uint8Array): boolean {
+  if (bytes.length < 8 || bytes[0] !== 0x30) return false;
+  const lenByte = bytes[1]!;
+  let contentStart: number;
+  let contentLen: number;
+  if (lenByte < 0x80) {
+    contentStart = 2;
+    contentLen = lenByte;
+  } else if (lenByte === 0x81) {
+    contentStart = 3;
+    contentLen = bytes[2]!;
+  } else if (lenByte === 0x82) {
+    contentStart = 4;
+    contentLen = (bytes[2]! << 8) | bytes[3]!;
+  } else {
+    return false;
+  }
+  // The length header must frame exactly the remaining bytes — a genuine DER doc,
+  // not arbitrary secret bytes that happen to start with 0x30.
+  if (contentStart + contentLen !== bytes.length) return false;
+  return SPKI_ALG_OIDS.some((oid) => indexOfBytes(bytes, oid) !== -1);
+}
+
+/** Index of a byte subsequence in a byte array, or -1. */
+function indexOfBytes(haystack: Uint8Array, needle: readonly number[]): number {
+  outer: for (let i = 0; i + needle.length <= haystack.length; i++) {
+    for (let j = 0; j < needle.length; j++) {
+      if (haystack[i + j] !== needle[j]) continue outer;
+    }
+    return i;
+  }
+  return -1;
+}
+
 /**
  * True when the resolved key material is an ASYMMETRIC PUBLIC key — a PEM
- * SPKI/PKCS#1 public block, or a JWK with an asymmetric `kty`. Such material is
- * public (known to an attacker), so it must NEVER be fed into an HMAC branch:
- * an attacker who sets `alg:HS256` could HMAC with the public key and forge a
- * "valid" symmetric signature (JWT algorithm confusion).
+ * SPKI/PKCS#1 public block, a JWK with an asymmetric `kty`, or raw DER-encoded
+ * SubjectPublicKeyInfo bytes. Such material is public (known to an attacker), so
+ * it must NEVER be fed into an HMAC branch: an attacker who sets `alg:HS256`
+ * could HMAC with the public key and forge a "valid" symmetric signature (JWT
+ * algorithm confusion).
  */
 function looksLikeAsymmetricPublicKey(key: string | Uint8Array): boolean {
+  if (typeof key !== "string" && looksLikeDerPublicKey(key)) return true;
   const s = keyToString(key).trim();
   if (
     s.includes("-----BEGIN PUBLIC KEY-----") ||

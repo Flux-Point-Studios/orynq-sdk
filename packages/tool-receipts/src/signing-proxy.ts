@@ -58,9 +58,11 @@ export interface SigningProxyOptions {
   publicKey?: string;
   /**
    * Call-binding context signed into the receipt header so a genuine receipt
-   * cannot be lifted into a different trace/request. When set, the verifier
-   * requires the enclosing trace's runId (and the recorded request hash) to
-   * equal these signed values, marking the receipt `callBound`.
+   * cannot be lifted into a different trace/request. Any signed value that
+   * disagrees with the enclosing trace is a hard verification failure. To make a
+   * receipt `callBound` (request cryptographically attributed), sign BOTH `runId`
+   * AND `requestHash` — binding only the runId scopes the trace but leaves the
+   * request unauthenticated, so the receipt verifies but is NOT `callBound`.
    */
   binding?: { runId: string; requestHash?: string };
 }

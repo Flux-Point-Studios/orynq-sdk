@@ -199,7 +199,12 @@ describe("JWS receipts via signing proxy (anti-lie pattern)", () => {
     const proxy = createSigningProxy({ signer: "tee://x", alg: "EdDSA", privateKey, publicKey: pem(publicKey) });
     const payload = { a: 1 };
     const receipt = proxy.sign(payload);
-    receipt.signature = receipt.signature.slice(0, -2) + "AA";
+    // Deterministic tamper: flip a byte in the DECODED signature and re-encode.
+    // A base64url character swap can decode to identical bytes for a 64-byte
+    // ed25519 sig, so tamper at the byte level to reliably corrupt it.
+    const sigBytes = Buffer.from(receipt.signature, "base64url");
+    sigBytes[Math.floor(sigBytes.length / 2)] ^= 0xff;
+    receipt.signature = sigBytes.toString("base64url");
     const bundle = await traceWithReceipt(receipt, payload);
     const outcome = await verifyToolReceipts(bundle, { keys: { "tee://x": pem(publicKey) } });
     expect(outcome.results[0]!.verified).toBe(false);
@@ -269,7 +274,9 @@ describe("verifyTrace integration", () => {
     const proxy = createSigningProxy({ signer: "tee://bad", alg: "EdDSA", privateKey, publicKey: pem(publicKey) });
     const payload = { ok: true };
     const receipt = proxy.sign(payload);
-    receipt.signature = receipt.signature.slice(0, -2) + "AA";
+    const sigBytes = Buffer.from(receipt.signature, "base64url");
+    sigBytes[Math.floor(sigBytes.length / 2)] ^= 0xff;
+    receipt.signature = sigBytes.toString("base64url");
     const bundle = await traceWithReceipt(receipt, payload);
 
     const result = await verifyTrace(bundle, { keys: { "tee://bad": pem(publicKey) } });

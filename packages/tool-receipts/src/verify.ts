@@ -47,12 +47,15 @@ export interface ToolReceiptVerificationResult {
   signer: string;
   verified: boolean;
   /**
-   * True when the signature cryptographically binds this receipt to THIS
-   * trace's runId + request (self-signed JWS anti-lie path). False for external
-   * webhook schemes (stripe/github/rfc9421): those prove authenticity of the
-   * response body but cannot cover our runId, so cross-trace call-binding is not
-   * provable by the signature — anti-replay for them relies on the bundle Merkle
-   * commitment + the scheme's own timestamp window.
+   * True ONLY when the signature cryptographically binds this receipt to THIS
+   * trace's runId AND the recorded request hash (self-signed JWS anti-lie path,
+   * with a signed `orynqBinding.{runId,requestHash}` that both matched). A JWS
+   * with no binding, or one that binds only the runId, is `false` — the request
+   * is not authenticated. Always `false` for external webhook schemes
+   * (stripe/github/rfc9421): those prove authenticity of the response body but
+   * cannot cover our runId/request, so call-binding is not provable by the
+   * signature and request-attribution must not be inferred — anti-replay for them
+   * relies on the bundle Merkle commitment + the scheme's own timestamp window.
    */
   callBound: boolean;
   /** When not verified, a short machine-readable reason. */
@@ -77,6 +80,15 @@ export interface VerifyToolReceiptsContext extends ToolReceiptVerifyContext {
    * {@link verifyToolReceipts} supplies it automatically from the bundle.
    */
   runId?: string;
+  /**
+   * When true, a receipt whose signature does not provably bind THIS call
+   * (runId + request hash) is `verified: false` with reason `call-binding-required`.
+   * Use this when request-attribution must be cryptographic: it rejects unbound
+   * JWS receipts and all webhook schemes (whose external signatures cannot cover
+   * our request). Default false — call-binding is reported via `callBound` but not
+   * required.
+   */
+  requireCallBinding?: boolean;
 }
 
 /** Extract all `tool-receipt` events from a bundle (ordered by seq). */
@@ -98,9 +110,11 @@ export async function verifyToolReceipt(
     scheme,
     signer: event.receipt.signer,
   };
-  // Only the self-signed JWS path can cover our runId + request; external
-  // webhook schemes prove authenticity of the body only (see callBound docs).
-  const callBound = scheme === "jws";
+  // `callBound` reflects PROVEN call-binding, computed after the checks below —
+  // never assumed from the scheme. Only a self-signed JWS carrying a signed
+  // `orynqBinding.{runId,requestHash}` that both match can be call-bound; external
+  // webhook schemes never can (their signature cannot cover our runId/request).
+  const callBound = false;
   const verifier = ctx?.verifiers?.[scheme] ?? BUILTIN_TOOL_RECEIPT_VERIFIERS[scheme];
   if (!verifier) {
     return {
@@ -133,22 +147,38 @@ export async function verifyToolReceipt(
       }
     }
     // Self-signed JWS receipts additionally commit to a binding context
-    // {runId, requestHash}. When the signer bound them, the enclosing trace's
-    // runId + request MUST match — this blocks lifting a genuine receipt into a
-    // different trace/request. External webhooks (callBound=false) cannot cover
-    // runId, so their anti-replay is the bundle Merkle commitment + timestamp.
-    if (callBound) {
+    // {runId, requestHash}. When present, the enclosing trace's runId AND the
+    // recorded request hash MUST both match — this authenticates the request and
+    // blocks lifting a genuine receipt into a different trace/request. A JWS that
+    // binds only runId (or nothing) is NOT call-bound: its request is
+    // unauthenticated. External webhooks can never cover runId/request, so their
+    // anti-replay is the bundle Merkle commitment + timestamp.
+    let provenCallBound = false;
+    if (scheme === "jws") {
       const bound = jwsBindingContext(event);
       if (bound !== null) {
+        // A signed binding is a commitment: any mismatch is a hard failure, not a
+        // downgrade to "unbound" — the signer attested to a specific call.
         if (ctx?.runId !== undefined && bound.runId !== ctx.runId) {
           return { ...base, callBound, verified: false, reason: "call-binding-mismatch" };
         }
         if (bound.requestHash !== undefined && !hexEq(bound.requestHash, event.request.hash)) {
           return { ...base, callBound, verified: false, reason: "call-binding-mismatch" };
         }
+        // Call-binding is PROVEN only when the request hash was signed and matched
+        // AND the runId was verified against this trace. Binding only the runId
+        // leaves the request unauthenticated → not call-bound.
+        provenCallBound =
+          bound.requestHash !== undefined &&
+          hexEq(bound.requestHash, event.request.hash) &&
+          ctx?.runId !== undefined &&
+          bound.runId === ctx.runId;
       }
     }
-    return { ...base, callBound, verified: true };
+    if (ctx?.requireCallBinding && !provenCallBound) {
+      return { ...base, callBound: provenCallBound, verified: false, reason: "call-binding-required" };
+    }
+    return { ...base, callBound: provenCallBound, verified: true };
   } catch (error) {
     return {
       ...base,
