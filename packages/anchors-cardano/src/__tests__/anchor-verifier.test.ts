@@ -858,6 +858,114 @@ describe("verifyAnchor fetchBundle integrity (#61)", () => {
   });
 });
 
+describe("verifyAnchor fetchBundle scopes result.bundle to committed data (#77 round-4)", () => {
+  it("strips an attacker-tampered publicView the anchor root never committed to", async () => {
+    const bundle = await buildRealBundle();
+    const anchorRoot = bundle.rootHash;
+
+    // The privateRun is honest (hashes to the anchor root), but the attacker
+    // rewrites the publicView status + injects a fake public span. The anchor
+    // root binds only events/spans/manifest, NOT publicView, so a naive verifier
+    // that attaches the raw JSON would surface this tampered view as "verified".
+    const forged = JSON.parse(JSON.stringify(bundle)) as TraceBundle & {
+      publicView: { status: string; totalSpans: number };
+    };
+    forged.publicView.status = "cancelled";
+    forged.publicView.totalSpans = 999;
+
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [
+        { type: "https", uri: "https://storage.example.com/b.json", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(forged));
+
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+    });
+
+    // The root still matches, so the fetch is valid...
+    expect(result.valid).toBe(true);
+    expect(result.bundle).toBeDefined();
+    // ...but result.bundle must carry ONLY anchor-committed data. The tampered,
+    // uncommitted publicView must NOT be surfaced as if it were anchor-verified.
+    const attached = result.bundle as { publicView?: unknown };
+    expect(attached.publicView).toBeUndefined();
+  });
+
+  it("drops extra top-level fields the anchor root never committed to", async () => {
+    const bundle = await buildRealBundle();
+    const anchorRoot = bundle.rootHash;
+
+    // Attacker appends a trusted-looking, uncommitted top-level field.
+    const forged = JSON.parse(JSON.stringify(bundle)) as TraceBundle &
+      Record<string, unknown>;
+    forged.attestation = { approvedBy: "totally-legit", verified: true };
+    forged.signature = "0x" + "de".repeat(32);
+
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [
+        { type: "https", uri: "https://storage.example.com/b.json", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(forged));
+
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+    });
+
+    expect(result.valid).toBe(true);
+    const attached = result.bundle as Record<string, unknown>;
+    expect(attached.attestation).toBeUndefined();
+    expect(attached.signature).toBeUndefined();
+    // The committed data survives.
+    expect((attached.privateRun as { id?: string }).id).toBe(bundle.privateRun.id);
+    expect(attached.rootHash).toBe(anchorRoot);
+  });
+
+  it("attached committed data still hashes to the anchor root", async () => {
+    const bundle = await buildRealBundle();
+    const anchorRoot = bundle.rootHash;
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [
+        { type: "https", uri: "https://storage.example.com/b.json", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(bundle));
+
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+    });
+
+    const attached = result.bundle as {
+      privateRun: unknown;
+      rootHash: string;
+      merkleRoot: string;
+    };
+    expect(attached.rootHash).toBe(anchorRoot);
+    expect(attached.merkleRoot).toBe(bundle.merkleRoot);
+    expect(attached.privateRun).toBeDefined();
+  });
+});
+
 describe("verifyAnchor fetchBundle SSRF hardening (#61)", () => {
   it("rejects an http:// (non-https) storage URI", async () => {
     const bundle = await buildRealBundle();
@@ -910,6 +1018,59 @@ describe("verifyAnchor fetchBundle SSRF hardening (#61)", () => {
     expect(fetchFn).not.toHaveBeenCalled();
     expect(result.bundle).toBeUndefined();
     expect(result.warnings.some((w) => /allow-?list|host/i.test(w))).toBe(true);
+  });
+
+  it("rejects an allow-listed host that resolves to a blocked IP (post-resolution guard)", async () => {
+    const bundle = await buildRealBundle();
+    const anchorRoot = bundle.rootHash;
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [
+        { type: "https", uri: "https://storage.example.com/b.json", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(bundle));
+
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+      // DNS-rebind: the allow-listed name resolves to the cloud metadata IP.
+      resolveHostname: async () => ["169.254.169.254"],
+    });
+
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(result.bundle).toBeUndefined();
+    expect(result.warnings.some((w) => /blocked address|169\.254/.test(w))).toBe(true);
+  });
+
+  it("allows an allow-listed host that resolves to a public IP", async () => {
+    const bundle = await buildRealBundle();
+    const anchorRoot = bundle.rootHash;
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [
+        { type: "https", uri: "https://storage.example.com/b.json", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(bundle));
+
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+      resolveHostname: async () => ["93.184.216.34"],
+    });
+
+    expect(fetchFn).toHaveBeenCalled();
+    expect(result.valid).toBe(true);
+    expect(result.bundle).toBeDefined();
   });
 
   it("rejects a private/link-local host even without an allow-list", async () => {

@@ -382,10 +382,13 @@ export interface AnchorVerificationResult {
   warnings: string[];
 
   /**
-   * The fetched trace bundle/manifest, present only when verification was run
-   * with `{ fetchBundle: true }` and a storage reference resolved successfully.
-   * Parsed JSON of the retrieved content (verifier checks its rootHash against
-   * the anchor and warns on mismatch).
+   * The anchor-COMMITTED subset of the fetched trace bundle, present only when
+   * verification ran with `{ fetchBundle: true }` and a storage ref both fetched
+   * AND hash-matched the on-chain anchor rootHash. It carries only what the
+   * anchor root binds — `privateRun` (events/spans/manifest pin) plus the
+   * independently recomputed `rootHash`/`merkleRoot`. The fetched `publicView`
+   * and any other top-level fields are excluded: the anchor does not commit to
+   * them, so they must not be read as anchor-verified.
    */
   bundle?: unknown;
 }

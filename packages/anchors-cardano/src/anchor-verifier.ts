@@ -56,6 +56,7 @@ import {
   computeRollingHash,
   computeEventHash,
   computeSpanHash,
+  buildSpanMerkleTree,
 } from "@fluxpointstudios/orynq-sdk-process-trace";
 import type { TraceRun, TraceEvent, TraceSpan } from "@fluxpointstudios/orynq-sdk-process-trace";
 
@@ -73,14 +74,24 @@ export interface VerifyAnchorOptions {
   arweaveGateway?: string;
   /**
    * SSRF allow-list of hostnames the verifier may fetch from (case-insensitive,
-   * exact host match). When set, any URL whose host is not listed is rejected.
-   * When OMITTED, fetches are still restricted to https:// with public hosts:
-   * private/link-local/loopback/ULA/metadata addresses (incl. IPv4-mapped IPv6)
-   * are always rejected, and a DNS hostname is resolved and rejected if it maps
-   * to any private/blocked address (post-resolution guard). Supply an allow-list
-   * for the strongest guarantee.
+   * exact host match). When set, any URL whose host is not listed is rejected;
+   * an allow-listed DNS name is additionally resolved (see {@link resolveHostname})
+   * and rejected if it maps to a private/link-local/metadata address, so an
+   * allow-listed host cannot silently point at an internal target. When OMITTED,
+   * fetches are still restricted to https:// with public hosts: private/link-
+   * local/loopback/ULA/metadata literals (incl. IPv4-mapped IPv6) are always
+   * rejected, and a DNS hostname is refused outright (it cannot be pinned).
+   * Supply an allow-list for the strongest guarantee.
    */
   allowedHosts?: string[];
+  /**
+   * Resolve a hostname to its IP addresses for the allow-listed post-resolution
+   * SSRF guard. Defaults to Node's `dns.promises.lookup` when available; when no
+   * resolver is available (e.g. an edge runtime) the guard is skipped and the
+   * documented DNS-rebinding residual applies — pass an IP literal or a
+   * connection-pinning `fetchFn` to close it entirely.
+   */
+  resolveHostname?: (host: string) => Promise<string[]>;
   /**
    * Hard cap on the number of response bytes read from a storage fetch. A
    * `StorageRef.size` smaller than this further tightens the cap for that ref.
@@ -829,6 +840,19 @@ async function resolveStorageUri(
     if (!allowed.includes(host.toLowerCase())) {
       return { reason: `host not in allow-list: ${host}` };
     }
+    // Post-resolution guard: an allow-listed DNS name must not resolve to a
+    // private/link-local/metadata IP. Closes the case where an allow-listed host
+    // silently points at an internal target. IP literals already passed the
+    // block-check above and need no resolution.
+    if (!isIpLiteral(host)) {
+      const addrs = await resolveHostAddresses(host, options);
+      if (addrs !== null) {
+        const blocked = addrs.find((ip) => isBlockedHost(ip));
+        if (blocked !== undefined) {
+          return { reason: `allow-listed host resolves to a blocked address (${blocked}): ${host}` };
+        }
+      }
+    }
     return { url: resolved };
   }
 
@@ -854,18 +878,59 @@ async function resolveStorageUri(
 }
 
 /**
- * Recompute a fetched trace bundle's rootHash from its ACTUAL content, using the
- * same canonical derivation the bundle builder uses. The rolling hash is
- * recomputed from the events themselves (NOT read from the stored field), so
- * any tampering with events, spans, or the model-manifest pin changes the
- * result. Returns null when the document is not a full bundle we can
- * independently recompute (e.g. a manifest with redacted spans) — in which case
- * integrity cannot be established from the fetch alone.
+ * Resolve a hostname to IP strings via the injected resolver, or Node's
+ * `dns.promises.lookup` when available. Returns null when no resolver is
+ * available (edge runtime) or resolution fails — the caller then falls back to
+ * the documented DNS-rebinding residual rather than failing the fetch outright.
  */
-async function recomputeBundleRootHash(parsed: unknown): Promise<string | null> {
+async function resolveHostAddresses(
+  host: string,
+  options: VerifyAnchorOptions
+): Promise<string[] | null> {
+  try {
+    if (options.resolveHostname) {
+      return await options.resolveHostname(host);
+    }
+    const dns = await import("node:dns").then((m) => m.promises).catch(() => null);
+    if (!dns) return null;
+    const records = await dns.lookup(host, { all: true });
+    return records.map((r) => r.address);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The subset of a fetched trace bundle that the anchor rootHash actually commits
+ * to: the private run (events/spans/manifest pin) plus the independently
+ * recomputed rootHash + merkleRoot. `publicView` and any other top-level fields
+ * are NOT bound by the anchor, so they are deliberately excluded — an auditor
+ * must never read uncommitted, attacker-controllable fields as anchor-verified.
+ */
+export interface CommittedBundle {
+  privateRun: TraceRun;
+  rootHash: string;
+  merkleRoot: string;
+  modelManifestHash?: string;
+}
+
+/**
+ * Recompute a fetched trace bundle's rootHash from its ACTUAL content, using the
+ * same canonical derivation the bundle builder uses, and return it alongside the
+ * anchor-COMMITTED subset. The rolling hash is recomputed from the events
+ * themselves (NOT read from the stored field), so any tampering with events,
+ * spans, or the model-manifest pin changes the result; the returned rootHash and
+ * merkleRoot are likewise recomputed, never trusted from the fetched document.
+ * Returns null when the document is not a full bundle we can independently
+ * recompute (e.g. a manifest with redacted spans) — in which case integrity
+ * cannot be established from the fetch alone.
+ */
+async function recomputeBundleRootHash(
+  parsed: unknown
+): Promise<{ rootHash: string; committed: CommittedBundle } | null> {
   if (!parsed || typeof parsed !== "object") return null;
   const run = (parsed as { privateRun?: unknown }).privateRun as
-    | Partial<TraceRun>
+    | (Partial<TraceRun> & Record<string, unknown>)
     | undefined;
   if (!run || !Array.isArray(run.events) || !Array.isArray(run.spans)) {
     return null;
@@ -875,15 +940,17 @@ async function recomputeBundleRootHash(parsed: unknown): Promise<string | null> 
     const spans = run.spans as TraceSpan[];
     const rollingHash = await computeRollingHash(events);
 
-    // Recompute EACH span hash from its actual header + event hashes (the same
-    // derivation the bundle builder uses) — never trust the fetched span.hash.
-    // Event hashes are likewise recomputed, so tampering with any span-header
-    // field, event, or ordering changes the root. computeRootHash reads
-    // span.hash, so feed it spans carrying the freshly recomputed hashes.
+    // Recompute EACH event + span hash from actual content (the same derivation
+    // the bundle builder uses) — never trust the fetched span.hash/event.hash.
+    // Tampering with any span-header field, event, or ordering changes the root.
     const eventHashById = new Map<string, string>();
     for (const event of events) {
       eventHashById.set(event.id, await computeEventHash(event));
     }
+    const rehashedEvents: TraceEvent[] = events.map((e) => ({
+      ...e,
+      hash: eventHashById.get(e.id) ?? "",
+    }));
     const rehashedSpans: TraceSpan[] = [];
     for (const span of spans) {
       const spanEventHashes = span.eventIds
@@ -895,7 +962,30 @@ async function recomputeBundleRootHash(parsed: unknown): Promise<string | null> 
       rehashedSpans.push({ ...span, hash: spanHash });
     }
 
-    return await computeRootHash(rollingHash, rehashedSpans, run.modelManifestHash);
+    const rootHash = await computeRootHash(rollingHash, rehashedSpans, run.modelManifestHash);
+    // Merkle root is recomputed from the rehashed spans+events so it too is
+    // independent of the fetched document's self-declared merkleRoot.
+    const merkle = await buildSpanMerkleTree(rehashedSpans, rehashedEvents);
+
+    // Reconstruct the private run carrying ONLY recomputed hashes, so the
+    // attached committed subset reflects the anchor commitment, not fetched
+    // fields. Root/rolling hashes are pinned to the recomputed values.
+    const committedRun: TraceRun = {
+      ...(run as TraceRun),
+      events: rehashedEvents,
+      spans: rehashedSpans,
+      rollingHash,
+      rootHash,
+    };
+    const committed: CommittedBundle = {
+      privateRun: committedRun,
+      rootHash,
+      merkleRoot: merkle.rootHash,
+      ...(run.modelManifestHash !== undefined
+        ? { modelManifestHash: run.modelManifestHash }
+        : {}),
+    };
+    return { rootHash, committed };
   } catch {
     return null;
   }
@@ -1044,14 +1134,17 @@ async function fetchBundleFromAnchor(
         );
         continue;
       }
-      if (normalizeHash(recomputed) !== normalizeHash(anchor.rootHash)) {
+      if (normalizeHash(recomputed.rootHash) !== normalizeHash(anchor.rootHash)) {
         warnings.push(
-          `Fetched bundle content hashes to ${recomputed} which does not match anchor rootHash ${anchor.rootHash} (${ref.uri})`
+          `Fetched bundle content hashes to ${recomputed.rootHash} which does not match anchor rootHash ${anchor.rootHash} (${ref.uri})`
         );
         continue;
       }
 
-      return { bundle: parsed, warnings, verified: true };
+      // Attach ONLY the anchor-committed subset. The fetched publicView and any
+      // other top-level fields are not bound by the anchor root, so surfacing
+      // them would let an auditor read attacker-controllable data as verified.
+      return { bundle: recomputed.committed, warnings, verified: true };
     } catch (error) {
       warnings.push(
         `Fetch errored (${ref.uri}): ${error instanceof Error ? error.message : String(error)}`
