@@ -56,6 +56,13 @@ export interface SigningProxyOptions {
    * (public keys only).
    */
   publicKey?: string;
+  /**
+   * Call-binding context signed into the receipt header so a genuine receipt
+   * cannot be lifted into a different trace/request. When set, the verifier
+   * requires the enclosing trace's runId (and the recorded request hash) to
+   * equal these signed values, marking the receipt `callBound`.
+   */
+  binding?: { runId: string; requestHash?: string };
 }
 
 function b64url(input: string | Buffer): string {
@@ -106,7 +113,17 @@ export function createSigningProxy(opts: SigningProxyOptions): SigningProxy {
   if (!opts.signer) throw new Error("createSigningProxy: `signer` is required");
   return {
     sign(payload: unknown): ToolReceiptEvent["receipt"] {
-      const header = { alg: opts.alg, typ: "JWT", kid: opts.signer };
+      // The call-binding lives in the (signed) header so the payload segment
+      // stays the canonical response body the response-hash commitment covers.
+      const header: Record<string, unknown> = { alg: opts.alg, typ: "JWT", kid: opts.signer };
+      if (opts.binding) {
+        header.orynqBinding = {
+          runId: opts.binding.runId,
+          ...(opts.binding.requestHash !== undefined
+            ? { requestHash: opts.binding.requestHash }
+            : {}),
+        };
+      }
       const h = b64url(JSON.stringify(header));
       const body = typeof payload === "string" ? payload : canonicalize(payload);
       const p = b64url(body);

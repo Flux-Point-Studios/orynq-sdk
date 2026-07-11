@@ -37,6 +37,13 @@ export interface ToolReceiptVerifyContext {
   /** Epoch-seconds clock override (testing). */
   nowSec?: number;
   /**
+   * Optional per-signer expected-algorithm allow-list (defense-in-depth against
+   * algorithm confusion). When present for a signer, any receipt whose resolved
+   * `alg` is not listed is rejected — e.g. `{ "tee://oracle": ["EdDSA"] }` pins
+   * that signer to EdDSA so an attacker-set `alg:HS256` is refused.
+   */
+  keyAlgs?: Record<string, string[]>;
+  /**
    * Accept a public key embedded in `receipt.params.publicKey` when no
    * out-of-band key is configured. This is a CONVENIENCE for internal
    * consistency checks only — it is NOT an authenticity guarantee, because the
@@ -84,6 +91,64 @@ async function resolveKey(
 
 function keyToString(key: string | Uint8Array): string {
   return typeof key === "string" ? key : Buffer.from(key).toString("utf8");
+}
+
+/**
+ * True when the resolved key material is an ASYMMETRIC PUBLIC key — a PEM
+ * SPKI/PKCS#1 public block, or a JWK with an asymmetric `kty`. Such material is
+ * public (known to an attacker), so it must NEVER be fed into an HMAC branch:
+ * an attacker who sets `alg:HS256` could HMAC with the public key and forge a
+ * "valid" symmetric signature (JWT algorithm confusion).
+ */
+function looksLikeAsymmetricPublicKey(key: string | Uint8Array): boolean {
+  const s = keyToString(key).trim();
+  if (
+    s.includes("-----BEGIN PUBLIC KEY-----") ||
+    s.includes("-----BEGIN RSA PUBLIC KEY-----")
+  ) {
+    return true;
+  }
+  if (s.startsWith("{")) {
+    try {
+      const jwk = JSON.parse(s) as { kty?: unknown };
+      const kty = typeof jwk.kty === "string" ? jwk.kty.toUpperCase() : "";
+      return kty === "RSA" || kty === "EC" || kty === "OKP";
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * Guard an HMAC/symmetric verification against a key that is actually an
+ * asymmetric public key. Symmetric secrets are arbitrary bytes, so we only
+ * refuse material that is unambiguously a public key.
+ */
+function assertSymmetricSecret(key: string | Uint8Array, algLabel: string): void {
+  if (looksLikeAsymmetricPublicKey(key)) {
+    throw new Error(
+      `${algLabel}: refusing to HMAC with an asymmetric public key (algorithm confusion). ` +
+        "Provide the signer's symmetric secret out-of-band, or pin the asymmetric alg via keyAlgs."
+    );
+  }
+}
+
+/**
+ * Enforce the optional per-signer expected-algorithm allow-list (defense in
+ * depth). Throws when the signer is pinned and `alg` is not allowed.
+ */
+function assertAlgAllowed(
+  event: ToolReceiptEvent,
+  ctx: ToolReceiptVerifyContext | undefined,
+  alg: string
+): void {
+  const allow = ctx?.keyAlgs?.[event.receipt.signer];
+  if (allow && !allow.includes(alg)) {
+    throw new Error(
+      `alg "${alg}" is not in the expected-algorithm allow-list for signer "${event.receipt.signer}"`
+    );
+  }
 }
 
 // =============================================================================
@@ -202,11 +267,15 @@ export async function verifyJwsReceipt(
   const { signingInput, signature, header } = parseJws(event);
   const alg = header.alg;
   if (!alg || alg === "none") throw new Error(`jws: unsupported alg "${alg}"`);
+  assertAlgAllowed(event, ctx, alg);
   const data = utf8(signingInput);
 
   if (alg.startsWith("HS")) {
     const secret = await resolveKey(event, ctx, { allowEmbedded: false });
     if (secret === undefined) throw new Error(`jws(${alg}): HMAC secret not found in verify context`);
+    // The alg comes from the attacker-controlled JWS header. Refuse to HMAC with
+    // an asymmetric public key (JWT algorithm confusion).
+    assertSymmetricSecret(secret, `jws(${alg})`);
     const hashAlg = `sha${alg.slice(2)}`;
     const expected = createHmac(hashAlg, keyToString(secret)).update(data).digest();
     return expected.length === signature.length && timingSafeEqual(expected, signature);
@@ -265,6 +334,7 @@ export async function verifyHttpMessageReceipt(
   if (!alg) {
     throw new Error("http-message-signatures: receipt.params.alg is required (RFC 9421 alg id)");
   }
+  assertAlgAllowed(event, ctx, alg);
   // The signature base is the canonical signed bytes.
   const data = utf8(event.receipt.signedPayload);
   const signature = decodeSignature(event.receipt.signature);
@@ -278,6 +348,9 @@ export async function verifyHttpMessageReceipt(
   if (alg === "hmac-sha256") {
     const secret = await resolveKey(event, ctx, { allowEmbedded: false });
     if (secret === undefined) throw new Error("http-message-signatures(hmac-sha256): secret not found");
+    // The alg is attacker-controlled — refuse to HMAC with an asymmetric public
+    // key (algorithm confusion).
+    assertSymmetricSecret(secret, "http-message-signatures(hmac-sha256)");
     const expected = createHmac("sha256", keyToString(secret)).update(data).digest();
     return expected.length === signature.length && timingSafeEqual(expected, signature);
   }
@@ -355,6 +428,32 @@ export async function responseCommitmentHash(event: ToolReceiptEvent): Promise<s
       return contentDigestSha256Hex(signedPayload);
     default:
       return null;
+  }
+}
+
+/**
+ * Read the signed call-binding context ({runId, requestHash}) from a self-signed
+ * JWS receipt's header, or `null` when the receipt is not a bound JWS. Because
+ * the header is part of the JWS signing input, these values are covered by the
+ * signature — lifting the receipt into another trace/request breaks the match.
+ */
+export function jwsBindingContext(
+  event: ToolReceiptEvent
+): { runId: string; requestHash?: string } | null {
+  if (event.receipt.scheme !== "jws") return null;
+  const seg0 = event.receipt.signedPayload.split(".")[0];
+  if (!seg0) return null;
+  try {
+    const header = JSON.parse(Buffer.from(seg0, "base64url").toString("utf8")) as {
+      orynqBinding?: { runId?: unknown; requestHash?: unknown };
+    };
+    const b = header.orynqBinding;
+    if (!b || typeof b.runId !== "string") return null;
+    return typeof b.requestHash === "string"
+      ? { runId: b.runId, requestHash: b.requestHash }
+      : { runId: b.runId };
+  } catch {
+    return null;
   }
 }
 

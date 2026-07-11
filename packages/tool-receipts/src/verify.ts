@@ -20,8 +20,10 @@ import {
   verifyJwsReceipt,
   verifyHttpMessageReceipt,
   responseCommitmentHash,
+  jwsBindingContext,
   type ToolReceiptVerifyContext,
 } from "./schemes.js";
+import { hashToolPayload } from "./record.js";
 
 /** A verifier for a single receipt scheme. */
 export type ToolReceiptSchemeVerifier = (
@@ -44,6 +46,15 @@ export interface ToolReceiptVerificationResult {
   scheme: string;
   signer: string;
   verified: boolean;
+  /**
+   * True when the signature cryptographically binds this receipt to THIS
+   * trace's runId + request (self-signed JWS anti-lie path). False for external
+   * webhook schemes (stripe/github/rfc9421): those prove authenticity of the
+   * response body but cannot cover our runId, so cross-trace call-binding is not
+   * provable by the signature — anti-replay for them relies on the bundle Merkle
+   * commitment + the scheme's own timestamp window.
+   */
+  callBound: boolean;
   /** When not verified, a short machine-readable reason. */
   reason?: string;
   error?: string;
@@ -60,6 +71,12 @@ function hexEq(a: string, b: string): boolean {
 export interface VerifyToolReceiptsContext extends ToolReceiptVerifyContext {
   /** Register or override scheme verifiers (e.g. a custom/internal scheme). */
   verifiers?: Record<string, ToolReceiptSchemeVerifier>;
+  /**
+   * The enclosing trace's run id. Self-signed JWS receipts commit to it (and to
+   * the request hash) so a genuine receipt cannot be lifted into another trace.
+   * {@link verifyToolReceipts} supplies it automatically from the bundle.
+   */
+  runId?: string;
 }
 
 /** Extract all `tool-receipt` events from a bundle (ordered by seq). */
@@ -81,27 +98,61 @@ export async function verifyToolReceipt(
     scheme,
     signer: event.receipt.signer,
   };
+  // Only the self-signed JWS path can cover our runId + request; external
+  // webhook schemes prove authenticity of the body only (see callBound docs).
+  const callBound = scheme === "jws";
   const verifier = ctx?.verifiers?.[scheme] ?? BUILTIN_TOOL_RECEIPT_VERIFIERS[scheme];
   if (!verifier) {
-    return { ...base, verified: false, error: `no verifier registered for scheme "${scheme}"` };
+    return {
+      ...base,
+      callBound,
+      verified: false,
+      error: `no verifier registered for scheme "${scheme}"`,
+    };
   }
   try {
     const sigValid = await verifier(event, ctx);
-    if (!sigValid) return { ...base, verified: false, reason: "signature-invalid" };
+    if (!sigValid) return { ...base, callBound, verified: false, reason: "signature-invalid" };
     // A valid signature is necessary but NOT sufficient: the signed content
     // must commit to the recorded response, else a genuine receipt for output
     // A can be paired with a fabricated response B (issue #60's core guarantee).
     const commit = await responseCommitmentHash(event);
     if (commit === null) {
-      return { ...base, verified: false, reason: "response-not-bound" };
+      return { ...base, callBound, verified: false, reason: "response-not-bound" };
     }
     if (!hexEq(commit, event.response.hash)) {
-      return { ...base, verified: false, reason: "response-binding-mismatch" };
+      return { ...base, callBound, verified: false, reason: "response-binding-mismatch" };
     }
-    return { ...base, verified: true };
+    // Auditors read the retained human-readable `response.payload`; when present
+    // it MUST hash to the bound `response.hash`, else an honest signature can be
+    // paired with a fabricated payload the auditor sees.
+    if (event.response.payload !== undefined) {
+      const payloadHash = await hashToolPayload(event.response.payload);
+      if (!hexEq(payloadHash, event.response.hash)) {
+        return { ...base, callBound, verified: false, reason: "response-payload-mismatch" };
+      }
+    }
+    // Self-signed JWS receipts additionally commit to a binding context
+    // {runId, requestHash}. When the signer bound them, the enclosing trace's
+    // runId + request MUST match — this blocks lifting a genuine receipt into a
+    // different trace/request. External webhooks (callBound=false) cannot cover
+    // runId, so their anti-replay is the bundle Merkle commitment + timestamp.
+    if (callBound) {
+      const bound = jwsBindingContext(event);
+      if (bound !== null) {
+        if (ctx?.runId !== undefined && bound.runId !== ctx.runId) {
+          return { ...base, callBound, verified: false, reason: "call-binding-mismatch" };
+        }
+        if (bound.requestHash !== undefined && !hexEq(bound.requestHash, event.request.hash)) {
+          return { ...base, callBound, verified: false, reason: "call-binding-mismatch" };
+        }
+      }
+    }
+    return { ...base, callBound, verified: true };
   } catch (error) {
     return {
       ...base,
+      callBound,
       verified: false,
       error: error instanceof Error ? error.message : String(error),
     };
@@ -121,9 +172,15 @@ export async function verifyToolReceipts(
   ctx?: VerifyToolReceiptsContext
 ): Promise<ToolReceiptsVerifyOutcome> {
   const events = extractToolReceipts(bundle);
+  // Bind receipt verification to THIS trace's run id (self-signed anti-replay).
+  // An explicit ctx.runId takes precedence for advanced callers.
+  const boundCtx: VerifyToolReceiptsContext = {
+    ...ctx,
+    runId: ctx?.runId ?? bundle.privateRun.id,
+  };
   const results: ToolReceiptVerificationResult[] = [];
   for (const event of events) {
-    results.push(await verifyToolReceipt(event, ctx));
+    results.push(await verifyToolReceipt(event, boundCtx));
   }
   const failed = results.filter((r) => !r.verified);
   return {

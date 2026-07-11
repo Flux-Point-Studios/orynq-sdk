@@ -36,6 +36,7 @@ export {
   verifyGitHubReceipt,
   verifyJwsReceipt,
   verifyHttpMessageReceipt,
+  jwsBindingContext,
 } from "./schemes.js";
 export type { ToolReceiptVerifyContext } from "./schemes.js";
 
