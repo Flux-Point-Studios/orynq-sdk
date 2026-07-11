@@ -22,6 +22,14 @@ import {
 } from "../anchor-verifier.js";
 import { POI_METADATA_LABEL } from "../types.js";
 import type { AnchorChainProvider, AnchorEntry, TxInfo } from "../types.js";
+import {
+  createTrace,
+  addSpan,
+  addEvent,
+  closeSpan,
+  finalizeTrace,
+} from "@fluxpointstudios/orynq-sdk-process-trace";
+import type { TraceBundle } from "@fluxpointstudios/orynq-sdk-process-trace";
 
 // =============================================================================
 // TEST FIXTURES
@@ -757,5 +765,173 @@ describe("findAnchorsInTx", () => {
     expect(result.anchors).toHaveLength(1);
     expect(result.txInfo).toBeNull();
     expect(result.errors.some((e) => e.includes("txInfo"))).toBe(true);
+  });
+});
+
+// =============================================================================
+// fetchBundle integrity + SSRF TESTS (issue #61)
+// =============================================================================
+
+async function buildRealBundle(): Promise<TraceBundle> {
+  const run = await createTrace({ agentId: "agent-c61" });
+  const span = addSpan(run, { name: "work", visibility: "public" });
+  await addEvent(run, span.id, {
+    kind: "command",
+    command: "do the thing",
+    visibility: "public",
+  });
+  await closeSpan(run, span.id);
+  return finalizeTrace(run);
+}
+
+function jsonResponse(body: unknown): Response {
+  return {
+    ok: true,
+    status: 200,
+    text: async () => (typeof body === "string" ? body : JSON.stringify(body)),
+  } as unknown as Response;
+}
+
+describe("verifyAnchor fetchBundle integrity (#61)", () => {
+  it("honest bundle whose real bytes hash to the anchor rootHash verifies", async () => {
+    const bundle = await buildRealBundle();
+    const anchorRoot = bundle.rootHash;
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [
+        { type: "https", uri: "https://storage.example.com/b.json", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(bundle));
+
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+    });
+
+    expect(result.valid).toBe(true);
+    expect(result.bundle).toBeDefined();
+  });
+
+  it("forged bundle: real bytes do NOT hash to anchor rootHash even though self-declared rootHash matches -> valid:false", async () => {
+    const bundle = await buildRealBundle();
+    const anchorRoot = bundle.rootHash;
+
+    // Attacker tampers the bundle content (adds a fake event) but leaves the
+    // self-declared rootHash field pointing at the honest anchor root.
+    const forged = JSON.parse(JSON.stringify(bundle)) as TraceBundle;
+    forged.privateRun.events.push({
+      kind: "command",
+      id: "00000000-0000-4000-8000-000000000abc",
+      seq: 99,
+      timestamp: "2024-01-01T00:00:00.000Z",
+      visibility: "public",
+      command: "injected",
+      hash: "f".repeat(64),
+    } as never);
+    // Self-declared field still claims the honest root (circular-check bypass).
+    forged.rootHash = anchorRoot;
+
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [
+        { type: "https", uri: "https://storage.example.com/b.json", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(forged));
+
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.bundle).toBeUndefined();
+  });
+});
+
+describe("verifyAnchor fetchBundle SSRF hardening (#61)", () => {
+  it("rejects an http:// (non-https) storage URI", async () => {
+    const bundle = await buildRealBundle();
+    const anchorRoot = bundle.rootHash;
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [
+        { type: "http", uri: "http://storage.example.com/b.json", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(bundle));
+
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+    });
+
+    // fetch must never be called for a non-https URI.
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(result.bundle).toBeUndefined();
+    expect(
+      result.warnings.some((w) => /https|scheme|reject/i.test(w))
+    ).toBe(true);
+  });
+
+  it("rejects a host not in the allow-list", async () => {
+    const bundle = await buildRealBundle();
+    const anchorRoot = bundle.rootHash;
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [
+        { type: "https", uri: "https://evil.attacker.example/b.json", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(bundle));
+
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+    });
+
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(result.bundle).toBeUndefined();
+    expect(result.warnings.some((w) => /allow-?list|host/i.test(w))).toBe(true);
+  });
+
+  it("rejects a private/link-local host even without an allow-list", async () => {
+    const bundle = await buildRealBundle();
+    const anchorRoot = bundle.rootHash;
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [
+        { type: "https", uri: "https://169.254.169.254/latest/meta-data", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(bundle));
+
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(result.bundle).toBeUndefined();
   });
 });

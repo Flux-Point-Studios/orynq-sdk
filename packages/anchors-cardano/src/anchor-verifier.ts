@@ -51,6 +51,8 @@ import type {
   TxInfo,
 } from "./types.js";
 import { POI_METADATA_LABEL, isAnchorMetadata } from "./types.js";
+import { computeRootHash, computeRollingHash } from "@fluxpointstudios/orynq-sdk-process-trace";
+import type { TraceRun } from "@fluxpointstudios/orynq-sdk-process-trace";
 
 /**
  * Options for {@link verifyAnchor} (issue #61).
@@ -64,6 +66,19 @@ export interface VerifyAnchorOptions {
   ipfsGateway?: string;
   /** Arweave HTTP gateway base for ar:// URIs (default "https://arweave.net/"). */
   arweaveGateway?: string;
+  /**
+   * SSRF allow-list of hostnames the verifier may fetch from (case-insensitive,
+   * exact host match). When set, any URL whose host is not listed is rejected.
+   * When omitted, fetches are still restricted to https:// with public hosts
+   * (private/link-local/loopback addresses are always rejected).
+   */
+  allowedHosts?: string[];
+  /**
+   * Hard cap on the number of response bytes read from a storage fetch. A
+   * `StorageRef.size` smaller than this further tightens the cap for that ref.
+   * Defaults to {@link DEFAULT_MAX_BUNDLE_BYTES}.
+   */
+  maxBundleBytes?: number;
 }
 
 // =============================================================================
@@ -116,6 +131,12 @@ const KNOWN_ENTRY_FIELDS = new Set<string>([
  * Valid anchor types.
  */
 const VALID_ANCHOR_TYPES = new Set(["process-trace", "proof-of-intent", "custom"]);
+
+/**
+ * Default hard cap on bytes read from a storage fetch (8 MiB). Prevents an
+ * attacker-controlled storageRef from streaming an unbounded response (#61).
+ */
+export const DEFAULT_MAX_BUNDLE_BYTES = 8 * 1024 * 1024;
 
 // =============================================================================
 // HASH VALIDATION
@@ -627,20 +648,30 @@ export async function verifyAnchor(
     // Fetch transaction info for confirmation details
     const txInfo = await provider.getTxInfo(txHash);
 
-    // Optionally fetch the raw bundle from storage refs (issue #61)
+    // Optionally fetch the raw bundle from storage refs (issue #61) and verify
+    // its content hashes to the on-chain anchor rootHash.
     let bundle: unknown;
+    const errors: string[] = [];
     if (options.fetchBundle) {
       const fetched = await fetchBundleFromAnchor(matchingAnchor, options);
       warnings.push(...fetched.warnings);
-      bundle = fetched.bundle;
+      if (fetched.integrityFailed) {
+        errors.push(
+          "Fetched bundle failed integrity check: its content does not hash to the on-chain anchor rootHash"
+        );
+      } else {
+        bundle = fetched.bundle;
+      }
     }
+
+    const valid = errors.length === 0;
 
     if (txInfo === null) {
       warnings.push("Transaction metadata found but txInfo unavailable");
       return {
-        valid: true,
+        valid,
         anchor: matchingAnchor,
-        errors: [],
+        errors,
         warnings,
         ...(bundle !== undefined ? { bundle } : {}),
       };
@@ -651,10 +682,10 @@ export async function verifyAnchor(
     }
 
     return {
-      valid: true,
+      valid,
       txInfo,
       anchor: matchingAnchor,
-      errors: [],
+      errors,
       warnings,
       ...(bundle !== undefined ? { bundle } : {}),
     };
@@ -671,39 +702,155 @@ export async function verifyAnchor(
 }
 
 /**
- * Resolve a storage URI to an HTTP(S) URL the verifier can fetch.
- * Returns null for schemes that require credentials/SDKs (e.g. s3://).
+ * True for hosts that must never be fetched: loopback, link-local, and RFC1918
+ * private ranges (the classic SSRF targets, incl. the cloud metadata endpoint
+ * 169.254.169.254). Hostnames (non-IP) are allowed only via the allow-list.
  */
-function resolveStorageUri(uri: string, options: VerifyAnchorOptions): string | null {
-  if (uri.startsWith("https://") || uri.startsWith("http://")) return uri;
-  if (uri.startsWith("ipfs://")) {
+function isBlockedHost(host: string): boolean {
+  const h = host.toLowerCase();
+  if (h === "localhost" || h.endsWith(".localhost")) return true;
+
+  // IPv6 loopback / unique-local / link-local.
+  if (h === "[::1]" || h === "::1") return true;
+  if (h.startsWith("[fc") || h.startsWith("[fd") || h.startsWith("[fe80")) return true;
+
+  // IPv4 dotted-quad ranges.
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (m) {
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    if (a === 127) return true; // loopback
+    if (a === 10) return true; // 10.0.0.0/8
+    if (a === 169 && b === 254) return true; // link-local (metadata)
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+    if (a === 192 && b === 168) return true; // 192.168.0.0/16
+    if (a === 0) return true; // 0.0.0.0/8
+  }
+  return false;
+}
+
+/**
+ * Resolve a storage URI to an HTTPS URL the verifier is allowed to fetch (#61).
+ *
+ * SSRF hardening: only https:// is honored (http:// is rejected); the host must
+ * be on `options.allowedHosts` when that list is provided; private/link-local/
+ * loopback hosts are always rejected. Returns `{ url }` when fetchable, or
+ * `{ reason }` describing why it was rejected (for a caller warning).
+ */
+function resolveStorageUri(
+  uri: string,
+  options: VerifyAnchorOptions
+): { url: string } | { reason: string } {
+  let resolved: string;
+  if (uri.startsWith("https://")) {
+    resolved = uri;
+  } else if (uri.startsWith("http://")) {
+    // Plaintext http is never allowed (SSRF + downgrade).
+    return { reason: `rejected non-https scheme (only https:// allowed): ${uri}` };
+  } else if (uri.startsWith("ipfs://")) {
     const base = (options.ipfsGateway ?? "https://ipfs.io/ipfs/").replace(/\/+$/, "/");
     const cid = uri.slice("ipfs://".length).replace(/^ipfs\//, "");
-    return base.endsWith("/") ? base + cid : base + "/" + cid;
-  }
-  if (uri.startsWith("ar://")) {
+    resolved = base.endsWith("/") ? base + cid : base + "/" + cid;
+  } else if (uri.startsWith("ar://")) {
     const base = (options.arweaveGateway ?? "https://arweave.net/").replace(/\/+$/, "/");
     const id = uri.slice("ar://".length);
-    return base.endsWith("/") ? base + id : base + "/" + id;
+    resolved = base.endsWith("/") ? base + id : base + "/" + id;
+  } else {
+    return { reason: `unsupported storage scheme (skipped): ${uri}` };
   }
-  return null;
+
+  let host: string;
+  try {
+    const parsed = new URL(resolved);
+    if (parsed.protocol !== "https:") {
+      return { reason: `rejected non-https resolved URL: ${resolved}` };
+    }
+    host = parsed.hostname;
+  } catch {
+    return { reason: `unparseable storage URL (skipped): ${resolved}` };
+  }
+
+  if (isBlockedHost(host)) {
+    return { reason: `rejected private/link-local host: ${host}` };
+  }
+
+  if (options.allowedHosts !== undefined) {
+    const allowed = options.allowedHosts.map((h) => h.toLowerCase());
+    if (!allowed.includes(host.toLowerCase())) {
+      return { reason: `host not in allow-list: ${host}` };
+    }
+  }
+
+  return { url: resolved };
+}
+
+/**
+ * Recompute a fetched trace bundle's rootHash from its ACTUAL content, using the
+ * same canonical derivation the bundle builder uses. The rolling hash is
+ * recomputed from the events themselves (NOT read from the stored field), so
+ * any tampering with events, spans, or the model-manifest pin changes the
+ * result. Returns null when the document is not a full bundle we can
+ * independently recompute (e.g. a manifest with redacted spans) — in which case
+ * integrity cannot be established from the fetch alone.
+ */
+async function recomputeBundleRootHash(parsed: unknown): Promise<string | null> {
+  if (!parsed || typeof parsed !== "object") return null;
+  const run = (parsed as { privateRun?: unknown }).privateRun as
+    | Partial<TraceRun>
+    | undefined;
+  if (!run || !Array.isArray(run.events) || !Array.isArray(run.spans)) {
+    return null;
+  }
+  try {
+    const rollingHash = await computeRollingHash(run.events as TraceRun["events"]);
+    return await computeRootHash(
+      rollingHash,
+      run.spans as TraceRun["spans"],
+      run.modelManifestHash
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read a response body with a hard byte cap (#61). Rejects (returns null) when
+ * the stream exceeds `maxBytes` instead of buffering an unbounded response.
+ */
+async function readCapped(res: Response, maxBytes: number): Promise<string | null> {
+  const declared = res.headers?.get?.("content-length");
+  if (declared !== null && declared !== undefined) {
+    const n = Number(declared);
+    if (Number.isFinite(n) && n > maxBytes) return null;
+  }
+  const text = await res.text();
+  // TextEncoder gives the true byte length (multi-byte chars count correctly).
+  if (new TextEncoder().encode(text).length > maxBytes) return null;
+  return text;
 }
 
 /**
  * Fetch the trace bundle from an anchor's storage references (issue #61).
- * Tries each storageRef (then storageUri) until one resolves; performs a light
- * rootHash integrity check against the anchor and warns on mismatch.
+ *
+ * SSRF-hardened (https-only, host allow-list, private-host block) and size-
+ * capped. Integrity is established by recomputing the fetched bundle's rootHash
+ * from its own bytes and requiring it equals the on-chain anchor rootHash — the
+ * fetched document's self-declared `rootHash` field is NEVER trusted. On an
+ * integrity mismatch the fetch fails hard (`integrityFailed`) so the caller
+ * marks the whole verification invalid.
  */
 async function fetchBundleFromAnchor(
   anchor: AnchorEntry,
   options: VerifyAnchorOptions
-): Promise<{ bundle: unknown; warnings: string[] }> {
+): Promise<{ bundle: unknown; warnings: string[]; integrityFailed: boolean }> {
   const warnings: string[] = [];
   const fetchFn = options.fetchFn ?? globalThis.fetch;
   if (typeof fetchFn !== "function") {
     warnings.push("fetchBundle requested but no fetch implementation is available");
-    return { bundle: undefined, warnings };
+    return { bundle: undefined, warnings, integrityFailed: false };
   }
+
+  const maxBytes = options.maxBundleBytes ?? DEFAULT_MAX_BUNDLE_BYTES;
 
   const candidates: StorageRef[] = [...(anchor.storageRefs ?? [])];
   if (anchor.storageUri) {
@@ -711,37 +858,58 @@ async function fetchBundleFromAnchor(
   }
   if (candidates.length === 0) {
     warnings.push("fetchBundle requested but anchor has no storageRefs or storageUri");
-    return { bundle: undefined, warnings };
+    return { bundle: undefined, warnings, integrityFailed: false };
   }
 
   for (const ref of candidates) {
-    const url = resolveStorageUri(ref.uri, options);
-    if (!url) {
-      warnings.push(`Cannot resolve storage URI to HTTP (skipped): ${ref.uri}`);
+    const resolved = resolveStorageUri(ref.uri, options);
+    if ("reason" in resolved) {
+      warnings.push(resolved.reason);
       continue;
     }
+    const url = resolved.url;
+
+    // A storageRef may declare its own byte size; use the tighter of the two.
+    const refCap =
+      typeof ref.size === "number" && ref.size > 0
+        ? Math.min(ref.size, maxBytes)
+        : maxBytes;
+
     try {
       const res = await fetchFn(url);
       if (!res.ok) {
         warnings.push(`Fetch failed (HTTP ${res.status}): ${url}`);
         continue;
       }
-      const text = await res.text();
+      const text = await readCapped(res, refCap);
+      if (text === null) {
+        warnings.push(`Fetched content exceeds size cap (${refCap} bytes): ${url}`);
+        continue;
+      }
       let parsed: unknown;
       try {
         parsed = JSON.parse(text);
       } catch {
         parsed = text;
       }
-      // Light integrity check: if the fetched content carries a rootHash, it
-      // must match the anchor's rootHash.
-      if (parsed && typeof parsed === "object") {
-        const rh = (parsed as Record<string, unknown>).rootHash;
-        if (typeof rh === "string" && normalizeHash(rh) !== normalizeHash(anchor.rootHash)) {
-          warnings.push(`Fetched bundle rootHash does not match anchor rootHash (${ref.uri})`);
-        }
+
+      // Integrity: recompute the root from the ACTUAL bytes and require it to
+      // equal the on-chain anchor rootHash. Never trust the self-declared field.
+      const recomputed = await recomputeBundleRootHash(parsed);
+      if (recomputed === null) {
+        warnings.push(
+          `Fetched content is not a full trace bundle; cannot recompute rootHash to verify against the anchor (${ref.uri})`
+        );
+        return { bundle: undefined, warnings, integrityFailed: true };
       }
-      return { bundle: parsed, warnings };
+      if (normalizeHash(recomputed) !== normalizeHash(anchor.rootHash)) {
+        warnings.push(
+          `Fetched bundle content hashes to ${recomputed} which does not match anchor rootHash ${anchor.rootHash} (${ref.uri})`
+        );
+        return { bundle: undefined, warnings, integrityFailed: true };
+      }
+
+      return { bundle: parsed, warnings, integrityFailed: false };
     } catch (error) {
       warnings.push(
         `Fetch errored (${ref.uri}): ${error instanceof Error ? error.message : String(error)}`
@@ -749,7 +917,7 @@ async function fetchBundleFromAnchor(
     }
   }
 
-  return { bundle: undefined, warnings };
+  return { bundle: undefined, warnings, integrityFailed: false };
 }
 
 /**

@@ -14,7 +14,14 @@ import {
   POI_METADATA_LABEL,
 } from "../index.js";
 import type { AnchorEntry, AnchorChainProvider, StorageRef, TxInfo } from "../index.js";
-import type { TraceManifest } from "@fluxpointstudios/orynq-sdk-process-trace";
+import {
+  createTrace,
+  addSpan,
+  addEvent,
+  closeSpan,
+  finalizeTrace,
+} from "@fluxpointstudios/orynq-sdk-process-trace";
+import type { TraceManifest, TraceBundle } from "@fluxpointstudios/orynq-sdk-process-trace";
 
 const ROOT = "a".repeat(64);
 const MANIFEST = "b".repeat(64);
@@ -78,7 +85,19 @@ describe("storageRefs serialization round-trip", () => {
 });
 
 describe("verifyAnchor fetchBundle", () => {
-  function provider(): AnchorChainProvider {
+  async function realBundle(): Promise<TraceBundle> {
+    const run = await createTrace({ agentId: "agent-refs" });
+    const span = addSpan(run, { name: "work", visibility: "public" });
+    await addEvent(run, span.id, {
+      kind: "command",
+      command: "run",
+      visibility: "public",
+    });
+    await closeSpan(run, span.id);
+    return finalizeTrace(run);
+  }
+
+  function provider(anchorRoot: string): AnchorChainProvider {
     const txInfo: TxInfo = {
       txHash: "tx1",
       blockHash: "blk",
@@ -91,6 +110,7 @@ describe("verifyAnchor fetchBundle", () => {
       getTxMetadata: async () =>
         buildAnchorMetadata({
           ...entryWithRefs(),
+          rootHash: anchorRoot,
           storageRefs: [{ type: "https", uri: "https://gw.example/bundle.json", hash: "h" }],
         }).json,
       getTxInfo: async () => txInfo,
@@ -98,46 +118,50 @@ describe("verifyAnchor fetchBundle", () => {
     };
   }
 
-  it("fetches and attaches the bundle from storageRefs", async () => {
-    const bundle = { rootHash: ROOT, merkleRoot: "c".repeat(64) };
+  it("attaches the bundle only when its content hashes to the anchor rootHash", async () => {
+    const bundle = await realBundle();
     const fetchFn = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       text: async () => JSON.stringify(bundle),
     } as unknown as Response);
 
-    const result = await verifyAnchor(provider(), "tx1", ROOT, {
+    const result = await verifyAnchor(provider(bundle.rootHash), "tx1", bundle.rootHash, {
       fetchBundle: true,
       fetchFn: fetchFn as unknown as typeof fetch,
+      allowedHosts: ["gw.example"],
     });
 
     expect(result.valid).toBe(true);
     expect(fetchFn).toHaveBeenCalledWith("https://gw.example/bundle.json");
     expect(result.bundle).toEqual(bundle);
-    // rootHash matches -> no mismatch warning
     expect(result.warnings.some((w) => /does not match/i.test(w))).toBe(false);
   });
 
-  it("warns when the fetched bundle rootHash does not match the anchor", async () => {
-    const bundle = { rootHash: "f".repeat(64) };
+  it("fails (valid:false, no bundle) when the fetched content does not hash to the anchor rootHash", async () => {
+    // Self-declared rootHash matches the anchor, but the content does NOT hash
+    // to it — the old circular check trusted the declared field; now rejected.
+    const forged = { rootHash: ROOT, merkleRoot: "c".repeat(64) };
     const fetchFn = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      text: async () => JSON.stringify(bundle),
+      text: async () => JSON.stringify(forged),
     } as unknown as Response);
 
-    const result = await verifyAnchor(provider(), "tx1", ROOT, {
+    const result = await verifyAnchor(provider(ROOT), "tx1", ROOT, {
       fetchBundle: true,
       fetchFn: fetchFn as unknown as typeof fetch,
+      allowedHosts: ["gw.example"],
     });
 
-    expect(result.bundle).toEqual(bundle);
-    expect(result.warnings.some((w) => /does not match/i.test(w))).toBe(true);
+    expect(result.valid).toBe(false);
+    expect(result.bundle).toBeUndefined();
+    expect(result.errors.some((e) => /integrity/i.test(e))).toBe(true);
   });
 
   it("does not fetch when fetchBundle is not set", async () => {
     const fetchFn = vi.fn();
-    const result = await verifyAnchor(provider(), "tx1", ROOT, {
+    const result = await verifyAnchor(provider(ROOT), "tx1", ROOT, {
       fetchFn: fetchFn as unknown as typeof fetch,
     });
     expect(result.valid).toBe(true);
