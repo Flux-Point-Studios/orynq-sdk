@@ -501,7 +501,10 @@ async function verifySubstrateSignature(
 }
 
 /** The message fields an eip712 attestation's signature MUST provably commit to. */
-const REQUIRED_EIP712_FIELDS = ["role", "policyRef", "decisionRef", "runId"] as const;
+const REQUIRED_EIP712_FIELDS = ["role", "policyRef", "decisionRef", "runId", "signedAt"] as const;
+
+/** Default freshness window for eip712 attestations (24h). */
+const DEFAULT_EIP712_FRESHNESS_MS = 24 * 60 * 60_000;
 
 /**
  * Build an `eip712` {@link GovernanceVerifier} from an injected
@@ -512,8 +515,10 @@ const REQUIRED_EIP712_FIELDS = ["role", "policyRef", "decisionRef", "runId"] as 
  * controlled, so without pins an attacker signs an EMPTY struct
  * (`types:{Attestation:[]}`) with their own key and smuggles the claim fields as
  * untyped message extras the signature never commits to. The pinned primaryType
- * must also declare `role`, `policyRef`, `decisionRef`, and `runId` so the
- * signature provably binds them.
+ * must also declare `role`, `policyRef`, `decisionRef`, `runId`, and `signedAt`
+ * so the signature provably binds them. `signedAt` is then cross-checked against
+ * the recorded event and held to a freshness window so a signed sign-off cannot
+ * be replayed or backdated.
  *
  * @example
  * ```typescript
@@ -530,6 +535,7 @@ const REQUIRED_EIP712_FIELDS = ["role", "policyRef", "decisionRef", "runId"] as 
  *           { name: "policyRef", type: "string" },
  *           { name: "decisionRef", type: "string" },
  *           { name: "runId", type: "string" },
+ *           { name: "signedAt", type: "string" },
  *         ],
  *       },
  *     }),
@@ -558,6 +564,14 @@ export function createEip712GovernanceVerifier(deps: {
   expectedPrimaryType: string;
   /** Expected `types` map; the event's must deep-equal it. */
   expectedTypes: Record<string, Array<{ name: string; type: string }>>;
+  /**
+   * Max age of an attestation, in ms, before it is rejected as stale — measured
+   * from `signedAt` to `nowMs`. Also rejects far-future timestamps beyond the
+   * same window (clock-skew tolerance). Defaults to {@link DEFAULT_EIP712_FRESHNESS_MS}.
+   */
+  freshnessToleranceMs?: number;
+  /** Epoch-ms clock override (testing). Defaults to `Date.now()`. */
+  nowMs?: number;
 }): GovernanceVerifier {
   if (
     deps.expectedDomain === undefined ||
@@ -619,14 +633,25 @@ export function createEip712GovernanceVerifier(deps: {
 
     // A valid signature over an attacker-chosen message is not enough (#58): the
     // signed message MUST correspond to the recorded claim (role/policyRef/
-    // decisionRef) and be scoped to THIS trace's run id. Otherwise any valid
-    // signature over any message forges an attestation for this event.
-    return (
+    // decisionRef/signedAt) and be scoped to THIS trace's run id. Otherwise any
+    // valid signature over any message forges an attestation for this event.
+    const claimBound =
       message.role === event.role &&
       message.policyRef === event.policyRef &&
       message.decisionRef === event.decisionRef &&
-      message.runId === context.runId
-    );
+      message.runId === context.runId &&
+      message.signedAt === event.signedAt;
+    if (!claimBound) return false;
+
+    // The signed timestamp is now bound to the recorded event; hold it to a
+    // freshness window so a genuine sign-off cannot be replayed or backdated.
+    const toleranceMs = deps.freshnessToleranceMs ?? DEFAULT_EIP712_FRESHNESS_MS;
+    const nowMs = deps.nowMs ?? Date.now();
+    const signedAtMs = Date.parse(String(message.signedAt));
+    if (!Number.isFinite(signedAtMs)) return false;
+    if (Math.abs(nowMs - signedAtMs) > toleranceMs) return false;
+
+    return true;
   };
 }
 

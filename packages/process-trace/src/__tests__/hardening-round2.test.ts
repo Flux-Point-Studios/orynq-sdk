@@ -30,12 +30,14 @@ const EXPECTED_TYPES = {
     { name: "policyRef", type: "string" },
     { name: "decisionRef", type: "string" },
     { name: "runId", type: "string" },
+    { name: "signedAt", type: "string" },
   ],
 };
 
 async function eip712Bundle(bindingOverrides: Record<string, unknown>): Promise<TraceBundle> {
   const run = await createTrace({ agentId: "agent-1" });
   const span = addSpan(run, { name: "approve", visibility: "public" });
+  const signedAt = new Date().toISOString();
   await addEvent(run, span.id, {
     kind: "governance-attestation",
     visibility: "public",
@@ -47,7 +49,7 @@ async function eip712Bundle(bindingOverrides: Record<string, unknown>): Promise<
       signatureScheme: "eip712",
     },
     signature: "0x" + "ab".repeat(65),
-    signedAt: new Date().toISOString(),
+    signedAt,
     eip712: {
       domain: EXPECTED_DOMAIN,
       types: EXPECTED_TYPES,
@@ -57,6 +59,7 @@ async function eip712Bundle(bindingOverrides: Record<string, unknown>): Promise<
         policyRef: "sha256:policy",
         decisionRef: "decision-1",
         runId: run.id,
+        signedAt,
       },
       ...bindingOverrides,
     },

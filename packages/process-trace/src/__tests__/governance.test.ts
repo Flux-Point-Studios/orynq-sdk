@@ -29,12 +29,16 @@ let AUTHORITY_ED25519 = "";
 
 const EIP712_ATTESTOR = "0x1111111111111111111111111111111111111111";
 const EIP712_DOMAIN = { name: "Orynq", version: "1" };
+// `signedAt` is a REQUIRED signed field (#77 round-4): the pinned type must
+// declare it so the signature commits to the timestamp, and the verifier
+// cross-checks it against the event + a freshness window.
 const EIP712_TYPES = {
   Attestation: [
     { name: "role", type: "string" },
     { name: "policyRef", type: "string" },
     { name: "decisionRef", type: "string" },
     { name: "runId", type: "string" },
+    { name: "signedAt", type: "string" },
   ],
 };
 
@@ -250,6 +254,7 @@ describe("eip712 governance verification", () => {
   it("marks eip712 unverified when no verifier is registered", async () => {
     const run = await createTrace({ agentId: "agent-1" });
     const span = addSpan(run, { name: "approve", visibility: "public" });
+    const signedAt = "2026-07-11T00:00:00.000Z";
     // Construct an eip712 attestation directly (caller-supplied signature + binding).
     await addEvent(run, span.id, {
       kind: "governance-attestation",
@@ -262,17 +267,10 @@ describe("eip712 governance verification", () => {
         signatureScheme: "eip712",
       },
       signature: "0x" + "ab".repeat(65),
-      signedAt: new Date().toISOString(),
+      signedAt,
       eip712: {
         domain: { name: "Orynq", version: "1" },
-        types: {
-          Attestation: [
-            { name: "role", type: "string" },
-            { name: "policyRef", type: "string" },
-            { name: "decisionRef", type: "string" },
-            { name: "runId", type: "string" },
-          ],
-        },
+        types: EIP712_TYPES,
         primaryType: "Attestation",
         // The signed message MUST carry the event's own claim + trace context.
         message: {
@@ -280,6 +278,7 @@ describe("eip712 governance verification", () => {
           policyRef: "sha256:policy",
           decisionRef: "decision-1",
           runId: run.id,
+          signedAt,
         },
       },
     });
@@ -301,6 +300,7 @@ describe("eip712 governance verification", () => {
       expectedDomain: EIP712_DOMAIN,
       expectedPrimaryType: "Attestation",
       expectedTypes: EIP712_TYPES,
+      nowMs: Date.parse(signedAt),
     });
     const withVerifier = await verifyGovernanceAttestations(bundle, {
       verifiers: { eip712: verifier },
@@ -325,23 +325,17 @@ describe("eip712 governance verification", () => {
         signatureScheme: "eip712",
       },
       signature: "0x" + "ab".repeat(65),
-      signedAt: new Date().toISOString(),
+      signedAt: "2026-07-11T00:00:00.000Z",
       eip712: {
         domain: { name: "Orynq", version: "1" },
-        types: {
-          Attestation: [
-            { name: "role", type: "string" },
-            { name: "policyRef", type: "string" },
-            { name: "decisionRef", type: "string" },
-            { name: "runId", type: "string" },
-          ],
-        },
+        types: EIP712_TYPES,
         primaryType: "Attestation",
         message: {
           role: "data-steward", // != event.role
           policyRef: "sha256:policy",
           decisionRef: "decision-1",
           runId: run.id,
+          signedAt: "2026-07-11T00:00:00.000Z",
         },
       },
     });
@@ -355,6 +349,7 @@ describe("eip712 governance verification", () => {
       expectedDomain: EIP712_DOMAIN,
       expectedPrimaryType: "Attestation",
       expectedTypes: EIP712_TYPES,
+      nowMs: Date.parse("2026-07-11T00:00:00.000Z"),
     });
     const summaries = await verifyGovernanceAttestations(bundle, {
       verifiers: { eip712: verifier },
