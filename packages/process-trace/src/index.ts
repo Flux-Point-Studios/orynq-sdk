@@ -316,6 +316,7 @@ export type {
   GovernanceSignContext,
   GovernanceAttestationFields,
   GovernanceVerifier,
+  GovernanceVerifyContext,
   SubstrateGovernanceSignerOptions,
   AddGovernanceAttestationOptions,
   GovernanceAttestationSummary,

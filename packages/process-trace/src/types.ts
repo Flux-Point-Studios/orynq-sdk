@@ -147,9 +147,10 @@ export interface GovernanceEip712Binding {
  * inside a trace (compliance review, release approval, data-steward sign-off).
  *
  * The signature is computed over a canonical, domain-separated preimage of
- * `(policyRef || decisionRef || signedAt)` (see `governanceAttestationPreimage`),
- * so an auditor can verify *who* governed a decision without trusting the
- * wrapper that recorded it.
+ * `(runId || role || policyRef || decisionRef || signedAt)` (see
+ * `governanceAttestationPreimage`), so an auditor can verify *who* governed a
+ * decision without trusting the wrapper that recorded it, and a genuine
+ * attestation cannot be replayed into a different trace.
  *
  * Default visibility: "public" (governance provenance is meant to be auditable).
  */

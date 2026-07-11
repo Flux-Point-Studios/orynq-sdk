@@ -56,18 +56,25 @@ export interface GovernanceAttestationFields {
   policyRef: string;
   decisionRef: string;
   signedAt: string;
+  /**
+   * Trace run id this attestation is scoped to. Binding it prevents replaying a
+   * genuine attestation from trace X into an unrelated trace Y (#58).
+   */
+  runId: string;
 }
 
 /**
  * Build the canonical, domain-separated preimage signed by sr25519/ed25519
  * governance signers. Deterministic — a verifier reconstructs identical bytes
- * from the recorded event fields.
+ * from the recorded event fields plus the enclosing run id.
  *
- * Layout: `"poi-trace:governance:v1|" + role "\n" policyRef "\n" decisionRef "\n" signedAt`
+ * Layout: `"poi-trace:governance:v1|" + runId "\n" role "\n" policyRef "\n" decisionRef "\n" signedAt`
  */
 export function governanceAttestationPreimage(fields: GovernanceAttestationFields): Uint8Array {
   const s =
     HASH_DOMAIN_PREFIXES.governance +
+    fields.runId +
+    "\n" +
     fields.role +
     "\n" +
     fields.policyRef +
@@ -149,6 +156,7 @@ export async function addGovernanceAttestation(
     policyRef: opts.policyRef,
     decisionRef: opts.decisionRef,
     signedAt,
+    runId: run.id,
   };
   const preimage = governanceAttestationPreimage(fields);
 
@@ -313,10 +321,18 @@ export async function createEd25519GovernanceSigner(
 // VERIFICATION
 // =============================================================================
 
+/** Context passed to a {@link GovernanceVerifier} alongside the event. */
+export interface GovernanceVerifyContext {
+  /** Canonical preimage bytes bound to this trace's run id (#58). */
+  preimage: Uint8Array;
+  /** The enclosing trace run id — verifiers MUST bind signatures to it. */
+  runId: string;
+}
+
 /** A pluggable verifier for a single governance signature scheme. */
 export type GovernanceVerifier = (
   event: GovernanceAttestationEvent,
-  preimage: Uint8Array
+  context: GovernanceVerifyContext
 ) => Promise<boolean> | boolean;
 
 export interface VerifyGovernanceOptions {
@@ -353,14 +369,18 @@ export async function verifyGovernanceAttestations(
     (e): e is GovernanceAttestationEvent & TraceEvent => e.kind === "governance-attestation"
   );
 
+  const runId = bundle.privateRun.id;
   const summaries: GovernanceAttestationSummary[] = [];
   for (const event of events) {
     const scheme = event.attestor.signatureScheme;
+    // Reconstruct the preimage bound to THIS trace's run id (#58) — a genuine
+    // attestation from another trace produces a different preimage and fails.
     const preimage = governanceAttestationPreimage({
       role: event.role,
       policyRef: event.policyRef,
       decisionRef: event.decisionRef,
       signedAt: event.signedAt,
+      runId,
     });
 
     const base = {
@@ -376,7 +396,7 @@ export async function verifyGovernanceAttestations(
       const override = opts.verifiers?.[scheme];
       let verified: boolean;
       if (override) {
-        verified = await override(event, preimage);
+        verified = await override(event, { preimage, runId });
       } else if (scheme === "sr25519" || scheme === "ed25519") {
         verified = await verifySubstrateSignature(scheme, event, preimage);
       } else {
@@ -436,20 +456,34 @@ export function createEip712GovernanceVerifier(deps: {
     signature: `0x${string}`;
   }) => Promise<boolean> | boolean;
 }): GovernanceVerifier {
-  return async (event) => {
+  return async (event, context) => {
     if (!event.eip712) {
       throw new Error("eip712 governance attestation is missing its `eip712` binding");
     }
     const signature = (
       event.signature.startsWith("0x") ? event.signature : "0x" + event.signature
     ) as `0x${string}`;
-    return deps.verifyTypedData({
+    const message = event.eip712.message ?? {};
+
+    const sigValid = await deps.verifyTypedData({
       address: event.attestor.address as `0x${string}`,
       domain: event.eip712.domain,
       types: event.eip712.types,
       primaryType: event.eip712.primaryType,
-      message: event.eip712.message ?? {},
+      message,
       signature,
     });
+    if (!sigValid) return false;
+
+    // A valid signature over an attacker-chosen message is not enough (#58): the
+    // signed message MUST correspond to the recorded claim (role/policyRef/
+    // decisionRef) and be scoped to THIS trace's run id. Otherwise any valid
+    // signature over any message forges an attestation for this event.
+    return (
+      message.role === event.role &&
+      message.policyRef === event.policyRef &&
+      message.decisionRef === event.decisionRef &&
+      message.runId === context.runId
+    );
   };
 }
