@@ -28,9 +28,13 @@
  *   decisionRef: eventId,
  *   signer,
  * });
- * // ...later, during audit:
- * const summary = await verifyGovernanceAttestations(bundle);
- * // [{ role: "compliance", attestor: "5...", scheme: "sr25519", verified: true }]
+ * // ...later, during audit: the attestor identity comes from the untrusted
+ * // trace, so the caller MUST allow-list the authorized signer(s) — a valid
+ * // self-signed attestation from an arbitrary key is not a real sign-off.
+ * const summary = await verifyGovernanceAttestations(bundle, {
+ *   authorizedAttestors: [signer.address],
+ * });
+ * // [{ role: "compliance", attestor: "5...", scheme: "sr25519", verified: true, authorized: true }]
  * ```
  */
 
@@ -342,6 +346,24 @@ export interface VerifyGovernanceOptions {
    * to the built-in @polkadot verifiers when not overridden.
    */
   verifiers?: Partial<Record<GovernanceSignatureScheme, GovernanceVerifier>>;
+  /**
+   * The set of attestor identities (SS58 / 0x-address, case-insensitive) that
+   * are authorized to sign governance attestations. The attestor identity comes
+   * from the untrusted trace, so a cryptographically valid self-signed
+   * attestation from an arbitrary key is NOT a real sign-off — only a key on
+   * this list counts. When OMITTED, governance verification FAILS CLOSED: every
+   * attestation is `authorized: false` / `verified: false`, so an
+   * "anyone can sign" attestation can never fold into a passing bundle verdict.
+   * Optionally scope keys to a role via {@link authorizedAttestorsByRole}.
+   */
+  authorizedAttestors?: string[];
+  /**
+   * Per-role authorized attestors (case-insensitive). When present for an
+   * attestation's role, the signer must be listed under THAT role — a
+   * data-steward key cannot pass off a release-authority sign-off. Falls back to
+   * {@link authorizedAttestors} for roles not present here.
+   */
+  authorizedAttestorsByRole?: Record<string, string[]>;
 }
 
 /** Per-attestation verification result. */
@@ -352,7 +374,10 @@ export interface GovernanceAttestationSummary {
   scheme: GovernanceSignatureScheme;
   policyRef: string;
   decisionRef: string;
+  /** The signature cryptographically verifies AND the signer is authorized. */
   verified: boolean;
+  /** The attestor is on the caller-supplied authorized-signer allow-list. */
+  authorized: boolean;
   error?: string;
 }
 
@@ -392,31 +417,72 @@ export async function verifyGovernanceAttestations(
       decisionRef: event.decisionRef,
     };
 
+    // The attestor identity is attacker-controlled (it rides in the trace), so a
+    // valid self-signed attestation from an arbitrary key is not a real sign-off.
+    // Fail closed unless the caller allow-lists the signer for this role (#58).
+    const authorized = attestorAuthorized(event.attestor.address, event.role, opts);
+    if (!authorized) {
+      summaries.push({
+        ...base,
+        authorized: false,
+        verified: false,
+        error:
+          opts.authorizedAttestors === undefined && opts.authorizedAttestorsByRole === undefined
+            ? "no authorized-attestor allow-list supplied — governance verification fails closed (pass authorizedAttestors)"
+            : `attestor ${event.attestor.address} is not authorized for role "${event.role}"`,
+      });
+      continue;
+    }
+
     try {
       const override = opts.verifiers?.[scheme];
-      let verified: boolean;
+      let signatureValid: boolean;
       if (override) {
-        verified = await override(event, { preimage, runId });
+        signatureValid = await override(event, { preimage, runId });
       } else if (scheme === "sr25519" || scheme === "ed25519") {
-        verified = await verifySubstrateSignature(scheme, event, preimage);
+        signatureValid = await verifySubstrateSignature(scheme, event, preimage);
       } else {
         summaries.push({
           ...base,
+          authorized: true,
           verified: false,
           error: `no verifier registered for scheme "${scheme}" (pass one via verifiers)`,
         });
         continue;
       }
-      summaries.push({ ...base, verified });
+      summaries.push({ ...base, authorized: true, verified: signatureValid });
     } catch (error) {
       summaries.push({
         ...base,
+        authorized: true,
         verified: false,
         error: error instanceof Error ? error.message : String(error),
       });
     }
   }
   return summaries;
+}
+
+/**
+ * True when `address` is on the caller-supplied authorized-attestor allow-list
+ * for `role` (case-insensitive). A per-role list takes precedence for its role;
+ * otherwise the flat list applies. With NEITHER list configured this returns
+ * false — governance verification fails closed.
+ */
+function attestorAuthorized(
+  address: string,
+  role: string,
+  opts: VerifyGovernanceOptions
+): boolean {
+  const norm = (s: string) => s.toLowerCase();
+  const roleList = opts.authorizedAttestorsByRole?.[role];
+  if (roleList !== undefined) {
+    return roleList.map(norm).includes(norm(address));
+  }
+  if (opts.authorizedAttestors !== undefined) {
+    return opts.authorizedAttestors.map(norm).includes(norm(address));
+  }
+  return false;
 }
 
 async function verifySubstrateSignature(
@@ -434,15 +500,41 @@ async function verifySubstrateSignature(
     : crypto.ed25519Verify(preimage, sig, publicKey);
 }
 
+/** The message fields an eip712 attestation's signature MUST provably commit to. */
+const REQUIRED_EIP712_FIELDS = ["role", "policyRef", "decisionRef", "runId"] as const;
+
 /**
  * Build an `eip712` {@link GovernanceVerifier} from an injected
  * `verifyTypedData` (e.g. viem's). Keeps viem out of this package's deps.
+ *
+ * The schema pins (`expectedDomain`/`expectedPrimaryType`/`expectedTypes`) are
+ * MANDATORY: the event's `eip712.{domain,primaryType,types}` are attacker-
+ * controlled, so without pins an attacker signs an EMPTY struct
+ * (`types:{Attestation:[]}`) with their own key and smuggles the claim fields as
+ * untyped message extras the signature never commits to. The pinned primaryType
+ * must also declare `role`, `policyRef`, `decisionRef`, and `runId` so the
+ * signature provably binds them.
  *
  * @example
  * ```typescript
  * import { verifyTypedData } from "viem";
  * const summary = await verifyGovernanceAttestations(bundle, {
- *   verifiers: { eip712: createEip712GovernanceVerifier({ verifyTypedData }) },
+ *   verifiers: {
+ *     eip712: createEip712GovernanceVerifier({
+ *       verifyTypedData,
+ *       expectedDomain: { name: "Orynq", version: "1" },
+ *       expectedPrimaryType: "Attestation",
+ *       expectedTypes: {
+ *         Attestation: [
+ *           { name: "role", type: "string" },
+ *           { name: "policyRef", type: "string" },
+ *           { name: "decisionRef", type: "string" },
+ *           { name: "runId", type: "string" },
+ *         ],
+ *       },
+ *     }),
+ *   },
+ *   authorizedAttestors: ["0x<release-authority>"],
  * });
  * ```
  */
@@ -457,16 +549,41 @@ export function createEip712GovernanceVerifier(deps: {
   }) => Promise<boolean> | boolean;
   /**
    * Expected EIP-712 domain (name/version/chainId/verifyingContract). The
-   * event's `eip712.domain` is attacker-controlled, so when this is supplied the
-   * verifier requires an EXACT match on every provided field — a swapped
-   * verifyingContract/chainId/name is rejected before the signature is trusted.
+   * event's `eip712.domain` is attacker-controlled, so the verifier requires an
+   * EXACT match on every field — a swapped verifyingContract/chainId/name is
+   * rejected before the signature is trusted.
    */
-  expectedDomain?: Record<string, unknown>;
+  expectedDomain: Record<string, unknown>;
   /** Expected `primaryType`; a mismatch is rejected. */
-  expectedPrimaryType?: string;
-  /** Expected `types` map; when supplied it must deep-equal the event's. */
-  expectedTypes?: Record<string, Array<{ name: string; type: string }>>;
+  expectedPrimaryType: string;
+  /** Expected `types` map; the event's must deep-equal it. */
+  expectedTypes: Record<string, Array<{ name: string; type: string }>>;
 }): GovernanceVerifier {
+  if (
+    deps.expectedDomain === undefined ||
+    deps.expectedPrimaryType === undefined ||
+    deps.expectedTypes === undefined
+  ) {
+    throw new Error(
+      "createEip712GovernanceVerifier: expectedDomain, expectedPrimaryType, and expectedTypes are required — " +
+        "an unpinned verifier accepts an empty attacker-signed struct (forgery)"
+    );
+  }
+  const declared = deps.expectedTypes[deps.expectedPrimaryType];
+  if (!declared) {
+    throw new Error(
+      `createEip712GovernanceVerifier: expectedTypes has no entry for primaryType "${deps.expectedPrimaryType}"`
+    );
+  }
+  const declaredNames = new Set(declared.map((f) => f.name));
+  const missing = REQUIRED_EIP712_FIELDS.filter((f) => !declaredNames.has(f));
+  if (missing.length > 0) {
+    throw new Error(
+      `createEip712GovernanceVerifier: the pinned "${deps.expectedPrimaryType}" type must include ` +
+        `${missing.join(", ")} so the signature commits to them`
+    );
+  }
+
   return async (event, context) => {
     if (!event.eip712) {
       throw new Error("eip712 governance attestation is missing its `eip712` binding");
@@ -475,19 +592,13 @@ export function createEip712GovernanceVerifier(deps: {
     // Pin the attacker-controlled typed-data schema BEFORE trusting the
     // signature. A signature over an unexpected domain/type proves nothing about
     // an Orynq governance attestation.
-    if (
-      deps.expectedPrimaryType !== undefined &&
-      event.eip712.primaryType !== deps.expectedPrimaryType
-    ) {
+    if (event.eip712.primaryType !== deps.expectedPrimaryType) {
       return false;
     }
-    if (deps.expectedDomain !== undefined && !domainMatches(deps.expectedDomain, event.eip712.domain)) {
+    if (!domainMatches(deps.expectedDomain, event.eip712.domain)) {
       return false;
     }
-    if (
-      deps.expectedTypes !== undefined &&
-      !typesMatch(deps.expectedTypes, event.eip712.types)
-    ) {
+    if (!typesMatch(deps.expectedTypes, event.eip712.types)) {
       return false;
     }
 

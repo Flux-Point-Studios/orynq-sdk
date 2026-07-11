@@ -66,6 +66,8 @@ async function eip712Bundle(bindingOverrides: Record<string, unknown>): Promise<
 }
 
 describe("eip712 domain/primaryType pinning (#58)", () => {
+  const ATTESTOR = "0x1111111111111111111111111111111111111111";
+
   it("rejects an unexpected primaryType even when the raw signature verifies", async () => {
     const bundle = await eip712Bundle({ primaryType: "EvilType" });
     const verifier = createEip712GovernanceVerifier({
@@ -76,7 +78,9 @@ describe("eip712 domain/primaryType pinning (#58)", () => {
     });
     const summaries = await verifyGovernanceAttestations(bundle, {
       verifiers: { eip712: verifier },
+      authorizedAttestors: [ATTESTOR],
     });
+    expect(summaries[0]!.authorized).toBe(true);
     expect(summaries[0]!.verified).toBe(false);
   });
 
@@ -92,7 +96,9 @@ describe("eip712 domain/primaryType pinning (#58)", () => {
     });
     const summaries = await verifyGovernanceAttestations(bundle, {
       verifiers: { eip712: verifier },
+      authorizedAttestors: [ATTESTOR],
     });
+    expect(summaries[0]!.authorized).toBe(true);
     expect(summaries[0]!.verified).toBe(false);
   });
 
@@ -106,6 +112,7 @@ describe("eip712 domain/primaryType pinning (#58)", () => {
     });
     const summaries = await verifyGovernanceAttestations(bundle, {
       verifiers: { eip712: verifier },
+      authorizedAttestors: [ATTESTOR],
     });
     expect(summaries[0]!.verified).toBe(true);
   });

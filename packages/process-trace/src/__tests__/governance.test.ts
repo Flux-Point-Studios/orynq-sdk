@@ -22,6 +22,22 @@ import type { TraceRun, TraceBundle, GovernanceAttestationEvent } from "../index
 const SEED_A = "0x" + "11".repeat(32);
 const SEED_B = "0x" + "22".repeat(32);
 
+// The release-authority address derived from SEED_A — the caller must allow-list
+// the attestor for a governance verdict to pass (attestor identity is untrusted).
+let AUTHORITY_SR25519 = "";
+let AUTHORITY_ED25519 = "";
+
+const EIP712_ATTESTOR = "0x1111111111111111111111111111111111111111";
+const EIP712_DOMAIN = { name: "Orynq", version: "1" };
+const EIP712_TYPES = {
+  Attestation: [
+    { name: "role", type: "string" },
+    { name: "policyRef", type: "string" },
+    { name: "decisionRef", type: "string" },
+    { name: "runId", type: "string" },
+  ],
+};
+
 async function buildAttestedBundle(scheme: "sr25519" | "ed25519"): Promise<TraceBundle> {
   const run: TraceRun = await createTrace({ agentId: "agent-1" });
   const span = addSpan(run, { name: "release", visibility: "public" });
@@ -35,6 +51,8 @@ async function buildAttestedBundle(scheme: "sr25519" | "ed25519"): Promise<Trace
     scheme === "sr25519"
       ? await createSr25519GovernanceSigner({ seed: SEED_A })
       : await createEd25519GovernanceSigner({ seed: SEED_A });
+  if (scheme === "sr25519") AUTHORITY_SR25519 = signer.address;
+  else AUTHORITY_ED25519 = signer.address;
 
   await addGovernanceAttestation(run, span.id, {
     role: "release-authority",
@@ -97,16 +115,21 @@ describe("addGovernanceAttestation + verify (sr25519)", () => {
     expect(result.valid).toBe(true);
   });
 
-  it("verifyGovernanceAttestations returns verified=true", async () => {
-    const summaries = await verifyGovernanceAttestations(bundle);
+  it("verifyGovernanceAttestations returns verified=true for an allow-listed signer", async () => {
+    const summaries = await verifyGovernanceAttestations(bundle, {
+      authorizedAttestors: [AUTHORITY_SR25519],
+    });
     expect(summaries).toHaveLength(1);
     expect(summaries[0]!.verified).toBe(true);
+    expect(summaries[0]!.authorized).toBe(true);
     expect(summaries[0]!.scheme).toBe("sr25519");
     expect(summaries[0]!.role).toBe("release-authority");
   });
 
-  it("verifyBundle({ governance: true }) sets governanceValid", async () => {
-    const result = await verifyBundle(bundle, { governance: true });
+  it("verifyBundle({ governance: {...} }) sets governanceValid for an allow-listed signer", async () => {
+    const result = await verifyBundle(bundle, {
+      governance: { authorizedAttestors: [AUTHORITY_SR25519] },
+    });
     expect(result.checks.governanceValid).toBe(true);
     expect(result.valid).toBe(true);
   });
@@ -119,10 +142,17 @@ describe("addGovernanceAttestation + verify (sr25519)", () => {
     // Flip a hex nibble in the signature so it no longer verifies.
     ev.signature = ev.signature.slice(0, -1) + (ev.signature.endsWith("0") ? "1" : "0");
 
-    const summaries = await verifyGovernanceAttestations(tampered);
+    // Allow-list the genuine signer so the failure is proven to come from the
+    // signature check, not the authorization gate.
+    const summaries = await verifyGovernanceAttestations(tampered, {
+      authorizedAttestors: [AUTHORITY_SR25519],
+    });
+    expect(summaries[0]!.authorized).toBe(true);
     expect(summaries[0]!.verified).toBe(false);
 
-    const result = await verifyBundle(tampered, { governance: true });
+    const result = await verifyBundle(tampered, {
+      governance: { authorizedAttestors: [AUTHORITY_SR25519] },
+    });
     expect(result.checks.governanceValid).toBe(false);
     expect(result.valid).toBe(false);
   });
@@ -135,7 +165,12 @@ describe("addGovernanceAttestation + verify (sr25519)", () => {
     ) as GovernanceAttestationEvent;
     ev.attestor.address = otherSigner.address; // signature no longer matches the claimed signer
 
-    const summaries = await verifyGovernanceAttestations(tampered);
+    // Allow-list the spoofed address, so a pass would require the signature to
+    // actually verify under it — proving the crypto check (not just auth) rejects.
+    const summaries = await verifyGovernanceAttestations(tampered, {
+      authorizedAttestors: [otherSigner.address],
+    });
+    expect(summaries[0]!.authorized).toBe(true);
     expect(summaries[0]!.verified).toBe(false);
   });
 });
@@ -143,7 +178,9 @@ describe("addGovernanceAttestation + verify (sr25519)", () => {
 describe("addGovernanceAttestation + verify (ed25519)", () => {
   it("verifies an ed25519 attestation", async () => {
     const bundle = await buildAttestedBundle("ed25519");
-    const summaries = await verifyGovernanceAttestations(bundle);
+    const summaries = await verifyGovernanceAttestations(bundle, {
+      authorizedAttestors: [AUTHORITY_ED25519],
+    });
     expect(summaries[0]!.verified).toBe(true);
     expect(summaries[0]!.scheme).toBe("ed25519");
   });
@@ -173,9 +210,12 @@ describe("governance replay resistance (#58)", () => {
     const donorEvent = donor.privateRun.events.find(
       (e) => e.kind === "governance-attestation"
     ) as GovernanceAttestationEvent;
+    // Allow-list the genuine donor signer for both traces, so the replay failure
+    // is proven to come from the run-id preimage binding, not the auth gate.
+    const allow = { authorizedAttestors: [donorEvent.attestor.address] };
 
     // In the donor trace it verifies.
-    const honest = await verifyGovernanceAttestations(donor);
+    const honest = await verifyGovernanceAttestations(donor, allow);
     expect(honest[0]!.verified).toBe(true);
 
     // Build a victim trace and splice the donor's genuine attestation into it.
@@ -200,7 +240,8 @@ describe("governance replay resistance (#58)", () => {
     await closeSpan(victimRun, span.id);
     const victim = await finalizeTrace(victimRun);
 
-    const replayed = await verifyGovernanceAttestations(victim);
+    const replayed = await verifyGovernanceAttestations(victim, allow);
+    expect(replayed[0]!.authorized).toBe(true);
     expect(replayed[0]!.verified).toBe(false);
   });
 });
@@ -245,7 +286,8 @@ describe("eip712 governance verification", () => {
     await closeSpan(run, span.id);
     const bundle = await finalizeTrace(run);
 
-    const noVerifier = await verifyGovernanceAttestations(bundle);
+    const allow = { authorizedAttestors: [EIP712_ATTESTOR] };
+    const noVerifier = await verifyGovernanceAttestations(bundle, allow);
     expect(noVerifier[0]!.verified).toBe(false);
     expect(noVerifier[0]!.error).toMatch(/no verifier/i);
 
@@ -253,12 +295,16 @@ describe("eip712 governance verification", () => {
     const verifier = createEip712GovernanceVerifier({
       verifyTypedData: async (args) => {
         expect(args.primaryType).toBe("Attestation");
-        expect(args.address).toBe("0x1111111111111111111111111111111111111111");
+        expect(args.address).toBe(EIP712_ATTESTOR);
         return true;
       },
+      expectedDomain: EIP712_DOMAIN,
+      expectedPrimaryType: "Attestation",
+      expectedTypes: EIP712_TYPES,
     });
     const withVerifier = await verifyGovernanceAttestations(bundle, {
       verifiers: { eip712: verifier },
+      ...allow,
     });
     expect(withVerifier[0]!.verified).toBe(true);
   });
@@ -302,14 +348,19 @@ describe("eip712 governance verification", () => {
     await closeSpan(run, span.id);
     const bundle = await finalizeTrace(run);
 
-    // Even with a verifier that accepts the raw signature, the field-binding
-    // check must reject it.
+    // Even with a verifier that accepts the raw signature (and the signer
+    // allow-listed), the field-binding check must reject it.
     const verifier = createEip712GovernanceVerifier({
       verifyTypedData: async () => true,
+      expectedDomain: EIP712_DOMAIN,
+      expectedPrimaryType: "Attestation",
+      expectedTypes: EIP712_TYPES,
     });
     const summaries = await verifyGovernanceAttestations(bundle, {
       verifiers: { eip712: verifier },
+      authorizedAttestors: [EIP712_ATTESTOR],
     });
+    expect(summaries[0]!.authorized).toBe(true);
     expect(summaries[0]!.verified).toBe(false);
   });
 });
