@@ -51,8 +51,13 @@ import type {
   TxInfo,
 } from "./types.js";
 import { POI_METADATA_LABEL, isAnchorMetadata } from "./types.js";
-import { computeRootHash, computeRollingHash } from "@fluxpointstudios/orynq-sdk-process-trace";
-import type { TraceRun } from "@fluxpointstudios/orynq-sdk-process-trace";
+import {
+  computeRootHash,
+  computeRollingHash,
+  computeEventHash,
+  computeSpanHash,
+} from "@fluxpointstudios/orynq-sdk-process-trace";
+import type { TraceRun, TraceEvent, TraceSpan } from "@fluxpointstudios/orynq-sdk-process-trace";
 
 /**
  * Options for {@link verifyAnchor} (issue #61).
@@ -69,8 +74,11 @@ export interface VerifyAnchorOptions {
   /**
    * SSRF allow-list of hostnames the verifier may fetch from (case-insensitive,
    * exact host match). When set, any URL whose host is not listed is rejected.
-   * When omitted, fetches are still restricted to https:// with public hosts
-   * (private/link-local/loopback addresses are always rejected).
+   * When OMITTED, fetches are still restricted to https:// with public hosts:
+   * private/link-local/loopback/ULA/metadata addresses (incl. IPv4-mapped IPv6)
+   * are always rejected, and a DNS hostname is resolved and rejected if it maps
+   * to any private/blocked address (post-resolution guard). Supply an allow-list
+   * for the strongest guarantee.
    */
   allowedHosts?: string[];
   /**
@@ -702,45 +710,106 @@ export async function verifyAnchor(
 }
 
 /**
- * True for hosts that must never be fetched: loopback, link-local, and RFC1918
- * private ranges (the classic SSRF targets, incl. the cloud metadata endpoint
- * 169.254.169.254). Hostnames (non-IP) are allowed only via the allow-list.
+ * True for a dotted-quad IPv4 literal in a loopback/private/link-local/metadata
+ * range. Operates on the bare address (no brackets).
+ */
+function isBlockedIpv4(addr: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(addr);
+  if (!m) return false;
+  const a = Number(m[1]);
+  const b = Number(m[2]);
+  if (a > 255 || b > 255 || Number(m[3]) > 255 || Number(m[4]) > 255) return false;
+  if (a === 127) return true; // loopback 127/8
+  if (a === 10) return true; // 10/8
+  if (a === 169 && b === 254) return true; // link-local 169.254/16 (metadata)
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12
+  if (a === 192 && b === 168) return true; // 192.168/16
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
+  if (a === 0) return true; // 0/8
+  return false;
+}
+
+/**
+ * True for hosts that must never be fetched: loopback, link-local, RFC1918
+ * private ranges, ULA, and the cloud metadata endpoint — the classic SSRF
+ * targets. Handles IPv4 literals, IPv6 literals (bracketed or bare), and the
+ * IPv4-mapped IPv6 forms (`::ffff:a.b.c.d` / `::ffff:aabb:ccdd`) that would
+ * otherwise smuggle a private IPv4 past a naive IPv6 check.
  */
 function isBlockedHost(host: string): boolean {
-  const h = host.toLowerCase();
+  const h = host.toLowerCase().trim();
   if (h === "localhost" || h.endsWith(".localhost")) return true;
 
-  // IPv6 loopback / unique-local / link-local.
-  if (h === "[::1]" || h === "::1") return true;
-  if (h.startsWith("[fc") || h.startsWith("[fd") || h.startsWith("[fe80")) return true;
+  if (isBlockedIpv4(h)) return true;
 
-  // IPv4 dotted-quad ranges.
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
-  if (m) {
-    const a = Number(m[1]);
-    const b = Number(m[2]);
-    if (a === 127) return true; // loopback
-    if (a === 10) return true; // 10.0.0.0/8
-    if (a === 169 && b === 254) return true; // link-local (metadata)
-    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
-    if (a === 192 && b === 168) return true; // 192.168.0.0/16
-    if (a === 0) return true; // 0.0.0.0/8
+  // Strip IPv6 brackets to inspect the address literal.
+  const v6 = h.startsWith("[") && h.endsWith("]") ? h.slice(1, -1) : h;
+
+  // IPv6 loopback / ULA (fc00::/7) / link-local (fe80::/10).
+  if (v6 === "::1" || v6 === "::") return true;
+  if (/^f[cd][0-9a-f]{0,2}:/.test(v6)) return true; // fc00::/7
+  if (/^fe[89ab][0-9a-f]:/.test(v6)) return true; // fe80::/10
+
+  // IPv4-mapped IPv6: ::ffff:169.254.169.254 (dotted) or ::ffff:a9fe:a9fe (hex).
+  const mappedDotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(v6);
+  if (mappedDotted && isBlockedIpv4(mappedDotted[1]!)) return true;
+  const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(v6);
+  if (mappedHex) {
+    const hi = parseInt(mappedHex[1]!, 16);
+    const lo = parseInt(mappedHex[2]!, 16);
+    const dotted = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+    if (isBlockedIpv4(dotted)) return true;
   }
+
   return false;
+}
+
+/** True when the host is a bare IP literal (v4 or bracketed/bare v6), not DNS. */
+function isIpLiteral(host: string): boolean {
+  const h = host.toLowerCase().trim();
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  const v6 = h.startsWith("[") && h.endsWith("]") ? h.slice(1, -1) : h;
+  return v6.includes(":");
+}
+
+/**
+ * Resolve a DNS hostname and return true if ANY resolved address is private/
+ * blocked (post-resolution SSRF guard against DNS→private-IP). On resolution
+ * failure, fails safe (returns true → blocked). Uses node:dns when available.
+ */
+async function dnsResolvesToBlocked(hostname: string): Promise<boolean> {
+  let lookup: (h: string, opts: { all: true }) => Promise<Array<{ address: string }>>;
+  try {
+    const dns = await import("node:dns");
+    lookup = dns.promises.lookup as unknown as typeof lookup;
+  } catch {
+    // No resolver available (edge runtime) — cannot prove the host is safe.
+    return true;
+  }
+  try {
+    const records = await lookup(hostname, { all: true });
+    if (records.length === 0) return true;
+    return records.some((r) => isBlockedHost(r.address));
+  } catch {
+    return true;
+  }
 }
 
 /**
  * Resolve a storage URI to an HTTPS URL the verifier is allowed to fetch (#61).
  *
- * SSRF hardening: only https:// is honored (http:// is rejected); the host must
- * be on `options.allowedHosts` when that list is provided; private/link-local/
- * loopback hosts are always rejected. Returns `{ url }` when fetchable, or
- * `{ reason }` describing why it was rejected (for a caller warning).
+ * SSRF hardening: only https:// is honored (http:// is rejected); private/
+ * link-local/loopback/ULA/metadata hosts are always rejected (incl. IPv4-mapped
+ * IPv6). When `options.allowedHosts` is provided, the host must be on it. When
+ * it is OMITTED, a bare IP literal must pass the private-range block, and a DNS
+ * hostname is resolved and rejected if it maps to a private/blocked IP
+ * (post-resolution guard against DNS→private-IP). Returns `{ url }` when
+ * fetchable, or `{ reason }` describing why it was rejected.
  */
-function resolveStorageUri(
+async function resolveStorageUri(
   uri: string,
   options: VerifyAnchorOptions
-): { url: string } | { reason: string } {
+): Promise<{ url: string } | { reason: string }> {
   let resolved: string;
   if (uri.startsWith("https://")) {
     resolved = uri;
@@ -779,6 +848,18 @@ function resolveStorageUri(
     if (!allowed.includes(host.toLowerCase())) {
       return { reason: `host not in allow-list: ${host}` };
     }
+    return { url: resolved };
+  }
+
+  // No allow-list: a DNS hostname could resolve to a private IP (DNS-rebind /
+  // metadata SSRF). Resolve it and block if any answer is private/blocked.
+  // Bare IP literals already passed isBlockedHost above.
+  if (!isIpLiteral(host)) {
+    if (await dnsResolvesToBlocked(host)) {
+      return {
+        reason: `host not in allow-list and resolves to a private/blocked or unresolvable address: ${host}`,
+      };
+    }
   }
 
   return { url: resolved };
@@ -802,20 +883,42 @@ async function recomputeBundleRootHash(parsed: unknown): Promise<string | null> 
     return null;
   }
   try {
-    const rollingHash = await computeRollingHash(run.events as TraceRun["events"]);
-    return await computeRootHash(
-      rollingHash,
-      run.spans as TraceRun["spans"],
-      run.modelManifestHash
-    );
+    const events = run.events as TraceEvent[];
+    const spans = run.spans as TraceSpan[];
+    const rollingHash = await computeRollingHash(events);
+
+    // Recompute EACH span hash from its actual header + event hashes (the same
+    // derivation the bundle builder uses) — never trust the fetched span.hash.
+    // Event hashes are likewise recomputed, so tampering with any span-header
+    // field, event, or ordering changes the root. computeRootHash reads
+    // span.hash, so feed it spans carrying the freshly recomputed hashes.
+    const eventHashById = new Map<string, string>();
+    for (const event of events) {
+      eventHashById.set(event.id, await computeEventHash(event));
+    }
+    const rehashedSpans: TraceSpan[] = [];
+    for (const span of spans) {
+      const spanEventHashes = span.eventIds
+        .map((id) => ({ id, event: events.find((e) => e.id === id) }))
+        .filter((x): x is { id: string; event: TraceEvent } => x.event !== undefined)
+        .sort((a, b) => a.event.seq - b.event.seq)
+        .map((x) => eventHashById.get(x.id) ?? "");
+      const spanHash = await computeSpanHash(span, spanEventHashes);
+      rehashedSpans.push({ ...span, hash: spanHash });
+    }
+
+    return await computeRootHash(rollingHash, rehashedSpans, run.modelManifestHash);
   } catch {
     return null;
   }
 }
 
 /**
- * Read a response body with a hard byte cap (#61). Rejects (returns null) when
- * the stream exceeds `maxBytes` instead of buffering an unbounded response.
+ * Read a response body with a hard byte cap (#61). Enforces the cap WHILE
+ * reading — streams the body in bounded chunks and aborts once `maxBytes` is
+ * exceeded — so an oversize (or headerless chunked) body is never buffered
+ * whole. Returns null when the cap is exceeded. Falls back to `res.text()` only
+ * when no readable stream is available.
  */
 async function readCapped(res: Response, maxBytes: number): Promise<string | null> {
   const declared = res.headers?.get?.("content-length");
@@ -823,10 +926,51 @@ async function readCapped(res: Response, maxBytes: number): Promise<string | nul
     const n = Number(declared);
     if (Number.isFinite(n) && n > maxBytes) return null;
   }
+
+  const body = (res as { body?: unknown }).body as
+    | { getReader?: () => StreamReader }
+    | null
+    | undefined;
+  if (body && typeof body.getReader === "function") {
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          total += value.byteLength;
+          if (total > maxBytes) {
+            await reader.cancel?.();
+            return null;
+          }
+          chunks.push(value);
+        }
+      }
+    } finally {
+      reader.releaseLock?.();
+    }
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const c of chunks) {
+      merged.set(c, offset);
+      offset += c.byteLength;
+    }
+    return new TextDecoder().decode(merged);
+  }
+
+  // No stream reader (e.g. a minimal mock): fall back to buffered read, still
+  // measuring the true byte length before returning.
   const text = await res.text();
-  // TextEncoder gives the true byte length (multi-byte chars count correctly).
   if (new TextEncoder().encode(text).length > maxBytes) return null;
   return text;
+}
+
+interface StreamReader {
+  read(): Promise<{ done: boolean; value?: Uint8Array }>;
+  cancel?(): Promise<void> | void;
+  releaseLock?(): void;
 }
 
 /**
@@ -862,7 +1006,7 @@ async function fetchBundleFromAnchor(
   }
 
   for (const ref of candidates) {
-    const resolved = resolveStorageUri(ref.uri, options);
+    const resolved = await resolveStorageUri(ref.uri, options);
     if ("reason" in resolved) {
       warnings.push(resolved.reason);
       continue;
