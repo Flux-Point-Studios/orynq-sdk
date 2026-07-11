@@ -92,6 +92,27 @@ describe("governanceAttestationPreimage", () => {
     expect(Buffer.from(a)).toEqual(Buffer.from(b));
     expect(Buffer.from(a)).not.toEqual(Buffer.from(c));
   });
+
+  it("is collision-resistant across attacker-controlled field boundaries", () => {
+    // role/policyRef are attacker-supplied. A raw delimiter (e.g. "\n") would let
+    // two DIFFERENT tuples serialize to the SAME bytes by sliding the boundary
+    // through a field value, so one signature could be re-bound to a different
+    // claim. Length-prefixing makes the boundary unambiguous.
+    const a = governanceAttestationPreimage({
+      role: "compliance",
+      policyRef: "policy\nDECISION",
+      decisionRef: "d",
+      signedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const b = governanceAttestationPreimage({
+      role: "compliance\npolicy",
+      policyRef: "DECISION",
+      decisionRef: "d",
+      signedAt: "2026-01-01T00:00:00.000Z",
+    });
+    // Under naive "\n"-join these collide; under length-prefixing they must not.
+    expect(Buffer.from(a)).not.toEqual(Buffer.from(b));
+  });
 });
 
 describe("addGovernanceAttestation + verify (sr25519)", () => {

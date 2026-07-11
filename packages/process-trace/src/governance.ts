@@ -72,21 +72,38 @@ export interface GovernanceAttestationFields {
  * governance signers. Deterministic — a verifier reconstructs identical bytes
  * from the recorded event fields plus the enclosing run id.
  *
- * Layout: `"poi-trace:governance:v1|" + runId "\n" role "\n" policyRef "\n" decisionRef "\n" signedAt`
+ * Each field is LENGTH-PREFIXED (4-byte big-endian byte length) rather than
+ * delimiter-joined: a raw `\n` separator let two different tuples produce
+ * identical bytes when a field value (role/policyRef/decisionRef are
+ * attacker-supplied) itself contained `\n`, so one signature re-sliced to bind
+ * a different claim. Length-prefixing makes field boundaries unambiguous
+ * regardless of the field contents.
  */
 export function governanceAttestationPreimage(fields: GovernanceAttestationFields): Uint8Array {
-  const s =
-    HASH_DOMAIN_PREFIXES.governance +
-    fields.runId +
-    "\n" +
-    fields.role +
-    "\n" +
-    fields.policyRef +
-    "\n" +
-    fields.decisionRef +
-    "\n" +
-    fields.signedAt;
-  return new TextEncoder().encode(s);
+  const enc = new TextEncoder();
+  const domain = enc.encode(HASH_DOMAIN_PREFIXES.governance);
+  const parts = [
+    fields.runId,
+    fields.role,
+    fields.policyRef,
+    fields.decisionRef,
+    fields.signedAt,
+  ].map((v) => enc.encode(v));
+  const total = domain.length + parts.reduce((n, p) => n + 4 + p.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  out.set(domain, off);
+  off += domain.length;
+  for (const p of parts) {
+    out[off] = (p.length >>> 24) & 0xff;
+    out[off + 1] = (p.length >>> 16) & 0xff;
+    out[off + 2] = (p.length >>> 8) & 0xff;
+    out[off + 3] = p.length & 0xff;
+    off += 4;
+    out.set(p, off);
+    off += p.length;
+  }
+  return out;
 }
 
 // =============================================================================
