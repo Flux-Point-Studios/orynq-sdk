@@ -563,6 +563,45 @@ export async function verifyBundle(
   }
 
   // ---------------------------------------------------------------------------
+  // Verify PublicView Model-Manifest (issue #59)
+  // ---------------------------------------------------------------------------
+  // publicView.{modelManifest,modelManifestHash} is the shared artifact an
+  // EXTERNAL verifier reads. It must (a) equal the bound privateRun commitment
+  // and (b) recompute consistently from the publicView manifest itself — else an
+  // attacker can leave privateRun honest but fabricate the public fields.
+
+  const pvManifest = bundle.publicView.modelManifest;
+  const pvManifestHash = bundle.publicView.modelManifestHash;
+
+  if (pvManifestHash !== undefined && pvManifestHash !== run.modelManifestHash) {
+    checks.modelManifestValid = false;
+    errors.push(
+      `PublicView modelManifestHash (${pvManifestHash}) does not match the bound commitment (${run.modelManifestHash})`
+    );
+  }
+  if (pvManifest !== undefined && run.modelManifest === undefined) {
+    checks.modelManifestValid = false;
+    errors.push("PublicView carries a model manifest but the bound run has none");
+  }
+  if (pvManifest !== undefined) {
+    try {
+      const recomputed = await computeModelManifestHash(pvManifest);
+      const expected = pvManifestHash ?? run.modelManifestHash;
+      if (expected !== undefined && recomputed !== expected) {
+        checks.modelManifestValid = false;
+        errors.push(
+          `PublicView model manifest hash mismatch: recorded ${expected}, computed ${recomputed}`
+        );
+      }
+    } catch (error) {
+      checks.modelManifestValid = false;
+      errors.push(
+        `Failed to recompute publicView model manifest hash: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Additional Warnings
   // ---------------------------------------------------------------------------
 

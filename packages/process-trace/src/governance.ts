@@ -455,11 +455,42 @@ export function createEip712GovernanceVerifier(deps: {
     message: Record<string, unknown>;
     signature: `0x${string}`;
   }) => Promise<boolean> | boolean;
+  /**
+   * Expected EIP-712 domain (name/version/chainId/verifyingContract). The
+   * event's `eip712.domain` is attacker-controlled, so when this is supplied the
+   * verifier requires an EXACT match on every provided field — a swapped
+   * verifyingContract/chainId/name is rejected before the signature is trusted.
+   */
+  expectedDomain?: Record<string, unknown>;
+  /** Expected `primaryType`; a mismatch is rejected. */
+  expectedPrimaryType?: string;
+  /** Expected `types` map; when supplied it must deep-equal the event's. */
+  expectedTypes?: Record<string, Array<{ name: string; type: string }>>;
 }): GovernanceVerifier {
   return async (event, context) => {
     if (!event.eip712) {
       throw new Error("eip712 governance attestation is missing its `eip712` binding");
     }
+
+    // Pin the attacker-controlled typed-data schema BEFORE trusting the
+    // signature. A signature over an unexpected domain/type proves nothing about
+    // an Orynq governance attestation.
+    if (
+      deps.expectedPrimaryType !== undefined &&
+      event.eip712.primaryType !== deps.expectedPrimaryType
+    ) {
+      return false;
+    }
+    if (deps.expectedDomain !== undefined && !domainMatches(deps.expectedDomain, event.eip712.domain)) {
+      return false;
+    }
+    if (
+      deps.expectedTypes !== undefined &&
+      !typesMatch(deps.expectedTypes, event.eip712.types)
+    ) {
+      return false;
+    }
+
     const signature = (
       event.signature.startsWith("0x") ? event.signature : "0x" + event.signature
     ) as `0x${string}`;
@@ -486,4 +517,42 @@ export function createEip712GovernanceVerifier(deps: {
       message.runId === context.runId
     );
   };
+}
+
+/**
+ * True when every field of the EXPECTED domain is present and strictly equal in
+ * the ACTUAL (event-supplied) domain. The actual domain may carry no extra
+ * fields beyond the expected ones — extra fields (e.g. an injected
+ * verifyingContract) are rejected, closing the domain-substitution vector.
+ */
+function domainMatches(
+  expected: Record<string, unknown>,
+  actual: Record<string, unknown>
+): boolean {
+  const expectedKeys = Object.keys(expected);
+  const actualKeys = Object.keys(actual);
+  if (actualKeys.length !== expectedKeys.length) return false;
+  for (const key of expectedKeys) {
+    if (actual[key] !== expected[key]) return false;
+  }
+  return true;
+}
+
+/** Deep-equal for an EIP-712 `types` map (order-insensitive per type). */
+function typesMatch(
+  expected: Record<string, Array<{ name: string; type: string }>>,
+  actual: Record<string, Array<{ name: string; type: string }>>
+): boolean {
+  const norm = (t: Record<string, Array<{ name: string; type: string }>>): string =>
+    JSON.stringify(
+      Object.fromEntries(
+        Object.keys(t)
+          .sort()
+          .map((k) => [
+            k,
+            [...t[k]!].sort((a, b) => a.name.localeCompare(b.name)).map((f) => `${f.name}:${f.type}`),
+          ])
+      )
+    );
+  return norm(expected) === norm(actual);
 }
