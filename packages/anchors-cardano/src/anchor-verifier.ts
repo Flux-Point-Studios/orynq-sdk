@@ -751,11 +751,67 @@ function isBlockedIpv4(addr: string): boolean {
 }
 
 /**
+ * Expand an IPv6 literal (with `::` compression and an optional trailing
+ * dotted-quad) to its eight 16-bit groups, or null if it is not a well-formed
+ * IPv6 address. Used to detect embedded-IPv4 SSRF smuggling generically instead
+ * of matching each textual form by regex.
+ */
+function expandIpv6(v6: string): number[] | null {
+  if (!/^[0-9a-f:.]+$/.test(v6)) return null;
+  let s = v6;
+  // Fold a trailing dotted-quad (e.g. ::ffff:1.2.3.4) into two hex groups.
+  const dq = /:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
+  if (dq) {
+    const p = [dq[1]!, dq[2]!, dq[3]!, dq[4]!].map(Number);
+    if (p.some((n) => n > 255)) return null;
+    const hi = (p[0]! << 8) | p[1]!;
+    const lo = (p[2]! << 8) | p[3]!;
+    s = s.slice(0, dq.index) + ":" + hi.toString(16) + ":" + lo.toString(16);
+  }
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  let groups: string[];
+  if (halves.length === 1) {
+    if (head.length !== 8) return null;
+    groups = head;
+  } else {
+    const missing = 8 - head.length - tail.length;
+    if (missing < 1) return null;
+    groups = [...head, ...Array(missing).fill("0"), ...tail];
+  }
+  if (groups.length !== 8) return null;
+  const out = groups.map((g) => parseInt(g, 16));
+  if (out.some((n) => Number.isNaN(n) || n < 0 || n > 0xffff)) return null;
+  return out;
+}
+
+/**
+ * The dotted-quad IPv4 embedded in an IPv6 literal under a known translation
+ * prefix — IPv4-mapped `::ffff:0:0/96` and NAT64 well-known `64:ff9b::/96` — or
+ * null when the address embeds no such IPv4. Both prefixes carry a real IPv4 in
+ * the low 32 bits that a naive IPv6 check would let smuggle a private/metadata
+ * target past the SSRF filter.
+ */
+function embeddedIpv4FromV6(v6: string): string | null {
+  const g = expandIpv6(v6);
+  if (!g) return null;
+  const isMapped = g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0xffff;
+  const isNat64 = g[0] === 0x64 && g[1] === 0xff9b && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0;
+  if (!isMapped && !isNat64) return null;
+  const hi = g[6]!;
+  const lo = g[7]!;
+  return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+}
+
+/**
  * True for hosts that must never be fetched: loopback, link-local, RFC1918
  * private ranges, ULA, and the cloud metadata endpoint — the classic SSRF
  * targets. Handles IPv4 literals, IPv6 literals (bracketed or bare), and the
- * IPv4-mapped IPv6 forms (`::ffff:a.b.c.d` / `::ffff:aabb:ccdd`) that would
- * otherwise smuggle a private IPv4 past a naive IPv6 check.
+ * embedded-IPv4 IPv6 forms — IPv4-mapped (`::ffff:a.b.c.d`) AND NAT64
+ * (`64:ff9b::a.b.c.d`) — that would otherwise smuggle a private IPv4 past a
+ * naive IPv6 check.
  */
 function isBlockedHost(host: string): boolean {
   const h = host.toLowerCase().trim();
@@ -771,16 +827,10 @@ function isBlockedHost(host: string): boolean {
   if (/^f[cd][0-9a-f]{0,2}:/.test(v6)) return true; // fc00::/7
   if (/^fe[89ab][0-9a-f]:/.test(v6)) return true; // fe80::/10
 
-  // IPv4-mapped IPv6: ::ffff:169.254.169.254 (dotted) or ::ffff:a9fe:a9fe (hex).
-  const mappedDotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(v6);
-  if (mappedDotted && isBlockedIpv4(mappedDotted[1]!)) return true;
-  const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(v6);
-  if (mappedHex) {
-    const hi = parseInt(mappedHex[1]!, 16);
-    const lo = parseInt(mappedHex[2]!, 16);
-    const dotted = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
-    if (isBlockedIpv4(dotted)) return true;
-  }
+  // Embedded IPv4 under a translation prefix (IPv4-mapped or NAT64): block when
+  // the smuggled IPv4 is itself a private/loopback/link-local/metadata target.
+  const embedded = embeddedIpv4FromV6(v6);
+  if (embedded && isBlockedIpv4(embedded)) return true;
 
   return false;
 }

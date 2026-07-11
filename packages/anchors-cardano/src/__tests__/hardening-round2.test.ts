@@ -160,6 +160,55 @@ describe("SSRF hardening round 2 (#61)", () => {
     expect(result.bundle).toBeUndefined();
   });
 
+  it("rejects a NAT64-embedded metadata address (64:ff9b::/96)", async () => {
+    // 64:ff9b::a9fe:a9fe is the NAT64 well-known-prefix encoding of
+    // 169.254.169.254; on a network with a NAT64 gateway the outbound request
+    // would reach the internal IPv4 metadata endpoint.
+    const bundle = await buildRealBundle();
+    const anchorRoot = bundle.rootHash;
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [
+        { type: "https", uri: "https://[64:ff9b::a9fe:a9fe]/latest/meta-data", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(bundle));
+
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(result.bundle).toBeUndefined();
+  });
+
+  it("rejects a NAT64-embedded loopback address (64:ff9b::7f00:1)", async () => {
+    const bundle = await buildRealBundle();
+    const anchorRoot = bundle.rootHash;
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [
+        { type: "https", uri: "https://[64:ff9b::7f00:1]/x", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(bundle));
+
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(result.bundle).toBeUndefined();
+  });
+
   it("rejects an arbitrary DNS host when allowedHosts is omitted", async () => {
     const bundle = await buildRealBundle();
     const anchorRoot = bundle.rootHash;
