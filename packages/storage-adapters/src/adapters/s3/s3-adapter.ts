@@ -24,8 +24,24 @@ export function computeObjectLockRetainUntil(
   objectLock: S3ObjectLockConfig,
   nowMs: number = Date.now()
 ): Date | undefined {
-  if (objectLock.retainUntilDate) return objectLock.retainUntilDate;
+  if (objectLock.retainUntilDate) {
+    // A retain-until in the past provides no WORM protection.
+    if (objectLock.retainUntilDate.getTime() <= nowMs) {
+      throw new StorageException(
+        StorageError.INVALID_CONFIG,
+        `S3 objectLock retainUntilDate must be in the future (got ${objectLock.retainUntilDate.toISOString()})`
+      );
+    }
+    return objectLock.retainUntilDate;
+  }
   if (objectLock.retentionYears !== undefined) {
+    // 0 → retain-until == now (no protection); negative → a past date.
+    if (!(objectLock.retentionYears > 0)) {
+      throw new StorageException(
+        StorageError.INVALID_CONFIG,
+        `S3 objectLock retentionYears must be > 0 (got ${objectLock.retentionYears})`
+      );
+    }
     return new Date(nowMs + objectLock.retentionYears * MS_PER_YEAR);
   }
   return undefined;
@@ -44,6 +60,8 @@ export interface S3Client {
  */
 export class S3Adapter implements StorageAdapter {
   readonly type = "s3" as const;
+  /** True when Object Lock (WORM) retention is configured — see StorageAdapter. */
+  readonly isWorm: boolean;
   private readonly bucket: string;
   private readonly region: string;
   private readonly prefix: string;
@@ -64,6 +82,7 @@ export class S3Adapter implements StorageAdapter {
     this.serverSideEncryption = config.serverSideEncryption ?? false;
     this.presignedUrlExpiry = config.presignedUrlExpiry ?? 3600;
     this.objectLock = config.objectLock;
+    this.isWorm = config.objectLock !== undefined;
   }
 
   /**

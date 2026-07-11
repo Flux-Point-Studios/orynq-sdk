@@ -32,6 +32,13 @@ export interface StorageAdapter {
   readonly type: StorageType;
 
   /**
+   * True when this backend writes under WORM / Object-Lock retention (tamper-
+   * proof for the retention window). Durable-pinning policies require the WORM
+   * backend specifically, so a non-WORM success cannot stand in for it.
+   */
+  readonly isWorm?: boolean;
+
+  /**
    * Store raw data.
    */
   store(data: Uint8Array): Promise<StorageRef>;

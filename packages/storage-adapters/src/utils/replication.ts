@@ -14,6 +14,12 @@ export interface ReplicationResult {
   success: boolean;
   refs: StorageRef[];
   errors: Array<{ adapter: string; error: Error }>;
+  /**
+   * Per-adapter outcome in the SAME order as the configured adapters, so a
+   * caller can require a specific backend (e.g. the WORM one) to have succeeded
+   * regardless of the aggregate redundancy verdict.
+   */
+  perAdapter: Array<{ adapter: StorageAdapter; ref?: StorageRef; error?: Error }>;
 }
 
 /**
@@ -234,6 +240,7 @@ export class ReplicatedStorageAdapter implements StorageAdapter {
 
     const refs: StorageRef[] = [];
     const errors: Array<{ adapter: string; error: Error }> = [];
+    const perAdapter: ReplicationResult["perAdapter"] = [];
 
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
@@ -242,17 +249,18 @@ export class ReplicatedStorageAdapter implements StorageAdapter {
 
       if (result.status === "fulfilled") {
         refs.push(result.value);
+        perAdapter.push({ adapter, ref: result.value });
       } else {
-        errors.push({
-          adapter: adapter.type,
-          error: result.reason instanceof Error ? result.reason : new Error(String(result.reason)),
-        });
+        const error =
+          result.reason instanceof Error ? result.reason : new Error(String(result.reason));
+        errors.push({ adapter: adapter.type, error });
+        perAdapter.push({ adapter, error });
       }
     }
 
     const success = this.checkSuccess(refs.length, this.adapters.length);
 
-    return { success, refs, errors };
+    return { success, refs, errors, perAdapter };
   }
 
   private checkSuccess(successCount: number, totalCount: number): boolean {

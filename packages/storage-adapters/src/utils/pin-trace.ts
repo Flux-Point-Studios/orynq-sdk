@@ -53,6 +53,18 @@ function ensureSuccess(result: ReplicationResult, redundancy: string, what: stri
         result.errors.map((e) => `${e.adapter}: ${e.error.message}`).join("; ")
     );
   }
+  // The durability guarantee this helper advertises rests on the WORM (Object-
+  // Lock) backend. A non-WORM success under "any"/"quorum" does NOT stand in for
+  // it: if any configured WORM backend failed, the overall result is a failure,
+  // regardless of the aggregate redundancy verdict.
+  const wormFailure = result.perAdapter.find((p) => p.adapter.isWorm === true && p.ref === undefined);
+  if (wormFailure) {
+    throw new StorageException(
+      StorageError.REPLICATION_FAILED,
+      `pinTraceFor: ${what} WORM/Object-Lock backend failed — the durability guarantee is not met: ` +
+        `${wormFailure.adapter.type}: ${wormFailure.error?.message ?? "unknown error"}`
+    );
+  }
 }
 
 /**
