@@ -67,6 +67,7 @@ export {
   createS3Adapter,
   createS3WormAdapter,
   computeObjectLockRetainUntil,
+  objectLockConfigEnabled,
   type S3Client,
   type S3WormAdapterConfig,
 } from "./adapters/s3/index.js";

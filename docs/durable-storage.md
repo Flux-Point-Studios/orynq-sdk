@@ -75,7 +75,12 @@ Takeaways:
 - **Arweave** has the best long-horizon economics (pay once) and no "did the bill
   lapse?" risk — ideal as the durable anchor of a redundancy set.
 - **S3-WORM (COMPLIANCE)** gives a regulator-recognized retention guarantee that
-  even the root account can't delete before the retain-until date.
+  even the root account can't delete before the retain-until date — *provided the
+  bucket has Object Lock enabled*. `objectLock` config is a producer assertion, so
+  a bucket created without Object Lock silently ignores per-object retention; the
+  adapter's `isWorm` reflects the config, not enforcement. Confirm real
+  enforcement with `adapter.verifyWormEnabled()` before treating S3 as the
+  durable system of record.
 - **IPFS** is cheapest to start but is the only option whose data can *disappear*
   if pinning lapses (see below). Pair it with Arweave or S3-WORM, never alone for
   long horizons.

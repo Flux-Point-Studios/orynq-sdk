@@ -25,8 +25,18 @@ export function computeObjectLockRetainUntil(
   nowMs: number = Date.now()
 ): Date | undefined {
   if (objectLock.retainUntilDate) {
+    const t = objectLock.retainUntilDate.getTime();
+    // An Invalid Date has getTime() === NaN, and `NaN <= nowMs` is false, so it
+    // would slip past the past-date guard and yield a bogus retention. Reject
+    // non-finite dates explicitly.
+    if (!Number.isFinite(t)) {
+      throw new StorageException(
+        StorageError.INVALID_CONFIG,
+        "S3 objectLock retainUntilDate is not a valid date"
+      );
+    }
     // A retain-until in the past provides no WORM protection.
-    if (objectLock.retainUntilDate.getTime() <= nowMs) {
+    if (t <= nowMs) {
       throw new StorageException(
         StorageError.INVALID_CONFIG,
         `S3 objectLock retainUntilDate must be in the future (got ${objectLock.retainUntilDate.toISOString()})`
@@ -48,6 +58,17 @@ export function computeObjectLockRetainUntil(
 }
 
 /**
+ * True when an S3 `GetObjectLockConfiguration` response reports Object Lock as
+ * ENABLED on the bucket. Anything else (disabled, absent, malformed) is false.
+ * Pure — testable without AWS.
+ */
+export function objectLockConfigEnabled(response: unknown): boolean {
+  const cfg = (response as { ObjectLockConfiguration?: { ObjectLockEnabled?: unknown } } | null)
+    ?.ObjectLockConfiguration;
+  return cfg?.ObjectLockEnabled === "Enabled";
+}
+
+/**
  * S3 client interface (minimal subset used).
  * This allows using the actual AWS SDK or a compatible implementation.
  */
@@ -60,7 +81,13 @@ export interface S3Client {
  */
 export class S3Adapter implements StorageAdapter {
   readonly type = "s3" as const;
-  /** True when Object Lock (WORM) retention is configured — see StorageAdapter. */
+  /**
+   * True when Object Lock (WORM) retention is CONFIGURED. This is a producer
+   * asserted flag, not proof the bucket enforces Object Lock — a bucket without
+   * Object Lock enabled silently ignores per-object retention. Call
+   * {@link verifyWormEnabled} to confirm real enforcement before relying on the
+   * durability guarantee.
+   */
   readonly isWorm: boolean;
   private readonly bucket: string;
   private readonly region: string;
@@ -83,6 +110,34 @@ export class S3Adapter implements StorageAdapter {
     this.presignedUrlExpiry = config.presignedUrlExpiry ?? 3600;
     this.objectLock = config.objectLock;
     this.isWorm = config.objectLock !== undefined;
+    this.s3Client = config.s3Client;
+  }
+
+  /**
+   * Confirm the target bucket actually has S3 Object Lock ENABLED, so WORM
+   * retention is enforced (not silently ignored). Unlike {@link isWorm} — a
+   * producer-attested config flag — this performs a live `GetObjectLockConfiguration`
+   * check. Returns false when Object Lock is absent (including the
+   * "not found" error S3 raises for buckets created without it).
+   */
+  async verifyWormEnabled(): Promise<boolean> {
+    const client = await this.getS3Client();
+    let command: unknown;
+    try {
+      const { GetObjectLockConfigurationCommand } = await import("@aws-sdk/client-s3");
+      command = new GetObjectLockConfigurationCommand({ Bucket: this.bucket });
+    } catch {
+      // SDK not present (e.g. an injected/S3-compatible client): send a plain
+      // request the client can interpret.
+      command = { input: { Bucket: this.bucket } };
+    }
+    try {
+      const response = await client.send(command);
+      return objectLockConfigEnabled(response);
+    } catch {
+      // S3 raises ObjectLockConfigurationNotFoundError for buckets without it.
+      return false;
+    }
   }
 
   /**
@@ -224,7 +279,7 @@ export class S3Adapter implements StorageAdapter {
 
   private async getS3Client(): Promise<S3Client> {
     if (this.s3Client) {
-      return this.s3Client;
+      return this.s3Client as S3Client;
     }
 
     try {

@@ -167,8 +167,19 @@ export interface S3AdapterConfig {
    * S3 Object Lock (WORM) retention. When set, every stored object is written
    * with the given retention mode + retain-until date — regulatory-grade
    * tamper-resistance for long audit horizons.
+   *
+   * NOTE: setting this asserts the bucket is Object-Lock-enabled; it does not by
+   * itself prove enforcement. Call `S3Adapter.verifyWormEnabled()` to confirm the
+   * bucket actually has Object Lock enabled.
    */
   objectLock?: S3ObjectLockConfig;
+
+  /**
+   * Pre-constructed S3 client (or S3-compatible / test double). When supplied,
+   * the adapter uses it instead of lazily constructing an `@aws-sdk/client-s3`
+   * client. Must implement `send(command)`.
+   */
+  s3Client?: { send(command: unknown): Promise<unknown> };
 }
 
 // === Arweave Configuration ===
