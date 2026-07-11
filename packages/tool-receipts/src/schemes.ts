@@ -22,6 +22,7 @@ import {
   type KeyObject,
 } from "node:crypto";
 import type { ToolReceiptEvent } from "@fluxpointstudios/orynq-sdk-process-trace";
+import { sha256StringHex } from "@fluxpointstudios/orynq-sdk-core/utils";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -35,6 +36,15 @@ export interface ToolReceiptVerifyContext {
   toleranceSec?: number;
   /** Epoch-seconds clock override (testing). */
   nowSec?: number;
+  /**
+   * Accept a public key embedded in `receipt.params.publicKey` when no
+   * out-of-band key is configured. This is a CONVENIENCE for internal
+   * consistency checks only — it is NOT an authenticity guarantee, because the
+   * trace (and therefore the embedded key) is attacker-controlled. Default
+   * false; supply the signer's key via `keys`/`resolveKey` for a trustworthy
+   * verdict.
+   */
+  trustEmbeddedKeys?: boolean;
 }
 
 const textEncoder = new TextEncoder();
@@ -62,8 +72,10 @@ async function resolveKey(
   if (ctx?.keys && Object.prototype.hasOwnProperty.call(ctx.keys, event.receipt.signer)) {
     return ctx.keys[event.receipt.signer];
   }
-  // Asymmetric public keys are safe to embed; symmetric secrets are not.
-  if (allowEmbedded) {
+  // An embedded public key lives in the untrusted trace, so it is NOT trusted
+  // for a passing verdict unless the caller explicitly opts in. Prefer an
+  // out-of-band key via keys/resolveKey.
+  if (allowEmbedded && ctx?.trustEmbeddedKeys === true) {
     const p = event.receipt.params;
     if (p && typeof p.publicKey === "string") return p.publicKey;
   }
@@ -309,4 +321,51 @@ function decodeSignature(sig: string): Buffer {
   if (sig.startsWith("0x")) return Buffer.from(sig.slice(2), "hex");
   if (/[-_]/.test(sig)) return Buffer.from(sig, "base64url");
   return Buffer.from(sig, "base64");
+}
+
+// =============================================================================
+// Response binding — the signed content must commit to the recorded response
+// =============================================================================
+
+/**
+ * The sha-256 hex the signed material commits to, or `null` when the scheme's
+ * signed bytes structurally cannot bind the response (e.g. an RFC 9421
+ * signature base with no `content-digest` component). A `null` MUST cause
+ * verification to fail: a valid signature that does not cover the recorded
+ * response proves nothing about it.
+ */
+export async function responseCommitmentHash(event: ToolReceiptEvent): Promise<string | null> {
+  const { scheme, signedPayload } = event.receipt;
+  switch (scheme) {
+    case "jws": {
+      // signedPayload is the JWS signing input `h.p[.s]`; the payload segment
+      // is the exact bytes the tool signed (canonical response body).
+      const segs = signedPayload.split(".");
+      if (segs.length < 2 || !segs[1]) return null;
+      const body = Buffer.from(segs[1], "base64url").toString("utf8");
+      return sha256StringHex(body);
+    }
+    case "stripe-webhook":
+    case "github-webhook":
+      // The signed webhook body IS the tool response.
+      return sha256StringHex(signedPayload);
+    case "http-message-signatures":
+      // RFC 9421 signs a signature base, not the body; the body is bound only
+      // via a `content-digest` component inside that base.
+      return contentDigestSha256Hex(signedPayload);
+    default:
+      return null;
+  }
+}
+
+/** Extract the sha-256 content-digest (hex) from an RFC 9421 signature base. */
+function contentDigestSha256Hex(signatureBase: string): string | null {
+  for (const line of signatureBase.split("\n")) {
+    const m = /^"content-digest":\s*(.+)$/i.exec(line.trim());
+    if (!m) continue;
+    const d = /sha-256=:([A-Za-z0-9+/=]+):/.exec(m[1]!);
+    if (!d || !d[1]) return null;
+    return Buffer.from(d[1], "base64").toString("hex");
+  }
+  return null;
 }

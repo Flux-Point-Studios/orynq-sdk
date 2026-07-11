@@ -19,6 +19,7 @@ import {
   verifyGitHubReceipt,
   verifyJwsReceipt,
   verifyHttpMessageReceipt,
+  responseCommitmentHash,
   type ToolReceiptVerifyContext,
 } from "./schemes.js";
 
@@ -43,7 +44,16 @@ export interface ToolReceiptVerificationResult {
   scheme: string;
   signer: string;
   verified: boolean;
+  /** When not verified, a short machine-readable reason. */
+  reason?: string;
   error?: string;
+}
+
+/** Case-insensitive, 0x-tolerant hex equality. */
+function hexEq(a: string, b: string): boolean {
+  const na = a.startsWith("0x") ? a.slice(2) : a;
+  const nb = b.startsWith("0x") ? b.slice(2) : b;
+  return na.toLowerCase() === nb.toLowerCase();
 }
 
 /** Context for {@link verifyToolReceipts}; extends key resolution with custom schemes. */
@@ -76,8 +86,19 @@ export async function verifyToolReceipt(
     return { ...base, verified: false, error: `no verifier registered for scheme "${scheme}"` };
   }
   try {
-    const verified = await verifier(event, ctx);
-    return { ...base, verified };
+    const sigValid = await verifier(event, ctx);
+    if (!sigValid) return { ...base, verified: false, reason: "signature-invalid" };
+    // A valid signature is necessary but NOT sufficient: the signed content
+    // must commit to the recorded response, else a genuine receipt for output
+    // A can be paired with a fabricated response B (issue #60's core guarantee).
+    const commit = await responseCommitmentHash(event);
+    if (commit === null) {
+      return { ...base, verified: false, reason: "response-not-bound" };
+    }
+    if (!hexEq(commit, event.response.hash)) {
+      return { ...base, verified: false, reason: "response-binding-mismatch" };
+    }
+    return { ...base, verified: true };
   } catch (error) {
     return {
       ...base,
@@ -108,7 +129,8 @@ export async function verifyToolReceipts(
   return {
     valid: failed.length === 0,
     errors: failed.map(
-      (f) => `tool-receipt "${f.toolId}" (${f.scheme}) failed${f.error ? `: ${f.error}` : ""}`
+      (f) =>
+        `tool-receipt "${f.toolId}" (${f.scheme}) failed${f.reason ? ` [${f.reason}]` : ""}${f.error ? `: ${f.error}` : ""}`
     ),
     results,
   };
