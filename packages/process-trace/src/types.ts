@@ -609,6 +609,12 @@ export interface TraceVerificationResult {
     eventHashesValid: boolean;
     sequenceValid: boolean;
     /**
+     * Model-manifest pin binding (#59): the pinned manifest hashes to its
+     * recorded commitment AND that commitment is folded into the committed
+     * root. True when no manifest is pinned (nothing to bind).
+     */
+    modelManifestValid?: boolean;
+    /**
      * Set only when governance verification is requested via
      * verifyBundle(bundle, { governance }). Undefined means "not checked".
      */

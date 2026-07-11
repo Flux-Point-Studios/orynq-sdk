@@ -69,6 +69,8 @@ import {
   computeRootHash,
 } from "./rolling-hash.js";
 
+import { computeModelManifestHash } from "./model-manifest.js";
+
 import { buildSpanMerkleTree, computeSpanHash } from "./merkle.js";
 
 import {
@@ -461,7 +463,13 @@ export async function verifyBundle(
   // ---------------------------------------------------------------------------
 
   try {
-    const computedRootHash = await computeRootHash(run.rollingHash, run.spans);
+    // Recompute the root binding the recorded model-manifest commitment (#59),
+    // so a manifest swapped after commitment fails here.
+    const computedRootHash = await computeRootHash(
+      run.rollingHash,
+      run.spans,
+      run.modelManifestHash
+    );
     if (computedRootHash === bundle.rootHash) {
       checks.rootHashValid = true;
     } else {
@@ -492,6 +500,66 @@ export async function verifyBundle(
     errors.push(
       `Failed to compute Merkle root: ${error instanceof Error ? error.message : String(error)}`
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Verify Model-Manifest Pin Binding (issue #59)
+  // ---------------------------------------------------------------------------
+  // When a manifest is pinned it MUST (a) hash to the recorded commitment and
+  // (b) be bound into the committed root. (b) is enforced by folding
+  // modelManifestHash into computeRootHash above — a swapped hash breaks
+  // rootHashValid. Here we additionally recompute the commitment from the
+  // manifest itself so that swapping the manifest (while leaving the recorded
+  // hash) is caught, and reject a manifest present but not bound into the root.
+
+  const hasManifest = run.modelManifest !== undefined;
+  const hasManifestHash =
+    run.modelManifestHash !== undefined && run.modelManifestHash.length > 0;
+
+  if (!hasManifest && !hasManifestHash) {
+    // No manifest pinned — nothing to bind (warn-only path lives in finalizeTrace).
+    checks.modelManifestValid = true;
+  } else {
+    let manifestBindingValid = true;
+
+    if (hasManifest && !hasManifestHash) {
+      manifestBindingValid = false;
+      errors.push(
+        "Model manifest present but modelManifestHash (its commitment) is missing"
+      );
+    } else if (!hasManifest && hasManifestHash) {
+      manifestBindingValid = false;
+      errors.push(
+        "modelManifestHash present but the model manifest itself is missing"
+      );
+    } else if (run.modelManifest !== undefined) {
+      try {
+        const recomputed = await computeModelManifestHash(run.modelManifest);
+        if (recomputed !== run.modelManifestHash) {
+          manifestBindingValid = false;
+          errors.push(
+            `Model manifest hash mismatch: recorded ${run.modelManifestHash}, computed ${recomputed}`
+          );
+        }
+      } catch (error) {
+        manifestBindingValid = false;
+        errors.push(
+          `Failed to recompute model manifest hash: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+
+    // The manifest must actually be bound into the committed root. If the root
+    // recompute (with the manifest folded in) matched, rootHashValid is true;
+    // a manifest that is NOT bound produces a root mismatch above.
+    if (manifestBindingValid && !checks.rootHashValid) {
+      manifestBindingValid = false;
+      errors.push(
+        "Model manifest is not bound into the committed root hash"
+      );
+    }
+
+    checks.modelManifestValid = manifestBindingValid;
   }
 
   // ---------------------------------------------------------------------------
@@ -566,6 +634,7 @@ export async function verifyBundle(
     checks.spanHashesValid &&
     checks.eventHashesValid &&
     checks.sequenceValid &&
+    checks.modelManifestValid !== false &&
     checks.governanceValid !== false &&
     checks.toolReceiptsValid !== false;
 

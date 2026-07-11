@@ -596,8 +596,13 @@ export async function finalizeTrace(run: TraceRun): Promise<TraceBundle> {
   // Build Merkle tree from spans
   const merkleTree = await buildSpanMerkleTree(run.spans, run.events);
 
-  // Compute root hash from rolling hash + span hashes
-  const rootHash = await computeRootHash(run.rollingHash, run.spans);
+  // Compute root hash from rolling hash + span hashes, binding the pinned
+  // model-manifest commitment into the committed root (#59).
+  const rootHash = await computeRootHash(
+    run.rollingHash,
+    run.spans,
+    run.modelManifestHash
+  );
   run.rootHash = rootHash;
 
   // Create public view

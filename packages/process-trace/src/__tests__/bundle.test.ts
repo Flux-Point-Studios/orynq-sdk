@@ -366,6 +366,88 @@ describe('verifyBundle', () => {
 });
 
 // -----------------------------------------------------------------------------
+// Model-manifest pin binding (#59)
+// -----------------------------------------------------------------------------
+
+describe('verifyBundle model-manifest binding (#59)', () => {
+  const manifest = {
+    modelHash: 'sha256:' + '1'.repeat(64),
+    framework: 'anthropic',
+    modelId: 'claude-opus-4-8',
+  };
+
+  async function createManifestBundle(): Promise<TraceBundle> {
+    const run = await createTrace({ agentId: 'test-agent', manifest });
+    const span = addSpan(run, { name: 'infer', visibility: 'public' });
+    await addEvent(run, span.id, {
+      kind: 'command',
+      command: 'run inference',
+      visibility: 'public',
+    });
+    await closeSpan(run, span.id);
+    return finalizeTrace(run);
+  }
+
+  it('honest manifest bundle verifies', async () => {
+    const bundle = await createManifestBundle();
+    const result = await verifyBundle(bundle);
+    expect(result.valid).toBe(true);
+    expect(result.checks.modelManifestValid).toBe(true);
+  });
+
+  it('altered modelManifest (recorded hash unchanged) fails', async () => {
+    const bundle = await createManifestBundle();
+    // Attacker swaps the manifest but leaves the recorded commitment hash.
+    bundle.privateRun.modelManifest = {
+      ...manifest,
+      modelHash: 'sha256:' + '2'.repeat(64),
+    };
+    if (bundle.modelManifest) {
+      bundle.modelManifest = bundle.privateRun.modelManifest;
+    }
+
+    const result = await verifyBundle(bundle);
+    expect(result.valid).toBe(false);
+    expect(result.checks.modelManifestValid).toBe(false);
+  });
+
+  it('altered modelManifestHash (manifest unchanged) breaks the committed root', async () => {
+    const bundle = await createManifestBundle();
+    // Attacker swaps the recorded commitment hash to point at a different model.
+    const forged = 'sha256:' + '3'.repeat(64);
+    bundle.privateRun.modelManifestHash = forged;
+    bundle.modelManifestHash = forged;
+
+    const result = await verifyBundle(bundle);
+    expect(result.valid).toBe(false);
+  });
+
+  it('manifest present but not bound into the root fails', async () => {
+    // Simulate a legacy/forged bundle where the manifest was recorded but the
+    // committed root was computed WITHOUT folding the manifest in.
+    const run = await createTrace({ agentId: 'test-agent', manifest });
+    const span = addSpan(run, { name: 'infer', visibility: 'public' });
+    await addEvent(run, span.id, {
+      kind: 'command',
+      command: 'run inference',
+      visibility: 'public',
+    });
+    await closeSpan(run, span.id);
+    const bundle = await finalizeTrace(run);
+
+    // Recompute the root WITHOUT the manifest and overwrite it, mimicking a
+    // bundle that never bound the pin.
+    const { computeRootHash } = await import('../rolling-hash.js');
+    const unbound = await computeRootHash(bundle.privateRun.rollingHash, bundle.privateRun.spans);
+    bundle.rootHash = unbound;
+    bundle.privateRun.rootHash = unbound;
+
+    const result = await verifyBundle(bundle);
+    expect(result.valid).toBe(false);
+  });
+});
+
+// -----------------------------------------------------------------------------
 // Public View Content Tests
 // -----------------------------------------------------------------------------
 
