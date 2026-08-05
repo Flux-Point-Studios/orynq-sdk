@@ -1,0 +1,14 @@
+{
+  "repo": "orynq-sdk",
+  "primitives": [
+    {
+      "id": "orynq-attestation",
+      "name": "Orynq attestation",
+      "desc": "Attestation, tool-receipt, and process-trace SDK packages",
+      "kind": "toolkit",
+      "paths": ["packages/attestor", "packages/tool-receipts", "packages/process-trace"],
+      "consumes": [],
+      "status": "live"
+    }
+  ]
+}
