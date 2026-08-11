@@ -1,6 +1,6 @@
-# @fluxpointstudios/orynq-mcp
+# @fluxpointstudios/orynq-sdk-process-trace
 
-## 0.3.0
+## 0.2.0
 
 ### Minor Changes
 
@@ -50,20 +50,3 @@ verified)` summary; `eip712` is supported via a pluggable
   - The `trace_summary` MCP tool surfaces tool receipts distinctly.
 
   Additive — existing API is unchanged.
-
-### Patch Changes
-
-- Updated dependencies [48f2049]
-- Updated dependencies [48f2049]
-- Updated dependencies [48f2049]
-- Updated dependencies [3cd6027]
-- Updated dependencies [48f2049]
-  - @fluxpointstudios/orynq-sdk-anchors-cardano@0.3.0
-  - @fluxpointstudios/orynq-sdk-process-trace@0.2.0
-  - @fluxpointstudios/orynq-sdk-anchors-materios@0.5.0
-
-## 0.2.0
-
-### Minor Changes
-
-- c4186c6: Add orynq-mcp package — MCP server exposing 10 tools for process tracing, Cardano anchoring, and verification
