@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-tool-receipts",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Verifiable tool-call receipts for the Orynq process-trace SDK — RFC 9421, webhook-signature, and JWS verifiers",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -18,7 +18,10 @@
       }
     }
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -29,7 +32,18 @@
     "lint:fix": "eslint src --ext .ts --fix",
     "clean": "rimraf dist"
   },
-  "keywords": ["poi", "proof-of-intent", "orynq", "tool-receipts", "tool-call", "rfc9421", "jws", "webhook", "verifiable", "audit"],
+  "keywords": [
+    "poi",
+    "proof-of-intent",
+    "orynq",
+    "tool-receipts",
+    "tool-call",
+    "rfc9421",
+    "jws",
+    "webhook",
+    "verifiable",
+    "audit"
+  ],
   "author": "Flux Point Studios",
   "license": "MIT",
   "publishConfig": {

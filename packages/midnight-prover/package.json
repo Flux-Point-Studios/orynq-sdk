@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-midnight-prover",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "ZK proof generation for PoI using Midnight network",
   "type": "module",
   "main": "./dist/index.js",

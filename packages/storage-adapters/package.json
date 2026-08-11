@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-storage-adapters",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Storage adapters for PoI SDK - IPFS, S3, and Arweave backends",
   "type": "module",
   "main": "./dist/index.js",
