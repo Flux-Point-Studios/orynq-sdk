@@ -2,13 +2,191 @@
   "repo": "orynq-sdk",
   "primitives": [
     {
-      "id": "orynq-attestation",
-      "name": "Orynq attestation",
-      "desc": "Attestation, tool-receipt, and process-trace SDK packages",
+      "id": "process-trace",
+      "name": "Process trace",
+      "desc": "Cryptographic process-trace library: schemas, hashing, Merkle trees, bundles and selective disclosure \u2014 the Proof-of-Intent core.",
       "kind": "toolkit",
-      "paths": ["packages/attestor", "packages/tool-receipts", "packages/process-trace"],
+      "paths": [
+        "packages/process-trace"
+      ],
       "consumes": [],
       "status": "live"
+    },
+    {
+      "id": "anchors-materios",
+      "name": "Materios anchor client",
+      "desc": "Blob upload through the gateway, receipt submission, certification polling, Merkle proofs and end-to-end receipt verification against Materios.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-materios"
+      ],
+      "consumes": [
+        "orinq-receipts-pallet",
+        "blob-gateway-api",
+        "process-trace"
+      ],
+      "status": "live"
+    },
+    {
+      "id": "anchors-cardano",
+      "name": "Cardano anchor client",
+      "desc": "Direct Cardano L1 anchors: Proof-of-Intent label 2222 and Materios checkpoint label 8746 submitters and verifiers.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-cardano"
+      ],
+      "consumes": [
+        "process-trace"
+      ],
+      "status": "live"
+    },
+    {
+      "id": "tool-receipts",
+      "name": "Tool-call receipts",
+      "desc": "Verifiable tool-call receipts with RFC 9421, webhook-signature and JWS verifiers for the process-trace SDK.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/tool-receipts"
+      ],
+      "consumes": [
+        "process-trace"
+      ],
+      "status": "live"
+    },
+    {
+      "id": "payer-materios-x402",
+      "name": "Materios x402 payer",
+      "desc": "Materios-native sr25519 x402 payer with api-key passthrough for the Materios billing gateway.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/payer-materios-x402"
+      ],
+      "consumes": [
+        "billing-pallet",
+        "gateway-billing-metering"
+      ],
+      "status": "live"
+    },
+    {
+      "id": "orynq-observe",
+      "name": "Orynq observe",
+      "desc": "SDK for publishing attested AI-model behaviour observations to a chain-anchored public registry.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/orynq-observe",
+        "packages/orynq-observe-js"
+      ],
+      "consumes": [
+        "gateway-observations"
+      ],
+      "status": "live"
+    },
+    {
+      "id": "orynq-mcp",
+      "name": "Orynq MCP server",
+      "desc": "MCP server exposing process tracing, Cardano anchoring and verification as agent tools.",
+      "kind": "agent",
+      "paths": [
+        "packages/orynq-mcp"
+      ],
+      "consumes": [
+        "process-trace",
+        "anchors-cardano",
+        "anchors-materios"
+      ],
+      "status": "live"
+    },
+    {
+      "id": "dual-protocol-payment-layer",
+      "name": "Dual-protocol payment layer",
+      "desc": "Flux 402 and x402 commerce layer: core types, auto-pay client, server middleware, transports and Cardano/EVM payers.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/core",
+        "packages/client",
+        "packages/server-middleware",
+        "packages/transport-flux",
+        "packages/transport-x402",
+        "packages/payer-cardano-cip30",
+        "packages/payer-cardano-node",
+        "packages/payer-evm-x402",
+        "packages/payer-evm-direct",
+        "packages/gateway",
+        "packages/cli"
+      ],
+      "consumes": [],
+      "status": "live"
+    },
+    {
+      "id": "poi-attestor-backends",
+      "name": "PoI attestor backends",
+      "desc": "TEE attestation backends providing hardware-rooted trust for Proof-of-Intent.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/attestor"
+      ],
+      "consumes": [],
+      "status": "live"
+    },
+    {
+      "id": "flight-recorder",
+      "name": "Flight recorder",
+      "desc": "Streaming flight recorder with chunking, compression and encryption for long-running traces.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/flight-recorder"
+      ],
+      "consumes": [
+        "process-trace"
+      ],
+      "status": "live"
+    },
+    {
+      "id": "storage-adapters",
+      "name": "Storage adapters",
+      "desc": "IPFS, S3 and Arweave storage backends for trace payloads.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/storage-adapters"
+      ],
+      "consumes": [],
+      "status": "live"
+    },
+    {
+      "id": "orynq-quickstart",
+      "name": "Orynq quickstart",
+      "desc": "Solo-developer quickstart: generates an identity, faucet-drips MATRA and anchors a first trace in minutes.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/quickstart"
+      ],
+      "consumes": [
+        "anchors-materios",
+        "gateway-faucet"
+      ],
+      "status": "live"
+    },
+    {
+      "id": "hydra-batcher",
+      "name": "Hydra batcher",
+      "desc": "High-frequency L2 commitment lane using Cardano Hydra for Proof-of-Intent.",
+      "kind": "pipeline",
+      "paths": [
+        "packages/hydra-batcher"
+      ],
+      "consumes": [],
+      "status": "experimental"
+    },
+    {
+      "id": "midnight-prover",
+      "name": "Midnight prover",
+      "desc": "ZK proof generation for Proof-of-Intent on the Midnight network.",
+      "kind": "engine",
+      "paths": [
+        "packages/midnight-prover"
+      ],
+      "consumes": [],
+      "status": "experimental"
     }
   ]
 }
