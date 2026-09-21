@@ -187,6 +187,19 @@
       ],
       "consumes": [],
       "status": "experimental"
+    },
+    {
+      "id": "compute-meter-sdk",
+      "name": "Compute meter SDK",
+      "desc": "Client for emitting compute-metering records into the Materios billing pipeline.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/compute-meter-sdk"
+      ],
+      "consumes": [
+        "gateway-billing-metering"
+      ],
+      "status": "live"
     }
   ]
 }
