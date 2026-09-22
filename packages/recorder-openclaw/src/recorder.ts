@@ -8,6 +8,15 @@ import { sha256Hex, sleep, jitterMs } from "./util.js";
 import { buildTraceFromSpool } from "./build-trace.js";
 import { anchorManifest } from "./anchor.js";
 
+/**
+ * How long a bundle may sit in "submitted" before it is retried.
+ *
+ * Long enough that a transaction which was going to confirm has confirmed, and
+ * one that was not has fallen outside its validity window; short enough that a
+ * bundle cannot be silently lost.
+ */
+const SUBMITTED_RECHECK_MS = 6 * 60 * 60_000;
+
 export class OpenClawRecorder {
   constructor(private cfg: RecorderConfig) {}
 
@@ -45,13 +54,34 @@ export class OpenClawRecorder {
     return { contentHash: hash, content: payload };
   }
 
+  private schedulePath() {
+    return path.join(this.cfg.outDir, "state", "schedule.json");
+  }
+
   async runForever() {
     await fs.mkdir(this.cfg.outDir, { recursive: true });
+    await fs.mkdir(path.dirname(this.schedulePath()), { recursive: true });
 
-    let nextAnchorAt = Date.now() + jitterMs(
-      this.cfg.schedule.anchorEveryMinutes * 60_000,
-      this.cfg.schedule.jitterSeconds
-    );
+    // Item 6: the anchor schedule used to live only in memory, so EVERY restart
+    // pushed the next anchor a full cycle into the future. Combined with a crash
+    // (item 5) that was unbounded starvation: crash, restart, wait 24h, crash.
+    // Persist it, so a restart resumes the existing schedule instead of
+    // resetting it.
+    const interval = this.cfg.schedule.anchorEveryMinutes * 60_000;
+    let nextAnchorAt = 0;
+    try {
+      const saved = JSON.parse(await fs.readFile(this.schedulePath(), "utf-8"));
+      if (typeof saved?.nextAnchorAt === "number" && Number.isFinite(saved.nextAnchorAt)) {
+        // Clamp: a corrupt or absurd future value must not starve anchoring.
+        nextAnchorAt = Math.min(saved.nextAnchorAt, Date.now() + interval);
+      }
+    } catch {
+      nextAnchorAt = 0;
+    }
+    if (!nextAnchorAt) {
+      nextAnchorAt = Date.now() + jitterMs(interval, this.cfg.schedule.jitterSeconds);
+      await this.saveSchedule(nextAnchorAt);
+    }
 
     while (true) {
       await this.scanOnce();
@@ -62,6 +92,7 @@ export class OpenClawRecorder {
           this.cfg.schedule.anchorEveryMinutes * 60_000,
           this.cfg.schedule.jitterSeconds
         );
+        await this.saveSchedule(nextAnchorAt);
       }
 
       await sleep(this.cfg.schedule.scanEverySeconds * 1000);
@@ -167,16 +198,55 @@ export class OpenClawRecorder {
 
       if (spoolEvents.length === 0) continue;
 
+
       // Build trace + manifest
       const agentId = `openclaw:${bundleId.split("__")[1] ?? "unknown"}`;
-      const { bundle, manifest, chunks } = await buildTraceFromSpool({
+      const { bundle, manifest, chunks, contentDigest } = await buildTraceFromSpool({
         agentId,
         spoolEvents,
         chunkSize: 500_000
       });
 
-      // If unchanged since last time, skip
-      if (anchorState[bundleId]?.manifestHash === manifest.manifestHash) continue;
+      // Skip ONLY when the content is unchanged AND the last attempt actually
+      // succeeded. The old check skipped on hash equality alone, so a failed
+      // anchor would never have been retried either — both halves were wrong,
+      // and they happened to cancel out into "retry everything, forever".
+      const prior = anchorState[bundleId];
+      if (prior?.contentDigest === contentDigest && prior?.state === "anchored") continue;
+
+      // Content unchanged but the last attempt failed: retry with backoff so a
+      // persistent server-side fault cannot turn into an hourly storm.
+      // Submitted and possibly still landing: do NOT re-post immediately, or
+      // the same bundle gets anchored twice.
+      //
+      // But it must not stick here forever either. The t-backend currently
+      // writes CONFIRMED for no request at all, so a bundle that reaches
+      // "submitted" would never advance to "anchored" and, if this were a plain
+      // `continue`, would never be retried — silent under-anchoring, the exact
+      // failure mode this commit exists to prevent. So a submitted bundle is
+      // re-attempted after SUBMITTED_RECHECK_MS, which is far longer than any
+      // Cardano validity window, so a transaction that was going to land has
+      // already landed or expired by then.
+      if (prior?.contentDigest === contentDigest && prior?.state === "submitted") {
+        const lastAt = typeof prior.lastAttemptAt === "number" ? prior.lastAttemptAt : 0;
+        if (Date.now() - lastAt < SUBMITTED_RECHECK_MS) continue;
+      }
+
+      if (prior?.contentDigest === contentDigest) {
+        const attempts = typeof prior.attempts === "number" ? prior.attempts : 0;
+        const lastAt = typeof prior.lastAttemptAt === "number" ? prior.lastAttemptAt : 0;
+        // Double from 1 minute up to a 24h ceiling. The exponent is clamped at
+        // 14 (2^14 min = 11.4 days) purely to keep the arithmetic bounded — the
+        // 24h cap is what actually binds, so a permanently failing bundle
+        // settles at one attempt a day rather than one an hour.
+        const base = Math.min(2 ** Math.min(attempts, 14) * 60_000, 24 * 60 * 60_000);
+        // +/-20% jitter. All 224 bundles failed together before the wallet was
+        // funded, so an unjittered backoff keeps their retries synchronised and
+        // delivers them as a burst on every retry boundary — straight into the
+        // worker's single-output contention.
+        const backoffMs = base * (0.8 + Math.random() * 0.4);
+        if (Date.now() - lastAt < backoffMs) continue;
+      }
 
       // Write local artifacts
       await fs.writeFile(
@@ -203,6 +273,7 @@ export class OpenClawRecorder {
       let receipt: Record<string, unknown> = { anchored: false };
 
       if (this.cfg.anchor.enabled && hasKey) {
+        try {
         const res = await anchorManifest({
           baseUrl: this.cfg.anchor.baseUrl,
           endpointPath: this.cfg.anchor.endpointPath,
@@ -210,18 +281,69 @@ export class OpenClawRecorder {
           manifest: manifest as unknown as Record<string, unknown>
         });
 
+        // anchored must mean ANCHORED, not "the HTTP call returned".
+        // res.ok alone produced {"anchored": true, "status": 200} wrapping an
+        // inner {"status":"ERROR","txHash":null} — 224 consecutive failures
+        // that read as successes for seven months. Require a txHash and a
+        // non-error inner status.
+        const body = (res.json ?? {}) as Record<string, unknown>;
+        const inner = String(body.status ?? "").toUpperCase();
+        const txHash = typeof body.txHash === "string" && body.txHash.length > 0
+          ? body.txHash
+          : null;
+        const confirmations = typeof body.confirmations === "number" ? body.confirmations : 0;
+
+        // Three states, on an ALLOWLIST. A denylist ("not ERROR/FAILED") would
+        // count any unknown future status carrying a stale txHash as anchored —
+        // a new false success of exactly the kind this commit removes.
+        //
+        // A txHash alone is NOT anchored: it means a transaction was built and
+        // handed to the network. It can be rejected ("All inputs are spent"),
+        // dropped from the mempool, or fall outside its validity window.
+        // An explicit failure from the worker is authoritative even when a
+        // txHash is present: a transaction can be built and then rejected, and
+        // that stale hash must not promote the bundle to "submitted" where it
+        // would never be retried.
+        const explicitFailure = inner === "ERROR" || inner === "FAILED";
+        const state: "anchored" | "submitted" | "failed" =
+          explicitFailure ? "failed"
+          : res.ok && txHash && (inner === "CONFIRMED" || confirmations >= 1) ? "anchored"
+          : res.ok && txHash ? "submitted"
+          : "failed";
+
         receipt = {
-          anchored: res.ok,
-          status: res.status,
+          anchored: state === "anchored",
+          state,
+          httpStatus: res.status,
+          txHash,
           response: res.json,
           manifestHash: manifest.manifestHash,
           rootHash: manifest.rootHash,
           merkleRoot: manifest.merkleRoot,
           timestamp: new Date().toISOString()
         };
+        } catch (err) {
+          // Item 5: one throw here used to kill the daemon. launchd restarts it,
+          // and item 6's in-memory schedule then pushed the next anchor a full
+          // cycle out — so a single transient network error silently cost a day
+          // of anchoring. Record it as a failed attempt and carry on to the next
+          // bundle.
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[anchor] ${bundleId} THREW: ${msg}`);
+          receipt = {
+            anchored: false,
+            state: "failed",
+            error: msg,
+            manifestHash: manifest.manifestHash,
+            rootHash: manifest.rootHash,
+            merkleRoot: manifest.merkleRoot,
+            timestamp: new Date().toISOString()
+          };
+        }
       } else {
         receipt = {
           anchored: false,
+          state: "failed",
           reason: hasKey ? "anchor disabled in config" : `missing ${this.cfg.anchor.partnerKeyEnv}`,
           manifestHash: manifest.manifestHash,
           rootHash: manifest.rootHash,
@@ -238,8 +360,37 @@ export class OpenClawRecorder {
         "utf-8"
       );
 
-      anchorState[bundleId] = { manifestHash: manifest.manifestHash, lastReceipt: receipt };
+      const recState = typeof receipt.state === "string" ? receipt.state : "failed";
+      const priorAttempts = typeof prior?.attempts === "number" ? prior.attempts : 0;
+      anchorState[bundleId] = {
+        contentDigest,
+        manifestHash: manifest.manifestHash,
+        state: recState,
+        attempts: recState === "failed" ? priorAttempts + 1 : 0,
+        lastAttemptAt: Date.now(),
+        lastReceipt: receipt
+      };
+      if (recState === "failed") {
+        // Item 7: no anchor outcome was ever logged, which is why an hourly
+        // storm of failures was invisible from the console.
+        console.error(
+          `[anchor] ${bundleId} FAILED (attempt ${priorAttempts + 1}): ` +
+          `http=${receipt.httpStatus ?? "n/a"} inner=${
+            ((receipt.response as Record<string, unknown>)?.status) ?? "n/a"
+          }`
+        );
+      }
       await this.saveAnchorState(anchorState);
+    }
+  }
+
+  private async saveSchedule(nextAnchorAt: number) {
+    try {
+      await fs.writeFile(this.schedulePath(), JSON.stringify({ nextAnchorAt }), "utf-8");
+    } catch (err) {
+      // Never let bookkeeping stop anchoring; worst case we fall back to the
+      // old in-memory behaviour for this process.
+      console.error(`[anchor] could not persist schedule: ${err instanceof Error ? err.message : err}`);
     }
   }
 
