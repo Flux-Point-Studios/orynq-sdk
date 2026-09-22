@@ -6,16 +6,17 @@ import { loadTailState, saveTailState, readNewJsonlLines } from "./tailer.js";
 import { appendSpool, type SpoolEvent, readSpool } from "./spool.js";
 import { sha256Hex, sleep, jitterMs } from "./util.js";
 import { buildTraceFromSpool } from "./build-trace.js";
-import { anchorManifest } from "./anchor.js";
+import { anchorManifest, checkAnchorStatus } from "./anchor.js";
 
 /**
- * How long a bundle may sit in "submitted" before it is retried.
+ * How long a bundle may sit unconfirmed before the recorder starts complaining.
  *
- * Long enough that a transaction which was going to confirm has confirmed, and
- * one that was not has fallen outside its validity window; short enough that a
- * bundle cannot be silently lost.
+ * This is a WARNING threshold, never a re-post trigger. A submitted anchor has
+ * a transaction on the network — measured, 15 of 15 submissions landed in
+ * consecutive preprod blocks — so re-posting one would duplicate an anchor that
+ * already succeeded. The only safe exit from "submitted" is the status poll.
  */
-const SUBMITTED_RECHECK_MS = 6 * 60 * 60_000;
+const SUBMITTED_WARN_MS = 6 * 60 * 60_000;
 
 export class OpenClawRecorder {
   constructor(private cfg: RecorderConfig) {}
@@ -216,23 +217,59 @@ export class OpenClawRecorder {
 
       // Content unchanged but the last attempt failed: retry with backoff so a
       // persistent server-side fault cannot turn into an hourly storm.
-      // Submitted and possibly still landing: do NOT re-post immediately, or
-      // the same bundle gets anchored twice.
+
+      // Submitted: ASK, never re-post.
       //
-      // But it must not stick here forever either. The t-backend currently
-      // writes CONFIRMED for no request at all, so a bundle that reaches
-      // "submitted" would never advance to "anchored" and, if this were a plain
-      // `continue`, would never be retried — silent under-anchoring, the exact
-      // failure mode this commit exists to prevent. So a submitted bundle is
-      // re-attempted after SUBMITTED_RECHECK_MS, which is far longer than any
-      // Cardano validity window, so a transaction that was going to land has
-      // already landed or expired by then.
+      // A submitted anchor already has a transaction on the network — measured,
+      // 15 of 15 submissions landed in consecutive preprod blocks — so
+      // re-posting one duplicates an anchor that already succeeded. Poll
+      // instead. Only an unrecognised requestId justifies posting again: that
+      // is the single case where the submission did not reach the server.
+      //
+      // A bundle that stays unconfirmed is made NOISY rather than retried:
+      // visible, not silent, and no duplicates.
       if (prior?.contentDigest === contentDigest && prior?.state === "submitted") {
+        const requestId = typeof prior.requestId === "string" ? prior.requestId : "";
         const lastAt = typeof prior.lastAttemptAt === "number" ? prior.lastAttemptAt : 0;
-        if (Date.now() - lastAt < SUBMITTED_RECHECK_MS) continue;
+        const waited = Date.now() - lastAt;
+
+        if (requestId) {
+          const poll = await checkAnchorStatus({
+            baseUrl: this.cfg.anchor.baseUrl,
+            requestId,
+            partnerKey
+          }).catch((err) => ({
+            state: "error" as const,
+            detail: err instanceof Error ? err.message : String(err)
+          }));
+
+          if (poll.state === "confirmed") {
+            anchorState[bundleId] = { ...prior, state: "anchored", confirmedAt: Date.now() };
+            await this.saveAnchorState(anchorState);
+            console.error(`[anchor] ${bundleId} CONFIRMED (requestId ${requestId})`);
+            continue;
+          }
+          if (poll.state !== "unknown") {
+            // pending, or the poll itself failed — neither is evidence the
+            // anchor is absent, so do not re-post.
+            if (waited >= SUBMITTED_WARN_MS) {
+              console.error(
+                `[anchor] ${bundleId} STILL UNCONFIRMED after ${Math.round(waited / 3_600_000)}h ` +
+                `(requestId ${requestId}, poll=${poll.state}${poll.detail ? `: ${poll.detail}` : ""}). ` +
+                `Not re-posting — a submitted anchor may already be on chain.`
+              );
+            }
+            continue;
+          }
+          console.error(
+            `[anchor] ${bundleId} requestId ${requestId} not recognised by the server — re-posting`
+          );
+        }
+        // No requestId recorded (state written by an older build): fall through.
       }
 
-      if (prior?.contentDigest === contentDigest) {
+
+      if (prior?.contentDigest === contentDigest && prior?.state === "failed") {
         const attempts = typeof prior.attempts === "number" ? prior.attempts : 0;
         const lastAt = typeof prior.lastAttemptAt === "number" ? prior.lastAttemptAt : 0;
         // Double from 1 minute up to a 24h ceiling. The exponent is clamped at
@@ -362,9 +399,13 @@ export class OpenClawRecorder {
 
       const recState = typeof receipt.state === "string" ? receipt.state : "failed";
       const priorAttempts = typeof prior?.attempts === "number" ? prior.attempts : 0;
+      const reqId = typeof (receipt.response as Record<string, unknown>)?.requestId === "string"
+        ? ((receipt.response as Record<string, unknown>).requestId as string)
+        : undefined;
       anchorState[bundleId] = {
         contentDigest,
         manifestHash: manifest.manifestHash,
+        ...(reqId ? { requestId: reqId } : {}),
         state: recState,
         attempts: recState === "failed" ? priorAttempts + 1 : 0,
         lastAttemptAt: Date.now(),

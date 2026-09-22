@@ -36,3 +36,52 @@ export async function anchorManifest(params: {
 
   return { status: res.status, ok: res.ok, json };
 }
+
+/**
+ * Poll an earlier submission for confirmation.
+ *
+ * A submitted anchor must never be re-posted — today all 15 SUBMITTED anchors
+ * landed on preprod in consecutive blocks, so re-posting would duplicate work
+ * that already succeeded. The only safe way out of "submitted" is to ask.
+ *
+ * The endpoint is lazy: it checks the chain on each call and upgrades the row
+ * when it finds the transaction. Nothing had ever called it, which is why every
+ * row read confirmations=0.
+ *
+ * Returns "unknown" when the server does not recognise the requestId — the one
+ * case where re-posting is correct — and "error" when the poll itself failed,
+ * which must NOT be read as either confirmation or absence.
+ */
+export async function checkAnchorStatus(params: {
+  baseUrl: string;
+  requestId: string;
+  partnerKey?: string;
+  timeoutMs?: number;
+}): Promise<{ state: "confirmed" | "pending" | "unknown" | "error"; detail?: string }> {
+  const { baseUrl, requestId, partnerKey } = params;
+  const url = `${baseUrl.replace(/\/$/, "")}/anchors/status/${encodeURIComponent(requestId)}`;
+
+  const headers: Record<string, string> = {};
+  if (partnerKey) headers["X-Partner"] = partnerKey;
+
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), params.timeoutMs ?? 30_000);
+  try {
+    const res = await fetch(url, { headers, signal: ac.signal });
+    if (res.status === 404) return { state: "unknown", detail: "requestId not recognised" };
+    if (!res.ok) return { state: "error", detail: `http ${res.status}` };
+
+    const body = (await res.json()) as Record<string, unknown>;
+    const status = String(body.status ?? "").toUpperCase();
+    const confirmations = typeof body.confirmations === "number" ? body.confirmations : 0;
+    if (status === "CONFIRMED" || confirmations >= 1) return { state: "confirmed" };
+    if (status === "ERROR" || status === "FAILED") {
+      return { state: "error", detail: `anchor reported ${status}` };
+    }
+    return { state: "pending", detail: status || "no status" };
+  } catch (err) {
+    return { state: "error", detail: err instanceof Error ? err.message : String(err) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
