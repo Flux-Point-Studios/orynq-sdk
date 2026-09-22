@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-flight-recorder",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Streaming flight recorder for PoI with chunking, compression, and encryption",
   "type": "module",
   "main": "dist/index.js",

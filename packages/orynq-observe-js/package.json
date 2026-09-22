@@ -1,6 +1,6 @@
 {
   "name": "@orynq/observe",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "SDK for publishing attested AI model behavior observations to a chain-anchored public registry.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -21,7 +21,10 @@
   "bin": {
     "orynq-observe": "./dist/cli.js"
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -31,7 +34,14 @@
     "lint": "echo skipping",
     "clean": "rimraf dist"
   },
-  "keywords": ["materios", "orynq", "ai", "observation", "attestation", "cardano"],
+  "keywords": [
+    "materios",
+    "orynq",
+    "ai",
+    "observation",
+    "attestation",
+    "cardano"
+  ],
   "author": "Flux Point Studios",
   "license": "MIT",
   "publishConfig": {
@@ -46,7 +56,7 @@
   "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk/tree/main/packages/orynq-observe-js#readme",
   "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
-    "@fluxpointstudios/orynq-sdk-anchors-materios": "^0.4.0",
+    "@fluxpointstudios/orynq-sdk-anchors-materios": "^0.5.0",
     "@polkadot/util": "^13.5.0",
     "@polkadot/util-crypto": "^13.5.0",
     "@polkadot/keyring": "^13.5.0"

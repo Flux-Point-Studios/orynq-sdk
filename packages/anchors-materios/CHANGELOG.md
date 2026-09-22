@@ -1,5 +1,22 @@
 # @fluxpointstudios/orynq-sdk-anchors-materios
 
+## 0.5.0
+
+### Minor Changes
+
+- 3cd6027: Expose canonical CBOR helpers + `AiCapabilityObservationV1` type for downstream observe SDK. New named exports from the package entry point:
+
+  - `canonicalCborPreImageAiCapabilityObservationV1`
+  - `canonicalContentHashAiCapabilityObservationV1`
+  - `validateAiCapabilityObservationV1`
+  - `AI_CAPABILITY_OBSERVATION_V1_SCHEMA_HASH_HEX`
+  - `AI_CAPABILITY_OBSERVATION_V1_SCHEMA_VERSION`
+  - `AI_CAPABILITY_OBSERVATION_V1_MAX_CONTEXT_LEN`
+  - `SEVERITIES`, `TEE_TIERS`
+  - types: `AiCapabilityObservationV1`, `ModelV1`, `CapabilityV1`, `ObservationV1`, `TeeAttestationV1`, `ObserverV1`, `TeeTier`, `Severity`
+
+  Additive — no existing API is removed or renamed.
+
 ## 0.3.2 (2026-05-12)
 
 ### Data-integrity fix — **upgrade required, 0.3.1 deprecated**
@@ -9,7 +26,7 @@
   Against the current Materios preprod runtime (which added `Option<>`
   wrappers and reordered fields in `OrinqReceipts::submit_receipt_v2`), the
   result was that **every receipt landed on chain with `schema_hash =
-  0x00…00`** (the legacy zero-bytes value) AND `base_root_sha256` decoded
+0x00…00`** (the legacy zero-bytes value) AND `base_root_sha256` decoded
   into the wrong slot, so cert-daemons rejected the receipt with
   `Merkle root mismatch` and the receipt could never be certified. No
   exception was raised by the SDK — the on-chain transaction succeeded.
@@ -34,7 +51,7 @@
   `api.tx.orinqReceipts.submitReceipt.meta` at SDK call time; `null` is
   passed for `Option<>` slots the caller does not populate. See commit
   `d0f2ac4 fix(anchors-materios): align submitReceipt args with live
-  runtime metadata` (PR #40).
+runtime metadata` (PR #40).
 
 ### Changes (carried over from unreleased prior to cut)
 

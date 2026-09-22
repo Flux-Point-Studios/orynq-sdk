@@ -1,4 +1,4 @@
-# @fluxpointstudios/orynq-mcp
+# @fluxpointstudios/orynq-sdk-process-trace
 
 ## 0.3.0
 
@@ -36,6 +36,19 @@ verified)` summary; `eip712` is supported via a pluggable
   `docs/model-manifest-pinning.md` for the migration guide + breaking-change note).
   Additive — existing API is unchanged.
 
+- 2efef73: The OpenClaw recorder anchors each bundle once and reports the outcome truthfully.
+
+  `@fluxpointstudios/orynq-sdk-recorder-openclaw`:
+
+  - Dedup keys on the content that is anchored, so an unchanged bundle is never re-posted. 0.2.0 re-posted every bundle on every cycle.
+  - A receipt reads `anchored: true` only after the anchor is confirmed. An accepted request is `submitted` and is polled by its requestId, never re-posted on a timer. Only the server's own `anchor_request_not_found` justifies a re-post.
+  - Failures retry with jittered exponential backoff capped at 24 hours.
+  - Network calls have deadlines that cover the response body, the anchor schedule survives restarts, and one bundle's failure no longer stops the others. A torn spool line costs only that line.
+
+  `@fluxpointstudios/orynq-openclaw`: depends on the fixed recorder with a caret range.
+
+  `@fluxpointstudios/orynq-sdk-process-trace`: the version floor moves to 0.2.0 because npm already holds a 0.2.0 built in February, so this release publishes as 0.3.0 instead of colliding with it.
+
 - 48f2049: Add verifiable tool-call receipts (#60) so a trace can prove "the tool actually
   returned this response", not just "the agent says it did".
 
@@ -50,21 +63,3 @@ verified)` summary; `eip712` is supported via a pluggable
   - The `trace_summary` MCP tool surfaces tool receipts distinctly.
 
   Additive — existing API is unchanged.
-
-### Patch Changes
-
-- Updated dependencies [48f2049]
-- Updated dependencies [48f2049]
-- Updated dependencies [48f2049]
-- Updated dependencies [3cd6027]
-- Updated dependencies [2efef73]
-- Updated dependencies [48f2049]
-  - @fluxpointstudios/orynq-sdk-anchors-cardano@0.3.0
-  - @fluxpointstudios/orynq-sdk-process-trace@0.3.0
-  - @fluxpointstudios/orynq-sdk-anchors-materios@0.5.0
-
-## 0.2.0
-
-### Minor Changes
-
-- c4186c6: Add orynq-mcp package — MCP server exposing 10 tools for process tracing, Cardano anchoring, and verification
