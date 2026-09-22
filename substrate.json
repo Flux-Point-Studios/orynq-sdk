@@ -9,6 +9,15 @@
       "paths": ["packages/attestor", "packages/tool-receipts", "packages/process-trace"],
       "consumes": [],
       "status": "live"
+    },
+    {
+      "id": "openclaw-recorder",
+      "name": "OpenClaw recorder",
+      "desc": "Daemon and CLI that tail OpenClaw agent sessions into process-trace bundles and anchor each bundle once, polling until confirmed",
+      "kind": "agent",
+      "paths": ["packages/recorder-openclaw", "packages/orynq-openclaw"],
+      "consumes": ["orynq-attestation"],
+      "status": "live"
     }
   ]
 }

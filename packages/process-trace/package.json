@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-process-trace",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Cryptographic process trace library for Proof-of-Intent SDK - schemas, hashing, Merkle trees, bundles, and selective disclosure",
   "type": "module",
   "main": "./dist/index.cjs",
