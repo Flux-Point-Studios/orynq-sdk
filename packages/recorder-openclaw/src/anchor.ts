@@ -68,7 +68,28 @@ export async function checkAnchorStatus(params: {
   const timer = setTimeout(() => ac.abort(), params.timeoutMs ?? 30_000);
   try {
     const res = await fetch(url, { headers, signal: ac.signal });
-    if (res.status === 404) return { state: "unknown", detail: "requestId not recognised" };
+
+    // A bare 404 is NOT proof the request never reached the server: a reverse
+    // proxy, a Cloudflare error page, or a renamed/re-versioned route all
+    // return one. Since "unknown" is the single state that re-posts, treating
+    // any 404 as unknown would re-post every submitted bundle on every cycle
+    // and reopen the duplicate storm through that one door.
+    //
+    // Only the server's own not-found counts, which it raises as
+    //   HTTPException(status_code=404, detail="anchor_request_not_found")
+    // Any other 404, and any non-JSON 404, is a poll error: wait.
+    if (res.status === 404) {
+      const raw = await res.text();
+      try {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (parsed.detail === "anchor_request_not_found") {
+          return { state: "unknown", detail: "requestId not recognised" };
+        }
+        return { state: "error", detail: `404 with unexpected detail: ${String(parsed.detail).slice(0, 60)}` };
+      } catch {
+        return { state: "error", detail: "404 with a non-JSON body (proxy or wrong route?)" };
+      }
+    }
     if (!res.ok) return { state: "error", detail: `http ${res.status}` };
 
     const body = (await res.json()) as Record<string, unknown>;
