@@ -7,6 +7,13 @@ import { appendSpool, type SpoolEvent, readSpool } from "./spool.js";
 import { sha256Hex, sleep, jitterMs } from "./util.js";
 import { buildTraceFromSpool } from "./build-trace.js";
 import { anchorManifest, checkAnchorStatus } from "./anchor.js";
+import {
+  classifyAnchorResponse,
+  shouldPost,
+  decideSubmitted,
+  resolveNextAnchorAt,
+  type AnchorRecord
+} from "./anchor-policy.js";
 
 /**
  * How long a bundle may sit unconfirmed before the recorder starts complaining.
@@ -72,10 +79,7 @@ export class OpenClawRecorder {
     let nextAnchorAt = 0;
     try {
       const saved = JSON.parse(await fs.readFile(this.schedulePath(), "utf-8"));
-      if (typeof saved?.nextAnchorAt === "number" && Number.isFinite(saved.nextAnchorAt)) {
-        // Clamp: a corrupt or absurd future value must not starve anchoring.
-        nextAnchorAt = Math.min(saved.nextAnchorAt, Date.now() + interval);
-      }
+      nextAnchorAt = resolveNextAnchorAt(saved, Date.now(), interval);
     } catch {
       nextAnchorAt = 0;
     }
@@ -208,15 +212,12 @@ export class OpenClawRecorder {
         chunkSize: 500_000
       });
 
-      // Skip ONLY when the content is unchanged AND the last attempt actually
-      // succeeded. The old check skipped on hash equality alone, so a failed
-      // anchor would never have been retried either — both halves were wrong,
-      // and they happened to cancel out into "retry everything, forever".
-      const prior = anchorState[bundleId];
-      if (prior?.contentDigest === contentDigest && prior?.state === "anchored") continue;
-
-      // Content unchanged but the last attempt failed: retry with backoff so a
-      // persistent server-side fault cannot turn into an hourly storm.
+      const prior = anchorState[bundleId] as AnchorRecord | undefined;
+      if (!shouldPost(prior, contentDigest, Date.now(), 0.8 + Math.random() * 0.4)) {
+        // Not due, already anchored, or awaiting a poll. The one case that
+        // still needs work here is "submitted", handled next.
+        if (prior?.state !== "submitted") continue;
+      }
 
       // Submitted: ASK, never re-post.
       //
@@ -243,16 +244,17 @@ export class OpenClawRecorder {
             detail: err instanceof Error ? err.message : String(err)
           }));
 
-          if (poll.state === "confirmed") {
+          const action = decideSubmitted(poll, waited, SUBMITTED_WARN_MS);
+          if (action === "promote-anchored") {
             anchorState[bundleId] = { ...prior, state: "anchored", confirmedAt: Date.now() };
             await this.saveAnchorState(anchorState);
             console.error(`[anchor] ${bundleId} CONFIRMED (requestId ${requestId})`);
             continue;
           }
-          if (poll.state !== "unknown") {
+          if (action !== "repost") {
             // pending, or the poll itself failed — neither is evidence the
             // anchor is absent, so do not re-post.
-            if (waited >= SUBMITTED_WARN_MS) {
+            if (action === "warn-and-wait") {
               console.error(
                 `[anchor] ${bundleId} STILL UNCONFIRMED after ${Math.round(waited / 3_600_000)}h ` +
                 `(requestId ${requestId}, poll=${poll.state}${poll.detail ? `: ${poll.detail}` : ""}). ` +
@@ -268,22 +270,6 @@ export class OpenClawRecorder {
         // No requestId recorded (state written by an older build): fall through.
       }
 
-
-      if (prior?.contentDigest === contentDigest && prior?.state === "failed") {
-        const attempts = typeof prior.attempts === "number" ? prior.attempts : 0;
-        const lastAt = typeof prior.lastAttemptAt === "number" ? prior.lastAttemptAt : 0;
-        // Double from 1 minute up to a 24h ceiling. The exponent is clamped at
-        // 14 (2^14 min = 11.4 days) purely to keep the arithmetic bounded — the
-        // 24h cap is what actually binds, so a permanently failing bundle
-        // settles at one attempt a day rather than one an hour.
-        const base = Math.min(2 ** Math.min(attempts, 14) * 60_000, 24 * 60 * 60_000);
-        // +/-20% jitter. All 224 bundles failed together before the wallet was
-        // funded, so an unjittered backoff keeps their retries synchronised and
-        // delivers them as a burst on every retry boundary — straight into the
-        // worker's single-output contention.
-        const backoffMs = base * (0.8 + Math.random() * 0.4);
-        if (Date.now() - lastAt < backoffMs) continue;
-      }
 
       // Write local artifacts
       await fs.writeFile(
@@ -318,35 +304,13 @@ export class OpenClawRecorder {
           manifest: manifest as unknown as Record<string, unknown>
         });
 
-        // anchored must mean ANCHORED, not "the HTTP call returned".
-        // res.ok alone produced {"anchored": true, "status": 200} wrapping an
-        // inner {"status":"ERROR","txHash":null} — 224 consecutive failures
-        // that read as successes for seven months. Require a txHash and a
-        // non-error inner status.
+        // Classification lives in anchor-policy.ts so tests exercise THIS
+        // code rather than a copy of it.
         const body = (res.json ?? {}) as Record<string, unknown>;
-        const inner = String(body.status ?? "").toUpperCase();
         const txHash = typeof body.txHash === "string" && body.txHash.length > 0
           ? body.txHash
           : null;
-        const confirmations = typeof body.confirmations === "number" ? body.confirmations : 0;
-
-        // Three states, on an ALLOWLIST. A denylist ("not ERROR/FAILED") would
-        // count any unknown future status carrying a stale txHash as anchored —
-        // a new false success of exactly the kind this commit removes.
-        //
-        // A txHash alone is NOT anchored: it means a transaction was built and
-        // handed to the network. It can be rejected ("All inputs are spent"),
-        // dropped from the mempool, or fall outside its validity window.
-        // An explicit failure from the worker is authoritative even when a
-        // txHash is present: a transaction can be built and then rejected, and
-        // that stale hash must not promote the bundle to "submitted" where it
-        // would never be retried.
-        const explicitFailure = inner === "ERROR" || inner === "FAILED";
-        const state: "anchored" | "submitted" | "failed" =
-          explicitFailure ? "failed"
-          : res.ok && txHash && (inner === "CONFIRMED" || confirmations >= 1) ? "anchored"
-          : res.ok && txHash ? "submitted"
-          : "failed";
+        const state = classifyAnchorResponse(res);
 
         receipt = {
           anchored: state === "anchored",

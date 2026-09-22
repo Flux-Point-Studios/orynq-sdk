@@ -1,3 +1,4 @@
+import { classifyNotFoundBody } from "./anchor-policy.js";
 export async function anchorManifest(params: {
   baseUrl: string;
   endpointPath: string;
@@ -80,25 +81,27 @@ export async function checkAnchorStatus(params: {
     // Any other 404, and any non-JSON 404, is a poll error: wait.
     if (res.status === 404) {
       const raw = await res.text();
-      try {
-        const parsed = JSON.parse(raw) as Record<string, unknown>;
-        if (parsed.detail === "anchor_request_not_found") {
-          return { state: "unknown", detail: "requestId not recognised" };
-        }
-        return { state: "error", detail: `404 with unexpected detail: ${String(parsed.detail).slice(0, 60)}` };
-      } catch {
-        return { state: "error", detail: "404 with a non-JSON body (proxy or wrong route?)" };
-      }
+      // One definition of this rule: classifyNotFoundBody in anchor-policy.ts.
+      // It previously lived here as well, so the unit probe covered a copy the
+      // recorder never called — two copies of one rule, which is the defect
+      // commit 7 exists to remove.
+      return classifyNotFoundBody(raw) === "unknown"
+        ? { state: "unknown", detail: "requestId not recognised" }
+        : { state: "error", detail: "404 was not the server's own anchor_request_not_found" };
     }
     if (!res.ok) return { state: "error", detail: `http ${res.status}` };
 
     const body = (await res.json()) as Record<string, unknown>;
     const status = String(body.status ?? "").toUpperCase();
     const confirmations = typeof body.confirmations === "number" ? body.confirmations : 0;
-    if (status === "CONFIRMED" || confirmations >= 1) return { state: "confirmed" };
+    // Precedence matches classifyAnchorResponse: an explicit failure outranks
+    // a confirmation count. The two classifiers disagreeing is how a body like
+    // {"status":"FAILED","confirmations":1} polls as confirmed in one path and
+    // failed in the other.
     if (status === "ERROR" || status === "FAILED") {
       return { state: "error", detail: `anchor reported ${status}` };
     }
+    if (status === "CONFIRMED" || confirmations >= 1) return { state: "confirmed" };
     return { state: "pending", detail: status || "no status" };
   } catch (err) {
     return { state: "error", detail: err instanceof Error ? err.message : String(err) };

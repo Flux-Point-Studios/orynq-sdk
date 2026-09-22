@@ -8,21 +8,8 @@ import {
   type CustomEvent
 } from "@fluxpointstudios/orynq-sdk-process-trace";
 import { createHash } from "node:crypto";
+import { canonical } from "./anchor-policy.js";
 import type { SpoolEvent } from "./spool.js";
-
-/**
- * Deterministic JSON: object keys sorted at every level.
- *
- * JSON.stringify preserves insertion order, so two structurally identical
- * `data` objects built by different code paths could serialise differently and
- * produce different digests. Sorting removes that.
- */
-function canonical(v: unknown): string {
-  if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
-  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
-  const o = v as Record<string, unknown>;
-  return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`).join(",")}}`;
-}
 
 type CustomEventInput = Omit<CustomEvent, "id" | "seq" | "timestamp" | "hash">;
 
