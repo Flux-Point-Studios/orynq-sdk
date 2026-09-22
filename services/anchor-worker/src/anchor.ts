@@ -22,7 +22,7 @@ import {
 /**
  * PoI metadata label for Cardano transactions.
  */
-const POI_METADATA_LABEL = 2222;
+export const POI_METADATA_LABEL = 2222;
 
 /**
  * Lucid instance singleton.

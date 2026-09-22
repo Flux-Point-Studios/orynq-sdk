@@ -9,8 +9,13 @@ import express, {
   type Response,
   type NextFunction,
 } from "express";
-import { PORT, ANCHOR_WORKER_TOKEN, validateEnv } from "./env.js";
-import { anchorProcessTrace, type ManifestData } from "./anchor.js";
+import { PORT, ANCHOR_WORKER_TOKEN, CARDANO_NETWORK, validateEnv } from "./env.js";
+import {
+  anchorProcessTrace,
+  POI_METADATA_LABEL,
+  type ManifestData,
+} from "./anchor.js";
+import { anchorErrorBody } from "./error-response.js";
 
 // Validate environment before starting
 validateEnv();
@@ -109,13 +114,9 @@ app.post(
     } catch (error) {
       console.error("[anchor] Error processing request:", error);
 
-      const message =
-        error instanceof Error ? error.message : "Unknown error occurred";
-
-      res.status(500).json({
-        success: false,
-        error: message,
-      });
+      res
+        .status(500)
+        .json(anchorErrorBody(error, CARDANO_NETWORK, POI_METADATA_LABEL));
     }
   }
 );
