@@ -1,13 +1,15 @@
 // Dedup + backoff decision logic, lifted verbatim from recorder.ts.
 import { createHash } from "node:crypto";
-const SUBMITTED_RECHECK_MS = 6 * 60 * 60_000;
+// NOTE: "submitted" is deliberately absent from this decision function. A
+// submitted anchor is never re-posted on a timer — it is resolved by polling
+// the status endpoint, which submitted-poll.test.mjs covers. An earlier version
+// of this file modelled a 6h re-check here; that design was rejected because it
+// would have re-anchored every landed bundle four times a day.
 
 function shouldAnchor(prior, contentDigest, now, rnd = 0.5) {
   if (prior?.contentDigest === contentDigest && prior?.state === "anchored") return false;
-  if (prior?.contentDigest === contentDigest && prior?.state === "submitted") {
-    const lastAt = typeof prior.lastAttemptAt === "number" ? prior.lastAttemptAt : 0;
-    if (now - lastAt < SUBMITTED_RECHECK_MS) return false;
-  }
+  // submitted never re-posts from here, at any age.
+  if (prior?.contentDigest === contentDigest && prior?.state === "submitted") return false;
   if (prior?.contentDigest === contentDigest && prior?.state === "failed") {
     const attempts = typeof prior.attempts === "number" ? prior.attempts : 0;
     const lastAt = typeof prior.lastAttemptAt === "number" ? prior.lastAttemptAt : 0;
@@ -52,10 +54,11 @@ t("key order does NOT alter the digest",
   digestOf(A, [{contentHash:"sha256:aa",meta:{},kind:"msg"},base[1]]), D);
 t("identical content -> identical digest", digestOf(A, base), D);
 
-// --- SUBMITTED: no re-post, but must not stick forever --------------------
+// --- SUBMITTED: never re-posted from the dedup path, at any age -----------
 const sub = { contentDigest: D, state: "submitted", attempts: 0, lastAttemptAt: Date.now() };
-t("submitted is not re-posted immediately", shouldAnchor(sub, D, Date.now()+HOUR), false);
-t("submitted is re-checked after 6h", shouldAnchor(sub, D, Date.now()+7*HOUR), true);
+t("submitted is not re-posted after 1h", shouldAnchor(sub, D, Date.now()+HOUR), false);
+t("submitted is not re-posted after 7h", shouldAnchor(sub, D, Date.now()+7*HOUR), false);
+t("submitted is not re-posted after 30 days", shouldAnchor(sub, D, Date.now()+30*24*HOUR), false);
 
 // --- FAILED: retries with jittered backoff -------------------------------
 const f1 = { contentDigest: D, state: "failed", attempts: 1, lastAttemptAt: Date.now() };
