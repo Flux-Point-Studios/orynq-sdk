@@ -8,12 +8,15 @@ import { startService, stopService, restartService } from "./commands/service.js
 import { uninstall } from "./commands/uninstall.js";
 import { configPath } from "./platform/paths.js";
 
+// Replaced at build time from package.json (tsup.config.ts).
+declare const __PACKAGE_VERSION__: string;
+
 const program = new Command();
 
 program
   .name("orynq-openclaw")
   .description("Install OpenClaw + attach Orynq process-trace anchoring recorder (local-first)")
-  .version("0.1.0");
+  .version(__PACKAGE_VERSION__);
 
 program.command("install")
   .description("Install Orynq OpenClaw recorder config and optionally as a service")
