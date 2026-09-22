@@ -19,23 +19,23 @@ export async function anchorManifest(params: {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
 
-  let res: Response;
+  // The deadline must cover the body as well as the headers: a server that
+  // sends headers and then stalls or trickles the body would otherwise hold
+  // the cycle until undici's idle timer, or forever.
   try {
-    res = await fetch(url, {
+    const res = await fetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify({ manifest }),
       signal: ac.signal
     });
+    const text = await res.text();
+    let json: Record<string, unknown>;
+    try { json = JSON.parse(text); } catch { json = { raw: text }; }
+    return { status: res.status, ok: res.ok, json };
   } finally {
     clearTimeout(timer);
   }
-
-  const text = await res.text();
-  let json: Record<string, unknown>;
-  try { json = JSON.parse(text); } catch { json = { raw: text }; }
-
-  return { status: res.status, ok: res.ok, json };
 }
 
 /**
@@ -58,7 +58,7 @@ export async function checkAnchorStatus(params: {
   requestId: string;
   partnerKey?: string;
   timeoutMs?: number;
-}): Promise<{ state: "confirmed" | "pending" | "unknown" | "error"; detail?: string }> {
+}): Promise<{ state: "confirmed" | "pending" | "unknown" | "error"; detail?: string; txHash?: string }> {
   const { baseUrl, requestId, partnerKey } = params;
   const url = `${baseUrl.replace(/\/$/, "")}/anchors/status/${encodeURIComponent(requestId)}`;
 
@@ -101,7 +101,11 @@ export async function checkAnchorStatus(params: {
     if (status === "ERROR" || status === "FAILED") {
       return { state: "error", detail: `anchor reported ${status}` };
     }
-    if (status === "CONFIRMED" || confirmations >= 1) return { state: "confirmed" };
+    if (status === "CONFIRMED" || confirmations >= 1) {
+      return typeof body.txHash === "string" && body.txHash.length > 0
+        ? { state: "confirmed", txHash: body.txHash }
+        : { state: "confirmed" };
+    }
     return { state: "pending", detail: status || "no status" };
   } catch (err) {
     return { state: "error", detail: err instanceof Error ? err.message : String(err) };

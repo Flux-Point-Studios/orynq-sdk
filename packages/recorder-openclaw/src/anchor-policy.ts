@@ -46,14 +46,19 @@ export function classifyAnchorResponse(res: {
   const body = (res.json ?? {}) as Record<string, unknown>;
   const inner = String(body.status ?? "").toUpperCase();
   const txHash = typeof body.txHash === "string" && body.txHash.length > 0 ? body.txHash : null;
+  const requestId = typeof body.requestId === "string" && body.requestId.length > 0 ? body.requestId : null;
   const confirmations = typeof body.confirmations === "number" ? body.confirmations : 0;
 
   // An explicit failure outranks a stale txHash: a transaction can be built
   // and then rejected, and that hash must not promote the bundle to
   // "submitted" where it would never be retried.
-  if (inner === "ERROR" || inner === "FAILED") return "failed";
-  if (res.ok && txHash && (inner === "CONFIRMED" || confirmations >= 1)) return "anchored";
-  if (res.ok && txHash) return "submitted";
+  if (inner === "ERROR" || inner === "FAILED" || !res.ok) return "failed";
+  if (txHash && (inner === "CONFIRMED" || confirmations >= 1)) return "anchored";
+  // A requestId proves the server accepted the request, txHash or not: the
+  // worker may already have put the transaction on chain while its callback
+  // to the server failed, so re-posting would anchor twice. Poll instead.
+  // Without a requestId there is nothing to poll, so it is a failure.
+  if (requestId) return "submitted";
   return "failed";
 }
 

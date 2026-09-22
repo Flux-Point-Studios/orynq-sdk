@@ -47,10 +47,18 @@ describe("classifyAnchorResponse — allowlist, not denylist", () => {
     expect(classifyAnchorResponse({ ok: true, json: { status, txHash: "stale" } })).toBe("failed");
   });
   it("a txHash without confirmation is submitted, never anchored", () => {
-    expect(classifyAnchorResponse({ ok: true, json: { status: "ACCEPTED", txHash: "ab" } })).toBe("submitted");
+    expect(classifyAnchorResponse({ ok: true, json: { requestId: "r", status: "ACCEPTED", txHash: "ab" } })).toBe("submitted");
   });
   it("ALLOWLIST: an unknown future status with a txHash is submitted, not anchored", () => {
-    expect(classifyAnchorResponse({ ok: true, json: { status: "QUEUED_V2", txHash: "ab" } })).toBe("submitted");
+    expect(classifyAnchorResponse({ ok: true, json: { requestId: "r", status: "QUEUED_V2", txHash: "ab" } })).toBe("submitted");
+  });
+  it("a requestId without a txHash is submitted: the worker may already be on chain", () => {
+    // t-backend answers from its DB row, PENDING with txHash null until the
+    // worker's best-effort callback lands. Re-posting that is a second anchor.
+    expect(classifyAnchorResponse({ ok: true, json: { requestId: "r", status: "PENDING", txHash: null } })).toBe("submitted");
+  });
+  it("without a requestId there is nothing to poll, so even a txHash is failed", () => {
+    expect(classifyAnchorResponse({ ok: true, json: { status: "SUBMITTED", txHash: "ab" } })).toBe("failed");
   });
   it.each([
     ["no txHash", { ok: true, json: { status: "CONFIRMED" } }],

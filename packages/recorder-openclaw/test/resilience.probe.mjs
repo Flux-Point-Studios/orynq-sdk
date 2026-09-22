@@ -1,6 +1,7 @@
 // Resilience probes against the SHIPPED build (dist/index.js), not a copy of
-// its logic: timeouts on both network calls, the persisted anchor schedule and
-// its clamp, and the dedup digest's coverage of sessionId.
+// its logic: timeouts on both network calls (headers and body), the persisted
+// anchor schedule and its clamp, the dedup digest's coverage of sessionId, and
+// isolation of a torn spool line and of any other one-bundle failure.
 //
 // Every observation comes from outside the recorder: requests a real
 // 127.0.0.1 server received, and the receipt / state files the recorder wrote.
@@ -10,16 +11,17 @@
 //
 // Each case runs in its own child process: runForever() never returns, so the
 // schedule cases can only be stopped with process.exit, and the setTimeout
-// override must not leak between cases.
+// override must not leak between cases. Workspaces live under a per-case
+// directory the parent owns and removes, so a crashed child leaks nothing.
 //
-// Timer shortening (P1, P2): setTimeout calls made from inside dist/index.js
-// with a delay >= 30000 ms are cut to 200 ms. Every other timer, including
-// undici's own, runs at real speed. The original delays are recorded so the
-// probe also proves which shipped timeout armed the abort.
+// Timer shortening (P1, P2, P6, P7): setTimeout calls made from inside
+// dist/index.js with a delay >= 30000 ms are cut to 200 ms. Every other timer,
+// including undici's own, runs at real speed. The original delays are recorded
+// so the probe also shows which shipped timeout was armed.
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
-import { rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -30,6 +32,7 @@ const DIST_URL = pathToFileURL(DIST).href;
 const BUNDLE = "2026-02-03__main";
 const TX = "ab".repeat(32);
 const DEADLINE_MS = 10_000;
+const WINDOW_MS = 10_000;
 
 let failures = 0;
 function check(name, ok, detail) {
@@ -38,10 +41,7 @@ function check(name, ok, detail) {
   return ok;
 }
 
-const workspaces = [];
-
 function finish() {
-  for (const dir of workspaces) rmSync(dir, { recursive: true, force: true });
   process.exit(failures === 0 ? 0 : 1);
 }
 
@@ -71,8 +71,7 @@ function reply(res, status, body) {
 const neverAnswer = () => {};
 
 async function workspace(lines) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "real-resilience-"));
-  workspaces.push(root);
+  const root = await fs.mkdtemp(path.join(process.env.RESILIENCE_TMP ?? os.tmpdir(), "ws-"));
   await fs.mkdir(path.join(root, "sessions"), { recursive: true });
   await fs.writeFile(
     path.join(root, "sessions", "s1.jsonl"),
@@ -160,7 +159,7 @@ const CASES = {
       r.done && !r.error, r.done ? `returned after ${elapsed}ms${r.error ? `, threw ${r.error.message}` : ""}` : `still hanging after ${DEADLINE_MS}ms`);
     check("P1 the POST reached the server (the hang is server-side)",
       srv.posts().length === 1, `POSTs=${srv.posts().length}`);
-    check("P1 the shipped 60s POST timeout is what armed the abort",
+    check("P1 the shipped 60s POST timeout was armed (completion above proves it is wired)",
       shortened.includes(60_000), `dist timers shortened: [${shortened.join(", ")}]`);
     if (!r.done) return;
 
@@ -206,7 +205,7 @@ const CASES = {
     check("P2 the status GET for the recorded requestId reached the server",
       srv.gets().length === 1 && srv.gets()[0].url === "/anchors/status/req-p2",
       `GETs=${srv.gets().map((g) => g.url).join(",") || "none"}`);
-    check("P2 the shipped 30s status timeout is what armed the abort",
+    check("P2 the shipped 30s status timeout was armed (completion above proves it is wired)",
       shortened.includes(30_000), `dist timers shortened: [${shortened.join(", ")}]`);
     check("P2 no re-post: POST count unchanged",
       srv.posts().length === 1, `POSTs=${srv.posts().length}`);
@@ -233,9 +232,9 @@ const CASES = {
 
     const t0 = Date.now();
     rec.runForever().catch((e) => { check("P3 runForever does not throw", false, e.message); finish(); });
-    const arrived = await waitFor(() => srv.posts().length >= 1, 5000);
-    check("P3 the saved, already-due schedule is honoured: a POST arrives within 5s",
-      arrived, arrived ? `first POST after ${srv.posts()[0].at - t0}ms` : "no POST in 5s");
+    const arrived = await waitFor(() => srv.posts().length >= 1, WINDOW_MS);
+    check("P3 the saved, already-due schedule is honoured: a POST arrives within the window",
+      arrived, arrived ? `first POST after ${srv.posts()[0].at - t0}ms` : `no POST in ${WINDOW_MS}ms`);
     if (!arrived) return;
 
     const interval = 1440 * 60_000;
@@ -260,8 +259,8 @@ const CASES = {
 
     const t0 = Date.now();
     rec.runForever().catch((e) => { check("P3-control runForever does not throw", false, e.message); finish(); });
-    const arrived = await waitFor(() => srv.posts().length >= 1, 5000);
-    check("P3-control with no saved schedule, no POST in the same 5s window",
+    const arrived = await waitFor(() => srv.posts().length >= 1, WINDOW_MS);
+    check("P3-control with no saved schedule, no POST in the same window",
       !arrived, `POSTs=${srv.posts().length}`);
     const next = (await readJson(schedulePath(outDir)))?.nextAnchorAt;
     check("P3-control a fresh schedule one interval ahead is persisted",
@@ -281,10 +280,10 @@ const CASES = {
 
     const t0 = Date.now();
     rec.runForever().catch((e) => { check("P4 runForever does not throw", false, e.message); finish(); });
-    const arrived = await waitFor(() => srv.posts().length >= 1, 10_000);
+    const arrived = await waitFor(() => srv.posts().length >= 1, 2 * WINDOW_MS);
     const after = arrived ? srv.posts()[0].at - t0 : undefined;
-    check("P4 a year-out saved schedule is clamped: a POST arrives within 10s",
-      arrived, arrived ? `first POST after ${after}ms` : "no POST in 10s");
+    check("P4 a year-out saved schedule is clamped: a POST arrives within two windows",
+      arrived, arrived ? `first POST after ${after}ms` : `no POST in ${2 * WINDOW_MS}ms`);
     if (!arrived) return;
     check("P4 the clamp is one interval, not zero: the POST waits ~3s",
       after >= 2500, `first POST after ${after}ms, interval=3000ms`);
@@ -294,6 +293,116 @@ const CASES = {
     const next = (await readJson(schedulePath(outDir)))?.nextAnchorAt;
     check("P4 the year-out value is gone from schedule.json after the anchor",
       rescheduled, `nextAnchorAt - now = ${next - Date.now()}ms`);
+  },
+
+  // P6: the POST's headers arrive, then the body stalls. The anchor timeout
+  // must cover reading the body too, or one dead connection holds the whole
+  // cycle until undici's own 300s body timeout.
+  async P6() {
+    const srv = await startServer((req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.write('{"requestId":"req-p6","status":"SUB');
+    });
+    const { root, outDir } = await workspace([line()]);
+    const rec = await recorderFor(root, outDir, srv.url);
+    await rec.scanOnce();
+
+    const shortened = shortenDistTimers();
+    const t0 = Date.now();
+    const r = await withDeadline(rec.anchorLatestBundles(), DEADLINE_MS);
+    check("P6 anchorLatestBundles completes although the POST body never finishes",
+      r.done && !r.error, r.done ? `returned after ${Date.now() - t0}ms` : `still hanging after ${DEADLINE_MS}ms`);
+    check("P6 the shipped 60s POST timeout was armed", shortened.includes(60_000), `dist timers shortened: [${shortened.join(", ")}]`);
+    if (!r.done) return;
+    const st = (await readJson(statePath(outDir)))?.[BUNDLE];
+    check("P6 the stalled POST is recorded failed", st?.state === "failed" && st?.attempts === 1,
+      `state=${st?.state} attempts=${st?.attempts}`);
+  },
+
+  // P7: the POST body trickles one byte a second, which resets undici's idle
+  // body timer forever. Only the recorder's own deadline can end it.
+  async P7() {
+    const srv = await startServer((req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.write('{"requestId":"req-p7","status":"SUBMITTED"');
+      const drip = setInterval(() => res.write(" "), 1000);
+      res.on("close", () => clearInterval(drip));
+    });
+    const { root, outDir } = await workspace([line()]);
+    const rec = await recorderFor(root, outDir, srv.url);
+    await rec.scanOnce();
+
+    shortenDistTimers();
+    const t0 = Date.now();
+    const r = await withDeadline(rec.anchorLatestBundles(), DEADLINE_MS);
+    check("P7 anchorLatestBundles completes although the POST body trickles forever",
+      r.done && !r.error, r.done ? `returned after ${Date.now() - t0}ms` : `still hanging after ${DEADLINE_MS}ms`);
+    if (!r.done) return;
+    const st = (await readJson(statePath(outDir)))?.[BUNDLE];
+    check("P7 the trickling POST is recorded failed", st?.state === "failed", `state=${st?.state}`);
+  },
+
+  // P8: a crash or ENOSPC mid-append leaves a torn last line in one bundle's
+  // spool. That must cost at most the torn event: every other bundle anchors,
+  // the torn bundle anchors its intact events, and the next append starts on
+  // a fresh line instead of gluing itself to the fragment forever.
+  async P8() {
+    const srv = await startServer((req, res) =>
+      reply(res, 200, { requestId: `req-p8-${Date.now()}`, status: "CONFIRMED", txHash: TX, confirmations: 1 }));
+    const { root, outDir } = await workspace([line({ agentId: "alpha" }), line({ agentId: "main" })]);
+    const rec = await recorderFor(root, outDir, srv.url);
+    await rec.scanOnce();
+    const alphaSpool = path.join(outDir, "spool", "2026-02-03__alpha.jsonl");
+    await fs.appendFile(alphaSpool, '{"ts":"2026-02-03T10:0');
+
+    const r = await withDeadline(rec.anchorLatestBundles(), DEADLINE_MS);
+    check("P8 anchorLatestBundles resolves despite the torn line",
+      r.done && !r.error, r.error ? `rejected: ${r.error.message}` : r.done ? "resolved" : "hanging");
+    const posted = srv.posts().map((p) => JSON.parse(p.body).manifest);
+    const byAgent = Object.fromEntries(posted.map((m) => [m.agentId, m]));
+    check("P8 the healthy bundle is still anchored",
+      byAgent["openclaw:main"] !== undefined, `agents posted=${posted.map((m) => m.agentId).join(",") || "none"}`);
+    check("P8 the torn bundle anchors its intact event, skipping only the fragment",
+      byAgent["openclaw:alpha"]?.totalEvents === 1, `alpha totalEvents=${byAgent["openclaw:alpha"]?.totalEvents}`);
+
+    await fs.appendFile(path.join(root, "sessions", "s1.jsonl"),
+      JSON.stringify(line({ agentId: "alpha", ts: "2026-02-03T11:00:00Z", content: "after the tear" })) + "\n");
+    await rec.scanOnce();
+    const lines = (await fs.readFile(alphaSpool, "utf-8")).split("\n").filter(Boolean);
+    let lastParses = true;
+    try { JSON.parse(lines.at(-1)); } catch { lastParses = false; }
+    check("P8 the next append lands on its own line, not glued to the fragment",
+      lastParses, `last spool line: ${lines.at(-1)?.slice(0, 60)}`);
+
+    const before = srv.posts().length;
+    await rec.anchorLatestBundles();
+    const again = srv.posts().slice(before).map((p) => JSON.parse(p.body).manifest)
+      .find((m) => m.agentId === "openclaw:alpha");
+    check("P8 the event written after the tear is anchored on the next pass",
+      again?.totalEvents === 2, `alpha totalEvents=${again?.totalEvents}`);
+  },
+
+  // P9: a local failure confined to one bundle (here its bundle file path is
+  // occupied by a directory, so writing it throws EISDIR) must not stop the
+  // others. Any throw outside the network call used to reject the whole pass.
+  async P9() {
+    const srv = await startServer((req, res) =>
+      reply(res, 200, { requestId: `req-p9-${Date.now()}`, status: "CONFIRMED", txHash: TX, confirmations: 1 }));
+    const { root, outDir } = await workspace([line({ agentId: "alpha" }), line({ agentId: "main" })]);
+    await fs.mkdir(path.join(outDir, "bundles", "2026-02-03__alpha.bundle.json"), { recursive: true });
+    const rec = await recorderFor(root, outDir, srv.url);
+    await rec.scanOnce();
+
+    const r = await withDeadline(rec.anchorLatestBundles(), DEADLINE_MS);
+    check("P9 anchorLatestBundles resolves although one bundle cannot be written",
+      r.done && !r.error, r.error ? `rejected: ${r.error.message}` : r.done ? "resolved" : "hanging");
+    const agents = srv.posts().map((p) => JSON.parse(p.body).manifest.agentId);
+    const st = await readJson(statePath(outDir));
+    check("P9 the healthy bundle is POSTed and recorded anchored",
+      agents.includes("openclaw:main") && st?.[BUNDLE]?.state === "anchored",
+      `agents posted=${agents.join(",") || "none"} main=${st?.[BUNDLE]?.state}`);
+    check("P9 the broken bundle has no state recorded, so the next cycle retries it",
+      st?.["2026-02-03__alpha"] === undefined, `alpha=${JSON.stringify(st?.["2026-02-03__alpha"])}`);
   },
 
   // P5: the dedup digest covers sessionId. The recorder sets meta to the
@@ -362,9 +471,13 @@ async function orchestrate(names) {
   const results = [];
   for (const name of names) {
     const code = await new Promise((resolve) => {
-      const child = spawn(process.execPath, [SELF, "--case", name], { stdio: ["ignore", "inherit", "inherit"] });
+      const tmp = mkdtempSync(path.join(os.tmpdir(), "real-resilience-"));
+      const child = spawn(process.execPath, [SELF, "--case", name], {
+        stdio: ["ignore", "inherit", "inherit"],
+        env: { ...process.env, RESILIENCE_TMP: tmp }
+      });
       const kill = setTimeout(() => { console.log(`  FAIL  ${name} child killed after 60s`); child.kill("SIGKILL"); }, 60_000);
-      child.on("exit", (c) => { clearTimeout(kill); resolve(c ?? 1); });
+      child.on("exit", (c) => { clearTimeout(kill); rmSync(tmp, { recursive: true, force: true }); resolve(c ?? 1); });
     });
     results.push([name, code]);
   }

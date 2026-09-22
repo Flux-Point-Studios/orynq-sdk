@@ -47,6 +47,20 @@ describe("anchorManifest — the fetch is bounded", () => {
     expect(process.getActiveResourcesInfo().filter((r) => r === "Timeout").length).toBe(before);
   });
 
+  it("the deadline covers the body, not only the headers", async () => {
+    // Headers arrive at once; the body never finishes unless the abort ends it.
+    stubFetch(async (_u: string, o: RequestInit) => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"status":"SUB'));
+        o.signal?.addEventListener("abort", () =>
+          controller.error(Object.assign(new Error("aborted"), { name: "AbortError" })));
+      }
+    })));
+    const started = Date.now();
+    await expect(anchorManifest({ ...BASE, timeoutMs: 150 })).rejects.toMatchObject({ name: "AbortError" });
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
   it("a non-JSON error body does not throw", async () => {
     stubFetch(async () => json("<html>502 Bad Gateway</html>", 502));
     const res = await anchorManifest({ ...BASE });
@@ -77,6 +91,11 @@ describe("checkAnchorStatus — 'unknown' is the only state that re-posts", () =
   it.each(["CONFIRMED"])("%s is confirmed", async (status) => {
     stubFetch(async () => json({ status, txHash: "ab" }));
     expect((await checkAnchorStatus(STATUS)).state).toBe("confirmed");
+  });
+
+  it("a confirmation reports the txHash it saw, for a receipt the POST could not fill", async () => {
+    stubFetch(async () => json({ status: "CONFIRMED", txHash: "ab", confirmations: 1 }));
+    expect(await checkAnchorStatus(STATUS)).toEqual({ state: "confirmed", txHash: "ab" });
   });
 
   it("confirmations >= 1 is confirmed", async () => {

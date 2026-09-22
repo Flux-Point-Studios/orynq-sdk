@@ -305,14 +305,14 @@ await property("P7 an HTTP error is a failure even when its body claims CONFIRME
 // The retry schedule is pinned exactly. Math.random is the recorder's only
 // source of jitter; fixing it makes each backoff boundary deterministic, and
 // every check straddles a boundary so a changed formula moves a POST across it.
-async function failingBundle(cleanups, random) {
+async function bundleAnswering(cleanups, { body = WORKER_FAILURE, random = 0.5 } = {}) {
   let now = Date.parse("2026-09-22T00:00:00Z");
   const clock = { get: () => now, set: (v) => { now = v; } };
   Date.now = () => now;
   const realRandom = Math.random;
   Math.random = () => random;
   cleanups.push(async () => { Date.now = realNow; Math.random = realRandom; });
-  const srv = await startServer((e, req, res) => reply(res, 200, WORKER_FAILURE));
+  const srv = await startServer((e, req, res) => reply(res, 200, body));
   cleanups.push(srv.close);
   const { root, outDir } = await fixture(["main"]);
   cleanups.push(() => fs.rm(root, { recursive: true, force: true }));
@@ -325,7 +325,7 @@ async function failingBundle(cleanups, random) {
 const MIN = 60_000;
 
 await property("P8 backoff doubles per attempt: 2 min after attempt 1, 4 min after attempt 2", async (cleanups) => {
-  const { clock, srv, rec, outDir, id } = await failingBundle(cleanups, 0.5); // jitter x1.0
+  const { clock, srv, rec, outDir, id } = await bundleAnswering(cleanups); // jitter x1.0
   const t0 = clock.get();
   check("t0: attempt 1 recorded", (await stateOf(outDir))[id]?.attempts === 1);
 
@@ -349,7 +349,7 @@ await property("P8 backoff doubles per attempt: 2 min after attempt 1, 4 min aft
 });
 
 await property("P9 the 24h cap binds: a bundle on attempt 20 retries after one day, not eleven", async (cleanups) => {
-  const { clock, srv, rec, outDir, id } = await failingBundle(cleanups, 0.5);
+  const { clock, srv, rec, outDir, id } = await bundleAnswering(cleanups);
   const statePath = path.join(outDir, "state", "anchored.json");
   const st = await stateOf(outDir);
   st[id] = { ...st[id], attempts: 20 };
@@ -366,7 +366,7 @@ await property("P9 the 24h cap binds: a bundle on attempt 20 retries after one d
 });
 
 await property("P10 the lower jitter bound (x0.8) lets the retry through early", async (cleanups) => {
-  const low = await failingBundle(cleanups, 0); // jitter x0.8: 2 min -> 96s
+  const low = await bundleAnswering(cleanups, { random: 0 }); // jitter x0.8: 2 min -> 96s
   const tl = low.clock.get();
   low.clock.set(tl + 100_000);
   await low.rec.anchorLatestBundles();
@@ -374,7 +374,7 @@ await property("P10 the lower jitter bound (x0.8) lets the retry through early",
 });
 
 await property("P11 the upper jitter bound (x1.2) holds the retry back", async (cleanups) => {
-  const high = await failingBundle(cleanups, 0.9999); // jitter ~x1.2: 2 min -> ~144s
+  const high = await bundleAnswering(cleanups, { random: 0.9999 }); // jitter ~x1.2: 2 min -> ~144s
   const th = high.clock.get();
   high.clock.set(th + 130_000);
   await high.rec.anchorLatestBundles();
@@ -382,6 +382,70 @@ await property("P11 the upper jitter bound (x1.2) holds the retry back", async (
   high.clock.set(th + 145_000);
   await high.rec.anchorLatestBundles();
   check("jitter x1.2: attempt 2 POSTed at t0+145s", high.srv.log.posts.length === 2, `posts=${high.srv.log.posts.length}`);
+});
+
+// t-backend answers the POST from its DB row, which is PENDING with no txHash
+// until the worker's best-effort submitted-callback lands. When that callback
+// fails the worker has ALREADY put the tx on chain, so a re-post is a duplicate
+// anchor. A requestId proves the server accepted the request: poll it.
+await property("P12 PENDING with a requestId and no txHash is submitted and polled, never re-posted", async (cleanups) => {
+  let now = Date.parse("2026-09-22T00:00:00Z");
+  Date.now = () => now;
+  cleanups.push(async () => { Date.now = realNow; });
+  let landed = false;
+  const srv = await startServer((e, req, res) => {
+    if (e.method === "POST") return reply(res, 200, { requestId: "r12", status: "PENDING", txHash: null });
+    reply(res, 200, landed
+      ? { requestId: "r12", status: "CONFIRMED", txHash: TX, confirmations: 1 }
+      : { requestId: "r12", status: "PENDING", txHash: null, confirmations: 0 });
+  });
+  cleanups.push(srv.close);
+  const { root, outDir } = await fixture(["main"]);
+  cleanups.push(() => fs.rm(root, { recursive: true, force: true }));
+  const id = "2026-02-03__main";
+
+  const rec = recorder(root, outDir, srv.baseUrl);
+  await rec.scanOnce();
+  await rec.anchorLatestBundles();
+  const st = (await stateOf(outDir))[id];
+  const receipt = await receiptOf(outDir, id);
+  check("anchored.json state === \"submitted\" with requestId r12",
+    st?.state === "submitted" && st?.requestId === "r12", `state=${st?.state} requestId=${st?.requestId}`);
+  check("receipt is submitted, not anchored", receipt.state === "submitted" && receipt.anchored === false,
+    `receipt.state=${receipt.state} anchored=${receipt.anchored}`);
+
+  for (let h = 1; h < 24; h++) {
+    now += 60 * 60_000;
+    await rec.anchorLatestBundles();
+  }
+  check("24 hourly cycles: exactly one POST", srv.log.posts.length === 1, `posts=${srv.log.posts.length}`);
+  check("cycles 2..24 each polled /anchors/status/r12",
+    srv.log.gets.length === 23 && srv.log.gets.every((g) => g.url === "/anchors/status/r12"),
+    `gets=${srv.log.gets.length} urls=${[...new Set(srv.log.gets.map((g) => g.url))].join(",")}`);
+
+  landed = true;
+  now += 60 * 60_000;
+  await rec.anchorLatestBundles();
+  const done = await receiptOf(outDir, id);
+  check("once the poll confirms, the receipt reads anchored with the txHash the POST never had",
+    done.anchored === true && done.state === "anchored" && done.txHash === TX,
+    `receipt.anchored=${done.anchored} state=${done.state} txHash=${String(done.txHash).slice(0, 8)}`);
+  check("and still only one POST", srv.log.posts.length === 1, `posts=${srv.log.posts.length}`);
+});
+
+// Without a requestId there is nothing to poll, so "submitted" would fall
+// through to a fresh POST on every cycle, with no log line. The bundle must be
+// a failure instead: counted, logged, and retried only on its backoff.
+await property("P13 a SUBMITTED reply with no requestId is a failure on backoff, not a silent per-cycle re-post", async (cleanups) => {
+  const { clock, srv, rec, outDir, id } = await bundleAnswering(cleanups,
+    { body: { status: "SUBMITTED", txHash: TX, confirmations: 0 } });
+  const st = (await stateOf(outDir))[id];
+  check("anchored.json state === \"failed\" (nothing to poll), attempts 1",
+    st?.state === "failed" && st?.attempts === 1, `state=${st?.state} attempts=${st?.attempts} requestId=${st?.requestId}`);
+
+  clock.set(clock.get() + MIN);
+  await rec.anchorLatestBundles();
+  check("one minute later, inside the backoff: NO new POST", srv.log.posts.length === 1, `posts=${srv.log.posts.length}`);
 });
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);

@@ -171,7 +171,8 @@ const PROPS = {
           !c.stderr.some((l) => l.includes("poll=error")),
           c.stderr.join(" | ").slice(0, 160) || "stderr empty");
       }
-      check("P1 status GETs carried the partner key", w.seen.gets.every((g) => g.xPartner),
+      check("P1 status GETs carried the partner key",
+        w.seen.gets.length > 0 && w.seen.gets.every((g) => g.xPartner),
         `x-partner present on ${w.seen.gets.filter((g) => g.xPartner).length}/${w.seen.gets.length}`);
     } finally { await w.close(); }
   },
@@ -250,6 +251,14 @@ const PROPS = {
             c1.state.state === "anchored" && typeof c1.state.confirmedAt === "number" &&
             c1.state.contentDigest === s.state.contentDigest && c1.state.requestId === "r1",
           `posts=${c1.posts} gets=${JSON.stringify(c1.gets)} state=${c1.state.state} confirmedAt=${c1.state.confirmedAt}`);
+        // In production the POST never answers CONFIRMED, so this poll is the
+        // only path to "anchored": the receipt must say so, not stay "submitted".
+        check(`P5 ${name} at +1h: the receipt now reads anchored, with the txHash`,
+          c1.receipt.anchored === true && c1.receipt.state === "anchored" && c1.receipt.txHash === TX,
+          `receipt.anchored=${c1.receipt.anchored} receipt.state=${c1.receipt.state} txHash=${String(c1.receipt.txHash).slice(0, 8)}`);
+        check(`P5 ${name} at +1h: anchored.json lastReceipt agrees with its state`,
+          c1.state.lastReceipt?.anchored === true && c1.state.lastReceipt?.state === "anchored",
+          `lastReceipt.anchored=${c1.state.lastReceipt?.anchored} lastReceipt.state=${c1.state.lastReceipt?.state}`);
         for (const [label, off] of [["+2h", 2 * HOUR], ["+3d", 3 * DAY]]) {
           const c = await w.cycle(off);
           check(`P5 ${name} at ${label}: no further POST or GET`,
