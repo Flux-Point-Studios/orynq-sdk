@@ -7,6 +7,14 @@ when:
   - event: manual
     branch: main
 
+# The t-backend submodule is private and nothing here builds it; GitHub's
+# checkout never fetched it either.
+clone:
+  - name: clone
+    image: woodpeckerci/plugin-git
+    settings:
+      recursive: false
+
 steps:
   - name: publish
     image: node:20-bookworm
