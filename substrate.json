@@ -18,6 +18,24 @@
       "paths": ["packages/recorder-openclaw", "packages/orynq-openclaw"],
       "consumes": ["orynq-attestation"],
       "status": "live"
+    },
+    {
+      "id": "anchors-cardano",
+      "name": "Cardano anchor client",
+      "desc": "Direct Cardano L1 anchors: label 2222 Proof-of-Intent and label 8746 Materios checkpoint metadata builders and verifiers, plus a chained submit queue that lets one wallet submit anchors back to back without re-reading a lagging indexer, remembers a key only once its own tx is seen on chain, fails a submit the node refused at once, and checks a submit of unknown outcome on chain before failing it.",
+      "kind": "toolkit",
+      "paths": ["packages/anchors-cardano"],
+      "consumes": ["orynq-attestation"],
+      "status": "live"
+    },
+    {
+      "id": "poi-anchor-worker",
+      "name": "PoI anchor worker",
+      "desc": "HTTP service behind t-backend that anchors process-trace manifests to Cardano under label 2222 from one wallet, chaining bursts through the anchors-cardano submit queue, answering a request identical to one in flight or recently landed with that tx (never one anchoring different content), rejecting malformed hashes with 400, and shedding load with 503 when the queue is full.",
+      "kind": "pipeline",
+      "paths": ["services/anchor-worker"],
+      "consumes": ["anchors-cardano"],
+      "status": "live"
     }
   ]
 }

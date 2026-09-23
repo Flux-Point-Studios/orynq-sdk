@@ -4,59 +4,21 @@
  * Location: services/anchor-worker/src/anchor.ts
  */
 
-import { Lucid, Blockfrost, type LucidEvolution } from "@lucid-evolution/lucid";
+import { createHash } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
+import type { LucidEvolution, TxBuilder, UTxO } from "@lucid-evolution/lucid";
 import {
   buildAnchorMetadata,
+  POI_METADATA_LABEL,
   serializeForCbor,
+  SubmitRefusedError,
+  type AnchorChainProvider,
   type AnchorEntry,
+  type CardanoNetwork,
+  type ChainedBuild,
+  type ChainedSubmitQueue,
 } from "@fluxpointstudios/orynq-sdk-anchors-cardano";
-import {
-  BLOCKFROST_PROJECT_ID,
-  CARDANO_NETWORK,
-  WALLET_SEED_PHRASE,
-  T_BACKEND_INTERNAL_URL,
-  ANCHOR_WORKER_TOKEN,
-  AWAIT_TX_TIMEOUT,
-} from "./env.js";
-
-/**
- * PoI metadata label for Cardano transactions.
- */
-const POI_METADATA_LABEL = 2222;
-
-/**
- * Lucid instance singleton.
- */
-let lucidInstance: LucidEvolution | null = null;
-
-/**
- * Get or create Lucid instance.
- */
-async function getLucid(): Promise<LucidEvolution> {
-  if (lucidInstance) {
-    return lucidInstance;
-  }
-
-  const networkMap: Record<string, string> = {
-    mainnet: "https://cardano-mainnet.blockfrost.io/api/v0",
-    preprod: "https://cardano-preprod.blockfrost.io/api/v0",
-    preview: "https://cardano-preview.blockfrost.io/api/v0",
-  };
-
-  const baseUrl = networkMap[CARDANO_NETWORK];
-  if (!baseUrl) {
-    throw new Error(`Unsupported network: ${CARDANO_NETWORK}`);
-  }
-
-  lucidInstance = await Lucid(
-    new Blockfrost(baseUrl, BLOCKFROST_PROJECT_ID!),
-    CARDANO_NETWORK === "mainnet" ? "Mainnet" : "Preprod"
-  );
-
-  lucidInstance.selectWallet.fromSeed(WALLET_SEED_PHRASE!);
-
-  return lucidInstance;
-}
+import { T_BACKEND_INTERNAL_URL, ANCHOR_WORKER_TOKEN } from "./env.js";
 
 /**
  * Result of anchor submission.
@@ -81,10 +43,22 @@ export interface ManifestData {
   agentId?: string;
 }
 
+export type AnchorProcessTrace = (
+  requestId: string,
+  manifest: ManifestData,
+  storageUri?: string
+) => Promise<AnchorResult>;
+
+/**
+ * serializeForCbor returns runtime-valid metadata typed loosely; lucid types
+ * attachMetadata strictly and does not export the type, so name it here.
+ */
+type TxMetadata = Parameters<TxBuilder["attachMetadata"]>[1];
+
 /**
  * Notify t-backend that the anchor transaction has been submitted.
  */
-async function notifySubmitted(
+export async function notifySubmitted(
   requestId: string,
   txHash: string,
   network: string
@@ -111,97 +85,125 @@ async function notifySubmitted(
   }
 }
 
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
 /**
- * Anchor a process trace to the Cardano blockchain.
- *
- * @param requestId - Request ID for callback tracking
- * @param manifest - Manifest data containing hashes
- * @param storageUri - Optional storage URI for the trace
- * @returns Anchor result with transaction hash and metadata
+ * Resolves true once txHash is in a block, or false after timeoutMs; a
+ * timeoutMs of 0 looks it up once. A failed lookup counts as not found and is
+ * named in the warning, so the queue never fails a request over it.
  */
-export async function anchorProcessTrace(
-  requestId: string,
-  manifest: ManifestData,
-  storageUri?: string
-): Promise<AnchorResult> {
-  const lucid = await getLucid();
+export async function awaitOnChain(
+  chain: Pick<AnchorChainProvider, "getTxInfo">,
+  txHash: string,
+  { pollMs, timeoutMs }: { pollMs: number; timeoutMs: number }
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  for (;;) {
+    try {
+      if ((await chain.getTxInfo(txHash)) !== null) return true;
+      lastError = undefined;
+    } catch (error) {
+      lastError = error;
+    }
+    if (Date.now() >= deadline) break;
+    await sleep(pollMs);
+  }
+  const cause = lastError === undefined ? "" : ` (last lookup failed: ${messageOf(lastError)})`;
+  console.warn(
+    `[anchor] ${txHash} not on chain after ${timeoutMs}ms${cause}; a re-post of what it anchored submits again`
+  );
+  return false;
+}
 
-  // Build AnchorEntry from manifest
-  const entry: AnchorEntry = {
-    type: "process-trace",
-    version: "1.0",
-    rootHash: manifest.rootHash,
-    manifestHash: manifest.manifestHash,
-    timestamp: new Date().toISOString(),
+function anchorTx(lucid: LucidEvolution, payload: TxMetadata): ChainedBuild<UTxO> {
+  return async (walletUtxos) => {
+    const available = walletUtxos ?? (await lucid.utxosAt(await lucid.wallet().address()));
+    // The seed wallet both selects and signs from its overridden UTxOs; left
+    // empty, it would re-read the provider and pick inputs the mempool spent.
+    lucid.overrideUTxOs(available);
+    const [next, , unsigned] = await lucid
+      .newTx()
+      .attachMetadata(POI_METADATA_LABEL, payload)
+      .chain();
+    const signed = await unsigned.sign.withWallet().complete();
+    const txHash = signed.toHash();
+    const spent = available
+      .filter((u) => !next.some((n) => n.txHash === u.txHash && n.outputIndex === u.outputIndex))
+      .map((u) => `${u.txHash}#${u.outputIndex}`);
+    return {
+      txHash,
+      walletUtxos: next,
+      submit: async () => {
+        try {
+          await signed.submit();
+        } catch (error) {
+          const message = messageOf(error);
+          console.warn(`[anchor] Submit of ${txHash} failed: ${message}`);
+          // lucid's Blockfrost provider passes a reply's message on only for a
+          // 400, which carries the node's refusal. Any other failure may follow
+          // a tx the node took, and the queue checks the chain for it.
+          throw /TxValidationErrorInCardanoMode|ShelleyTxValidationError/.test(message)
+            ? new SubmitRefusedError(message, { cause: error })
+            : error;
+        }
+        console.log(
+          `[anchor] Transaction submitted: ${txHash} spending ${spent.join(",")} (${walletUtxos === undefined ? "fresh wallet read" : "chained"})`
+        );
+      },
+    };
   };
+}
 
-  // Add optional fields using ?? for falsy handling
-  if (manifest.merkleRoot ?? undefined) {
-    entry.merkleRoot = manifest.merkleRoot;
-  }
+export function createProcessTraceAnchorer(deps: {
+  /** Wallet selected; builds only through `queue`, which owns its UTxO override. */
+  lucid: LucidEvolution;
+  queue: ChainedSubmitQueue<UTxO>;
+  network: CardanoNetwork;
+  notifySubmitted: (requestId: string, txHash: string, network: CardanoNetwork) => Promise<void>;
+}): AnchorProcessTrace {
+  return async function anchorProcessTrace(requestId, manifest, storageUri) {
+    const entry: AnchorEntry = {
+      type: "process-trace",
+      version: "1.0",
+      rootHash: manifest.rootHash,
+      manifestHash: manifest.manifestHash,
+      timestamp: new Date().toISOString(),
+    };
+    if (manifest.merkleRoot) entry.merkleRoot = manifest.merkleRoot;
+    if (typeof manifest.totalEvents === "number") entry.itemCount = manifest.totalEvents;
+    if (manifest.agentId) entry.agentId = manifest.agentId;
+    if (storageUri) entry.storageUri = storageUri;
 
-  if ((manifest.totalEvents ?? undefined) !== undefined) {
-    entry.itemCount = manifest.totalEvents;
-  }
+    // serializeForCbor chunks strings past Cardano's 64-byte metadata limit.
+    const payload = serializeForCbor(buildAnchorMetadata(entry))[
+      POI_METADATA_LABEL
+    ] as TxMetadata;
 
-  if (manifest.agentId ?? undefined) {
-    entry.agentId = manifest.agentId;
-  }
-
-  if (storageUri ?? undefined) {
-    entry.storageUri = storageUri;
-  }
-
-  // Build metadata using the anchors-cardano package
-  const anchorResult = buildAnchorMetadata(entry);
-
-  // Serialize for CBOR - handles 64-byte string limit by chunking long strings
-  const cborMetadata = serializeForCbor(anchorResult);
-  // serializeForCbor (orynq SDK) returns a loosely-typed (unknown-valued) but runtime-valid
-  // Cardano metadata structure; lucid-evolution's attachMetadata is strictly typed (lucid-cardano
-  // accepted it untyped), so cast at this lib boundary.
-  const metadataPayload = cborMetadata[POI_METADATA_LABEL] as any;
-
-  // Build and sign transaction
-  // NO explicit self-payment output - let Lucid handle change automatically
-  const tx = await lucid
-    .newTx()
-    .attachMetadata(POI_METADATA_LABEL, metadataPayload)
-    .complete();
-
-  const signedTx = await tx.sign.withWallet().complete();
-  const txHash = await signedTx.submit();
-
-  console.log(`[anchor] Transaction submitted: ${txHash}`);
-
-  // Callback to t-backend immediately after submit
-  await notifySubmitted(requestId, txHash, CARDANO_NETWORK);
-
-  // Best-effort awaitTx with short timeout - don't fail on slow mempool
-  try {
-    await Promise.race([
-      lucid.awaitTx(txHash),
-      new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error("awaitTx timeout")),
-          AWAIT_TX_TIMEOUT
-        )
-      ),
-    ]);
-    console.log(`[anchor] Transaction confirmed: ${txHash}`);
-  } catch (error) {
-    // Log but don't fail - tx is already submitted
-    console.log(
-      `[anchor] awaitTx timeout or error (tx still submitted): ${error}`
+    // Everything the tx anchors but its timestamp, strings exactly as sent: a
+    // request is only ever answered with a tx that anchors what it asked for.
+    const key = createHash("sha256")
+      .update(JSON.stringify({ ...entry, timestamp: undefined }))
+      .digest("hex");
+    const { txHash, chainPosition, deduplicated } = await deps.queue.submit(
+      key,
+      anchorTx(deps.lucid, payload)
     );
-  }
+    console.log(
+      deduplicated
+        ? `[anchor] Request ${requestId} reuses ${txHash}: an identical anchor of manifest ${manifest.manifestHash} is already in flight or anchored`
+        : `[anchor] Request ${requestId} anchored in ${txHash} (chain position ${chainPosition})`
+    );
 
-  return {
-    txHash,
-    network: CARDANO_NETWORK,
-    label: POI_METADATA_LABEL,
-    rootHash: manifest.rootHash,
-    manifestHash: manifest.manifestHash,
-    merkleRoot: manifest.merkleRoot,
+    await deps.notifySubmitted(requestId, txHash, deps.network);
+
+    return {
+      txHash,
+      network: deps.network,
+      label: POI_METADATA_LABEL,
+      rootHash: manifest.rootHash,
+      manifestHash: manifest.manifestHash,
+      merkleRoot: manifest.merkleRoot,
+    };
   };
 }

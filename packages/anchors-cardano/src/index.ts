@@ -12,6 +12,7 @@
  * - Builder functions to create anchor metadata from trace bundles
  * - Verifier functions to parse and verify anchors from on-chain data
  * - Provider implementations for Blockfrost and Koios APIs
+ * - A chained submit queue that lets one wallet submit anchors back to back
  *
  * Used by:
  * - Consumer applications anchoring traces to Cardano
@@ -160,6 +161,24 @@ export type {
   MateriosAnchorV2Input,
   MateriosAnchorV2Metadata,
 } from "./materios-anchor-v2.js";
+
+// =============================================================================
+// CHAINED SUBMISSION
+// =============================================================================
+
+export {
+  createChainedSubmitQueue,
+  isSpentInputError,
+  SubmitQueueFullError,
+  SubmitRefusedError,
+} from "./chained-submit-queue.js";
+export type {
+  ChainedBuild,
+  ChainedSubmitQueue,
+  ChainedSubmitQueueOptions,
+  ChainedSubmitResult,
+  ChainedTx,
+} from "./chained-submit-queue.js";
 
 // =============================================================================
 // VERSION

@@ -1,0 +1,13 @@
+*
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!.npmrc
+!tsconfig.base.json
+!packages/core
+!packages/process-trace
+!packages/anchors-cardano
+!services/anchor-worker
+**/node_modules
+**/dist
+**/__tests__
