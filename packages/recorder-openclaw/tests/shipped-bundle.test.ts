@@ -1,6 +1,8 @@
 /**
- * Runs every .probe.mjs against the SHIPPED bundle, and refuses to run at all
- * against a stale one.
+ * Runs every .probe.mjs against BOTH shipped bundles, and refuses to run at all
+ * against a stale one. ESM consumers load dist/index.js; the orynq-openclaw CLI
+ * require()s the package and so loads dist/index.cjs, a separate tsup output of
+ * the same source. Each probe must say which build it tested.
  *
  * Both halves matter. The freshness guard exists because a bundle older than
  * src means the probes are testing yesterday's code while reporting on today's
@@ -15,7 +17,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const bundle = join(pkgRoot, "dist", "index.js");
+const bundles = ["index.js", "index.cjs"].map((f) => join(pkgRoot, "dist", f));
 const probeDir = join(pkgRoot, "test");
 
 const walk = (dir: string): string[] =>
@@ -23,7 +25,7 @@ const walk = (dir: string): string[] =>
     e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]
   );
 
-describe("the shipped bundle", () => {
+describe.each(bundles)("the shipped bundle %s", (bundle) => {
   it("exists — run `pnpm build` first", () => {
     expect(existsSync(bundle), `missing ${bundle}`).toBe(true);
   });
@@ -58,12 +60,15 @@ describe("bundle probes", () => {
   // What IS worth asserting beyond the exit code: that the probe said
   // something, and that nothing in it announced a failure — so a probe that
   // exits 0 while printing FAIL lines cannot slip through.
-  it.each(probes)("%s exits 0 against dist/index.js", (name) => {
+  const runs = probes.flatMap((name) => bundles.map((bundle) => [name, bundle] as const));
+  it.each(runs)("%s exits 0 against %s", (name, bundle) => {
     const out = execFileSync(process.execPath, [join(probeDir, name)], {
       encoding: "utf-8",
-      timeout: 90_000
+      timeout: 90_000,
+      env: { ...process.env, RECORDER_DIST: bundle }
     });
     expect(out.trim().length, `${name} produced no output`).toBeGreaterThan(0);
+    expect(out.includes(bundle), `${name} did not report testing ${bundle}`).toBe(true);
     const failed = out.split("\n").filter((l) => /^\s*FAIL\b/.test(l));
     expect(failed, `${name} printed FAIL lines but exited 0`).toEqual([]);
   });

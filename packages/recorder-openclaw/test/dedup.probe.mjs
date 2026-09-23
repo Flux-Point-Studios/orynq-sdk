@@ -4,14 +4,17 @@
 // receipt/state file the recorder wrote.
 //
 // Run: node test/dedup.probe.mjs   (exit 0 = all PASS)
+// RECORDER_DIST overrides the build under test (default: ../dist/index.js).
 import { createServer } from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const DIST = fileURLToPath(new URL("../dist/index.js", import.meta.url));
-const { OpenClawRecorder, defaultConfig } = await import(DIST);
+const DIST = process.env.RECORDER_DIST
+  ? path.resolve(process.env.RECORDER_DIST)
+  : fileURLToPath(new URL("../dist/index.js", import.meta.url));
+const { OpenClawRecorder, defaultConfig } = await import(pathToFileURL(DIST).href);
 console.log(`recorder under test: ${DIST}`);
 
 const BUNDLE = "2026-02-03__main";

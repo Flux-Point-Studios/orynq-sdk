@@ -92,11 +92,13 @@ export class OpenClawRecorder {
       await this.saveSchedule(nextAnchorAt);
     }
 
+    // A failed scan or anchor pass is logged and the loop carries on: under
+    // launchd KeepAlive a throw here is a crash-restart, not a recovery.
     while (true) {
-      await this.scanOnce();
+      await this.logFailure("scan", () => this.scanOnce());
 
       if (this.cfg.anchor.enabled && Date.now() >= nextAnchorAt) {
-        await this.anchorLatestBundles();
+        await this.logFailure("anchor pass", () => this.anchorLatestBundles());
         nextAnchorAt = Date.now() + jitterMs(
           this.cfg.schedule.anchorEveryMinutes * 60_000,
           this.cfg.schedule.jitterSeconds
@@ -123,7 +125,21 @@ export class OpenClawRecorder {
 
     for (const filePath of jsonlFiles) {
       const lastOffset = state[filePath] ?? 0;
-      const { lines, newOffset } = await readNewJsonlLines(filePath, lastOffset);
+      let read: Awaited<ReturnType<typeof readNewJsonlLines>>;
+      try {
+        read = await readNewJsonlLines(filePath, lastOffset);
+      } catch (err) {
+        if (isMissingFile(err)) {
+          // Deleted after discovery: OpenClaw removes a session file when the
+          // session resets.
+          delete state[filePath];
+        } else {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[scan] ${filePath} SKIPPED this pass: ${msg}`);
+        }
+        continue;
+      }
+      const { lines, newOffset } = read;
       state[filePath] = newOffset;
 
       for (const line of lines) {
@@ -410,6 +426,15 @@ export class OpenClawRecorder {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`[anchor] ${bundleId} SKIPPED this cycle: ${msg}`);
       }
+    }
+  }
+
+  private async logFailure(what: string, run: () => Promise<void>) {
+    try {
+      await run();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[recorder] ${what} failed, continuing: ${msg}`);
     }
   }
 
