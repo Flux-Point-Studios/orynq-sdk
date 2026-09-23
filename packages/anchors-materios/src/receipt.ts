@@ -359,6 +359,33 @@ export async function queryMotraBalance(
   return BigInt(json.balance ?? json ?? "0");
 }
 
+/** One gateway request, as the materios-upload-v2 signature covers it. */
+export interface GatewayRequest {
+  method: string;
+  /** Path appended to the gateway base URL, without a query. */
+  path: string;
+  /** The exact bytes sent as the body; empty when there is none. */
+  body: Uint8Array;
+  /** Content hash in the path, without 0x. */
+  id: string;
+}
+
+/**
+ * The materios-upload-v2 signing string. The gateway rebuilds it from the
+ * request it receives. Exported for unit testing; not part of the public
+ * package API.
+ */
+export function uploadSigV2Message(p: {
+  method: string;
+  path: string;
+  bodySha256: string;
+  id: string;
+  address: string;
+  ts: number;
+}): string {
+  return ["materios-upload-v2", p.method, p.path, p.bodySha256, p.id, p.address, p.ts].join("|");
+}
+
 /**
  * Build auth headers for gateway requests (API key or sr25519 signature).
  *
@@ -366,9 +393,14 @@ export async function queryMotraBalance(
  * which only accepts `Authorization: Bearer ...`. Legacy keys (no prefix) keep
  * the `x-api-key` header for back-compat with pre-v6 deployments.
  *
+ * A signed request carries a materios-upload-v2 signature, which binds the
+ * method, path and body. No v1 signature is sent: it covers only the content
+ * hash, so a copy lifted from the request could authorize a different body.
+ * The gateway refuses reuse, so every request is signed afresh.
+ *
  * Exported for unit testing; not part of the public package API.
  */
-export function buildAuthHeaders(gateway: BlobGatewayConfig, contentHash: string): Record<string, string> {
+export function buildAuthHeaders(gateway: BlobGatewayConfig, request: GatewayRequest): Record<string, string> {
   if (gateway.apiKey) {
     if (gateway.apiKey.startsWith("matra_")) {
       return { "Authorization": `Bearer ${gateway.apiKey}` };
@@ -376,13 +408,21 @@ export function buildAuthHeaders(gateway: BlobGatewayConfig, contentHash: string
     return { "x-api-key": gateway.apiKey };
   }
   if (gateway.signerKeypair) {
-    const ts = Math.floor(Date.now() / 1000).toString();
-    const msg = `materios-upload-v1|${contentHash}|${gateway.signerKeypair.address}|${ts}`;
-    const sig = gateway.signerKeypair.sign(stringToU8a(msg));
+    const signer = gateway.signerKeypair;
+    const address = signer.address;
+    const ts = Math.floor(Date.now() / 1000);
+    const v2 = uploadSigV2Message({
+      method: request.method,
+      path: request.path,
+      bodySha256: createHash("sha256").update(request.body).digest("hex"),
+      id: request.id,
+      address,
+      ts,
+    });
     return {
-      "x-upload-sig": u8aToHex(sig),
-      "x-uploader-address": gateway.signerKeypair.address,
-      "x-upload-ts": ts,
+      "x-upload-sig-v2": u8aToHex(signer.sign(stringToU8a(v2))),
+      "x-uploader-address": address,
+      "x-upload-ts": String(ts),
     };
   }
   return {};
@@ -399,17 +439,25 @@ export async function uploadBlobs(
   gateway: BlobGatewayConfig,
 ): Promise<BlobUploadResult> {
   const strippedHash = stripPrefix(contentHash);
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  Object.assign(headers, buildAuthHeaders(gateway, strippedHash));
 
   try {
     // 1. Upload manifest
+    const manifestPath = `/blobs/${strippedHash}/manifest`;
+    const manifestBody = JSON.stringify(manifest);
     const manifestRes = await fetch(
-      `${gateway.baseUrl}/blobs/${strippedHash}/manifest`,
+      `${gateway.baseUrl}${manifestPath}`,
       {
         method: "POST",
-        headers,
-        body: JSON.stringify(manifest),
+        headers: {
+          "Content-Type": "application/json",
+          ...buildAuthHeaders(gateway, {
+            method: "POST",
+            path: manifestPath,
+            body: stringToU8a(manifestBody),
+            id: strippedHash,
+          }),
+        },
+        body: manifestBody,
       },
     );
     if (!manifestRes.ok && manifestRes.status !== 409) {
@@ -420,17 +468,18 @@ export async function uploadBlobs(
     // 2. Upload each chunk
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i]!;
-      const chunkHeaders: Record<string, string> = {
-        "Content-Type": "application/octet-stream",
-      };
-      Object.assign(chunkHeaders, buildAuthHeaders(gateway, strippedHash));
+      const chunkPath = `/blobs/${strippedHash}/chunks/${i}`;
+      const chunkBody = new Uint8Array(chunk.data);
 
       const chunkRes = await fetch(
-        `${gateway.baseUrl}/blobs/${strippedHash}/chunks/${i}`,
+        `${gateway.baseUrl}${chunkPath}`,
         {
           method: "PUT",
-          headers: chunkHeaders,
-          body: new Uint8Array(chunk.data),
+          headers: {
+            "Content-Type": "application/octet-stream",
+            ...buildAuthHeaders(gateway, { method: "PUT", path: chunkPath, body: chunkBody, id: strippedHash }),
+          },
+          body: chunkBody,
         },
       );
       if (!chunkRes.ok && chunkRes.status !== 409) {
