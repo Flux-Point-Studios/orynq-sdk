@@ -4,11 +4,11 @@
  * Location: services/anchor-worker/src/anchor.ts
  */
 
+import { createHash } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { LucidEvolution, TxBuilder, UTxO } from "@lucid-evolution/lucid";
 import {
   buildAnchorMetadata,
-  extractRawHash,
   POI_METADATA_LABEL,
   serializeForCbor,
   type AnchorChainProvider,
@@ -162,16 +162,18 @@ export function createProcessTraceAnchorer(deps: {
       POI_METADATA_LABEL
     ] as TxMetadata;
 
-    // The root is part of the key so a request is never answered with a tx
-    // whose metadata carries someone else's root under the same manifestHash.
-    const key = `${extractRawHash(manifest.manifestHash)}:${extractRawHash(manifest.rootHash)}`;
+    // Everything the tx anchors but its timestamp, strings exactly as sent: a
+    // request is only ever answered with a tx that anchors what it asked for.
+    const key = createHash("sha256")
+      .update(JSON.stringify({ ...entry, timestamp: undefined }))
+      .digest("hex");
     const { txHash, chainPosition, deduplicated } = await deps.queue.submit(
       key,
       anchorTx(deps.lucid, payload)
     );
     console.log(
       deduplicated
-        ? `[anchor] Request ${requestId} reuses ${txHash}: manifest ${manifest.manifestHash} is already in flight or anchored`
+        ? `[anchor] Request ${requestId} reuses ${txHash}: an identical anchor of manifest ${manifest.manifestHash} is already in flight or anchored`
         : `[anchor] Request ${requestId} anchored in ${txHash} (chain position ${chainPosition})`
     );
 

@@ -24,7 +24,8 @@ import { awaitOnChain, createProcessTraceAnchorer, type ManifestData } from "../
 export interface SubmittedTx {
   txHash: string;
   inputs: string[];
-  isAnchor: boolean;
+  /** The label-2222 anchor entry the tx carries, or null for any other tx. */
+  entry: Record<string, unknown> | null;
 }
 
 export async function emulatorHarness(queueOptions: Partial<ChainedSubmitQueueOptions> = {}) {
@@ -46,7 +47,7 @@ export async function emulatorHarness(queueOptions: Partial<ChainedSubmitQueueOp
         const input = inputs.get(i);
         return `${input.transaction_id().to_hex()}#${input.index()}`;
       }),
-      isAnchor: tx.auxiliary_data()?.metadata()?.get(BigInt(POI_METADATA_LABEL)) !== undefined,
+      entry: anchorEntryOf(tx),
     });
     unconfirmed.push(txHash);
     return txHash;
@@ -95,6 +96,13 @@ export async function emulatorHarness(queueOptions: Partial<ChainedSubmitQueueOp
   });
 
   return { account, emulator, lucid, anchor, submitted, notified };
+}
+
+function anchorEntryOf(tx: CML.Transaction): Record<string, unknown> | null {
+  const metadatum = tx.auxiliary_data()?.metadata()?.get(BigInt(POI_METADATA_LABEL));
+  if (metadatum === undefined) return null;
+  const json = CML.decode_metadatum_to_json_str(metadatum, CML.MetadataJsonSchema.NoConversions);
+  return (JSON.parse(json) as { anchors: Array<Record<string, unknown>> }).anchors[0]!;
 }
 
 const blockProducers: Array<ReturnType<typeof setInterval>> = [];

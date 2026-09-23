@@ -11,6 +11,7 @@ import express, {
   type Response,
 } from "express";
 import {
+  isValidHashFormat,
   POI_METADATA_LABEL,
   SubmitQueueFullError,
   type CardanoNetwork,
@@ -96,6 +97,21 @@ export function createApp({
 
       if (!manifest.manifestHash) {
         res.status(400).json({ error: "Missing required field: manifest.manifestHash" });
+        return;
+      }
+
+      const hashes: Array<[string, unknown]> = [
+        ["rootHash", manifest.rootHash],
+        ["manifestHash", manifest.manifestHash],
+      ];
+      if (manifest.merkleRoot) hashes.push(["merkleRoot", manifest.merkleRoot]);
+      const malformed = hashes.find(
+        ([, value]) => typeof value !== "string" || !isValidHashFormat(value)
+      );
+      if (malformed) {
+        res.status(400).json({
+          error: `Invalid manifest.${malformed[0]}: expected 64 lowercase hex characters, optionally prefixed with sha256:`,
+        });
         return;
       }
 

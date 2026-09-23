@@ -27,7 +27,7 @@ describe("anchorProcessTrace on a one-UTxO wallet", () => {
     );
 
     expect(submitted).toHaveLength(12);
-    expect(submitted.every((tx) => tx.isAnchor)).toBe(true);
+    expect(submitted.every((tx) => tx.entry !== null)).toBe(true);
     expect(results.map((r) => r.txHash)).toEqual(submitted.map((tx) => tx.txHash));
     expectEachSpendsThePreviousChange(submitted);
     expect(notified.map((n) => n.requestId)).toEqual(results.map((_, i) => `req-${i}`));
@@ -87,6 +87,49 @@ describe("anchorProcessTrace on a one-UTxO wallet", () => {
     expect(submitted).toHaveLength(2);
   });
 
+  const first = {
+    manifest: { ...manifest(7), merkleRoot: "1".repeat(64), agentId: "agent-a", totalEvents: 5 },
+    storageUri: "https://a.example/trace",
+  };
+  it.each([
+    ["merkleRoot", { ...first, manifest: { ...first.manifest, merkleRoot: "2".repeat(64) } }, { merkleRoot: "2".repeat(64) }],
+    ["agentId", { ...first, manifest: { ...first.manifest, agentId: "agent-b" } }, { agentId: "agent-b" }],
+    ["totalEvents", { ...first, manifest: { ...first.manifest, totalEvents: 99 } }, { itemCount: 99 }],
+    ["storageUri", { ...first, storageUri: "https://b.example/trace" }, { storageUri: "https://b.example/trace" }],
+  ])(
+    "anchors a request that differs from a landed one only in %s in its own tx",
+    async (_field, second, anchoredAs) => {
+      const { anchor, submitted, notified } = await emulatorHarness();
+
+      const a = await anchor("req-a", first.manifest, first.storageUri);
+      const b = await anchor("req-b", second.manifest, second.storageUri);
+
+      expect(b.txHash).not.toBe(a.txHash);
+      expect(submitted.map((tx) => tx.txHash)).toEqual([a.txHash, b.txHash]);
+      expect(submitted[1]!.entry).toMatchObject(anchoredAs);
+      expect(notified.find((n) => n.requestId === "req-b")!.txHash).toBe(b.txHash);
+    }
+  );
+
+  it("anchors hash strings exactly as sent, so a bare and a prefixed hash are separate anchors", async () => {
+    const { anchor, submitted } = await emulatorHarness();
+    const prefixed = manifest(7);
+    const bare = {
+      ...prefixed,
+      manifestHash: prefixed.manifestHash.slice("sha256:".length),
+      rootHash: prefixed.rootHash.slice("sha256:".length),
+    };
+
+    const a = await anchor("req-a", prefixed);
+    const b = await anchor("req-b", bare);
+
+    expect(b.txHash).not.toBe(a.txHash);
+    expect(submitted[1]!.entry).toMatchObject({
+      manifestHash: bare.manifestHash,
+      rootHash: bare.rootHash,
+    });
+  });
+
   it("resets the chain when its input is spent elsewhere, then re-reads the wallet once the tip lands", async () => {
     const { account, emulator, anchor, submitted } = await emulatorHarness();
 
@@ -110,7 +153,7 @@ describe("anchorProcessTrace on a one-UTxO wallet", () => {
     emulator.awaitBlock();
     const third = await anchor("req-3", manifest(3));
 
-    const anchors = submitted.filter((tx) => tx.isAnchor);
+    const anchors = submitted.filter((tx) => tx.entry !== null);
     expect(anchors.map((tx) => tx.txHash)).toEqual([first.txHash, third.txHash]);
     expect(anchors[1]!.inputs.length).toBeGreaterThan(0);
     expect(anchors[1]!.inputs.every((input) => input.startsWith(`${moveHash}#`))).toBe(true);

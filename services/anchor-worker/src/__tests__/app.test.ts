@@ -63,6 +63,34 @@ describe("POST /anchor/process-trace", () => {
     expect(res.status).toBe(400);
   });
 
+  it.each([
+    ["manifest.manifestHash", { manifestHash: `SHA256:${"B".repeat(64)}` }],
+    ["manifest.manifestHash", { manifestHash: "b".repeat(63) }],
+    ["manifest.rootHash", { rootHash: "aaaa:bbbb" }],
+    ["manifest.rootHash", { rootHash: 42 }],
+    ["manifest.merkleRoot", { merkleRoot: "not-a-hash" }],
+  ])("rejects a malformed %s with 400 before anchoring", async (field, override) => {
+    const anchor = vi.fn(async () => stubResult);
+    const base = await serve(anchor);
+
+    const res = await post(base, { requestId: "r", manifest: { ...manifest(1), ...override } });
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain(field);
+    expect(anchor).not.toHaveBeenCalled();
+  });
+
+  it("accepts bare lowercase hashes, as the recorder sends them", async () => {
+    const anchor = vi.fn(async () => stubResult);
+    const base = await serve(anchor);
+    const bare = { rootHash: "a".repeat(64), manifestHash: "b".repeat(64), merkleRoot: "c".repeat(64) };
+
+    const res = await post(base, { requestId: "r", manifest: bare });
+
+    expect(res.status).toBe(200);
+    expect(anchor).toHaveBeenCalledWith("r", bare, undefined);
+  });
+
   it("returns the anchor with its network and label", async () => {
     const base = await serve(async () => stubResult);
 
