@@ -133,9 +133,8 @@ describe("uploadBlobs", () => {
         ts,
       });
       expect(pair.verify(stringToU8a(v2), hexToU8a(r.headers["x-upload-sig-v2"]), pair.publicKey)).toBe(true);
-      const v1 = `materios-upload-v1|${contentHash}|${pair.address}|${ts}`;
-      expect(pair.verify(stringToU8a(v1), hexToU8a(r.headers["x-upload-sig"]), pair.publicKey)).toBe(true);
+      expect(r.headers).not.toHaveProperty("x-upload-sig");
     }
-    expect(new Set(sent.map((r) => r.headers["x-upload-sig"])).size).toBe(sent.length);
+    expect(new Set(sent.map((r) => r.headers["x-upload-sig-v2"])).size).toBe(sent.length);
   });
 });

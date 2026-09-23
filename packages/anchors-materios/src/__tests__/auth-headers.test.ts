@@ -40,8 +40,9 @@ describe("buildAuthHeaders", () => {
     expect(headers["x-uploader-address"]).toBe(
       "5FXCG7by7UuQZpbHMi1kRtQfgDSpA83D2GH82kaWHuMMFu2m",
     );
-    expect(headers["x-upload-sig"]).toBe("0x" + "ab".repeat(64));
     expect(headers["x-upload-sig-v2"]).toBe("0x" + "ab".repeat(64));
+    // v1 covers only the id, so a copy lifted from this request could carry any body.
+    expect(headers).not.toHaveProperty("x-upload-sig");
     expect(headers["x-upload-ts"]).toMatch(/^\d+$/);
     expect(headers).not.toHaveProperty("Authorization");
     expect(headers).not.toHaveProperty("x-api-key");
@@ -59,7 +60,6 @@ describe("buildAuthHeaders", () => {
       { baseUrl: "https://example/gateway", signerKeypair: new ClassSigner() },
       REQUEST,
     );
-    expect(headers["x-upload-sig"]).toBe("0x" + "cd".repeat(64));
     expect(headers["x-upload-sig-v2"]).toBe("0x" + "cd".repeat(64));
   });
 

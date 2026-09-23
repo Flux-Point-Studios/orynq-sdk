@@ -393,10 +393,10 @@ export function uploadSigV2Message(p: {
  * which only accepts `Authorization: Bearer ...`. Legacy keys (no prefix) keep
  * the `x-api-key` header for back-compat with pre-v6 deployments.
  *
- * A signed request carries two signatures under one timestamp: v2 binds the
- * method, path and body, v1 only the content hash. A gateway that predates v2
- * reads v1; a current one verifies v2 and refuses reuse of either, so every
- * request is signed afresh.
+ * A signed request carries a materios-upload-v2 signature, which binds the
+ * method, path and body. No v1 signature is sent: it covers only the content
+ * hash, so a copy lifted from the request could authorize a different body.
+ * The gateway refuses reuse, so every request is signed afresh.
  *
  * Exported for unit testing; not part of the public package API.
  */
@@ -411,7 +411,6 @@ export function buildAuthHeaders(gateway: BlobGatewayConfig, request: GatewayReq
     const signer = gateway.signerKeypair;
     const address = signer.address;
     const ts = Math.floor(Date.now() / 1000);
-    const v1 = `materios-upload-v1|${request.id}|${address}|${ts}`;
     const v2 = uploadSigV2Message({
       method: request.method,
       path: request.path,
@@ -421,7 +420,6 @@ export function buildAuthHeaders(gateway: BlobGatewayConfig, request: GatewayReq
       ts,
     });
     return {
-      "x-upload-sig": u8aToHex(signer.sign(stringToU8a(v1))),
       "x-upload-sig-v2": u8aToHex(signer.sign(stringToU8a(v2))),
       "x-uploader-address": address,
       "x-upload-ts": String(ts),
