@@ -21,8 +21,10 @@ and `isOnChain` looks one up without waiting. A key is remembered for
 transaction of a chain lands, the queue looks up the others, because a wallet
 with several UTxOs builds parallel lineages and one landed transaction does
 not vouch for the rest. A chain that never lands is forgotten, so its keys
-submit again. A submit that fails without saying whether the node took the
-transaction (a timeout, a 5xx, an unreadable reply) is checked on chain before
-it is failed, and answered with its hash if it landed. `isSpentInputError`
-recognises the spent/unknown-input rejections of cardano-node, Blockfrost,
-Ogmios and the lucid-evolution Emulator.
+submit again. A `submit` that rejects with `SubmitRefusedError`, because the
+node refused the transaction, fails that submission at once, and the queue
+keeps chaining on the UTxOs it would have spent. A submit that fails without
+saying whether the node took the transaction (a timeout, a 5xx, an unreadable
+reply) is checked on chain before it is failed, and answered with its hash if
+it landed. `isSpentInputError` recognises the spent/unknown-input rejections
+of cardano-node, Blockfrost, Ogmios and the lucid-evolution Emulator.

@@ -170,6 +170,7 @@ export {
   createChainedSubmitQueue,
   isSpentInputError,
   SubmitQueueFullError,
+  SubmitRefusedError,
 } from "./chained-submit-queue.js";
 export type {
   ChainedBuild,

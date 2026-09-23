@@ -4,6 +4,7 @@ import {
   createChainedSubmitQueue,
   isSpentInputError,
   SubmitQueueFullError,
+  SubmitRefusedError,
   type ChainedBuild,
   type ChainedSubmitQueueOptions,
   type ChainedTx,
@@ -211,7 +212,34 @@ describe("createChainedSubmitQueue", () => {
     expect(new Set(allInputs).size).toBe(allInputs.length);
   });
 
-  it("flushes on a spent-input rejection; the next tx waits for the last landed tip, then reads the wallet fresh", async () => {
+  it.each([
+    ["as the node's error", new Error(BLOCKFROST_SPENT)],
+    ["marked as a refusal", new SubmitRefusedError(BLOCKFROST_SPENT)],
+  ])(
+    "flushes on a spent-input rejection %s; the next tx waits for the last landed tip, then reads the wallet fresh",
+    async (_how, rejection) => {
+      const chain = new FakeChain(100_000_000n);
+      const awaited: string[] = [];
+      const queue = createChainedSubmitQueue<Utxo>(
+        options({ awaitConfirmation: blockThenCheck(chain, awaited) })
+      );
+
+      const first = await queue.submit("a", anchorBuilder(chain, "a"));
+      await expect(
+        queue.submit("b", failingSubmit(anchorBuilder(chain, "b"), rejection, false))
+      ).rejects.toThrow("All inputs are spent");
+
+      const seen: Array<Utxo[] | undefined> = [];
+      const third = await queue.submit("c", watched(anchorBuilder(chain, "c"), seen));
+
+      expect(awaited).toEqual([first.txHash]);
+      expect(seen).toEqual([undefined]);
+      expect(third.chainPosition).toBe(1);
+      expect(chain.txs[1]!.inputs).toEqual([`${first.txHash}#0`]);
+    }
+  );
+
+  it("fails a submission the node refused without waiting, and chains the next on the UTxOs it would have spent", async () => {
     const chain = new FakeChain(100_000_000n);
     const awaited: string[] = [];
     const queue = createChainedSubmitQueue<Utxo>(
@@ -219,17 +247,23 @@ describe("createChainedSubmitQueue", () => {
     );
 
     const first = await queue.submit("a", anchorBuilder(chain, "a"));
-    await expect(
-      queue.submit("b", failingSubmit(anchorBuilder(chain, "b"), new Error(BLOCKFROST_SPENT), false))
-    ).rejects.toThrow("All inputs are spent");
+    const refused = new SubmitRefusedError("FeeTooSmallUTxO");
+    const [b, c] = await Promise.allSettled([
+      queue.submit("b", failingSubmit(anchorBuilder(chain, "b"), refused, false)),
+      queue.submit("c", anchorBuilder(chain, "c")),
+    ]);
 
-    const seen: Array<Utxo[] | undefined> = [];
-    const third = await queue.submit("c", watched(anchorBuilder(chain, "c"), seen));
-
-    expect(awaited).toEqual([first.txHash]);
-    expect(seen).toEqual([undefined]);
-    expect(third.chainPosition).toBe(1);
-    expect(chain.txs[1]!.inputs).toEqual([`${first.txHash}#0`]);
+    expect(awaited).toEqual([]);
+    expect(b).toEqual({ status: "rejected", reason: refused });
+    expect(c).toEqual({
+      status: "fulfilled",
+      value: { txHash: chain.txs[1]!.txHash, chainPosition: 2, deduplicated: false },
+    });
+    expect(chain.txs.map((t) => t.inputs)).toEqual([["genesis#0"], [`${first.txHash}#0`]]);
+    await expect(queue.submit("b", anchorBuilder(chain, "b"))).resolves.toMatchObject({
+      chainPosition: 3,
+      deduplicated: false,
+    });
   });
 
   it("keeps chaining after a build fails before anything is submitted", async () => {

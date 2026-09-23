@@ -17,6 +17,12 @@ export interface ChainedTx<U> {
   txHash: string;
   /** The wallet once this tx applies: its outputs to the wallet plus every UTxO it left unspent. */
   walletUtxos: U[];
+  /**
+   * Rejects with SubmitRefusedError when the node refused the tx; the queue
+   * fails it at once and keeps chaining. Any other rejection that is not a
+   * spent-input error may follow a tx the node took, so the queue checks the
+   * chain for it first.
+   */
   submit(): Promise<unknown>;
 }
 
@@ -72,6 +78,17 @@ export class SubmitQueueFullError extends Error {
   constructor(readonly pending: number) {
     super(`submit queue is full: ${pending} submissions pending`);
     this.name = "SubmitQueueFullError";
+  }
+}
+
+/**
+ * Thrown by ChainedTx.submit when the node refused the tx, so it never
+ * reached the mempool and the UTxOs it would have spent are still unspent.
+ */
+export class SubmitRefusedError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "SubmitRefusedError";
   }
 }
 
@@ -184,6 +201,7 @@ export function createChainedSubmitQueue<U>(
         chainLength = 0;
         throw error;
       }
+      if (error instanceof SubmitRefusedError) throw error;
       return confirmUnknownOutcome(key, anchored, error);
     }
 

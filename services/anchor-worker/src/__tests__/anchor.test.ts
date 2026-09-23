@@ -1,8 +1,10 @@
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CML, Lucid } from "@lucid-evolution/lucid";
+import { Blockfrost, CML, Lucid } from "@lucid-evolution/lucid";
 import type { AnchorChainProvider, TxInfo } from "@fluxpointstudios/orynq-sdk-anchors-cardano";
 
-import { awaitOnChain } from "../anchor.js";
+import { awaitOnChain, type AnchorResult } from "../anchor.js";
 import {
   emulatorHarness,
   expectEachSpendsThePreviousChange,
@@ -11,10 +13,33 @@ import {
   stopProducingBlocks,
 } from "./emulator-harness.js";
 
+const servers: Server[] = [];
+
 afterEach(() => {
   stopProducingBlocks();
   vi.restoreAllMocks();
+  for (const server of servers.splice(0)) server.close();
 });
+
+/** lucid-evolution's own Blockfrost provider, pointed at a server that answers every request with `status` and `body`. */
+async function blockfrostAnswering(status: number, body: unknown): Promise<Blockfrost> {
+  const server = createServer((req, res) => {
+    req.resume().on("end", () => {
+      res.writeHead(status, { "Content-Type": "application/json" }).end(JSON.stringify(body));
+    });
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return new Blockfrost(`http://127.0.0.1:${(server.address() as AddressInfo).port}`, "preprod-test");
+}
+
+/** Blockfrost's 400 for a tx the node refused: the production shape of BLOCKFROST_SPENT with a fee rule in place of spent inputs. */
+const FEE_TOO_SMALL = {
+  status_code: 400,
+  error: "Bad Request",
+  message:
+    '{"contents":{"contents":{"contents":{"era":"ShelleyBasedEraConway","error":["ConwayUtxowFailure (UtxoFailure (FeeTooSmallUTxO (Mismatch {mismatchSupplied = Coin 150000, mismatchExpected = Coin 168405})))"],"kind":"ShelleyTxValidationError"},"tag":"TxValidationErrorInCardanoMode"},"tag":"TxCmdTxSubmitValidationError"},"tag":"TxSubmitFail"}',
+};
 
 describe("anchorProcessTrace on a one-UTxO wallet", () => {
   it("lands N concurrent requests, each tx spending the previous one's change", async () => {
@@ -210,6 +235,62 @@ describe("anchorProcessTrace on a one-UTxO wallet", () => {
     ]);
     expect(submitted.map((tx) => tx.txHash)).toEqual([r1.txHash, r3.txHash]);
     expectEachSpendsThePreviousChange(submitted);
+  });
+});
+
+describe("anchorProcessTrace when Blockfrost rejects a submit", () => {
+  it("fails a request the node refused (HTTP 400) without waiting, and chains the next one on the same UTxOs", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { emulator, anchor, submitted } = await emulatorHarness();
+    const blockfrost = await blockfrostAnswering(400, FEE_TOO_SMALL);
+    const submitTx = emulator.submitTx.bind(emulator);
+    let calls = 0;
+    emulator.submitTx = async (cbor: string) =>
+      ++calls === 2 ? blockfrost.submitTx(cbor) : submitTx(cbor);
+
+    const r1 = await anchor("req-1", manifest(1));
+    const [r2, r3] = await Promise.allSettled([
+      anchor("req-2", manifest(2)),
+      anchor("req-3", manifest(3)),
+    ]);
+
+    expect(warn.mock.calls.map(([line]) => String(line))).toEqual([
+      expect.stringMatching(/^\[anchor\] Submit of [0-9a-f]{64} failed: .*FeeTooSmallUTxO/),
+    ]);
+    expect(r2).toMatchObject({
+      status: "rejected",
+      reason: { message: expect.stringContaining("FeeTooSmallUTxO") },
+    });
+    expect(r3).toMatchObject({ status: "fulfilled" });
+    expect(submitted.map((tx) => tx.txHash)).toEqual([
+      r1.txHash,
+      (r3 as PromiseFulfilledResult<AnchorResult>).value.txHash,
+    ]);
+    expectEachSpendsThePreviousChange(submitted);
+  });
+
+  it("still checks the chain for a submit Blockfrost answered with a 5xx", async () => {
+    /** Control: lucid reports any status but 400 as "Could not submit
+     * transaction.", and the tx may have reached the node. */
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { emulator, anchor } = await emulatorHarness();
+    const blockfrost = await blockfrostAnswering(502, {
+      status_code: 502,
+      error: "Bad Gateway",
+      message: FEE_TOO_SMALL.message,
+    });
+    const submitTx = emulator.submitTx.bind(emulator);
+    let calls = 0;
+    emulator.submitTx = async (cbor: string) =>
+      ++calls === 2 ? blockfrost.submitTx(cbor) : submitTx(cbor);
+
+    await anchor("req-1", manifest(1));
+    await expect(anchor("req-2", manifest(2))).rejects.toThrow("Could not submit transaction.");
+
+    expect(warn.mock.calls.map(([line]) => String(line))).toEqual([
+      expect.stringMatching(/^\[anchor\] Submit of [0-9a-f]{64} failed: Error: Could not submit transaction\.$/),
+      expect.stringMatching(/^\[anchor\] [0-9a-f]{64} not on chain after 500ms/),
+    ]);
   });
 });
 

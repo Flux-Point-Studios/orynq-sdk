@@ -11,6 +11,7 @@ import {
   buildAnchorMetadata,
   POI_METADATA_LABEL,
   serializeForCbor,
+  SubmitRefusedError,
   type AnchorChainProvider,
   type AnchorEntry,
   type CardanoNetwork,
@@ -137,9 +138,14 @@ function anchorTx(lucid: LucidEvolution, payload: TxMetadata): ChainedBuild<UTxO
         try {
           await signed.submit();
         } catch (error) {
-          // The queue may still find this tx on chain and answer with it.
-          console.warn(`[anchor] Submit of ${txHash} failed: ${messageOf(error)}`);
-          throw error;
+          const message = messageOf(error);
+          console.warn(`[anchor] Submit of ${txHash} failed: ${message}`);
+          // lucid's Blockfrost provider passes a reply's message on only for a
+          // 400, which carries the node's refusal. Any other failure may follow
+          // a tx the node took, and the queue checks the chain for it.
+          throw /TxValidationErrorInCardanoMode|ShelleyTxValidationError/.test(message)
+            ? new SubmitRefusedError(message, { cause: error })
+            : error;
         }
         console.log(
           `[anchor] Transaction submitted: ${txHash} spending ${spent.join(",")} (${walletUtxos === undefined ? "fresh wallet read" : "chained"})`
