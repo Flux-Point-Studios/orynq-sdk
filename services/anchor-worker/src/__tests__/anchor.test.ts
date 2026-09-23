@@ -131,6 +131,7 @@ describe("anchorProcessTrace on a one-UTxO wallet", () => {
   });
 
   it("resets the chain when its input is spent elsewhere, then re-reads the wallet once the tip lands", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { account, emulator, anchor, submitted } = await emulatorHarness();
 
     const first = await anchor("req-1", manifest(1));
@@ -158,6 +159,58 @@ describe("anchorProcessTrace on a one-UTxO wallet", () => {
     expect(anchors[1]!.inputs.length).toBeGreaterThan(0);
     expect(anchors[1]!.inputs.every((input) => input.startsWith(`${moveHash}#`))).toBe(true);
   });
+
+  it("answers a request whose submit failed after the node took its tx with that tx, and chains on from it", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { emulator, anchor, submitted, notified } = await emulatorHarness();
+    produceBlocks(emulator);
+    const submitTx = emulator.submitTx.bind(emulator);
+    let calls = 0;
+    // Blockfrost relayed the tx, then answered 5xx or a non-JSON body.
+    emulator.submitTx = async (cbor: string) => {
+      const txHash = await submitTx(cbor);
+      if (++calls === 2) throw new Error("Could not submit transaction.");
+      return txHash;
+    };
+
+    const r1 = await anchor("req-1", manifest(1));
+    const r2 = await anchor("req-2", manifest(2));
+    const r3 = await anchor("req-3", manifest(3));
+    const repost = await anchor("req-2-again", manifest(2));
+
+    expect(submitted.map((tx) => tx.txHash)).toEqual([r1.txHash, r2.txHash, r3.txHash]);
+    expectEachSpendsThePreviousChange(submitted);
+    expect(repost.txHash).toBe(r2.txHash);
+    expect(notified.map((n) => [n.requestId, n.txHash])).toEqual([
+      ["req-1", r1.txHash],
+      ["req-2", r2.txHash],
+      ["req-3", r3.txHash],
+      ["req-2-again", r2.txHash],
+    ]);
+  });
+
+  it("fails a request whose tx never reached the node only after checking the chain, then chains on the tx before it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { emulator, anchor, submitted } = await emulatorHarness();
+    const submitTx = emulator.submitTx.bind(emulator);
+    let calls = 0;
+    emulator.submitTx = async (cbor: string) => {
+      if (++calls === 2) throw new Error("fetch failed");
+      return submitTx(cbor);
+    };
+
+    const r1 = await anchor("req-1", manifest(1));
+    await expect(anchor("req-2", manifest(2))).rejects.toThrow("fetch failed");
+    emulator.awaitBlock();
+    const r3 = await anchor("req-3", manifest(3));
+
+    expect(warn.mock.calls.map(([line]) => String(line))).toEqual([
+      expect.stringMatching(/^\[anchor\] Submit of [0-9a-f]{64} failed: .*fetch failed/),
+      expect.stringMatching(/^\[anchor\] [0-9a-f]{64} not on chain after 500ms/),
+    ]);
+    expect(submitted.map((tx) => tx.txHash)).toEqual([r1.txHash, r3.txHash]);
+    expectEachSpendsThePreviousChange(submitted);
+  });
 });
 
 describe("awaitOnChain", () => {
@@ -179,10 +232,12 @@ describe("awaitOnChain", () => {
     return { getTxInfo } satisfies Pick<AnchorChainProvider, "getTxInfo">;
   }
 
-  it("resolves as soon as the tx is in a block", async () => {
+  it("resolves true as soon as the tx is in a block", async () => {
     const chain = chainAnswering(null, null, onChain);
 
-    await awaitOnChain(chain, onChain.txHash, { pollMs: 1, timeoutMs: 1_000 });
+    await expect(
+      awaitOnChain(chain, onChain.txHash, { pollMs: 1, timeoutMs: 1_000 })
+    ).resolves.toBe(true);
 
     expect(chain.getTxInfo).toHaveBeenCalledTimes(3);
   });
@@ -190,16 +245,20 @@ describe("awaitOnChain", () => {
   it("keeps polling through failed lookups", async () => {
     const chain = chainAnswering(new Error("fetch failed"), onChain);
 
-    await awaitOnChain(chain, onChain.txHash, { pollMs: 1, timeoutMs: 1_000 });
+    await expect(
+      awaitOnChain(chain, onChain.txHash, { pollMs: 1, timeoutMs: 1_000 })
+    ).resolves.toBe(true);
 
     expect(chain.getTxInfo).toHaveBeenCalledTimes(2);
   });
 
-  it("gives up after the timeout, says so, and lets the caller read the wallet anyway", async () => {
+  it("gives up after the timeout, says so, and resolves false", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const chain = chainAnswering(new Error("fetch failed"), null);
 
-    await awaitOnChain(chain, onChain.txHash, { pollMs: 1, timeoutMs: 20 });
+    await expect(
+      awaitOnChain(chain, onChain.txHash, { pollMs: 1, timeoutMs: 20 })
+    ).resolves.toBe(false);
 
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0]![0])).toContain(`${onChain.txHash} not on chain after 20ms`);

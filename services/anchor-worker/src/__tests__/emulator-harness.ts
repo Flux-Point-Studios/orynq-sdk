@@ -81,7 +81,7 @@ export async function emulatorHarness(queueOptions: Partial<ChainedSubmitQueueOp
     maxPending: 1_000,
     dedupeTtlMs: 3_600_000,
     dedupeMaxEntries: 1_000,
-    awaitConfirmation: (txHash) => awaitOnChain(chain, txHash, { pollMs: 5, timeoutMs: 2_000 }),
+    awaitConfirmation: (txHash) => awaitOnChain(chain, txHash, { pollMs: 5, timeoutMs: 500 }),
     ...queueOptions,
   });
 

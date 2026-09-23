@@ -84,21 +84,22 @@ export async function notifySubmitted(
   }
 }
 
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
 /**
- * Resolves once txHash is in a block. After timeoutMs it logs and resolves
- * anyway: the tip was most likely dropped, and the wallet read that follows
- * is then the right thing to do.
+ * Resolves true once txHash is in a block, or false after timeoutMs: by then
+ * the tx was most likely dropped, and the queue forgets what it anchored.
  */
 export async function awaitOnChain(
   chain: Pick<AnchorChainProvider, "getTxInfo">,
   txHash: string,
   { pollMs, timeoutMs }: { pollMs: number; timeoutMs: number }
-): Promise<void> {
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
   for (;;) {
     try {
-      if ((await chain.getTxInfo(txHash)) !== null) return;
+      if ((await chain.getTxInfo(txHash)) !== null) return true;
       lastError = undefined;
     } catch (error) {
       lastError = error;
@@ -106,13 +107,11 @@ export async function awaitOnChain(
     if (Date.now() >= deadline) break;
     await sleep(pollMs);
   }
-  const cause =
-    lastError === undefined
-      ? ""
-      : ` (last lookup failed: ${lastError instanceof Error ? lastError.message : String(lastError)})`;
+  const cause = lastError === undefined ? "" : ` (last lookup failed: ${messageOf(lastError)})`;
   console.warn(
     `[anchor] ${txHash} not on chain after ${timeoutMs}ms${cause}; reading the wallet from the provider anyway`
   );
+  return false;
 }
 
 function anchorTx(lucid: LucidEvolution, payload: TxMetadata): ChainedBuild<UTxO> {
@@ -126,14 +125,26 @@ function anchorTx(lucid: LucidEvolution, payload: TxMetadata): ChainedBuild<UTxO
       .attachMetadata(POI_METADATA_LABEL, payload)
       .chain();
     const signed = await unsigned.sign.withWallet().complete();
-    const txHash = await signed.submit();
+    const txHash = signed.toHash();
     const spent = available
       .filter((u) => !next.some((n) => n.txHash === u.txHash && n.outputIndex === u.outputIndex))
       .map((u) => `${u.txHash}#${u.outputIndex}`);
-    console.log(
-      `[anchor] Transaction submitted: ${txHash} spending ${spent.join(",")} (${walletUtxos === undefined ? "fresh wallet read" : "chained"})`
-    );
-    return { txHash, walletUtxos: next };
+    return {
+      txHash,
+      walletUtxos: next,
+      submit: async () => {
+        try {
+          await signed.submit();
+        } catch (error) {
+          // The queue may still find this tx on chain and answer with it.
+          console.warn(`[anchor] Submit of ${txHash} failed: ${messageOf(error)}`);
+          throw error;
+        }
+        console.log(
+          `[anchor] Transaction submitted: ${txHash} spending ${spent.join(",")} (${walletUtxos === undefined ? "fresh wallet read" : "chained"})`
+        );
+      },
+    };
   };
 }
 

@@ -173,10 +173,10 @@ export {
 } from "./chained-submit-queue.js";
 export type {
   ChainedBuild,
-  ChainedSubmission,
   ChainedSubmitQueue,
   ChainedSubmitQueueOptions,
   ChainedSubmitResult,
+  ChainedTx,
 } from "./chained-submit-queue.js";
 
 // =============================================================================

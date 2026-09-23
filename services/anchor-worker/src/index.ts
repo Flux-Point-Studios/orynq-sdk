@@ -50,9 +50,11 @@ const queue = createChainedSubmitQueue<UTxO>({
   // wallet so a top-up or an outside spend is seen.
   cacheTtlMs: 90_000,
   // About what drains within t-backend's 30s client timeout (a chain of ten plus
-  // one block wait); later callers get 503 and retry instead of timing out.
+  // one block wait); later callers get 503 at once instead of timing out.
+  // t-backend records a 503 as ERROR without retrying it.
   maxPending: 20,
-  // Longer than the recorder's hourly re-post cycle, so a re-post gets the landed txHash.
+  // A re-send of an anchor seen on chain within this window gets its txHash
+  // instead of paying for a second tx.
   dedupeTtlMs: 6 * 60 * 60 * 1000,
   dedupeMaxEntries: 10_000,
   awaitConfirmation: (txHash) => awaitOnChain(chain, txHash, { pollMs: 5_000, timeoutMs: 120_000 }),

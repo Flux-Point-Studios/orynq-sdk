@@ -4,8 +4,9 @@ import {
   createChainedSubmitQueue,
   isSpentInputError,
   SubmitQueueFullError,
-  type ChainedSubmission,
+  type ChainedBuild,
   type ChainedSubmitQueueOptions,
+  type ChainedTx,
 } from "../chained-submit-queue.js";
 
 /** Verbatim from the preprod worker's logs on 2026-09-22. */
@@ -42,7 +43,15 @@ class FakeChain {
     return [...this.ledger.values()];
   }
 
-  submit(inputs: Utxo[], label: string): { txHash: string; change: Utxo } {
+  /** Signs a tx spending `inputs`; the node sees nothing until `submit`. */
+  sign(inputs: Utxo[], label: string): { txHash: string; change: Utxo; submit: () => Promise<void> } {
+    const txHash = `tx${++this.counter}`;
+    const total = inputs.reduce((sum, u) => sum + u.lovelace, 0n);
+    const change = { txHash, outputIndex: 0, lovelace: total - 200_000n };
+    return { txHash, change, submit: async () => this.accept(txHash, inputs, change, label) };
+  }
+
+  private accept(txHash: string, inputs: Utxo[], change: Utxo, label: string): void {
     for (const input of inputs) {
       const key = ref(input);
       const known = this.ledger.has(key) || this.mempool.has(key);
@@ -54,12 +63,8 @@ class FakeChain {
       this.everSpent.add(key);
       this.spentInMempool.add(key);
     }
-    const txHash = `tx${++this.counter}`;
-    const total = inputs.reduce((sum, u) => sum + u.lovelace, 0n);
-    const change = { txHash, outputIndex: 0, lovelace: total - 200_000n };
     this.mempool.set(ref(change), change);
     this.txs.push({ txHash, inputs: inputs.map(ref), label });
-    return { txHash, change };
   }
 
   block(): void {
@@ -75,14 +80,58 @@ class FakeChain {
 }
 
 /** Spends the largest UTxO it is given, or the provider's view when given none. */
-function anchorBuilder(chain: FakeChain, label: string) {
-  return async (walletUtxos: Utxo[] | undefined): Promise<ChainedSubmission<Utxo>> => {
+function anchorBuilder(chain: FakeChain, label: string): ChainedBuild<Utxo> {
+  return async (walletUtxos) => {
     const available = walletUtxos ?? chain.providerUtxos();
     const input = [...available].sort((a, b) => Number(b.lovelace - a.lovelace))[0];
     if (!input) throw new Error("wallet is empty");
-    const { txHash, change } = chain.submit([input], label);
-    return { txHash, walletUtxos: [change, ...available.filter((u) => u !== input)] };
+    const { txHash, change, submit } = chain.sign([input], label);
+    return { txHash, walletUtxos: [change, ...available.filter((u) => u !== input)], submit };
   };
+}
+
+/** The same tx, but its submission fails with `error` after `reachesNode` decides whether the node got it. */
+function failingSubmit(build: ChainedBuild<Utxo>, error: Error, reachesNode: boolean): ChainedBuild<Utxo> {
+  return async (walletUtxos) => {
+    const tx = await build(walletUtxos);
+    return {
+      ...tx,
+      submit: async () => {
+        if (reachesNode) await tx.submit();
+        throw error;
+      },
+    };
+  };
+}
+
+/** Records each awaited tip, produces a block, and reports whether the tip is in it. */
+function blockThenCheck(chain: FakeChain, awaited: string[]) {
+  return async (txHash: string) => {
+    awaited.push(txHash);
+    chain.block();
+    return chain.isOnChain(txHash);
+  };
+}
+
+/** Records what each build is handed. */
+function watched(build: ChainedBuild<Utxo>, seen: Array<Utxo[] | undefined>): ChainedBuild<Utxo> {
+  return (walletUtxos) => {
+    seen.push(walletUtxos);
+    return build(walletUtxos);
+  };
+}
+
+/** A build that never touches a chain: tx1, tx2, ... */
+function counterBuild() {
+  let n = 0;
+  return vi.fn<[Utxo[] | undefined], Promise<ChainedTx<Utxo>>>(async () => {
+    const txHash = `tx${++n}`;
+    return {
+      txHash,
+      walletUtxos: [{ txHash, outputIndex: 0, lovelace: 1n }],
+      submit: async () => undefined,
+    };
+  });
 }
 
 function options(overrides: Partial<ChainedSubmitQueueOptions> = {}): ChainedSubmitQueueOptions {
@@ -92,7 +141,7 @@ function options(overrides: Partial<ChainedSubmitQueueOptions> = {}): ChainedSub
     maxPending: 1_000,
     dedupeTtlMs: 3_600_000,
     dedupeMaxEntries: 1_000,
-    awaitConfirmation: async () => undefined,
+    awaitConfirmation: async () => true,
     ...overrides,
   };
 }
@@ -109,7 +158,7 @@ describe("FakeChain", () => {
      * accepts anything. 224 concurrent requests landed 15 in production. */
     const chain = new FakeChain(100_000_000n);
     const results = await Promise.allSettled(
-      Array.from({ length: 8 }, (_, i) => anchorBuilder(chain, `k${i}`)(undefined))
+      Array.from({ length: 8 }, async (_, i) => (await anchorBuilder(chain, `k${i}`)(undefined)).submit())
     );
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(chain.txs).toHaveLength(1);
@@ -144,27 +193,16 @@ describe("createChainedSubmitQueue", () => {
     const chain = new FakeChain(100_000_000n);
     const awaited: string[] = [];
     const queue = createChainedSubmitQueue<Utxo>(
-      options({
-        awaitConfirmation: async (txHash) => {
-          awaited.push(txHash);
-          chain.block();
-        },
-      })
+      options({ awaitConfirmation: blockThenCheck(chain, awaited) })
     );
 
     const first = await queue.submit("a", anchorBuilder(chain, "a"));
     await expect(
-      queue.submit("b", async () => {
-        throw new Error(BLOCKFROST_SPENT);
-      })
+      queue.submit("b", failingSubmit(anchorBuilder(chain, "b"), new Error(BLOCKFROST_SPENT), false))
     ).rejects.toThrow("All inputs are spent");
 
     const seen: Array<Utxo[] | undefined> = [];
-    const build = anchorBuilder(chain, "c");
-    const third = await queue.submit("c", async (walletUtxos) => {
-      seen.push(walletUtxos);
-      return build(walletUtxos);
-    });
+    const third = await queue.submit("c", watched(anchorBuilder(chain, "c"), seen));
 
     expect(awaited).toEqual([first.txHash]);
     expect(seen).toEqual([undefined]);
@@ -172,17 +210,17 @@ describe("createChainedSubmitQueue", () => {
     expect(chain.txs[1]!.inputs).toEqual([`${first.txHash}#0`]);
   });
 
-  it("keeps chaining after a failure that says nothing about the inputs", async () => {
+  it("keeps chaining after a build fails before anything is submitted", async () => {
     const chain = new FakeChain(100_000_000n);
-    const awaitConfirmation = vi.fn(async () => undefined);
+    const awaitConfirmation = vi.fn(async () => true);
     const queue = createChainedSubmitQueue<Utxo>(options({ awaitConfirmation }));
 
     const first = await queue.submit("a", anchorBuilder(chain, "a"));
     await expect(
       queue.submit("b", async () => {
-        throw new Error("Could not submit transaction.");
+        throw new Error("Insufficient input in transaction");
       })
-    ).rejects.toThrow("Could not submit transaction.");
+    ).rejects.toThrow("Insufficient input in transaction");
     const third = await queue.submit("c", anchorBuilder(chain, "c"));
 
     expect(awaitConfirmation).not.toHaveBeenCalled();
@@ -195,14 +233,7 @@ describe("createChainedSubmitQueue", () => {
     let now = 0;
     const awaited: string[] = [];
     const queue = createChainedSubmitQueue<Utxo>(
-      options({
-        cacheTtlMs: 90_000,
-        now: () => now,
-        awaitConfirmation: async (txHash) => {
-          awaited.push(txHash);
-          chain.block();
-        },
-      })
+      options({ cacheTtlMs: 90_000, now: () => now, awaitConfirmation: blockThenCheck(chain, awaited) })
     );
 
     await queue.submit("a", anchorBuilder(chain, "a"));
@@ -210,11 +241,7 @@ describe("createChainedSubmitQueue", () => {
     const chained = await queue.submit("b", anchorBuilder(chain, "b"));
     now = 89_999 + 90_000;
     const seen: Array<Utxo[] | undefined> = [];
-    const build = anchorBuilder(chain, "c");
-    const fresh = await queue.submit("c", async (walletUtxos) => {
-      seen.push(walletUtxos);
-      return build(walletUtxos);
-    });
+    const fresh = await queue.submit("c", watched(anchorBuilder(chain, "c"), seen));
 
     expect(chained.chainPosition).toBe(2);
     expect(awaited).toEqual([chained.txHash]);
@@ -227,13 +254,7 @@ describe("createChainedSubmitQueue", () => {
     const chain = new FakeChain(100_000_000n);
     const awaited: string[] = [];
     const queue = createChainedSubmitQueue<Utxo>(
-      options({
-        maxChainLength: 3,
-        awaitConfirmation: async (txHash) => {
-          awaited.push(txHash);
-          chain.block();
-        },
-      })
+      options({ maxChainLength: 3, awaitConfirmation: blockThenCheck(chain, awaited) })
     );
 
     const results = await Promise.all(
@@ -281,27 +302,141 @@ describe("createChainedSubmitQueue", () => {
     expect([a.deduplicated, b.deduplicated, c.deduplicated]).toEqual([false, true, true]);
   });
 
-  it("returns a recent key's txHash without building until the dedupe TTL passes", async () => {
-    const chain = new FakeChain(100_000_000n);
+  it("returns a landed key's txHash without building until dedupeTtlMs after its landing was seen", async () => {
     let now = 0;
-    const queue = createChainedSubmitQueue<Utxo>(options({ dedupeTtlMs: 1_000, now: () => now }));
-    const build = vi.fn(anchorBuilder(chain, "k"));
+    const queue = createChainedSubmitQueue<Utxo>(
+      options({ dedupeTtlMs: 1_000, maxChainLength: 1, now: () => now })
+    );
+    const build = counterBuild();
 
     const first = await queue.submit("k", build);
+    await queue.submit("other", build);
     now = 999;
     const repeat = await queue.submit("k", build);
     now = 1_000;
     const expired = await queue.submit("k", build);
 
     expect(repeat).toEqual({ ...first, deduplicated: true });
-    expect(build).toHaveBeenCalledTimes(2);
+    expect(build).toHaveBeenCalledTimes(3);
     expect(expired.txHash).not.toBe(first.txHash);
   });
 
-  it("forgets the least recently completed key beyond the dedupe bound", async () => {
+  it("answers a key of the live chain with its tx without waiting for it to land", async () => {
+    let now = 0;
+    const awaitConfirmation = vi.fn(async () => true);
+    const queue = createChainedSubmitQueue<Utxo>(options({ now: () => now, awaitConfirmation }));
+    const build = counterBuild();
+
+    const first = await queue.submit("a", build);
+    now = 89_999;
+    const repeat = await queue.submit("a", build);
+
+    expect(repeat).toEqual({ ...first, deduplicated: true });
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(awaitConfirmation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [true, "answers it with the landed tx", 1],
+    [false, "submits it again", 2],
+  ])(
+    "waits for an idle chain to land before answering a re-post of one of its keys; if it landed %s, it %s",
+    async (landed, _outcome, builds) => {
+      let now = 0;
+      const awaitConfirmation = vi.fn(async () => landed);
+      const queue = createChainedSubmitQueue<Utxo>(
+        options({ cacheTtlMs: 90_000, now: () => now, awaitConfirmation })
+      );
+      const build = counterBuild();
+
+      const first = await queue.submit("a", build);
+      now = 90_000;
+      const repost = await queue.submit("a", build);
+
+      expect(awaitConfirmation.mock.calls).toEqual([[first.txHash]]);
+      expect(build).toHaveBeenCalledTimes(builds);
+      expect(repost.deduplicated).toBe(landed);
+      expect(repost.txHash === first.txHash).toBe(landed);
+    }
+  );
+
+  it("forgets every key of a chain whose tip never lands, so a re-post submits again", async () => {
+    const awaitConfirmation = vi.fn(async () => false);
+    const queue = createChainedSubmitQueue<Utxo>(options({ maxChainLength: 3, awaitConfirmation }));
+    const build = counterBuild();
+
+    for (const key of ["a", "b", "c", "d"]) await queue.submit(key, build);
+    const retries = [await queue.submit("a", build), await queue.submit("c", build)];
+
+    expect(awaitConfirmation.mock.calls).toEqual([["tx3"]]);
+    expect(retries).toEqual([
+      { txHash: "tx5", chainPosition: 2, deduplicated: false },
+      { txHash: "tx6", chainPosition: 3, deduplicated: false },
+    ]);
+  });
+
+  it("answers a submission whose outcome is unknown with its tx once that lands, and chains on from a fresh read", async () => {
     const chain = new FakeChain(100_000_000n);
-    const queue = createChainedSubmitQueue<Utxo>(options({ dedupeMaxEntries: 2 }));
-    const build = vi.fn(anchorBuilder(chain, "x"));
+    const awaited: string[] = [];
+    const queue = createChainedSubmitQueue<Utxo>(
+      options({ awaitConfirmation: blockThenCheck(chain, awaited) })
+    );
+
+    const first = await queue.submit("a", anchorBuilder(chain, "a"));
+    // Blockfrost relayed the tx to the node, then answered 5xx or a non-JSON body.
+    const second = await queue.submit(
+      "b",
+      failingSubmit(anchorBuilder(chain, "b"), new Error("Could not submit transaction."), true)
+    );
+    const seen: Array<Utxo[] | undefined> = [];
+    const third = await queue.submit("c", watched(anchorBuilder(chain, "c"), seen));
+    const repost = vi.fn(anchorBuilder(chain, "repost"));
+
+    expect(second).toEqual({ txHash: chain.txs[1]!.txHash, chainPosition: 2, deduplicated: false });
+    expect(awaited).toEqual([second.txHash]);
+    expect(seen).toEqual([undefined]);
+    expect(third.chainPosition).toBe(1);
+    expect(chain.txs.map((t) => t.inputs)).toEqual([
+      ["genesis#0"],
+      [`${first.txHash}#0`],
+      [`${second.txHash}#0`],
+    ]);
+    await expect(queue.submit("b", repost)).resolves.toEqual({ ...second, deduplicated: true });
+    await expect(queue.submit("a", repost)).resolves.toEqual({ ...first, deduplicated: true });
+    expect(repost).not.toHaveBeenCalled();
+  });
+
+  it("fails a submission whose outcome is unknown once it is seen not to land, then waits on the tip before it", async () => {
+    const chain = new FakeChain(100_000_000n);
+    const awaited: string[] = [];
+    const queue = createChainedSubmitQueue<Utxo>(
+      options({ awaitConfirmation: blockThenCheck(chain, awaited) })
+    );
+
+    const first = await queue.submit("a", anchorBuilder(chain, "a"));
+    let lostHash = "";
+    const lost = failingSubmit(anchorBuilder(chain, "b"), new Error("fetch failed"), false);
+    await expect(
+      queue.submit("b", async (walletUtxos) => {
+        const tx = await lost(walletUtxos);
+        lostHash = tx.txHash;
+        return tx;
+      })
+    ).rejects.toThrow("fetch failed");
+    const seen: Array<Utxo[] | undefined> = [];
+    const retry = await queue.submit("b", watched(anchorBuilder(chain, "b"), seen));
+
+    expect(awaited).toEqual([lostHash, first.txHash]);
+    expect(seen).toEqual([undefined]);
+    expect(retry.deduplicated).toBe(false);
+    expect(chain.txs.map((t) => t.inputs)).toEqual([["genesis#0"], [`${first.txHash}#0`]]);
+  });
+
+  it("forgets the least recently landed key beyond the dedupe bound", async () => {
+    const queue = createChainedSubmitQueue<Utxo>(
+      options({ dedupeMaxEntries: 2, maxChainLength: 1 })
+    );
+    const build = counterBuild();
 
     await queue.submit("a", build);
     await queue.submit("b", build);
@@ -315,9 +450,9 @@ describe("createChainedSubmitQueue", () => {
   it("does not remember a failed key", async () => {
     const queue = createChainedSubmitQueue<Utxo>(options());
     const build = vi
-      .fn<[Utxo[] | undefined], Promise<ChainedSubmission<Utxo>>>()
+      .fn<[Utxo[] | undefined], Promise<ChainedTx<Utxo>>>()
       .mockRejectedValueOnce(new Error("boom"))
-      .mockResolvedValueOnce({ txHash: "tx-ok", walletUtxos: [] });
+      .mockResolvedValueOnce({ txHash: "tx-ok", walletUtxos: [], submit: async () => undefined });
 
     await expect(queue.submit("k", build)).rejects.toThrow("boom");
     await expect(queue.submit("k", build)).resolves.toMatchObject({ txHash: "tx-ok" });
@@ -327,7 +462,7 @@ describe("createChainedSubmitQueue", () => {
     const chain = new FakeChain(100_000_000n);
     const queue = createChainedSubmitQueue<Utxo>(options({ maxPending: 2 }));
     const held = gate();
-    const slow = async (walletUtxos: Utxo[] | undefined) => {
+    const slow: ChainedBuild<Utxo> = async (walletUtxos) => {
       await held.opened;
       return anchorBuilder(chain, "slow")(walletUtxos);
     };
