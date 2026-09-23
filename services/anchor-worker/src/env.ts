@@ -4,6 +4,11 @@
  * Location: services/anchor-worker/src/env.ts
  */
 
+import {
+  isCardanoNetwork,
+  type CardanoNetwork,
+} from "@fluxpointstudios/orynq-sdk-anchors-cardano";
+
 /**
  * Service port.
  * @default 3333
@@ -23,13 +28,10 @@ export const ANCHOR_WORKER_TOKEN = process.env.ANCHOR_WORKER_TOKEN;
 export const BLOCKFROST_PROJECT_ID = process.env.BLOCKFROST_PROJECT_ID;
 
 /**
- * Cardano network to use.
- * @default "preprod"
+ * Cardano network to anchor on. Required: a default would be a guess, and a
+ * guessed network gets reported back to clients as fact.
  */
-export const CARDANO_NETWORK = (process.env.CARDANO_NETWORK ?? "preprod") as
-  | "mainnet"
-  | "preprod"
-  | "preview";
+export const CARDANO_NETWORK = process.env.CARDANO_NETWORK as CardanoNetwork;
 
 /**
  * Wallet seed phrase for signing transactions.
@@ -53,26 +55,27 @@ export const AWAIT_TX_TIMEOUT = parseInt(
   10
 );
 
+const REQUIRED = [
+  "ANCHOR_WORKER_TOKEN",
+  "BLOCKFROST_PROJECT_ID",
+  "CARDANO_NETWORK",
+  "WALLET_SEED_PHRASE",
+] as const;
+
 /**
- * Validate required environment variables.
- * Throws if any required variable is missing.
+ * Throws naming every required variable that is unset, then rejects a
+ * CARDANO_NETWORK the worker cannot anchor on.
  */
-export function validateEnv(): void {
-  const missing: string[] = [];
-
-  if (!ANCHOR_WORKER_TOKEN) {
-    missing.push("ANCHOR_WORKER_TOKEN");
-  }
-  if (!BLOCKFROST_PROJECT_ID) {
-    missing.push("BLOCKFROST_PROJECT_ID");
-  }
-  if (!WALLET_SEED_PHRASE) {
-    missing.push("WALLET_SEED_PHRASE");
-  }
-
+export function validateEnv(env: NodeJS.ProcessEnv = process.env): void {
+  const missing = REQUIRED.filter((name) => !env[name]);
   if (missing.length > 0) {
     throw new Error(
       `Missing required environment variables: ${missing.join(", ")}`
+    );
+  }
+  if (!isCardanoNetwork(env.CARDANO_NETWORK)) {
+    throw new Error(
+      `CARDANO_NETWORK must be one of mainnet, preprod, preview (got "${env.CARDANO_NETWORK}")`
     );
   }
 }
