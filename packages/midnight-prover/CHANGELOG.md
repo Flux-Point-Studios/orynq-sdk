@@ -1,5 +1,12 @@
 # @fluxpointstudios/poi-sdk-midnight-prover
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [a918a40]
+  - @fluxpointstudios/orynq-sdk-anchors-cardano@0.4.0
+
 ## 0.1.1
 
 ### Patch Changes

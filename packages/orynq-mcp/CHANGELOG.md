@@ -1,5 +1,14 @@
 # @fluxpointstudios/orynq-mcp
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [a918a40]
+- Updated dependencies [41f315b]
+  - @fluxpointstudios/orynq-sdk-anchors-cardano@0.4.0
+  - @fluxpointstudios/orynq-sdk-anchors-materios@0.6.0
+
 ## 0.3.0
 
 ### Minor Changes
