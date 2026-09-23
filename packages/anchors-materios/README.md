@@ -151,7 +151,15 @@ const result = await uploadBlobs(contentHash, manifest, chunks, {
 });
 ```
 
-The signing string format is: `materios-upload-v1|{contentHash}|{uploaderAddress}|{timestamp}`.
+Every request is signed afresh, twice under one timestamp (`x-upload-ts`):
+
+- `x-upload-sig-v2` over `materios-upload-v2|{METHOD}|{path}|{sha256 of the body bytes}|{contentHash}|{uploaderAddress}|{timestamp}`,
+  where `path` is the path appended to `baseUrl` (e.g. `/blobs/<contentHash>/chunks/0`);
+- `x-upload-sig` over `materios-upload-v1|{contentHash}|{uploaderAddress}|{timestamp}`,
+  for gateways that predate v2.
+
+The gateway accepts each signature once, so a captured request cannot be
+replayed, and v2 means it cannot be resent with a different body.
 
 ## Configuration
 

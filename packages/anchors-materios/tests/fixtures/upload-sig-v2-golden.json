@@ -1,0 +1,17 @@
+{
+  "scheme": "materios-upload-v2",
+  "signer_uri": "//Alice",
+  "address": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+  "public_key": "0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d",
+  "method": "PUT",
+  "path": "/batches/bc24eba13cc71a7a251adf510fb4d80f327409d84d92a56b414ddc92bbfd7627",
+  "id": "bc24eba13cc71a7a251adf510fb4d80f327409d84d92a56b414ddc92bbfd7627",
+  "body": "{\"anchorId\":\"0xbc24eba13cc71a7a251adf510fb4d80f327409d84d92a56b414ddc92bbfd7627\",\"rootHash\":\"7e43b4d22a268ccba8b129401305db1c84a16e3ed6b1986afd82228187f0a91e\",\"leafCount\":1,\"leafHashes\":[\"e4a360419b09009a756134531b1eb56edc7e2d3111aa2a3b6db116656697164d\"],\"submitter\":\"5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY\",\"source\":\"daemon-é\"}",
+  "body_sha256": "e77d74a7dd570400c8382828380f45fa4b41dd5c35216b6f11f2213bfe22e5ca",
+  "ts": 1790000000,
+  "signing_string": "materios-upload-v2|PUT|/batches/bc24eba13cc71a7a251adf510fb4d80f327409d84d92a56b414ddc92bbfd7627|e77d74a7dd570400c8382828380f45fa4b41dd5c35216b6f11f2213bfe22e5ca|bc24eba13cc71a7a251adf510fb4d80f327409d84d92a56b414ddc92bbfd7627|5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY|1790000000",
+  "signatures": {
+    "substrate-interface": "0x96c819c571619b5d0d22597e4812c874835353be49b1f5368f0de5061c7cec505cf30612f0a0143c1ae50789d4372bc3c2db23af4030d6da2f4d856068579a8b",
+    "polkadot-js": "0x724a54e0ebdaa21c572098590aa5a013985b8440eae189ed23165bee49acd41ddfdfffa94c479b5be2ed2d007fc75cffc2bd9c90c2d76b47895d26be43695a86"
+  }
+}

@@ -97,6 +97,9 @@ importers:
         specifier: ^13.0.0
         version: 13.5.9
     devDependencies:
+      '@polkadot/util-crypto':
+        specifier: ^13.0.0
+        version: 13.5.9(@polkadot/util@13.5.9)
       tsup:
         specifier: ^8.0.1
         version: 8.5.1(tsx@4.21.0)(typescript@5.9.3)
