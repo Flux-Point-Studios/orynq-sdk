@@ -27,6 +27,15 @@
       "paths": ["packages/anchors-cardano"],
       "consumes": ["orynq-attestation"],
       "status": "live"
+    },
+    {
+      "id": "poi-anchor-worker",
+      "name": "PoI anchor worker",
+      "desc": "HTTP service behind t-backend that anchors process-trace manifests to Cardano under label 2222 from one wallet, chaining bursts through the anchors-cardano submit queue, answering duplicate manifests with one tx, and shedding load with 503 when the queue is full.",
+      "kind": "pipeline",
+      "paths": ["services/anchor-worker"],
+      "consumes": ["anchors-cardano"],
+      "status": "live"
     }
   ]
 }

@@ -4,125 +4,65 @@
  * Location: services/anchor-worker/src/index.ts
  */
 
-import express, {
-  type Request,
-  type Response,
-  type NextFunction,
-} from "express";
-import { PORT, ANCHOR_WORKER_TOKEN, CARDANO_NETWORK, validateEnv } from "./env.js";
+import { Blockfrost, Lucid, type Network, type UTxO } from "@lucid-evolution/lucid";
 import {
-  anchorProcessTrace,
-  POI_METADATA_LABEL,
-  type ManifestData,
-} from "./anchor.js";
-import { anchorErrorBody } from "./error-response.js";
+  createBlockfrostProvider,
+  createChainedSubmitQueue,
+  getBlockfrostBaseUrl,
+  type CardanoNetwork,
+} from "@fluxpointstudios/orynq-sdk-anchors-cardano";
+import {
+  ANCHOR_WORKER_TOKEN,
+  BLOCKFROST_PROJECT_ID,
+  CARDANO_NETWORK,
+  PORT,
+  WALLET_SEED_PHRASE,
+  validateEnv,
+} from "./env.js";
+import { awaitOnChain, createProcessTraceAnchorer, notifySubmitted } from "./anchor.js";
+import { createApp } from "./app.js";
 
-// Validate environment before starting
 validateEnv();
 
-const app = express();
+const LUCID_NETWORK: Record<CardanoNetwork, Network> = {
+  mainnet: "Mainnet",
+  preprod: "Preprod",
+  preview: "Preview",
+};
 
-// Request size limit 1MB
-app.use(express.json({ limit: "1mb" }));
+const lucid = await Lucid(
+  new Blockfrost(getBlockfrostBaseUrl(CARDANO_NETWORK), BLOCKFROST_PROJECT_ID!),
+  LUCID_NETWORK[CARDANO_NETWORK]
+);
+lucid.selectWallet.fromSeed(WALLET_SEED_PHRASE!);
 
-/**
- * Authentication middleware for internal service calls.
- * Rejects requests without valid X-Internal-Token header.
- */
-function authMiddleware(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void {
-  const token = req.headers["x-internal-token"];
-
-  if (!token || token !== ANCHOR_WORKER_TOKEN) {
-    res.status(403).json({ error: "Forbidden: Invalid or missing token" });
-    return;
-  }
-
-  next();
-}
-
-/**
- * Health check endpoint.
- * Does not require authentication.
- */
-app.get("/health", (_req: Request, res: Response) => {
-  res.json({ status: "ok", service: "anchor-worker" });
+const chain = createBlockfrostProvider({
+  projectId: BLOCKFROST_PROJECT_ID!,
+  network: CARDANO_NETWORK,
 });
 
-/**
- * Process trace anchor endpoint.
- * Requires X-Internal-Token authentication.
- *
- * POST /anchor/process-trace
- * Body: {
- *   requestId: string,
- *   manifest: ManifestData,
- *   storageUri?: string
- * }
- */
-app.post(
-  "/anchor/process-trace",
-  authMiddleware,
-  async (req: Request, res: Response) => {
-    try {
-      const { requestId, manifest, storageUri } = req.body as {
-        requestId?: string;
-        manifest?: ManifestData;
-        storageUri?: string;
-      };
+const queue = createChainedSubmitQueue<UTxO>({
+  // Bounds how many acknowledged anchors one dropped tx can take with it.
+  maxChainLength: 10,
+  // Idle this long (about four preprod blocks), the chain has landed; re-read the
+  // wallet so a top-up or an outside spend is seen.
+  cacheTtlMs: 90_000,
+  // About what drains within t-backend's 30s client timeout (a chain of ten plus
+  // one block wait); later callers get 503 and retry instead of timing out.
+  maxPending: 20,
+  // Longer than the recorder's hourly re-post cycle, so a re-post gets the landed txHash.
+  dedupeTtlMs: 6 * 60 * 60 * 1000,
+  dedupeMaxEntries: 10_000,
+  awaitConfirmation: (txHash) => awaitOnChain(chain, txHash, { pollMs: 5_000, timeoutMs: 120_000 }),
+});
 
-      // Validate required fields
-      if (!requestId) {
-        res.status(400).json({ error: "Missing required field: requestId" });
-        return;
-      }
+const app = createApp({
+  token: ANCHOR_WORKER_TOKEN!,
+  network: CARDANO_NETWORK,
+  anchor: createProcessTraceAnchorer({ lucid, queue, network: CARDANO_NETWORK, notifySubmitted }),
+});
 
-      if (!manifest) {
-        res.status(400).json({ error: "Missing required field: manifest" });
-        return;
-      }
-
-      if (!manifest.rootHash) {
-        res
-          .status(400)
-          .json({ error: "Missing required field: manifest.rootHash" });
-        return;
-      }
-
-      if (!manifest.manifestHash) {
-        res
-          .status(400)
-          .json({ error: "Missing required field: manifest.manifestHash" });
-        return;
-      }
-
-      console.log(`[anchor] Processing request: ${requestId}`);
-
-      const result = await anchorProcessTrace(requestId, manifest, storageUri);
-
-      console.log(
-        `[anchor] Request ${requestId} completed: txHash=${result.txHash}`
-      );
-
-      res.json({
-        success: true,
-        ...result,
-      });
-    } catch (error) {
-      console.error("[anchor] Error processing request:", error);
-
-      res
-        .status(500)
-        .json(anchorErrorBody(error, CARDANO_NETWORK, POI_METADATA_LABEL));
-    }
-  }
-);
-
-// Start server
 app.listen(PORT, () => {
-  console.log(`[anchor-worker] Service started on port ${PORT}`);
+  console.log(`[anchor-worker] Service started on port ${PORT} (network=${CARDANO_NETWORK})`);
   console.log(`[anchor-worker] Health check: http://localhost:${PORT}/health`);
 });

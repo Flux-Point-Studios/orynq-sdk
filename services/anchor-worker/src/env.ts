@@ -46,15 +46,6 @@ export const WALLET_SEED_PHRASE = process.env.WALLET_SEED_PHRASE;
 export const T_BACKEND_INTERNAL_URL =
   process.env.T_BACKEND_INTERNAL_URL ?? "http://t-backend:8000";
 
-/**
- * Timeout for awaitTx in milliseconds.
- * @default 10000 (10 seconds)
- */
-export const AWAIT_TX_TIMEOUT = parseInt(
-  process.env.AWAIT_TX_TIMEOUT ?? "10000",
-  10
-);
-
 const REQUIRED = [
   "ANCHOR_WORKER_TOKEN",
   "BLOCKFROST_PROJECT_ID",

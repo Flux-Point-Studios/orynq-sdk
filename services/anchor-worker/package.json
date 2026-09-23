@@ -6,14 +6,15 @@
   "main": "dist/index.js",
   "packageManager": "pnpm@9.15.0",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "vitest run"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "@fluxpointstudios/orynq-sdk-anchors-cardano": "^0.1.0",
+    "@fluxpointstudios/orynq-sdk-anchors-cardano": "workspace:*",
     "@lucid-evolution/lucid": "^0.4.0"
   },
   "devDependencies": {
