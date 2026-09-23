@@ -1,0 +1,43 @@
+when:
+  - event: pull_request
+  - event: push
+    branch: main
+
+steps:
+  - name: build-test
+    image: node:20-bookworm
+    depends_on: []
+    commands:
+      - corepack enable
+      - pnpm install --frozen-lockfile
+      - pnpm build
+      - pnpm typecheck
+      - pnpm test
+      - pnpm vectors:verify
+
+  - name: python-test
+    image: python:3.11
+    depends_on: []
+    commands:
+      - pip install -e "python/.[dev]"
+      - pytest python/tests/
+      - python scripts/verify-hash-vectors.py
+
+  - name: path-check
+    image: alpine:3.20
+    depends_on: []
+    commands:
+      - |
+        if grep -rE "(D:/fluxPoint|D:\\\\fluxPoint|C:/Users|C:\\\\Users)" packages/; then
+          echo "ERROR: Local machine paths found in codebase"
+          exit 1
+        fi
+
+  # Advisory only, as before: a known advisory must not block unrelated work.
+  - name: security-audit
+    image: node:20-bookworm
+    depends_on: []
+    failure: ignore
+    commands:
+      - corepack enable
+      - pnpm audit --audit-level=high
