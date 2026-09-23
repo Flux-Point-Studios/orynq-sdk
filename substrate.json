@@ -18,6 +18,15 @@
       "paths": ["packages/recorder-openclaw", "packages/orynq-openclaw"],
       "consumes": ["orynq-attestation"],
       "status": "live"
+    },
+    {
+      "id": "anchors-cardano",
+      "name": "Cardano anchor client",
+      "desc": "Direct Cardano L1 anchors: label 2222 Proof-of-Intent and label 8746 Materios checkpoint metadata builders and verifiers, plus a chained submit queue that lets one wallet submit anchors back to back without re-reading a lagging indexer.",
+      "kind": "toolkit",
+      "paths": ["packages/anchors-cardano"],
+      "consumes": ["orynq-attestation"],
+      "status": "live"
     }
   ]
 }
