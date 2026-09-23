@@ -41,6 +41,8 @@ const chain = createBlockfrostProvider({
   network: CARDANO_NETWORK,
 });
 
+// The queue lives in this process: run one worker per wallet, or replicas race
+// for the same UTxOs again.
 const queue = createChainedSubmitQueue<UTxO>({
   // Bounds how many acknowledged anchors one dropped tx can take with it.
   maxChainLength: 10,

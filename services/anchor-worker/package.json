@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "main": "dist/index.js",
-  "packageManager": "pnpm@9.15.0",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",

@@ -1,14 +1,30 @@
-name: Deploy anchor-worker
+name: anchor-worker image
+
+# Builds ghcr.io/flux-point-studios/anchor-worker:<sha> from the monorepo. Pull
+# requests build and smoke-test the image without pushing it. Deploying is a
+# manual image bump on the host that runs the worker.
 
 on:
   push:
     branches: [main]
     paths:
       - 'services/anchor-worker/**'
+      - 'packages/anchors-cardano/**'
+      - 'packages/process-trace/**'
+      - 'packages/core/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/anchor-worker.yml'
+  pull_request:
+    paths:
+      - 'services/anchor-worker/**'
+      - 'packages/anchors-cardano/**'
+      - 'packages/process-trace/**'
+      - 'packages/core/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/anchor-worker.yml'
   workflow_dispatch:
 
 env:
-  REGISTRY: ghcr.io
   IMAGE: ghcr.io/flux-point-studios/anchor-worker
 
 jobs:
@@ -22,37 +38,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Build
+        run: docker build -f services/anchor-worker/Dockerfile -t "$IMAGE:${{ github.sha }}" .
+
+      # ESM links every import before validateEnv runs, so this output also
+      # proves the image's dependency tree resolves.
+      - name: Refuses to start without its configuration
+        run: |
+          if out=$(docker run --rm "$IMAGE:${{ github.sha }}" 2>&1); then
+            echo "the worker started with no environment"; exit 1
+          fi
+          echo "$out"
+          grep -q "Missing required environment variables: ANCHOR_WORKER_TOKEN, BLOCKFROST_PROJECT_ID, CARDANO_NETWORK, WALLET_SEED_PHRASE" <<<"$out"
+
       - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
-        working-directory: services/anchor-worker
+      - name: Push
+        if: github.event_name != 'pull_request'
+        run: docker push "$IMAGE:${{ github.sha }}"
+
+      - name: Push latest
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
-          docker build -t ${{ env.IMAGE }}:${{ github.sha }} -t ${{ env.IMAGE }}:latest .
-          docker push ${{ env.IMAGE }}:${{ github.sha }}
-          docker push ${{ env.IMAGE }}:latest
-
-  deploy:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deploy to K8s via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.GPU_NODE_HOST }}
-          username: ${{ secrets.GPU_NODE_USER }}
-          key: ${{ secrets.GPU_NODE_SSH_KEY }}
-          command_timeout: 5m
-          script: |
-            set -e
-            TAG_IMAGE="${{ env.IMAGE }}:${{ github.sha }}"
-
-            # Update deployment (nodes pull from GHCR via imagePullSecrets)
-            kubectl -n t-backend set image deployment/anchor-worker anchor-worker="$TAG_IMAGE"
-            kubectl -n t-backend rollout restart deployment/anchor-worker
-            kubectl -n t-backend rollout status deployment/anchor-worker --timeout=3m
-            kubectl -n t-backend get pods -l app=anchor-worker
+          docker tag "$IMAGE:${{ github.sha }}" "$IMAGE:latest"
+          docker push "$IMAGE:latest"
