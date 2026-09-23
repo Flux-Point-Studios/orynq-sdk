@@ -15,6 +15,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http";
+import type { AddressInfo } from "net";
 import type { PaymentRequest, PaymentProof, Payer } from "@fluxpointstudios/orynq-sdk-core";
 import {
   loadTestEnvironment,
@@ -30,11 +31,16 @@ import {
 // ---------------------------------------------------------------------------
 
 const TEST_TIMEOUT = 60_000;
-const MOCK_SERVER_PORT = 9876;
 
 // ---------------------------------------------------------------------------
 // Mock Server
 // ---------------------------------------------------------------------------
+
+/** A fixed port collided between tests (EADDRINUSE); each server takes a free one. */
+async function listenOnFreePort(server: Server): Promise<string> {
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}
 
 interface MockServerState {
   paymentReceived: boolean;
@@ -167,11 +173,11 @@ describe("Client Auto-Pay Flow (Mock Server)", () => {
 
   it("should detect 402 and extract payment requirements", async () => {
     server = createMockServer(serverState);
-    await new Promise<void>((resolve) => server.listen(MOCK_SERVER_PORT, resolve));
+    const baseUrl = await listenOnFreePort(server);
 
     try {
       const client = new PoiClient({
-        baseUrl: `http://localhost:${MOCK_SERVER_PORT}`,
+        baseUrl,
         payer: createMockPayer(),
       });
 
@@ -198,7 +204,7 @@ describe("Client Auto-Pay Flow (Mock Server)", () => {
     "should complete full auto-pay flow with mock payer",
     async () => {
       server = createMockServer(serverState);
-      await new Promise<void>((resolve) => server.listen(MOCK_SERVER_PORT, resolve));
+      const baseUrl = await listenOnFreePort(server);
 
       try {
         const mockPayer = createMockPayer();
@@ -206,7 +212,7 @@ describe("Client Auto-Pay Flow (Mock Server)", () => {
         let paymentAmount: string | null = null;
 
         const client = new PoiClient({
-          baseUrl: `http://localhost:${MOCK_SERVER_PORT}`,
+          baseUrl,
           payer: mockPayer,
           // Use fast retry options for tests
           retryOptions: {
@@ -253,11 +259,11 @@ describe("Client Auto-Pay Flow (Mock Server)", () => {
 
   it("should respect onPaymentRequired cancellation", async () => {
     server = createMockServer(serverState);
-    await new Promise<void>((resolve) => server.listen(MOCK_SERVER_PORT, resolve));
+    const baseUrl = await listenOnFreePort(server);
 
     try {
       const client = new PoiClient({
-        baseUrl: `http://localhost:${MOCK_SERVER_PORT}`,
+        baseUrl,
         payer: createMockPayer(),
         onPaymentRequired: () => {
           console.log("  Payment required but cancelled by callback");
@@ -277,11 +283,11 @@ describe("Client Auto-Pay Flow (Mock Server)", () => {
 
   it("should skip payment when skipPayment option is set", async () => {
     server = createMockServer(serverState);
-    await new Promise<void>((resolve) => server.listen(MOCK_SERVER_PORT, resolve));
+    const baseUrl = await listenOnFreePort(server);
 
     try {
       const client = new PoiClient({
-        baseUrl: `http://localhost:${MOCK_SERVER_PORT}`,
+        baseUrl,
         payer: createMockPayer(),
       });
 
@@ -367,11 +373,11 @@ describe.skipIf(shouldSkipRealTests)("Client Auto-Pay Flow (Real EVM Payer)", ()
     // but doesn't execute actual payments to avoid spending testnet funds
 
     server = createMockServer(serverState);
-    await new Promise<void>((resolve) => server.listen(MOCK_SERVER_PORT, resolve));
+    const baseUrl = await listenOnFreePort(server);
 
     try {
       const client = new PoiClient({
-        baseUrl: `http://localhost:${MOCK_SERVER_PORT}`,
+        baseUrl,
         payer: realPayer,
         onPaymentRequired: (request) => {
           console.log(`  Would pay: ${request.amountUnits} ${request.asset}`);
@@ -422,11 +428,11 @@ describe("Client Budget Enforcement", () => {
 
   it("should enforce per-request budget limit", async () => {
     server = createMockServer(serverState);
-    await new Promise<void>((resolve) => server.listen(MOCK_SERVER_PORT, resolve));
+    const baseUrl = await listenOnFreePort(server);
 
     try {
       const client = new PoiClient({
-        baseUrl: `http://localhost:${MOCK_SERVER_PORT}`,
+        baseUrl,
         payer: createMockPayer(),
         budget: {
           maxPerRequest: "5000", // 0.005 USDC - less than test amount
@@ -444,11 +450,11 @@ describe("Client Budget Enforcement", () => {
 
   it("should allow payment within budget", async () => {
     server = createMockServer(serverState);
-    await new Promise<void>((resolve) => server.listen(MOCK_SERVER_PORT, resolve));
+    const baseUrl = await listenOnFreePort(server);
 
     try {
       const client = new PoiClient({
-        baseUrl: `http://localhost:${MOCK_SERVER_PORT}`,
+        baseUrl,
         payer: createMockPayer(),
         budget: {
           maxPerRequest: "100000", // 0.1 USDC - more than test amount
@@ -475,11 +481,11 @@ describe("Client Budget Enforcement", () => {
 
   it("should track remaining budget", async () => {
     server = createMockServer(serverState);
-    await new Promise<void>((resolve) => server.listen(MOCK_SERVER_PORT, resolve));
+    const baseUrl = await listenOnFreePort(server);
 
     try {
       const client = new PoiClient({
-        baseUrl: `http://localhost:${MOCK_SERVER_PORT}`,
+        baseUrl,
         payer: createMockPayer(),
         budget: {
           maxPerRequest: "100000",
