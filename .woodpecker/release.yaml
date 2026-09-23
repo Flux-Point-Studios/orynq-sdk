@@ -1,0 +1,29 @@
+# `changeset publish` only publishes versions that are not on npm yet, so a push
+# without a version bump publishes nothing. The version PR (`pnpm changeset
+# version`) is opened by hand: Woodpecker holds no GitHub token that could push it.
+when:
+  - event: push
+    branch: main
+  - event: manual
+    branch: main
+
+# The t-backend submodule is private and nothing here builds it; GitHub's
+# checkout never fetched it either.
+clone:
+  - name: clone
+    image: woodpeckerci/plugin-git
+    settings:
+      recursive: false
+
+steps:
+  - name: publish
+    image: node:20-bookworm
+    environment:
+      NPM_TOKEN:
+        from_secret: npm_token
+    commands:
+      - corepack enable
+      - pnpm install --frozen-lockfile
+      - pnpm build
+      - echo "//registry.npmjs.org/:_authToken=$${NPM_TOKEN}" > "$${HOME}/.npmrc"
+      - pnpm release
