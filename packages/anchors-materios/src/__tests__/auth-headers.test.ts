@@ -47,6 +47,22 @@ describe("buildAuthHeaders", () => {
     expect(headers).not.toHaveProperty("x-api-key");
   });
 
+  it("calls sign as a method of the signer, so a class-based signer keeps its state", () => {
+    class ClassSigner {
+      readonly address = "5FXCG7by7UuQZpbHMi1kRtQfgDSpA83D2GH82kaWHuMMFu2m";
+      private readonly signature = new Uint8Array(64).fill(0xcd);
+      sign(_message: Uint8Array): Uint8Array {
+        return this.signature;
+      }
+    }
+    const headers = buildAuthHeaders(
+      { baseUrl: "https://example/gateway", signerKeypair: new ClassSigner() },
+      REQUEST,
+    );
+    expect(headers["x-upload-sig"]).toBe("0x" + "cd".repeat(64));
+    expect(headers["x-upload-sig-v2"]).toBe("0x" + "cd".repeat(64));
+  });
+
   it("apiKey wins when both apiKey and signerKeypair are set", () => {
     const headers = buildAuthHeaders(
       {

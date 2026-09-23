@@ -408,7 +408,8 @@ export function buildAuthHeaders(gateway: BlobGatewayConfig, request: GatewayReq
     return { "x-api-key": gateway.apiKey };
   }
   if (gateway.signerKeypair) {
-    const { address, sign } = gateway.signerKeypair;
+    const signer = gateway.signerKeypair;
+    const address = signer.address;
     const ts = Math.floor(Date.now() / 1000);
     const v1 = `materios-upload-v1|${request.id}|${address}|${ts}`;
     const v2 = uploadSigV2Message({
@@ -420,8 +421,8 @@ export function buildAuthHeaders(gateway: BlobGatewayConfig, request: GatewayReq
       ts,
     });
     return {
-      "x-upload-sig": u8aToHex(sign(stringToU8a(v1))),
-      "x-upload-sig-v2": u8aToHex(sign(stringToU8a(v2))),
+      "x-upload-sig": u8aToHex(signer.sign(stringToU8a(v1))),
+      "x-upload-sig-v2": u8aToHex(signer.sign(stringToU8a(v2))),
       "x-uploader-address": address,
       "x-upload-ts": String(ts),
     };
