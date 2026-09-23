@@ -87,8 +87,9 @@ export async function notifySubmitted(
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
- * Resolves true once txHash is in a block, or false after timeoutMs: by then
- * the tx was most likely dropped, and the queue forgets what it anchored.
+ * Resolves true once txHash is in a block, or false after timeoutMs; a
+ * timeoutMs of 0 looks it up once. A failed lookup counts as not found and is
+ * named in the warning, so the queue never fails a request over it.
  */
 export async function awaitOnChain(
   chain: Pick<AnchorChainProvider, "getTxInfo">,
@@ -109,7 +110,7 @@ export async function awaitOnChain(
   }
   const cause = lastError === undefined ? "" : ` (last lookup failed: ${messageOf(lastError)})`;
   console.warn(
-    `[anchor] ${txHash} not on chain after ${timeoutMs}ms${cause}; reading the wallet from the provider anyway`
+    `[anchor] ${txHash} not on chain after ${timeoutMs}ms${cause}; a re-post of what it anchored submits again`
   );
   return false;
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Lucid } from "@lucid-evolution/lucid";
+import { CML, Lucid } from "@lucid-evolution/lucid";
 import type { AnchorChainProvider, TxInfo } from "@fluxpointstudios/orynq-sdk-anchors-cardano";
 
 import { awaitOnChain } from "../anchor.js";
@@ -210,6 +210,44 @@ describe("anchorProcessTrace on a one-UTxO wallet", () => {
     ]);
     expect(submitted.map((tx) => tx.txHash)).toEqual([r1.txHash, r3.txHash]);
     expectEachSpendsThePreviousChange(submitted);
+  });
+});
+
+describe("anchorProcessTrace on a two-UTxO wallet", () => {
+  it("never answers a re-post with a tx that did not land, though the tip on the other UTxO did", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { emulator, anchor, submitted } = await emulatorHarness({ maxChainLength: 4 }, [
+      250_000_000n,
+      250_000_000n,
+    ]);
+    const submitTx = emulator.submitTx.bind(emulator);
+    let calls = 0;
+    // The node took the third tx, then lost it from its mempool.
+    emulator.submitTx = async (cbor: string) =>
+      ++calls === 3
+        ? CML.hash_transaction(CML.Transaction.from_cbor_hex(cbor).body()).to_hex()
+        : submitTx(cbor);
+
+    const results = [];
+    for (let i = 1; i <= 4; i++) results.push(await anchor(`req-${i}`, manifest(i)));
+    emulator.awaitBlock();
+    // At the length cap: waits for the tip, then reads the wallet.
+    await anchor("req-5", manifest(5));
+
+    // lucid selects largest-first, so the tip spends the other UTxO's lineage.
+    expect(submitted.slice(0, 3).map((tx) => tx.txHash)).toEqual(
+      [results[0], results[1], results[3]].map((r) => r!.txHash)
+    );
+    expect(submitted[2]!.inputs).not.toContain(`${results[2]!.txHash}#0`);
+    expect(warn.mock.calls.map(([line]) => String(line))).toEqual([
+      expect.stringMatching(`^\\[anchor\\] ${results[2]!.txHash} not on chain after 0ms`),
+    ]);
+    for (const i of [1, 2, 4]) {
+      expect((await anchor(`req-${i}-again`, manifest(i))).txHash).toBe(results[i - 1]!.txHash);
+    }
+    const retry = await anchor("req-3-again", manifest(3));
+    expect(retry.txHash).not.toBe(results[2]!.txHash);
+    expect(submitted.at(-1)!.txHash).toBe(retry.txHash);
   });
 });
 

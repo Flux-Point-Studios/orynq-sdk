@@ -28,9 +28,12 @@ export interface SubmittedTx {
   entry: Record<string, unknown> | null;
 }
 
-export async function emulatorHarness(queueOptions: Partial<ChainedSubmitQueueOptions> = {}) {
-  const account = generateEmulatorAccount({ lovelace: 500_000_000n });
-  const emulator = new Emulator([account]);
+export async function emulatorHarness(
+  queueOptions: Partial<ChainedSubmitQueueOptions> = {},
+  walletUtxos: bigint[] = [500_000_000n]
+) {
+  const account = generateEmulatorAccount({});
+  const emulator = new Emulator(walletUtxos.map((lovelace) => ({ ...account, assets: { lovelace } })));
 
   const submitted: SubmittedTx[] = [];
   const unconfirmed: string[] = [];
@@ -82,6 +85,7 @@ export async function emulatorHarness(queueOptions: Partial<ChainedSubmitQueueOp
     dedupeTtlMs: 3_600_000,
     dedupeMaxEntries: 1_000,
     awaitConfirmation: (txHash) => awaitOnChain(chain, txHash, { pollMs: 5, timeoutMs: 500 }),
+    isOnChain: (txHash) => awaitOnChain(chain, txHash, { pollMs: 0, timeoutMs: 0 }),
     ...queueOptions,
   });
 

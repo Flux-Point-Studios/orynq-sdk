@@ -58,6 +58,7 @@ const queue = createChainedSubmitQueue<UTxO>({
   dedupeTtlMs: 6 * 60 * 60 * 1000,
   dedupeMaxEntries: 10_000,
   awaitConfirmation: (txHash) => awaitOnChain(chain, txHash, { pollMs: 5_000, timeoutMs: 120_000 }),
+  isOnChain: (txHash) => awaitOnChain(chain, txHash, { pollMs: 0, timeoutMs: 0 }),
 });
 
 const app = createApp({

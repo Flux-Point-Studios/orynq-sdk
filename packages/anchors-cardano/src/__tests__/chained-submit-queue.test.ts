@@ -31,12 +31,16 @@ class FakeChain {
   private mempool = new Map<string, Utxo>();
   private spentInMempool = new Set<string>();
   private everSpent = new Set<string>();
+  private pending = new Set<string>();
+  private confirmed = new Set<string>();
   private counter = 0;
   readonly txs: Array<{ txHash: string; inputs: string[]; label: string }> = [];
 
-  constructor(lovelace: bigint) {
-    const genesis = { txHash: "genesis", outputIndex: 0, lovelace };
-    this.ledger.set(ref(genesis), genesis);
+  constructor(...lovelace: bigint[]) {
+    lovelace.forEach((amount, outputIndex) => {
+      const genesis = { txHash: "genesis", outputIndex, lovelace: amount };
+      this.ledger.set(ref(genesis), genesis);
+    });
   }
 
   providerUtxos(): Utxo[] {
@@ -64,18 +68,35 @@ class FakeChain {
       this.spentInMempool.add(key);
     }
     this.mempool.set(ref(change), change);
+    this.pending.add(txHash);
     this.txs.push({ txHash, inputs: inputs.map(ref), label });
+  }
+
+  /** Evicts a mempool tx that nothing spends yet, as a node restart can. */
+  drop(txHash: string): void {
+    const change = `${txHash}#0`;
+    if (!this.pending.has(txHash) || this.spentInMempool.has(change)) {
+      throw new Error(`${txHash} is not a mempool tx without descendants`);
+    }
+    for (const input of this.txs.find((t) => t.txHash === txHash)!.inputs) {
+      this.spentInMempool.delete(input);
+      this.everSpent.delete(input);
+    }
+    this.mempool.delete(change);
+    this.pending.delete(txHash);
   }
 
   block(): void {
     for (const [key, utxo] of this.mempool) this.ledger.set(key, utxo);
     for (const key of this.spentInMempool) this.ledger.delete(key);
+    for (const txHash of this.pending) this.confirmed.add(txHash);
     this.mempool.clear();
     this.spentInMempool.clear();
+    this.pending.clear();
   }
 
   isOnChain(txHash: string): boolean {
-    return [...this.ledger.values()].some((u) => u.txHash === txHash);
+    return this.confirmed.has(txHash);
   }
 }
 
@@ -142,6 +163,7 @@ function options(overrides: Partial<ChainedSubmitQueueOptions> = {}): ChainedSub
     dedupeTtlMs: 3_600_000,
     dedupeMaxEntries: 1_000,
     awaitConfirmation: async () => true,
+    isOnChain: async () => true,
     ...overrides,
   };
 }
@@ -431,6 +453,63 @@ describe("createChainedSubmitQueue", () => {
     expect(retry.deduplicated).toBe(false);
     expect(chain.txs.map((t) => t.inputs)).toEqual([["genesis#0"], [`${first.txHash}#0`]]);
   });
+
+  it.each([
+    ["the chain tip lands", false],
+    ["a submit of unknown outcome turns out to have landed", true],
+  ])(
+    "on a wallet of two similar UTxOs, remembers only the keys whose own tx is on chain once %s",
+    async (_how, unknownOutcome) => {
+      // Largest-first selection alternates lineages: tx1 and tx3 spend
+      // genesis#0 and its change, tx2 and tx4 genesis#1 and its change.
+      const chain = new FakeChain(100_000_000n, 99_900_000n);
+      let dropped: string | undefined;
+      const awaitConfirmation = async (txHash: string) => {
+        if (dropped !== undefined) chain.drop(dropped);
+        dropped = undefined;
+        chain.block();
+        return chain.isOnChain(txHash);
+      };
+      const queue = createChainedSubmitQueue<Utxo>(
+        options({
+          maxChainLength: 4,
+          awaitConfirmation,
+          isOnChain: async (txHash) => chain.isOnChain(txHash),
+        })
+      );
+
+      const results = [];
+      for (const key of ["k1", "k2", "k3"]) results.push(await queue.submit(key, anchorBuilder(chain, key)));
+      dropped = results[2]!.txHash;
+      const last = anchorBuilder(chain, "k4");
+      results.push(
+        await queue.submit(
+          "k4",
+          unknownOutcome ? failingSubmit(last, new Error("Could not submit transaction."), true) : last
+        )
+      );
+      if (!unknownOutcome) await queue.submit("k5", anchorBuilder(chain, "k5"));
+
+      expect(chain.txs.slice(0, 4).map((t) => t.inputs)).toEqual([
+        ["genesis#0"],
+        ["genesis#1"],
+        ["tx1#0"],
+        ["tx2#0"],
+      ]);
+      expect(results.map((r) => chain.isOnChain(r.txHash))).toEqual([true, true, false, true]);
+      const repost = vi.fn(anchorBuilder(chain, "repost"));
+      for (const i of [0, 1, 3]) {
+        await expect(queue.submit(`k${i + 1}`, repost)).resolves.toEqual({
+          ...results[i]!,
+          deduplicated: true,
+        });
+      }
+      expect(repost).not.toHaveBeenCalled();
+      const retry = await queue.submit("k3", repost);
+      expect(retry).toMatchObject({ txHash: chain.txs.at(-1)!.txHash, deduplicated: false });
+      expect(repost).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it("forgets the least recently landed key beyond the dedupe bound", async () => {
     const queue = createChainedSubmitQueue<Utxo>(

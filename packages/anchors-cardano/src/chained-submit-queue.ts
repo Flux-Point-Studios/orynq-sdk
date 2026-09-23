@@ -45,6 +45,14 @@ export interface ChainedSubmitQueueOptions {
    * land. A rejection also fails the submission that was waiting.
    */
   awaitConfirmation: (txHash: string) => Promise<boolean>;
+  /**
+   * Resolves whether txHash is on chain now, without waiting. Once one tx of
+   * a chain lands, the queue looks up each other tx of it and remembers only
+   * the keys whose own tx is found: a wallet with several UTxOs builds
+   * parallel lineages, so one landed tx does not vouch for the rest. A
+   * rejection fails the submission that was waiting.
+   */
+  isOnChain: (txHash: string) => Promise<boolean>;
   now?: () => number;
 }
 
@@ -99,7 +107,7 @@ export function createChainedSubmitQueue<U>(
   let tail: Promise<unknown> = Promise.resolve();
   let chained: { utxos: U[]; at: number } | null = null;
   let chainLength = 0;
-  /** Submitted since the last provider read; the tip spends every earlier tx's change. */
+  /** Submitted since the last provider read; the tip is the latest. */
   let unconfirmed: { tip: string; keys: Map<string, Anchored> } | null = null;
 
   function exclusive<T>(task: () => Promise<T>): Promise<T> {
@@ -109,8 +117,18 @@ export function createChainedSubmitQueue<U>(
     return run;
   }
 
-  function remember(keys: Map<string, Anchored>): void {
+  /** Remembers each key whose own tx is on chain; `seen` already is. */
+  async function rememberLanded(keys: Map<string, Anchored>, seen: string): Promise<void> {
+    const found = new Set([seen]);
+    const unchecked = new Set([...keys.values()].map(({ txHash }) => txHash));
+    unchecked.delete(seen);
+    await Promise.all(
+      [...unchecked].map(async (txHash) => {
+        if (await options.isOnChain(txHash)) found.add(txHash);
+      })
+    );
     for (const [key, anchored] of keys) {
+      if (!found.has(anchored.txHash)) continue;
       landed.delete(key);
       landed.set(key, { ...anchored, at: now() });
     }
@@ -134,14 +152,14 @@ export function createChainedSubmitQueue<U>(
     deduplicated,
   });
 
-  /** Ends the chain: waits for its tip and keeps its keys only if the tip landed. */
+  /** Ends the chain: waits for its tip, then keeps the keys whose txs landed. */
   async function settle(): Promise<void> {
     chained = null;
     chainLength = 0;
     const chain = unconfirmed;
     if (chain === null) return;
     unconfirmed = null;
-    if (await options.awaitConfirmation(chain.tip)) remember(chain.keys);
+    if (await options.awaitConfirmation(chain.tip)) await rememberLanded(chain.keys, chain.tip);
   }
 
   async function submitNext(key: string, build: ChainedBuild<U>): Promise<ChainedSubmitResult> {
@@ -199,8 +217,8 @@ export function createChainedSubmitQueue<U>(
       if (!confirmed) unconfirmed = before;
     }
     if (!confirmed) throw error;
-    // It spends the change of the chain before it, so that chain landed too.
-    remember((before?.keys ?? new Map<string, Anchored>()).set(key, anchored));
+    const keys = (before?.keys ?? new Map<string, Anchored>()).set(key, anchored);
+    await rememberLanded(keys, anchored.txHash);
     return answer(anchored, false);
   }
 

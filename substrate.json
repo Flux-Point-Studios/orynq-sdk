@@ -22,7 +22,7 @@
     {
       "id": "anchors-cardano",
       "name": "Cardano anchor client",
-      "desc": "Direct Cardano L1 anchors: label 2222 Proof-of-Intent and label 8746 Materios checkpoint metadata builders and verifiers, plus a chained submit queue that lets one wallet submit anchors back to back without re-reading a lagging indexer, remembers a key only once its tx is seen on chain, and checks a submit of unknown outcome on chain before failing it.",
+      "desc": "Direct Cardano L1 anchors: label 2222 Proof-of-Intent and label 8746 Materios checkpoint metadata builders and verifiers, plus a chained submit queue that lets one wallet submit anchors back to back without re-reading a lagging indexer, remembers a key only once its own tx is seen on chain, and checks a submit of unknown outcome on chain before failing it.",
       "kind": "toolkit",
       "paths": ["packages/anchors-cardano"],
       "consumes": ["orynq-attestation"],
