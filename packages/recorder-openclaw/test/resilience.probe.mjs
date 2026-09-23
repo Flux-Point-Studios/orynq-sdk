@@ -1,13 +1,16 @@
 // Resilience probes against the SHIPPED build (dist/index.js), not a copy of
 // its logic: timeouts on both network calls (headers and body), the persisted
-// anchor schedule and its clamp, the dedup digest's coverage of sessionId, and
-// isolation of a torn spool line and of any other one-bundle failure.
+// anchor schedule and its clamp, the dedup digest's coverage of sessionId,
+// isolation of a torn spool line and of any other one-bundle failure, and a
+// daemon loop that survives failed scans and failed anchor passes.
 //
 // Every observation comes from outside the recorder: requests a real
 // 127.0.0.1 server received, and the receipt / state files the recorder wrote.
 //
 //   node test/resilience.probe.mjs          run every case, exit 0 on pass
 //   node test/resilience.probe.mjs P1       run one case
+//
+// RECORDER_DIST overrides the build under test (default: ../dist/index.js).
 //
 // Each case runs in its own child process: runForever() never returns, so the
 // schedule cases can only be stopped with process.exit, and the setTimeout
@@ -27,7 +30,9 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SELF = fileURLToPath(import.meta.url);
-const DIST = fileURLToPath(new URL("../dist/index.js", import.meta.url));
+const DIST = process.env.RECORDER_DIST
+  ? path.resolve(process.env.RECORDER_DIST)
+  : fileURLToPath(new URL("../dist/index.js", import.meta.url));
 const DIST_URL = pathToFileURL(DIST).href;
 const BUNDLE = "2026-02-03__main";
 const TX = "ab".repeat(32);
@@ -403,6 +408,105 @@ const CASES = {
       `agents posted=${agents.join(",") || "none"} main=${st?.[BUNDLE]?.state}`);
     check("P9 the broken bundle has no state recorded, so the next cycle retries it",
       st?.["2026-02-03__alpha"] === undefined, `alpha=${JSON.stringify(st?.["2026-02-03__alpha"])}`);
+  },
+
+  // P10: OpenClaw deletes a session file when a session resets. If that lands
+  // between discovery and the read, stat throws ENOENT. That used to reject
+  // the whole scan and, through runForever, kill the daemon. The race is made
+  // deterministic by deleting the file inside the stat call the recorder makes.
+  async P10() {
+    const { root, outDir } = await workspace([line()]);
+    const gone = path.join(root, "sessions", "s2.jsonl");
+    await fs.writeFile(gone, JSON.stringify(line({ agentId: "penny" })) + "\n");
+    const rec = await recorderFor(root, outDir, "http://127.0.0.1:9");
+
+    const realStat = fs.stat;
+    fs.stat = async (p, ...rest) => {
+      if (String(p) === gone) await fs.rm(gone, { force: true });
+      return realStat.call(fs, p, ...rest);
+    };
+    const r = await withDeadline(rec.scanOnce(), DEADLINE_MS);
+    fs.stat = realStat;
+
+    check("P10 scanOnce resolves when a session file vanishes between discovery and read",
+      r.done && !r.error, r.error ? `rejected: ${r.error.message}` : r.done ? "resolved" : "hanging");
+    const spool = await fs.readFile(path.join(outDir, "spool", `${BUNDLE}.jsonl`), "utf-8").catch(() => "");
+    check("P10 the other session's event is still spooled",
+      spool.split("\n").filter(Boolean).length === 1, `main spool lines=${spool.split("\n").filter(Boolean).length}`);
+    const tail = (await readJson(path.join(outDir, "state", "tail-state.json"))) ?? {};
+    check("P10 the vanished file is dropped from tail state, the other is tracked",
+      !(gone in tail) && Object.keys(tail).some((k) => k.endsWith("s1.jsonl")), `tail keys=${Object.keys(tail).map((k) => path.basename(k)).join(",")}`);
+  },
+
+  // P11: one unreadable session file must cost only that file: the others are
+  // spooled, its offset is kept, and it is read once it becomes readable.
+  async P11() {
+    check("P11 precondition: not running as root (root ignores file modes)", process.getuid?.() !== 0, `uid=${process.getuid?.()}`);
+    const { root, outDir } = await workspace([line()]);
+    const locked = path.join(root, "sessions", "s2.jsonl");
+    await fs.writeFile(locked, JSON.stringify(line({ agentId: "penny" })) + "\n");
+    await fs.chmod(locked, 0o000);
+    const rec = await recorderFor(root, outDir, "http://127.0.0.1:9");
+
+    const r = await withDeadline(rec.scanOnce(), DEADLINE_MS);
+    check("P11 scanOnce resolves with one unreadable session file",
+      r.done && !r.error, r.error ? `rejected: ${r.error.message}` : r.done ? "resolved" : "hanging");
+    const mainSpool = await fs.readFile(path.join(outDir, "spool", `${BUNDLE}.jsonl`), "utf-8").catch(() => "");
+    check("P11 the readable session is spooled", mainSpool.includes('"agentId":"main"'), `main spool bytes=${mainSpool.length}`);
+    const tail = (await readJson(path.join(outDir, "state", "tail-state.json"))) ?? {};
+    check("P11 the unreadable file's offset is not advanced", !tail[locked], `offset=${tail[locked]}`);
+
+    await fs.chmod(locked, 0o644);
+    await rec.scanOnce();
+    const pennySpool = await fs.readFile(path.join(outDir, "spool", "2026-02-03__penny.jsonl"), "utf-8").catch(() => "");
+    check("P11 once readable, the file is read on the next scan", pennySpool.split("\n").filter(Boolean).length === 1,
+      `penny spool lines=${pennySpool.split("\n").filter(Boolean).length}`);
+  },
+
+  // P12: a scan that fails outright (here the tail state cannot be saved,
+  // because its path is a directory) must not stop the daemon: the due anchor
+  // still goes out.
+  async P12() {
+    const srv = await startServer((req, res) =>
+      reply(res, 200, { requestId: "req-p12", status: "CONFIRMED", txHash: TX, confirmations: 1 }));
+    const { root, outDir } = await workspace([line()]);
+    await fs.mkdir(path.join(outDir, "state", "tail-state.json"), { recursive: true });
+    await fs.writeFile(schedulePath(outDir), JSON.stringify({ nextAnchorAt: Date.now() - 1000 }));
+    const rec = await recorderFor(root, outDir, srv.url,
+      { scanEverySeconds: 1, anchorEveryMinutes: 1440, jitterSeconds: 0 });
+
+    let crashed = null;
+    rec.runForever().catch((e) => { crashed = e; });
+    await waitFor(() => crashed !== null || srv.posts().length >= 1, WINDOW_MS);
+    check("P12 runForever survives a failed scan", crashed === null, crashed?.message);
+    check("P12 the due anchor still goes out", srv.posts().length >= 1, `POSTs=${srv.posts().length}`);
+  },
+
+  // P13: an anchor pass that fails before any bundle (here the bundles path is
+  // a file) must not stop the daemon: it logs, schedules the next cycle, and
+  // keeps scanning.
+  async P13() {
+    const srv = await startServer((req, res) =>
+      reply(res, 200, { requestId: "req-p13", status: "CONFIRMED", txHash: TX, confirmations: 1 }));
+    const { root, outDir } = await workspace([line()]);
+    await fs.writeFile(path.join(outDir, "bundles"), "not a directory");
+    await fs.writeFile(schedulePath(outDir), JSON.stringify({ nextAnchorAt: Date.now() - 1000 }));
+    const rec = await recorderFor(root, outDir, srv.url,
+      { scanEverySeconds: 1, anchorEveryMinutes: 1440, jitterSeconds: 0 });
+
+    const t0 = Date.now();
+    let crashed = null;
+    rec.runForever().catch((e) => { crashed = e; });
+    const rescheduled = await waitFor(async () => crashed !== null ||
+      ((await readJson(schedulePath(outDir)))?.nextAnchorAt ?? 0) > t0 + 60_000, WINDOW_MS);
+    check("P13 runForever survives a failed anchor pass", crashed === null, crashed?.message);
+    check("P13 the next cycle is scheduled one interval out", rescheduled && crashed === null,
+      `nextAnchorAt - start = ${((await readJson(schedulePath(outDir)))?.nextAnchorAt ?? 0) - t0}ms`);
+    await fs.appendFile(path.join(root, "sessions", "s1.jsonl"),
+      JSON.stringify(line({ ts: "2026-02-03T11:00:00Z", content: "later" })) + "\n");
+    const scanned = await waitFor(async () =>
+      (await fs.readFile(path.join(outDir, "spool", `${BUNDLE}.jsonl`), "utf-8").catch(() => "")).includes("11:00:00"), WINDOW_MS);
+    check("P13 scanning continues after the failed pass", scanned);
   },
 
   // P5: the dedup digest covers sessionId. The recorder sets meta to the
