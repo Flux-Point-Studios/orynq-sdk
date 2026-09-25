@@ -26,6 +26,13 @@ clone:
     settings:
       recursive: false
 
+variables:
+  # plugin-kaniko 2.3.2, pinned by digest.
+  - &kaniko woodpeckerci/plugin-kaniko@sha256:01e0e325efd8fd2b1a95d207e84780a85ed7f8eb9712d8e79888e0f42ff8b7b3
+  # The ci/oci-index plugin from materios-operator-kit. The gchr_token secret's image
+  # filter names this exact digest, so it is the only code here that can hold the token.
+  - &oci_index ghcr.io/flux-point-studios/materios-operator-kit@sha256:d3178aaf4dc548dda5bd2d15a09f7c650ac1325fa7bc9215a861a3f34774c84b
+
 steps:
   # Kaniko cannot run the image, so the service's own startup check runs here:
   # with no environment it must refuse to start and name what is missing.
@@ -42,32 +49,33 @@ steps:
         echo "$$out"
         echo "$$out" | grep -q "Missing required environment variables: ANCHOR_WORKER_TOKEN, BLOCKFROST_PROJECT_ID, CARDANO_NETWORK, WALLET_SEED_PHRASE"
 
-  - name: build
-    image: woodpeckerci/plugin-kaniko
+  # Kaniko builds in userspace (no docker.sock or privileged mode on the shared agent)
+  # and holds no registry credential: it runs the Dockerfile's RUN steps (pnpm install
+  # and the package builds) in its own container, where any credential is readable.
+  - name: build-image
+    image: *kaniko
     settings:
-      registry: ghcr.io
-      repo: flux-point-studios/anchor-worker
       dockerfile: services/anchor-worker/Dockerfile
       context: .
-      dry-run: true
-    when:
-      - event: pull_request
+      dry_run: true
+      extra_opts: --custom-platform=linux/amd64 --oci-layout-path=/woodpecker/oci/amd64
 
-  # Kaniko builds in userspace: no docker.sock or privileged mode on the shared agent.
-  # The plugin prefixes `registry` to `repo`, so `repo` must not repeat ghcr.io.
+  # One platform publishes the image itself (not an index): the same kind of manifest
+  # kaniko used to push, so the host that pins it by digest sees no change.
   - name: publish
-    image: woodpeckerci/plugin-kaniko
+    image: *oci_index
     settings:
       registry: ghcr.io
-      repo: flux-point-studios/anchor-worker
-      dockerfile: services/anchor-worker/Dockerfile
-      context: .
-      tags:
-        - latest
-        - ${CI_COMMIT_SHA}
       username: realdecimalist
       password:
         from_secret: gchr_token
+      sources:
+        - /woodpecker/oci/amd64=ghcr.io/flux-point-studios/anchor-worker:${CI_COMMIT_SHA}
+      platforms:
+        - linux/amd64
+      target: ghcr.io/flux-point-studios/anchor-worker:${CI_COMMIT_SHA}
+      tags:
+        - latest
     when:
       - event: [push, manual]
         branch: main
