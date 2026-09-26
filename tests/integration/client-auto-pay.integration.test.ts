@@ -202,6 +202,7 @@ describe("Client Auto-Pay Flow (Mock Server)", () => {
 
   it(
     "should complete full auto-pay flow with mock payer",
+    { timeout: TEST_TIMEOUT, retry: 2 },
     async () => {
       server = createMockServer(serverState);
       const baseUrl = await listenOnFreePort(server);
@@ -253,8 +254,7 @@ describe("Client Auto-Pay Flow (Mock Server)", () => {
         await new Promise((resolve) => setTimeout(resolve, 100));
         await new Promise<void>((resolve) => server.close(() => resolve()));
       }
-    },
-    { timeout: TEST_TIMEOUT, retry: 2 }
+    }
   );
 
   it("should respect onPaymentRequired cancellation", async () => {
