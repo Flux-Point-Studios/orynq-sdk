@@ -29,7 +29,9 @@ vi.mock("@meshsdk/core", () => {
       enable: vi.fn(),
       getInstalledWallets: vi.fn().mockReturnValue([]),
     },
-    Transaction: vi.fn(() => mockTx),
+    Transaction: vi.fn(function () {
+      return mockTx;
+    }),
   };
 });
 

@@ -17,7 +17,9 @@ vi.mock("@meshsdk/core", () => {
     BrowserWallet: {
       enable: vi.fn(),
     },
-    Transaction: vi.fn(() => mockTx),
+    Transaction: vi.fn(function () {
+      return mockTx;
+    }),
   };
 });
 
