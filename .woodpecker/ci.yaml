@@ -43,10 +43,10 @@ steps:
         fi
 
   # Advisory only, as before: a known advisory must not block unrelated work.
+  # Blocking: with failure ignored, 78 high and critical advisories built up unnoticed.
   - name: security-audit
     image: node:20-bookworm
     depends_on: []
-    failure: ignore
     commands:
       - corepack enable
       - pnpm audit --audit-level=high
