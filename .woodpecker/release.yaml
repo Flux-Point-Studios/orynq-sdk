@@ -30,7 +30,7 @@ steps:
       - node scripts/pack-unpublished.mjs /woodpecker/npm-publish
 
   - name: publish
-    image: ghcr.io/flux-point-studios/materios-operator-kit@sha256:98ca05a8ed24d9f3833005f29ff8f98cb250e418f87476ec6b0ab55bb857572a
+    image: ghcr.io/flux-point-studios/materios-operator-kit@sha256:ce7e0b4eb5db06bf2907035dfab6bb8aff13ff3059256eaf7f38eaf22fb73ceb
     settings:
       dir: /woodpecker/npm-publish
       token:
