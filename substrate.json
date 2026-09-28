@@ -241,7 +241,8 @@
       "consumes": [
         "npm-publish-plugin"
       ],
-      "status": "experimental"
+      "status": "experimental",
+      "terminal": true
     }
   ]
 }
