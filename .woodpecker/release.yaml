@@ -1,10 +1,15 @@
-# `changeset publish` only publishes versions that are not on npm yet, so a push
-# without a version bump publishes nothing. The version PR (`pnpm changeset
-# version`) is opened by hand: Woodpecker holds no GitHub token that could push it.
+# A push to main publishes every package version that npm does not have yet, so a push
+# without a version bump publishes nothing. The version PR (`pnpm changeset version`) is
+# opened by hand: Woodpecker holds no GitHub token that could push it.
+#
+# pack installs, builds and packs without the npm token; pull requests run it too, as a
+# rehearsal. Only publish, the ci/npm-publish plugin of materios-operator-kit, holds the
+# token: the npm_token secret's image filter names the digest pinned below, so no step that
+# runs an install, build or package script can receive it. The plugin refuses restarts, so a
+# failed publish is retried by the next push to main, which packs only what is still missing.
 when:
+  - event: pull_request
   - event: push
-    branch: main
-  - event: manual
     branch: main
 
 # The t-backend submodule is private and nothing here builds it; GitHub's
@@ -16,14 +21,20 @@ clone:
       recursive: false
 
 steps:
-  - name: publish
+  - name: pack
     image: node:20-bookworm
-    environment:
-      NPM_TOKEN:
-        from_secret: npm_token
     commands:
       - corepack enable
       - pnpm install --frozen-lockfile
       - pnpm build
-      - echo "//registry.npmjs.org/:_authToken=$${NPM_TOKEN}" > "$${HOME}/.npmrc"
-      - pnpm release
+      - node scripts/pack-unpublished.mjs /woodpecker/npm-publish
+
+  - name: publish
+    image: ghcr.io/flux-point-studios/materios-operator-kit@sha256:98ca05a8ed24d9f3833005f29ff8f98cb250e418f87476ec6b0ab55bb857572a
+    settings:
+      dir: /woodpecker/npm-publish
+      token:
+        from_secret: npm_token
+    when:
+      - event: push
+        branch: main
