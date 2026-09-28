@@ -32,6 +32,40 @@ variables:
   # The ci/oci-index plugin from materios-operator-kit. The gchr_token secret's image
   # filter names this exact digest, so it is the only code here that can hold the token.
   - &oci_index ghcr.io/flux-point-studios/materios-operator-kit@sha256:d3178aaf4dc548dda5bd2d15a09f7c650ac1325fa7bc9215a861a3f34774c84b
+  # Every setting the pinned kaniko plugin reads. Woodpecker fills a setting a step
+  # leaves undeclared from a run's variables (a manual run's, or a restart's query), and
+  # publish pushes what build-image produces, so each is declared. "" keeps the
+  # plugin's default.
+  - &kaniko_inputs
+    dockerfile: Dockerfile
+    context: ""
+    dry_run: true
+    extra_opts: ""
+    auto_tag: ""
+    build_args: ""
+    build_args_from_env: ""
+    cache: ""
+    cache_repo: ""
+    cache_ttl: ""
+    cleanup: ""
+    destinations: ""
+    docker_config_json: ""
+    env_file: ""
+    ignore_var_run: ""
+    insecure: ""
+    insecure_pull: ""
+    insecure_registry: ""
+    json_key: ""
+    log_level: ""
+    mirrors: ""
+    password: ""
+    registry: ""
+    repo: ""
+    single_snapshot: ""
+    skip_tls_verify: ""
+    tags: ""
+    target: ""
+    username: ""
 
 steps:
   # Kaniko cannot run the image, so the service's own startup check runs here:
@@ -55,9 +89,9 @@ steps:
   - name: build-image
     image: *kaniko
     settings:
+      <<: *kaniko_inputs
       dockerfile: services/anchor-worker/Dockerfile
       context: .
-      dry_run: true
       extra_opts: --custom-platform=linux/amd64 --oci-layout-path=/woodpecker/oci/amd64
 
   # One platform publishes the image itself (not an index): the same kind of manifest
