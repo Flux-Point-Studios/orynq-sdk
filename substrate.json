@@ -228,6 +228,21 @@
         "anchors-cardano"
       ],
       "status": "live"
+    },
+    {
+      "id": "npm-release",
+      "name": "npm release",
+      "desc": "Publishes every workspace package version npm lacks on a push to main: a token-less step installs, builds and packs them (scripts/pack-unpublished.mjs, the choice changeset publish makes), and only the digest-pinned npm-publish plugin, named by the npm_token secret's image filter, holds the token.",
+      "kind": "pipeline",
+      "paths": [
+        ".woodpecker/release.yaml",
+        "scripts/pack-unpublished.mjs"
+      ],
+      "consumes": [
+        "npm-publish-plugin"
+      ],
+      "status": "experimental",
+      "terminal": true
     }
   ]
 }
