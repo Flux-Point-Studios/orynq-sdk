@@ -151,13 +151,17 @@ function view(serial: number, networks: ReturnType<typeof parseDocument>["networ
 }
 
 // Opens a signed document: at least one signature, over the domain-separated document string,
-// must verify under one of `trustRoots`, and the document must parse strictly.
+// must verify under one of `trustRoots`, and the document must parse strictly. Each check
+// refuses with its own message, so a refusal names the check that made it.
 export function openKnownAuthors(signed: SignedKnownAuthors, trustRoots: readonly string[] = KNOWN_AUTHORS_TRUST_ROOTS): KnownAuthors {
+  const byRoot = signed.signatures.filter((s) => trustRoots.includes(s.key) && HEX64.test(s.key));
+  if (byRoot.length === 0) throw new Error("the known-authors document carries no signature by a trust root");
+  const wellFormed = byRoot.filter((s) => /^[0-9a-f]{128}$/.test(s.signature));
+  if (wellFormed.length === 0) throw new Error("the known-authors document's signature by a trust root is not 64 bytes of lowercase hex");
   const message = signingMessage(signed.document);
-  const trusted = signed.signatures.some(
-    (s) => trustRoots.includes(s.key) && HEX64.test(s.key) && /^[0-9a-f]{128}$/.test(s.signature) && ed25519Verify(fromHex(s.signature, "signature"), message, fromHex(s.key, "trust root")),
-  );
-  if (!trusted) throw new Error("the known-authors document carries no signature by a trust root");
+  if (!wellFormed.some((s) => ed25519Verify(fromHex(s.signature, "signature"), message, fromHex(s.key, "trust root")))) {
+    throw new Error("the known-authors document's signature by a trust root does not verify");
+  }
   const { serial, networks } = parseDocument(signed.document);
   return view(serial, networks);
 }

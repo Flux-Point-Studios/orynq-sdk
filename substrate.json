@@ -69,7 +69,7 @@
     {
       "id": "known-authors-document",
       "name": "Signed KNOWN_AUTHORS document",
-      "desc": "orynq-known-authors/v1: the author keys a Midnight anchor verifier recognizes, each with a role (relay) and an inclusive window of block heights, plus the GRANDPA finality checkpoints it trusts, as a JSON string signed with Ed25519 by an offline trust-root key over a domain-separated message. Parsing is strict (unknown fields, networks, roles and overlapping windows refused). Revocation is a higher-serial document closing a key's window, so no verifier scans the permissionless registry; the highest serial wins and an older one never rolls a revocation back. scripts/known-authors.ts creates the root key and signs documents offline. No root or document ships until deci signs the first.",
+      "desc": "orynq-known-authors/v1: the author keys a Midnight anchor verifier recognizes, each with a role (relay) and an inclusive window of block heights, plus the GRANDPA finality checkpoints it trusts, as a JSON string signed with Ed25519 by an offline trust-root key over a domain-separated message. Parsing is strict (unknown fields, networks, roles and overlapping windows refused), and each signature check refuses with its own message: no signature by a trust root, a malformed trust-root signature, or one Ed25519 does not verify. Revocation is a higher-serial document closing a key's window, so no verifier scans the permissionless registry; the highest serial wins and an older one never rolls a revocation back. scripts/known-authors.ts creates the root key and signs documents offline. No root or document ships until deci signs the first.",
       "kind": "toolkit",
       "paths": [
         "packages/anchors-midnight/src/known-authors.ts",

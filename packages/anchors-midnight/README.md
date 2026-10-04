@@ -142,6 +142,10 @@ signed with Ed25519 by an offline trust-root key over `"orynq-known-authors/v1\n
 The document is shipped as the exact string that was signed, in `known-authors.json`, so no
 JSON canonicalization sits between a signature and what it covers. Parsing is strict: unknown
 fields, networks and roles, malformed keys, and overlapping windows for one key are refused.
+Each signature check refuses with its own message, so a caller can tell which one failed: `the
+known-authors document carries no signature by a trust root` when no signature names one,
+`... is not 64 bytes of lowercase hex` when every trust-root signature is malformed, and `... does
+not verify` only after Ed25519 verification failed for every well-formed trust-root signature.
 
 Each author has a role (`relay`: an anchor the FPS service wrote for whoever asked it) and a
 window of block heights, `validFrom` to `validTo` inclusive. Revoking a key is a later document

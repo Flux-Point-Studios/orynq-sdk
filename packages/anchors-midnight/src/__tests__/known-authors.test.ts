@@ -35,6 +35,11 @@ const refusal = (f: () => unknown) => {
   }
 };
 
+// Each check refuses with its own message, so a caller can tell which check a document failed.
+const NOT_SIGNED_BY_A_TRUST_ROOT = "the known-authors document carries no signature by a trust root";
+const MALFORMED = "the known-authors document's signature by a trust root is not 64 bytes of lowercase hex";
+const DOES_NOT_VERIFY = "the known-authors document's signature by a trust root does not verify";
+
 describe("signed KNOWN_AUTHORS documents", () => {
   it("positive control: a document a trust root signed opens, with its authors, windows and checkpoints", () => {
     const k = openKnownAuthors(signed(doc()), [root]);
@@ -44,22 +49,45 @@ describe("signed KNOWN_AUTHORS documents", () => {
     expect(k.authors("preprod")).toEqual([]);
   });
 
-  it("refuses a document with no signature, one signed by a key that is not a trust root, or one changed after signing", () => {
+  it("refuses a document with no signature, or signed only by keys that are not trust roots, before verifying any signature", () => {
     const good = signed(doc());
-    expect(refusal(() => openKnownAuthors({ document: good.document, signatures: [] }, [root]))).toMatch(/no signature by a trust root/);
-    expect(refusal(() => openKnownAuthors(signed(doc(), random32()), [root]))).toMatch(/no signature by a trust root/);
-    const changed = { ...good, document: good.document.replace("fluxpoint-relay", "fluxpoint-relaY") };
-    expect(refusal(() => openKnownAuthors(changed, [root]))).toMatch(/no signature by a trust root/);
+    expect(refusal(() => openKnownAuthors({ document: good.document, signatures: [] }, [root]))).toBe(NOT_SIGNED_BY_A_TRUST_ROOT);
+    expect(refusal(() => openKnownAuthors(signed(doc(), random32()), [root]))).toBe(NOT_SIGNED_BY_A_TRUST_ROOT);
+    expect(refusal(() => openKnownAuthors({ document: good.document, signatures: [{ key: "ab".repeat(32), signature: good.signatures[0]!.signature }] }, [root]))).toBe(NOT_SIGNED_BY_A_TRUST_ROOT);
   });
 
-  it("signs the domain-separated document bytes, so a signature over the bare document does not count", () => {
+  it("refuses a trust root's signature over other bytes, or made with another key, at Ed25519 verification", () => {
+    const good = signed(doc());
+    const changed = { ...good, document: good.document.replace("fluxpoint-relay", "fluxpoint-relaY") };
+    expect(refusal(() => openKnownAuthors(changed, [root]))).toBe(DOES_NOT_VERIFY);
+    const [byStranger] = signed(doc(), random32()).signatures;
+    expect(refusal(() => openKnownAuthors({ document: good.document, signatures: [{ key: root, signature: byStranger!.signature }] }, [root]))).toBe(DOES_NOT_VERIFY);
+  });
+
+  it("refuses a trust root's signature that is not 64 bytes of lowercase hex without verifying it", () => {
+    const good = signed(doc());
+    const { signature } = good.signatures[0]!;
+    for (const bad of [signature.toUpperCase(), signature.slice(2), `${signature}00`, "zz".repeat(64)]) {
+      expect(refusal(() => openKnownAuthors({ document: good.document, signatures: [{ key: root, signature: bad }] }, [root]))).toBe(MALFORMED);
+    }
+  });
+
+  it("opens a document when any trust-root signature verifies, beside one that does not or one by a stranger", () => {
+    const good = signed(doc());
+    const [byStranger] = signed(doc(), random32()).signatures;
+    const failing = { key: root, signature: byStranger!.signature };
+    expect(openKnownAuthors({ document: good.document, signatures: [failing, ...good.signatures] }, [root]).serial).toBe(1);
+    expect(openKnownAuthors({ document: good.document, signatures: [byStranger!, ...good.signatures] }, [root]).serial).toBe(1);
+  });
+
+  it("signs the domain-separated document bytes, so a signature over the bare document does not verify", () => {
     const d = JSON.stringify(doc());
     const bare = { document: d, signatures: [{ key: root, signature: toHex(ed25519Sign(new Uint8Array(Buffer.from(d)), rootSeed)) }] };
-    expect(refusal(() => openKnownAuthors(bare, [root]))).toMatch(/no signature by a trust root/);
+    expect(refusal(() => openKnownAuthors(bare, [root]))).toBe(DOES_NOT_VERIFY);
   });
 
   it("with no trust root configured, refuses every document", () => {
-    expect(refusal(() => openKnownAuthors(signed(doc()), []))).toMatch(/no signature by a trust root/);
+    expect(refusal(() => openKnownAuthors(signed(doc()), []))).toBe(NOT_SIGNED_BY_A_TRUST_ROOT);
   });
 
   it.each<[string, KnownAuthorsDocument | string, RegExp]>([
@@ -109,7 +137,9 @@ describe("the newest valid document wins, and a revocation needs no registry sca
   });
 
   it("refuses a document that does not verify rather than skipping it", () => {
-    expect(refusal(() => knownAuthors({ documents: [first, signed(doc({ serial: 3 }), random32())], trustRoots: [root] }))).toMatch(/no signature by a trust root/);
+    expect(refusal(() => knownAuthors({ documents: [first, signed(doc({ serial: 3 }), random32())], trustRoots: [root] }))).toBe(NOT_SIGNED_BY_A_TRUST_ROOT);
+    const tampered = signed(doc({ serial: 3 }));
+    expect(refusal(() => knownAuthors({ documents: [first, { ...tampered, document: tampered.document.replace('"serial":3', '"serial":4') }], trustRoots: [root] }))).toBe(DOES_NOT_VERIFY);
   });
 
   it("refuses two different documents with the same serial", () => {
