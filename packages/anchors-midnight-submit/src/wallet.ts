@@ -68,21 +68,23 @@ export interface WalletSnapshot {
   dust: string;
 }
 
-// The wallet's saved state, or null before it first saves one. A state saved by another wallet
-// or on another network is refused, as is a file group or others can read.
-export function readWalletState(file: string, network: MidnightNetwork, addresses: WalletAddresses): WalletSnapshot | null {
+// The wallet's saved state, or null before it first saves one. A state saved by another wallet,
+// on another network or from another indexer (whose event ids its offsets do not name) is
+// refused, as is a file group or others can read.
+export function readWalletState(file: string, network: MidnightNetwork, addresses: WalletAddresses, indexer: string): WalletSnapshot | null {
   if (!existsSync(file)) return null;
-  const saved = JSON.parse(readPrivateFile(file)) as { network: string; addresses: WalletAddresses } & WalletSnapshot;
+  const saved = JSON.parse(readPrivateFile(file)) as { network: string; addresses: WalletAddresses; indexer: string } & WalletSnapshot;
   if (saved.network !== network) throw new Error(`${file} was saved on ${saved.network}, not ${network}`);
   if ((["unshielded", "shielded", "dust"] as const).some((role) => saved.addresses[role] !== addresses[role])) throw new Error(`${file} was saved by another wallet`);
+  if (saved.indexer !== indexer) throw new Error(`${file} was synced from ${saved.indexer}, not ${indexer}`);
   return { shielded: saved.shielded, unshielded: saved.unshielded, dust: saved.dust };
 }
 
 // Replaces the saved state atomically with a file only its owner can read.
-export function writeWalletState(file: string, network: MidnightNetwork, addresses: WalletAddresses, snapshot: WalletSnapshot): void {
+export function writeWalletState(file: string, network: MidnightNetwork, addresses: WalletAddresses, indexer: string, snapshot: WalletSnapshot): void {
   const next = `${file}.next`;
   rmSync(next, { force: true });
-  writePrivateFile(next, JSON.stringify({ network, addresses, ...snapshot }));
+  writePrivateFile(next, JSON.stringify({ network, addresses, indexer, ...snapshot }));
   renameSync(next, file);
 }
 
@@ -112,7 +114,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       }
     }
   }
-  const saved = options.stateFile ? readWalletState(options.stateFile, network, addresses) : null;
+  const saved = options.stateFile ? readWalletState(options.stateFile, network, addresses, endpoints.indexer) : null;
   const transport = await credentialRelay(endpoints);
   const submitTo = (tx: L.FinalizedTransaction) => broadcast(source, tx.serialize());
   const configuration = {
@@ -167,7 +169,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
   const saveState = async () => {
     if (!options.stateFile) throw new Error("the wallet was opened without a state file");
     const [shielded, unshielded, dust] = await Promise.all([facade.shielded.serializeState(), facade.unshielded.serializeState(), facade.dust.serializeState()]);
-    writeWalletState(options.stateFile, network, addresses, { shielded, unshielded, dust });
+    writeWalletState(options.stateFile, network, addresses, endpoints.indexer, { shielded, unshielded, dust });
   };
 
   return {
