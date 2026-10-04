@@ -10,6 +10,26 @@ export {
   readAuthorSecret,
 } from "./commitment.js";
 export type { AnchorKind, EntryHashes, Hash32 } from "./commitment.js";
+export {
+  DEFAULT_MAX_SET_CHANGES,
+  decodeFinalityProof,
+  decodeJustification,
+  justifiedTarget,
+  supermajority,
+  verifyFinality,
+} from "./grandpa.js";
+export type { AuthoritySet, BlockRef, FinalityCheckpoint, FinalityProof, FinalityResult, FinalityRpc, GrandpaJustification } from "./grandpa.js";
+export { blockfrostEndpoints, finalityRpc, midnightSource } from "./source.js";
+export type { IndexedTransaction, MidnightSource, SourceEndpoints } from "./source.js";
+export {
+  headerFromRpc,
+  headerHash,
+  includedTransactionIndex,
+  midnightTransactionIn,
+  orderedTrieRoot,
+  scheduledAuthorityChange,
+} from "./substrate.js";
+export type { BlockHeader, RpcHeader, WeightedAuthority } from "./substrate.js";
 export { KNOWN_RUNTIME_SPEC_VERSIONS, MIDNIGHT_REGISTRIES, assertRegistryGenerations } from "./registries.js";
 export type { MidnightNetwork, RegistryInfo } from "./registries.js";
 export {

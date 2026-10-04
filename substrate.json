@@ -53,14 +53,29 @@
       "status": "experimental"
     },
     {
+      "id": "grandpa-finality-verifier",
+      "name": "GRANDPA finality and strict inclusion verifier",
+      "desc": "Decides from untrusted grandpa_proveFinality and chain_getHeader answers (batched JSON-RPC) whether a block is final, trusting only given checkpoints: it follows each authority set change from the nearest checkpoint below the block (the outgoing set's supermajority-signed justification of a set-change block whose header hashes to it and names the next set in FRNK; forced and delayed changes refused), then checks the finalizing set's justification and the header chain down to the block. Cost is bounded by maxSetChanges (default 2016, six weeks of 30-minute sets, about 6.7 KB each), never by chain age. Inclusion is a strict decode: the ordered-trie (layout V1) extrinsicsRoot of the body and exactly one bare Midnight.send_mn_transaction(tx) extrinsic, never a byte search. Golden vectors from Midnight mainnet and preprod; Materios, also a GRANDPA chain, can verify against it.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight/src/grandpa.ts",
+        "packages/anchors-midnight/src/substrate.ts",
+        "packages/anchors-midnight/src/scale.ts",
+        "packages/anchors-midnight/src/ed25519.ts"
+      ],
+      "consumes": [],
+      "status": "experimental"
+    },
+    {
       "id": "anchors-midnight",
       "name": "Midnight anchor toolkit",
-      "desc": "Computes commitments with the compiled contract's own pure circuits (entryCommitment, hiddenDigest, hidingCommitment, deriveSalt, authorKey), writes and reads random author key files only their owner can read, lists the deployed registry generations per network (none yet) with their pinned verifier keys and runtime, and builds the registry's exact deploy state from the compiled constructor and the sha256-pinned verifier keys, and refuses anything else: assertImmutableAuthority (committee [], threshold 1, counter 0), assertRegistryState (operations, canonical verifier keys, schema) and assertRegistryDeployBytes, which decodes the exact deploy bytes before or after proving and requires the initial state byte for byte. Private until the mainnet registry exists.",
+      "desc": "Computes commitments with the compiled contract's own pure circuits (entryCommitment, hiddenDigest, hidingCommitment, deriveSalt, authorKey), writes and reads random author key files only their owner can read, lists the deployed registry generations per network (none yet) with their pinned verifier keys and runtime, reads a Midnight indexer and node through midnightSource (Blockfrost endpoints with the project id read from an owner-only file and kept out of every error), and builds the registry's exact deploy state from the compiled constructor and the sha256-pinned verifier keys, and refuses anything else: assertImmutableAuthority (committee [], threshold 1, counter 0), assertRegistryState (operations, canonical verifier keys, schema) and assertRegistryDeployBytes, which decodes the exact deploy bytes before or after proving and requires the initial state byte for byte. Private until the mainnet registry exists.",
       "kind": "toolkit",
       "paths": [
         "packages/anchors-midnight"
       ],
       "consumes": [
+        "grandpa-finality-verifier",
         "orynq-anchor-registry",
         "process-trace"
       ],

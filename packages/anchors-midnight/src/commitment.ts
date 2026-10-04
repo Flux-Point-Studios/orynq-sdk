@@ -1,5 +1,6 @@
-import { closeSync, fstatSync, openSync, readFileSync, writeSync, constants } from "node:fs";
+import { closeSync, constants, openSync, writeSync } from "node:fs";
 import { pureCircuits } from "../contract/managed/contract/index.js";
+import { readPrivateFile } from "./private-file.js";
 
 // The kinds the registry writes: anchor() refuses kind 2, which only anchor_hiding() writes.
 // A verifier rejects every other kind.
@@ -12,7 +13,7 @@ const HEX64 = /^[0-9a-fA-F]{64}$/;
 const ZERO32 = new Uint8Array(32);
 
 // 32 bytes, or 64 hex characters with an optional "sha256:" or "0x" prefix, the forms
-// process-trace and anchors-cardano write hashes in. Errors name the field, never the value.
+// process-trace and anchors-cardano write hashes in. Errors name the field and omit the value.
 export function hash32(value: Hash32, name: string): Uint8Array {
   if (value instanceof Uint8Array) {
     if (value.length !== 32) throw new Error(`${name} must be 32 bytes, got ${value.length}`);
@@ -59,8 +60,8 @@ export function authorKey(secret: Hash32): Uint8Array {
 }
 
 // Writes a fresh random author secret, as 64 hex characters, to a new file only its owner can
-// read, and returns the public author key. It never replaces an existing file, and the secret
-// is drawn at random rather than derived from any wallet seed.
+// read, and returns the public author key. It never replaces an existing file. The secret is 32
+// bytes from the platform CSPRNG, unrelated to any wallet seed.
 export function createAuthorKeyFile(path: string): string {
   const secret = crypto.getRandomValues(new Uint8Array(32));
   const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
@@ -75,22 +76,7 @@ export function createAuthorKeyFile(path: string): string {
 // Reads an author secret written by createAuthorKeyFile, refusing a symlink, anything but a
 // regular file the caller owns, and a file group or others can read or write.
 export function readAuthorSecret(path: string): Uint8Array {
-  let fd: number;
-  try {
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ELOOP") throw new Error(`${path} is not a regular file`);
-    throw error;
-  }
-  try {
-    const stat = fstatSync(fd);
-    if (!stat.isFile()) throw new Error(`${path} is not a regular file`);
-    if (process.getuid !== undefined && stat.uid !== process.getuid()) throw new Error(`${path} is not owned by the caller`);
-    if (stat.mode & 0o077) throw new Error(`${path} can be read or written by group or others`);
-    const text = readFileSync(fd, "utf8").replace(/\n$/, "");
-    if (!HEX64.test(text)) throw new Error(`${path} must hold exactly 64 hex characters`);
-    return new Uint8Array(Buffer.from(text, "hex"));
-  } finally {
-    closeSync(fd);
-  }
+  const text = readPrivateFile(path);
+  if (!HEX64.test(text)) throw new Error(`${path} must hold exactly 64 hex characters`);
+  return new Uint8Array(Buffer.from(text, "hex"));
 }

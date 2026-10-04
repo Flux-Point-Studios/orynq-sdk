@@ -66,6 +66,43 @@ a file group or others can read or write.
 Each entry pins its address, deploy transaction, the runtime whose extrinsic layout the decoder
 knows (spec 1000300), and this contract's verifier keys, which `assertRegistryGenerations` checks.
 
+## Finality and inclusion
+
+`verifyFinality` decides whether a block is final under GRANDPA from data any untrusted source
+supplies (`grandpa_proveFinality` and `chain_getHeader`, batched), trusting only the
+checkpoints it is given. A checkpoint names a GRANDPA set id, its weighted authorities, and the
+set-change block after which that set finalizes. From the nearest checkpoint below the block,
+the verifier follows each set change: the outgoing set must justify the set-change block with a
+supermajority of its weight (finality-grandpa's threshold, `total - (total - 1) / 3`), and that
+block's header, which must hash to the justified hash, names the next set in its FRNK log; a
+forced or delayed change stops the walk. The set that finalized the block must then justify a block
+at or above it, and the headers in its proof must chain down to the block's hash.
+
+Trust assumption: "consensus-verified" means that the checkpoint really is that GRANDPA set, and
+that every set from it to the block had more than two thirds of its weight honest. Signatures
+are Ed25519 (OpenSSL, RFC 8032 strict, which can refuse a ZIP-215 signature Substrate accepts
+but never accept one it refuses) and headers BLAKE2b-256.
+
+Cost: one batched request per 64 set changes for the proofs and one for the headers, about 6.7 KB
+per set change on mainnet, where a set lasts 300 blocks (30 minutes). The walk stops after
+`maxSetChanges` (default 2016, six weeks) and reports the block not finalized, so the cost never
+grows with the chain's age; a fresher checkpoint is the remedy. A finalized result returns the
+set that justified the block as a checkpoint the caller can keep.
+
+Inclusion is a strict decode, never a byte search. `orderedTrieRoot` recomputes a block body's
+`extrinsicsRoot` (trie layout V1, which Midnight's state version 3 selects), and
+`includedTransactionIndex` finds the one extrinsic that is exactly a bare
+`Midnight.send_mn_transaction(tx)` (pallet 5, call 0 in runtime 1000300) with nothing before or
+after the transaction. Only a bare extrinsic counts, because for those the runtime runs the
+ledger's full `well_formed` check, proofs included, in `pre_dispatch`: a block holding one is
+invalid unless the transaction is, so inclusion in a final block means consensus checked the
+proof. A transaction carried inside another call, another pallet, a signed or general extrinsic,
+or another transaction's bytes is not included.
+
+`midnightSource` reads a Midnight indexer (GraphQL) and node (JSON-RPC); `blockfrostEndpoints`
+points it at Blockfrost, with the project id read from a file only its owner can read and sent
+as a header. No error, status or echoed body carries the project id.
+
 ## Reproducing the build
 
 ```
