@@ -9,6 +9,10 @@ overrides:
   ip-address@9: ^10.3.1
   undici@5: ^6.29.0
   esbuild@0.27: ^0.28.1
+  '@midnight-ntwrk/compact-runtime': 0.16.0
+  '@midnight-ntwrk/ledger-v8': 8.1.3
+  '@midnight-ntwrk/onchain-runtime-v3': 3.1.2
+  '@midnight-ntwrk/zkir-v2': 2.1.1
 
 importers:
 
@@ -67,7 +71,7 @@ importers:
         version: 5.9.3
       viem:
         specifier: ^2.7.0
-        version: 2.56.9(typescript@5.9.3)
+        version: 2.56.9(typescript@5.9.3)(zod@3.25.76)
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@20.19.39)(@vitest/coverage-v8@4.1.11)(vite@8.3.1)
@@ -106,6 +110,37 @@ importers:
       '@polkadot/util-crypto':
         specifier: ^13.0.0
         version: 13.5.9(@polkadot/util@13.5.9)
+      tsup:
+        specifier: ^8.0.1
+        version: 8.5.1(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@20.19.39)(@vitest/coverage-v8@4.1.11)(vite@8.3.1)
+
+  packages/anchors-midnight:
+    dependencies:
+      '@midnight-ntwrk/compact-runtime':
+        specifier: 0.16.0
+        version: 0.16.0
+      '@midnight-ntwrk/ledger-v8':
+        specifier: 8.1.3
+        version: 8.1.3
+      '@midnight-ntwrk/onchain-runtime-v3':
+        specifier: 3.1.2
+        version: 3.1.2
+    devDependencies:
+      '@fluxpointstudios/orynq-sdk-process-trace':
+        specifier: workspace:*
+        version: link:../process-trace
+      '@midnight-ntwrk/zkir-v2':
+        specifier: 2.1.1
+        version: 2.1.1
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.39
       tsup:
         specifier: ^8.0.1
         version: 8.5.1(tsx@4.21.0)(typescript@5.9.3)
@@ -158,7 +193,7 @@ importers:
         version: 11.1.0
       viem:
         specifier: ^2.7.0
-        version: 2.56.9(typescript@5.9.3)
+        version: 2.56.9(typescript@5.9.3)(zod@3.25.76)
     devDependencies:
       tsup:
         specifier: ^8.0.1
@@ -288,8 +323,8 @@ importers:
         specifier: workspace:*
         version: link:../process-trace
       '@midnight-ntwrk/compact-runtime':
-        specifier: ^0.14.0
-        version: 0.14.0
+        specifier: 0.16.0
+        version: 0.16.0
     devDependencies:
       '@types/node':
         specifier: ^20.0.0
@@ -437,7 +472,7 @@ importers:
         version: 5.9.3
       viem:
         specifier: ^2.7.0
-        version: 2.56.9(typescript@5.9.3)
+        version: 2.56.9(typescript@5.9.3)(zod@3.25.76)
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@20.19.39)(@vitest/coverage-v8@4.1.11)(vite@8.3.1)
@@ -465,7 +500,7 @@ importers:
         version: 5.9.3
       viem:
         specifier: ^2.7.0
-        version: 2.56.9(typescript@5.9.3)
+        version: 2.56.9(typescript@5.9.3)(zod@3.25.76)
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@20.19.39)(@vitest/coverage-v8@4.1.11)(vite@8.3.1)
@@ -584,7 +619,7 @@ importers:
         version: 5.9.3
       viem:
         specifier: ^2.7.0
-        version: 2.56.9(typescript@5.9.3)
+        version: 2.56.9(typescript@5.9.3)(zod@3.25.76)
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@20.19.39)(@vitest/coverage-v8@4.1.11)(vite@8.3.1)
@@ -2489,17 +2524,25 @@ packages:
       - utf-8-validate
     dev: true
 
-  /@midnight-ntwrk/compact-runtime@0.14.0:
-    resolution: {integrity: sha512-VfZmfPDedRUPAYIhKAgS5y+KtxOkSSOCS24PAsGMjhMpzJaaWVSd5SajF6HtNZsciL54sqru4EpWvmCAqsbmYQ==}
+  /@midnight-ntwrk/compact-runtime@0.16.0:
+    resolution: {integrity: sha512-UR8+MI5zol+gkne17ZZru8xmZNf11xMgQJkiLT9KWsF+QD8Wuz1WONaqQLL0RAZ2aN2XlRsBFd0ViKDVh8prFw==}
     dependencies:
-      '@midnight-ntwrk/onchain-runtime-v2': 2.0.1
+      '@midnight-ntwrk/onchain-runtime-v3': 3.1.2
       '@types/object-inspect': 1.13.0
       object-inspect: 1.13.4
     dev: false
 
-  /@midnight-ntwrk/onchain-runtime-v2@2.0.1:
-    resolution: {integrity: sha512-nVtDyPaWD14thZuSz/MVUNNkv4HO2nYf3E3QbaRCE4UR+jKnUrd0s/BN0fLpnrYFlcMNHS7/sZqAeosV80tsOQ==}
+  /@midnight-ntwrk/ledger-v8@8.1.3:
+    resolution: {integrity: sha512-Y8G9tN8SeiuxzIMnUViCPD0QwBdz5EDH8XcE03iCLbEcoE7gvBWzqOSmUW78/DssriOlzJLasPi71y2XvxVs5g==}
     dev: false
+
+  /@midnight-ntwrk/onchain-runtime-v3@3.1.2:
+    resolution: {integrity: sha512-BQjmK6yVbHnRt9/l013ek3doLbmjaP08fbwSsphhIbEKIhaUZ5eW7oj8mc7DFDU7qtK35oLNr9GaiujHMXKZvQ==}
+    dev: false
+
+  /@midnight-ntwrk/zkir-v2@2.1.1:
+    resolution: {integrity: sha512-U3sh3kM8bj3BPqWov5o6ewLcq6SJ/tscJD5wATG6LVzqlKWUVudeb7QzUUHXmzeV8XMGgt97+lol/Gnc101Eqw==}
+    dev: true
 
   /@modelcontextprotocol/sdk@1.30.1(zod@3.25.76):
     resolution: {integrity: sha512-H2HxLvC3HDNybePJaLdSrU1hhUK5iQw+WvV1b01myFyI7sdVGe1u/IPTE5D9fGCiJDVtgMV/lmFkQXLmQyIFYA==}
@@ -3559,7 +3602,7 @@ packages:
   /@types/base32-encoding@1.0.2:
     resolution: {integrity: sha512-6kXiZ8gETqBU/B9ddcw15nwacX4iX9mLZTU0kghWK5u+OdjfJg6vxHh/vXoURWTyLSzs2jKgcq1lS3S/Tvl4mw==}
     dependencies:
-      '@types/node': 26.6.3
+      '@types/node': 20.19.39
     dev: true
 
   /@types/bn.js@5.2.0:
@@ -3643,12 +3686,6 @@ packages:
     resolution: {integrity: sha512-orrrD74MBUyK8jOAD/r0+lfa1I2MO6I+vAkmAWzMYbCcgrN4lCrmK52gRFQq/JRxfYPfonkr4b0jcY7Olqdqbw==}
     dependencies:
       undici-types: 6.21.0
-
-  /@types/node@26.6.3:
-    resolution: {integrity: sha512-dsqMQQoeTLqu9wynDD00q573mNzso3IdQOAfHRJqLCcmCFPoGo9A1bDpUcv/9tnKpErQWv9uKeGfl37EIS02Yg==}
-    dependencies:
-      undici-types: 8.9.0
-    dev: true
 
   /@types/object-inspect@1.13.0:
     resolution: {integrity: sha512-lwGTVESDDV+XsQ1pH4UifpJ1f7OtXzQ6QBOX2Afq2bM/T3oOt8hF6exJMjjIjtEWeAN2YAo25J7HxWh97CCz9w==}
@@ -3962,19 +3999,6 @@ packages:
     requiresBuild: true
     optional: true
 
-  /abitype@1.2.3(typescript@5.9.3):
-    resolution: {integrity: sha512-Ofer5QUnuUdTFsBRwARMoWKOH1ND5ehwYhJ3OJ/BQO+StkwQjHw0XyVh4vDttzHB7QOFhPHa/o413PJ82gU/Tg==}
-    peerDependencies:
-      typescript: '>=5.0.4'
-      zod: ^3.22.0 || ^4.0.0
-    peerDependenciesMeta:
-      typescript:
-        optional: true
-      zod:
-        optional: true
-    dependencies:
-      typescript: 5.9.3
-
   /abitype@1.2.3(typescript@5.9.3)(zod@3.25.76):
     resolution: {integrity: sha512-Ofer5QUnuUdTFsBRwARMoWKOH1ND5ehwYhJ3OJ/BQO+StkwQjHw0XyVh4vDttzHB7QOFhPHa/o413PJ82gU/Tg==}
     peerDependencies:
@@ -3988,7 +4012,6 @@ packages:
     dependencies:
       typescript: 5.9.3
       zod: 3.25.76
-    dev: false
 
   /abort-error@1.0.2:
     resolution: {integrity: sha512-lVgvB2NyPLqbXXhVmXcYFTC1x5K7CiVdPgdY7LGgFQWC8506oN01sPN3i9cl9ynuwF4iJ0TS9exnR7cZ9FuX4w==}
@@ -6355,26 +6378,6 @@ packages:
     resolution: {integrity: sha512-/jHxFIzoMXdqPzTaCpFzAAWhpkSjZPF4Vsn6jAfNpmbH/ymsmd7Qc6VE9BGn0L6YMj6uwpQLxCECpus4ukKS9Q==}
     dev: true
 
-  /ox@0.14.45(typescript@5.9.3):
-    resolution: {integrity: sha512-jpsQ+p0JZh9mKCxxzxz0d5qFHZZg2/O9xW18IpEC/dNXXPVqmDJ0c//9RMz0CILkbSGPA42+cbU0fC/ghwJ03w==}
-    peerDependencies:
-      typescript: '>=5.4.0'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
-    dependencies:
-      '@adraffy/ens-normalize': 1.11.1
-      '@noble/ciphers': 1.3.0
-      '@noble/curves': 1.9.1
-      '@noble/hashes': 1.8.0
-      '@scure/bip32': 1.7.0
-      '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@5.9.3)
-      eventemitter3: 5.0.1
-      typescript: 5.9.3
-    transitivePeerDependencies:
-      - zod
-
   /ox@0.14.45(typescript@5.9.3)(zod@3.25.76):
     resolution: {integrity: sha512-jpsQ+p0JZh9mKCxxzxz0d5qFHZZg2/O9xW18IpEC/dNXXPVqmDJ0c//9RMz0CILkbSGPA42+cbU0fC/ghwJ03w==}
     peerDependencies:
@@ -6394,7 +6397,6 @@ packages:
       typescript: 5.9.3
     transitivePeerDependencies:
       - zod
-    dev: false
 
   /p-filter@2.1.0:
     resolution: {integrity: sha512-ZBxxZ5sL2HghephhpGAQdoskxplTwr7ICaehZwLIlfL6acuVgZPm8yBNuRAFBGEqtD/hmUeq9eqLg2ys9Xr/yw==}
@@ -7508,10 +7510,6 @@ packages:
   /undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
-  /undici-types@8.9.0:
-    resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
-    dev: true
-
   /undici@6.29.0:
     resolution: {integrity: sha512-R+RODBqp6i2pPflGdq+xIOUkl+RNfGgHwoinecKu/JCuf2uO06cOKoDbI2P7Dn6KcswdKwrczbU6IYJ6K8X+wg==}
     engines: {node: '>=18.17'}
@@ -7555,28 +7553,6 @@ packages:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
     engines: {node: '>= 0.8'}
 
-  /viem@2.56.9(typescript@5.9.3):
-    resolution: {integrity: sha512-UC1G0Qz+RbPKqwl6yRrp3dH6ltrOmUcFJMTcOyE1Mg0nO5lxrEBTONh/8OFWPnALGuN/O7LkNcz/IsSj83Svqw==}
-    peerDependencies:
-      typescript: '>=5.0.4'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
-    dependencies:
-      '@noble/curves': 1.9.1
-      '@noble/hashes': 1.8.0
-      '@scure/bip32': 1.7.0
-      '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@5.9.3)
-      isows: 1.0.7(ws@8.21.0)
-      ox: 0.14.45(typescript@5.9.3)
-      typescript: 5.9.3
-      ws: 8.21.0
-    transitivePeerDependencies:
-      - bufferutil
-      - utf-8-validate
-      - zod
-
   /viem@2.56.9(typescript@5.9.3)(zod@3.25.76):
     resolution: {integrity: sha512-UC1G0Qz+RbPKqwl6yRrp3dH6ltrOmUcFJMTcOyE1Mg0nO5lxrEBTONh/8OFWPnALGuN/O7LkNcz/IsSj83Svqw==}
     peerDependencies:
@@ -7598,7 +7574,6 @@ packages:
       - bufferutil
       - utf-8-validate
       - zod
-    dev: false
 
   /vite@8.3.1(@types/node@20.19.39)(esbuild@0.28.2)(tsx@4.21.0):
     resolution: {integrity: sha512-/bvH9E9tmCXRGp2uXY3WbOldqpTwFkbha/8ANaEQ6VkxhH60KyqLwgZq6lG2y+4uT55x9+9eUHMpQ7uGnOCKjA==}
@@ -7876,4 +7851,3 @@ packages:
 
   /zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
-    dev: false

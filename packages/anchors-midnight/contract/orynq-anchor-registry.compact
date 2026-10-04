@@ -1,0 +1,83 @@
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+
+// orynq-anchor-registry v1: an ownerless, append-only log of orynq anchors.
+//
+// Each anchor is one transaction whose guaranteed transcript carries its commitment, kind,
+// author key and attribute. The ledger keeps only the last anchor and a counter, so the state
+// never grows, and neither circuit reads state (no popeq), so concurrent anchors never conflict.
+//
+// Every digest is plain SHA-256 over 32-byte words: persistentHash of a Vector of Bytes<32>
+// hashes their concatenation, and persistentCommit(v, s) hashes s followed by v.
+//
+// What anchor_hiding proves, and no more: the author knows an opening (root_hash,
+// manifest_hash, merkle_root, salt) such that
+//   last_commitment == hiding_commitment(hidden_digest(root_hash, manifest_hash, merkle_root, attribute), salt).
+// The published attribute is therefore bound to the published commitment: no opening of that
+// commitment carries another attribute. The circuit never checks the attribute against the
+// trace. root_hash is opaque here, and process-trace folds the model manifest into root_hash
+// inside a variable-length string this circuit never reads, so a trace that ran under manifest
+// B can be committed with attribute A. Only a holder of the opening and the bundle can check
+// that the two agree.
+
+export struct HiddenEntry {
+  root_hash: Bytes<32>;
+  manifest_hash: Bytes<32>;
+  merkle_root: Bytes<32>;
+  salt: Bytes<32>;
+}
+
+export sealed ledger schema: Bytes<32>;
+export ledger anchors: Counter;
+export ledger last_commitment: Bytes<32>;
+export ledger last_kind: Uint<8>;
+export ledger last_author: Bytes<32>;
+export ledger last_attribute: Bytes<32>;
+
+witness author_secret(): Bytes<32>;
+witness hidden_entry(): HiddenEntry;
+
+constructor() {
+  schema = pad(32, "orynq-anchor-registry:v1");
+}
+
+export pure circuit author_key(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "orynq:anchor:author:v1"), sk]);
+}
+
+export pure circuit entry_digest(root_hash: Bytes<32>, manifest_hash: Bytes<32>, merkle_root: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([pad(32, "orynq:anchor-entry:v1"), root_hash, manifest_hash, merkle_root]);
+}
+
+export pure circuit hidden_digest(root_hash: Bytes<32>, manifest_hash: Bytes<32>, merkle_root: Bytes<32>, attribute: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<5, Bytes<32>>>([pad(32, "orynq:anchor-hidden:v1"), root_hash, manifest_hash, merkle_root, attribute]);
+}
+
+export pure circuit hiding_commitment(digest: Bytes<32>, salt: Bytes<32>): Bytes<32> {
+  return persistentCommit<Bytes<32>>(digest, salt);
+}
+
+// The kind-2 salt a signer derives from its salt key; it never enters a proof.
+export pure circuit derive_salt(salt_key: Bytes<32>, digest: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "orynq:anchor-salt:v1"), salt_key, digest]);
+}
+
+export circuit anchor(commitment: Bytes<32>, kind: Uint<8>): [] {
+  assert(kind != 2, "kind 2 is written only by anchor_hiding");
+  last_commitment = disclose(commitment);
+  last_kind = disclose(kind);
+  last_attribute = default<Bytes<32>>;
+  last_author = disclose(author_key(author_secret()));
+  anchors.increment(1);
+}
+
+export circuit anchor_hiding(attribute: Bytes<32>): [] {
+  const e = hidden_entry();
+  const c = hiding_commitment(hidden_digest(e.root_hash, e.manifest_hash, e.merkle_root, attribute), e.salt);
+  last_commitment = disclose(c);
+  last_kind = 2;
+  last_attribute = disclose(attribute);
+  last_author = disclose(author_key(author_secret()));
+  anchors.increment(1);
+}

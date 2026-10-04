@@ -41,6 +41,32 @@
       "status": "live"
     },
     {
+      "id": "orynq-anchor-registry",
+      "name": "Orynq anchor registry (Midnight)",
+      "desc": "Compact contract (compactc 0.31.1) that records orynq anchors on Midnight with a maintenance authority of committee [], threshold 1, counter 0, so no update can ever apply. anchor(commitment, kind) refuses kind 2; anchor_hiding(attribute) computes a SHA-256 hiding commitment in-circuit from a private opening and binds the attribute to that commitment, not to the trace; neither reads state. Pure circuits author_key, entry_digest, hidden_digest, hiding_commitment and derive_salt are plain SHA-256. compile.sh --check reproduces the committed managed/ byte for byte with the sha256-pinned compactc from tools/compactc.",
+      "kind": "contract",
+      "paths": [
+        "packages/anchors-midnight/contract",
+        "tools/compactc"
+      ],
+      "consumes": [],
+      "status": "experimental"
+    },
+    {
+      "id": "anchors-midnight",
+      "name": "Midnight anchor toolkit",
+      "desc": "Builds the registry's exact deploy state from the compiled constructor and the sha256-pinned verifier keys, and refuses anything else: assertImmutableAuthority (committee [], threshold 1, counter 0), assertRegistryState (operations, canonical verifier keys, schema) and assertRegistryDeployBytes, which decodes the exact deploy bytes before or after proving and requires the initial state byte for byte. Private until the mainnet registry exists.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight"
+      ],
+      "consumes": [
+        "orynq-anchor-registry",
+        "process-trace"
+      ],
+      "status": "experimental"
+    },
+    {
       "id": "tool-receipts",
       "name": "Tool-call receipts",
       "desc": "Verifiable tool-call receipts with RFC 9421, webhook-signature and JWS verifiers for the process-trace SDK.",

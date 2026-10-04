@@ -32,6 +32,19 @@ steps:
       - pytest python/tests/
       - python scripts/verify-hash-vectors.py
 
+  # The registry contract is immutable once deployed: its committed build must be exactly what
+  # the sha256-pinned compiler produces, and proving must keep every secret out of the bytes a
+  # submitter sends. Proving takes about a minute on one core, so it runs at the lowest priority.
+  - name: midnight-contract
+    image: node:20-bookworm
+    depends_on: []
+    commands:
+      - corepack enable
+      - tools/compactc/install.sh /tmp/compactc /tmp/zk-params
+      - COMPACTC=/tmp/compactc/compactc MIDNIGHT_PP=/tmp/zk-params nice -n 19 packages/anchors-midnight/contract/compile.sh --check
+      - pnpm install --frozen-lockfile --filter @fluxpointstudios/orynq-sdk-anchors-midnight...
+      - cd packages/anchors-midnight && MIDNIGHT_PP=/tmp/zk-params nice -n 19 pnpm test:slow
+
   - name: path-check
     image: alpine:3.20
     depends_on: []
