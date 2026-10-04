@@ -31,7 +31,7 @@ beforeAll(async () => {
 });
 afterAll(() => server.close());
 
-const source = () => midnightSource({ operator: "test", indexer: `${base}/indexer`, node: `${base}/node`, headers: { project_id: TOKEN } });
+const source = () => midnightSource({ operator: "test", indexer: `${base}/indexer`, indexerWs: "ws://127.0.0.1:1/ws", node: `${base}/node`, headers: { project_id: TOKEN } });
 const failure = async (p: Promise<unknown>) => (await p.then(() => "resolved", (e: Error) => e.message)) as string;
 
 describe("midnightSource", () => {
@@ -125,6 +125,7 @@ describe("blockfrostEndpoints", () => {
     expect(e).toEqual({
       operator: "blockfrost",
       indexer: "https://midnight-mainnet.blockfrost.io/api/v0",
+      indexerWs: "wss://midnight-mainnet.blockfrost.io/api/v0/ws",
       node: "https://rpc.midnight-mainnet.blockfrost.io",
       headers: { project_id: TOKEN },
     });
@@ -143,5 +144,106 @@ describe("blockfrostEndpoints", () => {
     }
     expect(message).toMatch(/open\.project_id can be read or written by group or others/);
     expect(message).not.toContain(TOKEN.slice(4, 20));
+  });
+});
+
+// A WebSocket that plays the indexer's side of graphql-transport-ws from a script.
+class ScriptedSocket {
+  static last: ScriptedSocket;
+  static script: (socket: ScriptedSocket, message: { type: string; id?: string; payload?: any }) => void = () => {};
+  readonly sent: Array<{ type: string; id?: string; payload?: any }> = [];
+  onopen: (() => void) | null = null;
+  onmessage: ((m: { data: string }) => void) | null = null;
+  onerror: ((e: { message?: string }) => void) | null = null;
+  onclose: ((e: { code: number; reason: string }) => void) | null = null;
+  closed = false;
+  constructor(
+    readonly url: string,
+    readonly init: { protocols: string[]; headers: Record<string, string> },
+  ) {
+    ScriptedSocket.last = this;
+    queueMicrotask(() => this.onopen?.());
+  }
+  send(data: string) {
+    const message = JSON.parse(data);
+    this.sent.push(message);
+    queueMicrotask(() => ScriptedSocket.script(this, message));
+  }
+  emit(message: unknown) {
+    this.onmessage?.({ data: JSON.stringify(message) });
+  }
+  close() {
+    this.closed = true;
+  }
+}
+
+describe("midnightSource's indexer subscription", () => {
+  const action = (height: number, id: number) => ({ transaction: { id, hash: `${String(id).padStart(2, "0")}`.repeat(32), raw: "00ff", block: { height, hash: "cd".repeat(32) } } });
+  const withSockets = async <T>(script: typeof ScriptedSocket.script, run: () => Promise<T>) => {
+    const original = globalThis.WebSocket;
+    ScriptedSocket.script = script;
+    (globalThis as { WebSocket: unknown }).WebSocket = ScriptedSocket;
+    try {
+      return await run();
+    } finally {
+      (globalThis as { WebSocket: unknown }).WebSocket = original;
+    }
+  };
+  const src = () => midnightSource({ operator: "test", indexer: `${base}/indexer`, indexerWs: "ws://127.0.0.1:1/ws", node: `${base}/node`, headers: { project_id: TOKEN } });
+
+  it("subscribes with the credential in a header, never in the URL, and yields actions in order until closed", async () => {
+    const got = await withSockets(
+      (socket, m) => {
+        if (m.type === "connection_init") socket.emit({ type: "connection_ack" });
+        if (m.type === "subscribe") for (const [h, id] of [[10, 1], [12, 2], [15, 3]]) socket.emit({ id: m.id, type: "next", payload: { data: { contractActions: action(h!, id!) } } });
+      },
+      async () => {
+        const out = [];
+        const actions = src().indexer.contractActions("ef".repeat(32), 10);
+        for await (const a of actions) {
+          out.push(a);
+          if (out.length === 2) break;
+        }
+        return out;
+      },
+    );
+    expect(got).toEqual([
+      { txHash: "01".repeat(32), transactionId: 1, raw: "00ff", block: { height: 10, hash: "cd".repeat(32) } },
+      { txHash: "02".repeat(32), transactionId: 2, raw: "00ff", block: { height: 12, hash: "cd".repeat(32) } },
+    ]);
+    const socket = ScriptedSocket.last;
+    expect(socket.url).toBe("ws://127.0.0.1:1/ws");
+    expect(socket.init).toEqual({ protocols: ["graphql-transport-ws"], headers: { project_id: TOKEN } });
+    expect(socket.sent[1]).toMatchObject({ type: "subscribe", payload: { variables: { address: "ef".repeat(32), height: 10 } } });
+    expect(socket.sent.at(-1)).toMatchObject({ type: "complete" });
+    expect(socket.closed).toBe(true);
+  });
+
+  it("rejects with the indexer's error, redacted, and refuses an address that is not 32 bytes", async () => {
+    const message = await withSockets(
+      (socket, m) => {
+        if (m.type === "connection_init") socket.emit({ type: "connection_ack" });
+        if (m.type === "subscribe") socket.emit({ id: m.id, type: "error", payload: [{ message: `rate limited for ${TOKEN}` }] });
+      },
+      async () => failure((async () => {
+        for await (const _ of src().indexer.contractActions("ef".repeat(32), 1)) void _;
+      })()),
+    );
+    expect(message).toMatch(/test indexer subscription: .*rate limited for <redacted>/);
+    expect(ScriptedSocket.last.closed).toBe(true);
+    expect(await failure((async () => {
+      for await (const _ of src().indexer.contractActions("zz", 1)) void _;
+    })())).toMatch(/must be 64 lowercase hex/);
+  });
+
+  it("reads the indexer's head block and a contract's newest action over HTTP", async () => {
+    handler = (b) =>
+      b.query.includes("contract(")
+        ? { json: { data: { contract: { actions: [{ transaction: { id: 9, block: { height: 70 } } }] } } } }
+        : { json: { data: { block: { height: 99, hash: "ab".repeat(32), timestamp: 1791124488001 } } } };
+    expect(await src().indexer.head()).toEqual({ height: 99, hash: "ab".repeat(32), timestamp: 1791124488001 });
+    expect(await src().indexer.latestAction("ef".repeat(32))).toEqual({ height: 70, transactionId: 9 });
+    handler = () => ({ json: { data: { contract: null } } });
+    expect(await src().indexer.latestAction("ef".repeat(32))).toBeNull();
   });
 });

@@ -87,6 +87,21 @@ export function anchorChain({
         const found = indexed.has(hash) ? [indexed.get(hash)!] : [];
         return indexer[hash] ? indexer[hash]!(found) : found;
       },
+      async head() {
+        const tip = chain.endOf(5);
+        return { height: tip, hash: toHex(headerHash(chain.header(tip))), timestamp: 1_791_000_000_000 + tip * 6000 };
+      },
+      async latestAction() {
+        const [height] = [...placed.keys()].sort((a, b) => b - a);
+        return { height: height!, transactionId: height! };
+      },
+      async *contractActions(address, fromHeight) {
+        for (const [height, p] of [...placed].sort(([a], [b]) => a - b)) {
+          if (height >= fromHeight && address === fixture.registry.address) {
+            yield { txHash: p.txHash, transactionId: height, raw: p.tx, block: { height, hash: toHex(headerHash(chain.header(height))) } };
+          }
+        }
+      },
     },
     node: {
       async call<T>(method: string, params: unknown[] = []) {

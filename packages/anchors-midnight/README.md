@@ -105,6 +105,19 @@ circuit binds the attribute to the commitment and never checks it against the tr
 locally: the npm ledger WASM cannot verify one, and inclusion in a final block is what shows
 consensus did.
 
+## Finding anchors
+
+`findMidnightAnchors({ network, source, fromHeight, toHeight })` lists the anchors a set of
+authors (the KNOWN_AUTHORS document's by default) wrote in a window of at most 20,000 blocks that
+lies at or below the indexer's head. It reads the indexer's `contractActions` subscription for
+each registry generation and decodes every action from its transaction's own bytes; a call to a
+registry that is not an anchor is reported under `rejected`. It stops at the first action past
+the window, when the subscription has delivered the newest action the indexer knows, or after
+`maxActions` actions (default 2,000), returning a cursor to resume from, so strangers anchoring
+in the same window cannot make one call read more than `maxActions` actions. A result is a list
+of candidates: each one is shown final and authentic only by `verifyMidnightAnchor`. Nothing on
+a critical path scans the registry; the submitter reconciles by transaction hash.
+
 ## Known authors
 
 Which author keys a verifier recognizes, over which block heights and in which role, and which

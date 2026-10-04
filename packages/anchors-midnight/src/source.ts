@@ -9,6 +9,7 @@ import type { RpcHeader } from "./substrate.js";
 export interface SourceEndpoints {
   operator: string;
   indexer: string;
+  indexerWs: string;
   node: string;
   headers: Record<string, string>;
 }
@@ -21,10 +22,24 @@ export interface IndexedTransaction {
   contractActions: Array<{ kind: "ContractCall" | "ContractDeploy" | "ContractUpdate"; address: string; state: string; entryPoint?: string }>;
 }
 
+// A contract action as the indexer's contractActions subscription delivers it.
+export interface IndexedAction {
+  txHash: string;
+  // The indexer's sequence number for the transaction, which orders transactions in a block.
+  transactionId: number;
+  raw: string;
+  block: { height: number; hash: string };
+}
+
 export interface MidnightSource {
   operator: string;
   indexer: {
     transactions(hash: string): Promise<IndexedTransaction[]>;
+    head(): Promise<{ height: number; hash: string; timestamp: number }>;
+    latestAction(address: string): Promise<{ height: number; transactionId: number } | null>;
+    // Every action on `address` from block `fromHeight` on, in chain order, then new ones as
+    // they come; the subscription closes when the consumer stops iterating.
+    contractActions(address: string, fromHeight: number): AsyncIterableIterator<IndexedAction>;
   };
   node: {
     call<T = unknown>(method: string, params?: unknown[]): Promise<T>;
@@ -38,6 +53,7 @@ export function blockfrostEndpoints(network: MidnightNetwork, projectIdFile: str
   return {
     operator: "blockfrost",
     indexer: `https://midnight-${network}.blockfrost.io/api/v0`,
+    indexerWs: `wss://midnight-${network}.blockfrost.io/api/v0/ws`,
     node: `https://rpc.midnight-${network}.blockfrost.io`,
     headers: { project_id: readPrivateFile(projectIdFile).trim() },
   };
@@ -50,6 +66,12 @@ const TRANSACTIONS = `query Transactions($hash: HexEncoded!) {
     ... on RegularTransaction { transactionResult { status } }
     contractActions { __typename address state ... on ContractCall { entryPoint } }
   }
+}`;
+
+const HEAD = "query Head { block { height hash timestamp } }";
+const LATEST_ACTION = "query LatestAction($address: HexEncoded!) { contract(address: $address) { actions(limit: 1) { transaction { id block { height } } } } }";
+const CONTRACT_ACTIONS = `subscription ContractActions($address: HexEncoded!, $height: Int!) {
+  contractActions(address: $address, offset: { height: $height }) { transaction { id hash raw block { height hash } } }
 }`;
 
 interface RpcAnswer {
@@ -77,17 +99,29 @@ export function midnightSource(endpoints: SourceEndpoints): MidnightSource {
     if (a.error !== undefined) throw new Error(redact(`${endpoints.operator} node: ${method} failed: ${JSON.stringify(a.error)}`));
     return a.result;
   };
+  const graphql = async <T>(query: string, variables: Record<string, unknown>): Promise<T> => {
+    const out = (await post(endpoints.indexer, "indexer", { query, variables })) as { data?: T; errors?: unknown };
+    if (out.errors !== undefined || !out.data) throw new Error(redact(`${endpoints.operator} indexer: ${JSON.stringify(out.errors ?? out).slice(0, 300)}`));
+    return out.data;
+  };
   return {
     operator: endpoints.operator,
     indexer: {
+      async head() {
+        const { block } = await graphql<{ block: { height: number; hash: string; timestamp: number } }>(HEAD, {});
+        return { height: block.height, hash: block.hash, timestamp: block.timestamp };
+      },
+      async latestAction(address) {
+        if (!HASH.test(address)) throw new Error("a contract address must be 64 lowercase hex characters");
+        const { contract } = await graphql<{ contract: { actions: Array<{ transaction: { id: number; block: { height: number } } }> } | null }>(LATEST_ACTION, { address });
+        const latest = contract?.actions[0];
+        return latest ? { height: latest.transaction.block.height, transactionId: latest.transaction.id } : null;
+      },
+      contractActions: (address, fromHeight) => subscribe(endpoints, redact, address, fromHeight),
       async transactions(hash) {
         if (!HASH.test(hash)) throw new Error(`a transaction hash must be 64 lowercase hex characters`);
-        const out = (await post(endpoints.indexer, "indexer", { query: TRANSACTIONS, variables: { hash } })) as {
-          data?: { transactions: Array<Record<string, any>> };
-          errors?: unknown;
-        };
-        if (out.errors !== undefined || !out.data) throw new Error(redact(`${endpoints.operator} indexer: ${JSON.stringify(out.errors ?? out).slice(0, 300)}`));
-        return out.data.transactions.map((t) => ({
+        const out = await graphql<{ transactions: Array<Record<string, any>> }>(TRANSACTIONS, { hash });
+        return out.transactions.map((t) => ({
           hash: t.hash,
           raw: t.raw,
           block: { height: t.block.height, hash: t.block.hash, timestamp: t.block.timestamp },
@@ -116,6 +150,73 @@ export function midnightSource(endpoints: SourceEndpoints): MidnightSource {
         const byId = new Map(answers.map((a) => [a.id, a]));
         return calls.map(([method], id) => answer(method, byId.get(id)) as T);
       },
+    },
+  };
+}
+
+// The indexer's contractActions subscription over graphql-transport-ws. Messages queue until
+// the consumer asks for them; an error or the server's completion ends the iteration.
+function subscribe(endpoints: SourceEndpoints, redact: (s: string) => string, address: string, fromHeight: number): AsyncIterableIterator<IndexedAction> {
+  if (!HASH.test(address)) throw new Error("a contract address must be 64 lowercase hex characters");
+  const queue: IndexedAction[] = [];
+  let waiting: ((r: IteratorResult<IndexedAction>) => void) | null = null;
+  let failed: ((e: Error) => void) | null = null;
+  let ended: Error | "done" | null = null;
+  const fail = `${endpoints.operator} indexer subscription`;
+  const socket = new WebSocket(endpoints.indexerWs, { protocols: ["graphql-transport-ws"], headers: endpoints.headers } as never);
+  let subscribed = false;
+  let open = true;
+  const settle = (end: Error | "done") => {
+    ended ??= end;
+    if (waiting && ended === "done") waiting({ value: undefined, done: true });
+    else if (failed && ended instanceof Error) failed(ended);
+    waiting = failed = null;
+  };
+  socket.onopen = () => socket.send(JSON.stringify({ type: "connection_init" }));
+  socket.onerror = (e: Event) => settle(new Error(redact(`${fail}: ${(e as Event & { message?: string }).message ?? "socket error"}`)));
+  socket.onclose = (e: CloseEvent) => {
+    open = false;
+    settle(e.code === 1000 ? "done" : new Error(redact(`${fail}: closed ${e.code} ${e.reason}`)));
+  };
+  socket.onmessage = (m: MessageEvent) => {
+    const message = JSON.parse(String(m.data)) as { type: string; payload?: any };
+    if (message.type === "connection_ack") {
+      socket.send(JSON.stringify({ id: "1", type: "subscribe", payload: { query: CONTRACT_ACTIONS, variables: { address, height: fromHeight } } }));
+      subscribed = true;
+    } else if (message.type === "next") {
+      const t = message.payload.data.contractActions.transaction;
+      const action: IndexedAction = { txHash: t.hash, transactionId: t.id, raw: t.raw, block: { height: t.block.height, hash: t.block.hash } };
+      if (waiting) {
+        waiting({ value: action, done: false });
+        waiting = failed = null;
+      } else queue.push(action);
+    } else if (message.type === "error") close(new Error(redact(`${fail}: ${JSON.stringify(message.payload)}`)), false);
+    else if (message.type === "complete") close("done", false);
+  };
+  // Ends the iteration and closes the socket, telling the indexer when it is the client that stops.
+  function close(end: Error | "done", clientStops: boolean) {
+    if (open && subscribed && clientStops) socket.send(JSON.stringify({ id: "1", type: "complete" }));
+    if (open) socket.close(1000);
+    open = false;
+    settle(end);
+  }
+  return {
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+    next() {
+      const value = queue.shift();
+      if (value) return Promise.resolve({ value, done: false });
+      if (ended === "done") return Promise.resolve({ value: undefined, done: true });
+      if (ended) return Promise.reject(ended);
+      return new Promise((resolve, reject) => {
+        waiting = resolve;
+        failed = reject;
+      });
+    },
+    async return() {
+      close("done", true);
+      return { value: undefined, done: true };
     },
   };
 }
