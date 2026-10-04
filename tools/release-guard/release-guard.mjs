@@ -2,13 +2,16 @@
 //  - a public package with a runtime dependency on a private workspace package
 //    (pnpm pack rewrites workspace:* to a version that never reaches npm),
 //  - a public package with a link: or file: runtime dependency (published verbatim), and
+//  - a version npm would record differently (semver.clean), and
 //  - an unpublished version below one already published (npm tags it latest
 //    while ^ ranges keep resolving the higher one).
+// Versions are parsed and ordered by npm's own semver, prereleases included.
 //   node tools/release-guard/release-guard.mjs [REGISTRY]
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import semver from "semver";
 
 const RUNTIME_FIELDS = ["dependencies", "optionalDependencies", "peerDependencies"];
 
@@ -48,25 +51,26 @@ export function privateRuntimeDeps(projects) {
   return problems;
 }
 
-const release = (v) => (v.includes("-") ? null : v.split(".").map(Number));
-const compare = (a, b) => {
-  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i];
-  return 0;
-};
-
+// Published prereleases are left out: neither ^ ranges nor the latest tag resolve to them.
 export function inversions(projects, published) {
   const problems = [];
   for (const p of projects) {
     if (p.private) continue;
+    const id = `${p.name}@${p.version}`;
+    const recorded = semver.clean(p.version);
+    if (recorded === null) {
+      problems.push(`${id} is not valid semver`);
+      continue;
+    }
+    if (recorded !== p.version) {
+      problems.push(`${id} is not canonical semver; npm would publish it as ${recorded}`);
+      continue;
+    }
     const versions = published[p.name] ?? [];
     if (versions.includes(p.version)) continue;
-    const own = release(p.version.split("-")[0]);
-    const highest = versions
-      .map((v) => [v, release(v)])
-      .filter(([, r]) => r && compare(r, own) > 0)
-      .sort(([, a], [, b]) => compare(b, a))[0]?.[0];
-    if (highest) {
-      problems.push(`${p.name}@${p.version} is below published ${highest}; npm would tag it latest while ^${highest} ranges keep resolving ${highest}`);
+    const [highest] = semver.rsort(versions.filter((v) => semver.valid(v) === v && !semver.prerelease(v)));
+    if (highest && semver.lt(p.version, highest)) {
+      problems.push(`${id} is below published ${highest}; npm would tag it latest while ^${highest} ranges keep resolving ${highest}`);
     }
   }
   return problems;

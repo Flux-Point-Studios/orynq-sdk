@@ -87,6 +87,25 @@ describe("inversions", () => {
     ]);
   });
 
+  it("refuses a version npm would record differently: a v prefix, build metadata or invalid semver", () => {
+    const projects = [pkg("@f/a", "v0.1.5"), pkg("@f/b", "0.1.5+hotfix"), pkg("@f/c", "0.1"), pkg("@f/d", "01.2.3"), pkg("@f/e", "0.1.5")];
+    expect(inversions(projects, {})).toEqual([
+      "@f/a@v0.1.5 is not canonical semver; npm would publish it as 0.1.5",
+      "@f/b@0.1.5+hotfix is not canonical semver; npm would publish it as 0.1.5",
+      "@f/c@0.1 is not valid semver",
+      "@f/d@01.2.3 is not valid semver",
+    ]);
+  });
+
+  it("orders prereleases as npm does: one below the highest published release is an inversion", () => {
+    const published = { "@f/a": ["0.1.9"], "@f/b": ["0.1.9"], "@f/c": ["0.1.9"] };
+    const projects = [pkg("@f/a", "0.1.9-rc.1"), pkg("@f/b", "0.2.0-rc.1"), pkg("@f/c", "0.1.5")];
+    expect(inversions(projects, published)).toEqual([
+      "@f/a@0.1.9-rc.1 is below published 0.1.9; npm would tag it latest while ^0.1.9 ranges keep resolving 0.1.9",
+      "@f/c@0.1.5 is below published 0.1.9; npm would tag it latest while ^0.1.9 ranges keep resolving 0.1.9",
+    ]);
+  });
+
   it("skips private packages, which are never published", () => {
     const published = { "@f/p": ["1.0.0"], "@f/x": ["0.2.0"] };
     expect(inversions([pkg("@f/p", "0.0.1", { private: true }), pkg("@f/x", "0.1.0")], published)).toEqual([

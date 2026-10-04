@@ -8,8 +8,9 @@
 # runs an install, build or package script can receive it. The plugin refuses restarts, so a
 # failed publish is retried by the next push to main, which packs only what is still missing.
 #
-# release-guard runs before anything is packed: it refuses a public package with a runtime
-# dependency on a private one, and a version below one npm already has. post-publish-check
+# release-guard runs before anything is built or packed, after the install that gives it npm's
+# semver: it refuses a public package with a runtime dependency on a private one, a version npm
+# would record differently, and a version below one npm already has. post-publish-check
 # installs what was published from npm and requires one copy of each WASM singleton.
 when:
   - event: pull_request
@@ -29,8 +30,8 @@ steps:
     image: node:20-bookworm
     commands:
       - corepack enable
-      - node tools/release-guard/release-guard.mjs
       - pnpm install --frozen-lockfile
+      - node tools/release-guard/release-guard.mjs
       - pnpm build
       - node scripts/pack-unpublished.mjs /woodpecker/npm-publish
 
