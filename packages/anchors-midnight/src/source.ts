@@ -178,13 +178,24 @@ function subscribe(endpoints: SourceEndpoints, redact: (s: string) => string, ad
     open = false;
     settle(e.code === 1000 ? "done" : new Error(redact(`${fail}: closed ${e.code} ${e.reason}`)));
   };
+  // Node treats a throw from a WebSocket handler as an uncaught exception and ends the process,
+  // so every frame either yields an action or ends the iteration with the reason.
   socket.onmessage = (m: MessageEvent) => {
-    const message = JSON.parse(String(m.data)) as { type: string; payload?: any };
+    let message: { type?: unknown; payload?: any };
+    try {
+      message = JSON.parse(String(m.data));
+    } catch {
+      return close(new Error(`${fail}: a frame is not JSON`), true);
+    }
     if (message.type === "connection_ack") {
       socket.send(JSON.stringify({ id: "1", type: "subscribe", payload: { query: CONTRACT_ACTIONS, variables: { address, height: fromHeight } } }));
       subscribed = true;
     } else if (message.type === "next") {
-      const t = message.payload.data.contractActions.transaction;
+      if (message.payload?.errors !== undefined) return close(new Error(redact(`${fail}: ${JSON.stringify(message.payload.errors).slice(0, 300)}`)), true);
+      const t = message.payload?.data?.contractActions?.transaction;
+      if (typeof t?.hash !== "string" || !Number.isSafeInteger(t.id) || typeof t.raw !== "string" || !Number.isSafeInteger(t.block?.height) || typeof t.block.hash !== "string") {
+        return close(new Error(`${fail}: a next frame carries no transaction`), true);
+      }
       const action: IndexedAction = { txHash: t.hash, transactionId: t.id, raw: t.raw, block: { height: t.block.height, hash: t.block.hash } };
       if (waiting) {
         waiting({ value: action, done: false });

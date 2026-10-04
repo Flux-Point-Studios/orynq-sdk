@@ -170,7 +170,10 @@ class ScriptedSocket {
     queueMicrotask(() => ScriptedSocket.script(this, message));
   }
   emit(message: unknown) {
-    this.onmessage?.({ data: JSON.stringify(message) });
+    this.emitRaw(JSON.stringify(message));
+  }
+  emitRaw(data: string) {
+    this.onmessage?.({ data });
   }
   close() {
     this.closed = true;
@@ -234,6 +237,30 @@ describe("midnightSource's indexer subscription", () => {
     expect(await failure((async () => {
       for await (const _ of src().indexer.contractActions("zz", 1)) void _;
     })())).toMatch(/must be 64 lowercase hex/);
+  });
+
+  // Node reports a throw from a WebSocket handler as an uncaught exception, which ends the
+  // process, so every frame an untrusted indexer can send must end in the iterator instead.
+  it("rejects, redacted, on a next frame carrying GraphQL errors, a frame that is not JSON, or one without a transaction", async () => {
+    const frames: Array<[string, RegExp]> = [
+      [JSON.stringify({ id: "1", type: "next", payload: { data: null, errors: [{ message: `upstream timeout for ${TOKEN}` }] } }), /test indexer subscription: .*upstream timeout for <redacted>/],
+      [`not json ${TOKEN}`, /test indexer subscription: a frame is not JSON/],
+      [JSON.stringify({ id: "1", type: "next", payload: { data: { contractActions: { transaction: null } } } }), /test indexer subscription: a next frame carries no transaction/],
+    ];
+    for (const [frame, expected] of frames) {
+      const message = await withSockets(
+        (socket, m) => {
+          if (m.type === "connection_init") socket.emit({ type: "connection_ack" });
+          if (m.type === "subscribe") socket.emitRaw(frame);
+        },
+        async () => failure((async () => {
+          for await (const _ of src().indexer.contractActions("ef".repeat(32), 1)) void _;
+        })()),
+      );
+      expect(message).toMatch(expected);
+      expect(message).not.toContain(TOKEN);
+      expect(ScriptedSocket.last.closed).toBe(true);
+    }
   });
 
   it("reads the indexer's head block and a contract's newest action over HTTP", async () => {
