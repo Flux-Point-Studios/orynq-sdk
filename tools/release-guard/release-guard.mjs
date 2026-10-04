@@ -1,7 +1,7 @@
 // Refuses a release that npm would accept but that breaks installs:
 //  - a public package with a runtime dependency on a private workspace package
 //    (pnpm pack rewrites workspace:* to a version that never reaches npm),
-//  - a public package with a link: or file: runtime dependency (published verbatim), and
+//  - a public package with a link: or file: runtime dependency (published verbatim),
 //  - a version npm would record differently (semver.clean), and
 //  - an unpublished version below one already published (npm tags it latest
 //    while ^ ranges keep resolving the higher one).
