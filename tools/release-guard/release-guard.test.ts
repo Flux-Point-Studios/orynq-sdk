@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { inversions, privateRuntimeDeps } from "./release-guard.mjs";
 
 const guard = fileURLToPath(new URL("./release-guard.mjs", import.meta.url));
-const pkg = (name: string, version: string, extra: Record<string, unknown> = {}) => ({ name, version, ...extra });
+const pkg = (name: string, version: string, extra: Record<string, unknown> = {}) => ({ name, version, dir: `/w/${name}`, ...extra });
 
 describe("privateRuntimeDeps", () => {
   it("flags a public package whose dependencies name a private workspace package", () => {
@@ -31,6 +31,33 @@ describe("privateRuntimeDeps", () => {
     expect(privateRuntimeDeps(projects)).toEqual([
       "@f/a@1.0.0 -> @f/p (peerDependencies) is private",
       "@f/b@1.0.0 -> @f/p (optionalDependencies) is private",
+    ]);
+  });
+
+  it("follows workspace: and npm: aliases, and workspace: paths, to the package they name", () => {
+    const projects = [
+      pkg("@f/anchors-midnight", "0.1.0", { private: true, dir: "/w/packages/anchors-midnight" }),
+      pkg("@f/core", "0.2.0", { dir: "/w/packages/core" }),
+      pkg("@f/a", "1.0.0", { dir: "/w/packages/a", dependencies: { midnight: "workspace:@f/anchors-midnight@*", core: "workspace:@f/core@^" } }),
+      pkg("@f/b", "1.0.0", { dir: "/w/packages/b", optionalDependencies: { m: "npm:@f/anchors-midnight@0.1.0", c: "npm:@f/core@0.2.0" } }),
+      pkg("@f/c", "1.0.0", { dir: "/w/packages/c", peerDependencies: { m: "workspace:../anchors-midnight", c: "workspace:../core" } }),
+    ];
+    expect(privateRuntimeDeps(projects)).toEqual([
+      "@f/a@1.0.0 -> @f/anchors-midnight as midnight (dependencies) is private",
+      "@f/b@1.0.0 -> @f/anchors-midnight as m (optionalDependencies) is private",
+      "@f/c@1.0.0 -> @f/anchors-midnight as m (peerDependencies) is private",
+    ]);
+  });
+
+  it("refuses link: and file: dependencies, which npm publishes verbatim as local paths", () => {
+    const projects = [
+      pkg("@f/p", "1.0.0", { private: true, dir: "/w/packages/p" }),
+      pkg("@f/a", "1.0.0", { dir: "/w/packages/a", dependencies: { x: "link:../p" }, devDependencies: { y: "file:../p" } }),
+      pkg("@f/b", "1.0.0", { dir: "/w/packages/b", optionalDependencies: { z: "file:../p" } }),
+    ];
+    expect(privateRuntimeDeps(projects)).toEqual([
+      "@f/a@1.0.0 -> x (dependencies) is link:../p, a local path npm cannot install",
+      "@f/b@1.0.0 -> z (optionalDependencies) is file:../p, a local path npm cannot install",
     ]);
   });
 
@@ -120,6 +147,23 @@ describe("release-guard CLI", () => {
       const r = await run(root, reg.url);
       expect(r.status).toBe(1);
       expect(r.stderr).toContain("@f/quickstart@0.3.0 -> @f/anchors-midnight (dependencies) is private");
+    } finally {
+      reg.close();
+    }
+  });
+
+  it("exits 1 on a private package reached through an alias or a workspace path", async () => {
+    const root = workspace([
+      ["anchors-midnight", { name: "@f/anchors-midnight", version: "0.1.0", private: true }],
+      ["alias", { name: "@f/alias", version: "9.9.9", dependencies: { midnight: "workspace:@f/anchors-midnight@*" } }],
+      ["path", { name: "@f/path", version: "9.9.9", dependencies: { midnight: "workspace:../anchors-midnight" } }],
+    ]);
+    const reg = await registry({});
+    try {
+      const r = await run(root, reg.url);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("@f/alias@9.9.9 -> @f/anchors-midnight as midnight (dependencies) is private");
+      expect(r.stderr).toContain("@f/path@9.9.9 -> @f/anchors-midnight as midnight (dependencies) is private");
     } finally {
       reg.close();
     }

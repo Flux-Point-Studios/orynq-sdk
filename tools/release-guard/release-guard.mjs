@@ -1,25 +1,47 @@
 // Refuses a release that npm would accept but that breaks installs:
 //  - a public package with a runtime dependency on a private workspace package
-//    (pnpm pack rewrites workspace:* to a version that never reaches npm), and
+//    (pnpm pack rewrites workspace:* to a version that never reaches npm),
+//  - a public package with a link: or file: runtime dependency (published verbatim), and
 //  - an unpublished version below one already published (npm tags it latest
 //    while ^ ranges keep resolving the higher one).
 //   node tools/release-guard/release-guard.mjs [REGISTRY]
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const RUNTIME_FIELDS = ["dependencies", "optionalDependencies", "peerDependencies"];
 
+// The package a dependency installs: pnpm pack turns workspace:<name>@<range> and
+// workspace:<path> into npm:<name>@<version>, and keeps npm:<name>@<range> as written.
+const aliasName = (spec) => {
+  const at = spec.indexOf("@", 1);
+  return at === -1 ? spec : spec.slice(0, at);
+};
+function target(dep, spec, dir, nameAt) {
+  if (spec.startsWith("npm:")) return aliasName(spec.slice(4));
+  if (!spec.startsWith("workspace:")) return dep;
+  const rest = spec.slice("workspace:".length);
+  if (rest.startsWith(".") || rest.startsWith("/")) return nameAt.get(resolve(dir, rest)) ?? dep;
+  return rest.includes("@", 1) ? aliasName(rest) : dep;
+}
+
+// projects: workspace package.json objects, each with `dir`, its directory.
 export function privateRuntimeDeps(projects) {
   const privateNames = new Set(projects.filter((p) => p.private).map((p) => p.name));
+  const nameAt = new Map(projects.map((p) => [resolve(p.dir), p.name]));
   const problems = [];
   for (const p of projects) {
     if (p.private) continue;
     for (const field of RUNTIME_FIELDS) {
-      for (const dep of Object.keys(p[field] ?? {})) {
+      for (const [dep, spec] of Object.entries(p[field] ?? {})) {
         if (field === "peerDependencies" && p.peerDependenciesMeta?.[dep]?.optional) continue;
-        if (privateNames.has(dep)) problems.push(`${p.name}@${p.version} -> ${dep} (${field}) is private`);
+        if (spec.startsWith("link:") || spec.startsWith("file:")) {
+          problems.push(`${p.name}@${p.version} -> ${dep} (${field}) is ${spec}, a local path npm cannot install`);
+          continue;
+        }
+        const name = target(dep, spec, p.dir, nameAt);
+        if (privateNames.has(name)) problems.push(`${p.name}@${p.version} -> ${name}${name === dep ? "" : ` as ${dep}`} (${field}) is private`);
       }
     }
   }
@@ -70,7 +92,7 @@ async function publishedVersions(names, registry) {
 
 async function main(registry) {
   const listed = JSON.parse(execFileSync("pnpm", ["-r", "ls", "--json", "--depth", "-1"], { encoding: "utf8" }));
-  const projects = listed.map(({ path }) => JSON.parse(readFileSync(join(path, "package.json"), "utf8")));
+  const projects = listed.map(({ path }) => ({ ...JSON.parse(readFileSync(join(path, "package.json"), "utf8")), dir: path }));
   const publicNames = projects.filter((p) => !p.private).map((p) => p.name);
   const problems = [...privateRuntimeDeps(projects), ...inversions(projects, await publishedVersions(publicNames, registry))];
   if (problems.length) {
