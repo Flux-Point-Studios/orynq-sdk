@@ -1,49 +1,93 @@
 // Refuses a release that npm would accept but that breaks installs:
 //  - a public package with a runtime dependency on a private workspace package
 //    (pnpm pack rewrites workspace:* to a version that never reaches npm),
-//  - a public package with a link: or file: runtime dependency (published verbatim),
+//  - a public package with a runtime dependency on a local path (link:, file: or a bare
+//    path, which npm publishes verbatim) or a spec npm cannot classify,
 //  - a version npm would record differently (semver.clean), and
 //  - an unpublished version below one already published (npm tags it latest
 //    while ^ ranges keep resolving the higher one).
-// Versions are parsed and ordered by npm's own semver, prereleases included.
+// Specs are classified by npm-package-arg, and local paths are compared after realpath, so a
+// symlink cannot hide which package a path reaches. Versions are parsed and ordered by npm's
+// own semver, prereleases included.
 //   node tools/release-guard/release-guard.mjs [REGISTRY]
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import npa from "npm-package-arg";
 import semver from "semver";
 
 const RUNTIME_FIELDS = ["dependencies", "optionalDependencies", "peerDependencies"];
+const LOCAL_TYPES = new Set(["directory", "file"]);
+// pnpm's workspace:<alias>@<range>; an alias never starts with ".", "_" or "/".
+const WORKSPACE_ALIAS = /^([^._/][^@]*)@/;
+const WORKSPACE_SHORTHANDS = new Set(["*", "^", "~"]);
 
-// The package a dependency installs: pnpm pack turns workspace:<name>@<range> and
-// workspace:<path> into npm:<name>@<version>, and keeps npm:<name>@<range> as written.
-const aliasName = (spec) => {
-  const at = spec.indexOf("@", 1);
-  return at === -1 ? spec : spec.slice(0, at);
+const real = (path) => {
+  try {
+    return realpathSync(path);
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+    throw error;
+  }
 };
-function target(dep, spec, dir, nameAt) {
-  if (spec.startsWith("npm:")) return aliasName(spec.slice(4));
-  if (!spec.startsWith("workspace:")) return dep;
-  const rest = spec.slice("workspace:".length);
-  if (rest.startsWith(".") || rest.startsWith("/")) return nameAt.get(resolve(dir, rest)) ?? dep;
-  return rest.includes("@", 1) ? aliasName(rest) : dep;
+
+// What a dependency installs: { name } for a package npm resolves by name, or { path } for a
+// local path. pnpm pack rewrites workspace:<alias>@<range>, workspace:<range> and
+// workspace:<path> to npm:<name>@<version> and keeps every other spec as written.
+function installs(dep, spec, dir) {
+  if (spec.startsWith("link:")) return { path: resolve(dir, spec.slice("link:".length)), verbatim: true };
+  if (spec.startsWith("workspace:")) {
+    const rest = spec.slice("workspace:".length);
+    const alias = WORKSPACE_ALIAS.exec(rest);
+    if (alias) return { name: alias[1] };
+    if (WORKSPACE_SHORTHANDS.has(rest) || semver.validRange(rest)) return { name: dep };
+    const local = npa.resolve(dep, rest, dir);
+    if (!LOCAL_TYPES.has(local.type)) throw new Error(`workspace:${rest} is neither a range nor a path`);
+    return { path: local.fetchSpec, verbatim: false };
+  }
+  const parsed = npa.resolve(dep, spec, dir);
+  if (parsed.type === "alias") return { name: parsed.subSpec.name };
+  if (LOCAL_TYPES.has(parsed.type)) return { path: parsed.fetchSpec, verbatim: true };
+  return { name: dep };
 }
 
 // projects: workspace package.json objects, each with `dir`, its directory.
 export function privateRuntimeDeps(projects) {
   const privateNames = new Set(projects.filter((p) => p.private).map((p) => p.name));
-  const nameAt = new Map(projects.map((p) => [resolve(p.dir), p.name]));
+  let byRealDir;
+  const projectAt = (path) => {
+    byRealDir ??= new Map(projects.map((p) => [real(p.dir), p]).filter(([dir]) => dir !== null));
+    const at = real(path);
+    return at === null ? undefined : byRealDir.get(at);
+  };
   const problems = [];
   for (const p of projects) {
     if (p.private) continue;
     for (const field of RUNTIME_FIELDS) {
       for (const [dep, spec] of Object.entries(p[field] ?? {})) {
         if (field === "peerDependencies" && p.peerDependenciesMeta?.[dep]?.optional) continue;
-        if (spec.startsWith("link:") || spec.startsWith("file:")) {
-          problems.push(`${p.name}@${p.version} -> ${dep} (${field}) is ${spec}, a local path npm cannot install`);
+        const id = `${p.name}@${p.version} -> ${dep} (${field}) is ${spec}`;
+        let target;
+        try {
+          target = installs(dep, spec, p.dir);
+        } catch (error) {
+          problems.push(`${id}, which npm cannot classify: ${error.message}`);
           continue;
         }
-        const name = target(dep, spec, p.dir, nameAt);
+        if (target.path !== undefined) {
+          const reached = projectAt(target.path);
+          if (target.verbatim) {
+            problems.push(`${id}, a local path npm cannot install${reached?.private ? `; it reaches private ${reached.name}` : ""}`);
+            continue;
+          }
+          if (!reached) {
+            problems.push(`${id}, which reaches no workspace package`);
+            continue;
+          }
+          target = { name: reached.name };
+        }
+        const { name } = target;
         if (privateNames.has(name)) problems.push(`${p.name}@${p.version} -> ${name}${name === dep ? "" : ` as ${dep}`} (${field}) is private`);
       }
     }

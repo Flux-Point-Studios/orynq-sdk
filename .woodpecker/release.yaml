@@ -9,8 +9,9 @@
 # failed publish is retried by the next push to main, which packs only what is still missing.
 #
 # release-guard runs before anything is built or packed, after the install that gives it npm's
-# semver: it refuses a public package with a runtime dependency on a private one, a version npm
-# would record differently, and a version below one npm already has. post-publish-check
+# semver and npm-package-arg: it refuses a public package with a runtime dependency on a private
+# one or on a local path, a version npm would record differently, and a version below one npm
+# already has. post-publish-check
 # installs what was published from npm and requires one copy of each WASM singleton.
 when:
   - event: pull_request

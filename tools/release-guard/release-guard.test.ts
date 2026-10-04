@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,10 @@ import { inversions, privateRuntimeDeps } from "./release-guard.mjs";
 
 const guard = fileURLToPath(new URL("./release-guard.mjs", import.meta.url));
 const pkg = (name: string, version: string, extra: Record<string, unknown> = {}) => ({ name, version, dir: `/w/${name}`, ...extra });
+const tempRoots: string[] = [];
+afterAll(() => {
+  for (const root of tempRoots) rmSync(root, { recursive: true, force: true });
+});
 
 describe("privateRuntimeDeps", () => {
   it("flags a public package whose dependencies name a private workspace package", () => {
@@ -35,12 +39,15 @@ describe("privateRuntimeDeps", () => {
   });
 
   it("follows workspace: and npm: aliases, and workspace: paths, to the package they name", () => {
+    const w = mkdtempSync(join(tmpdir(), "release-guard-aliases-"));
+    tempRoots.push(w);
+    for (const dir of ["anchors-midnight", "core", "a", "b", "c"]) mkdirSync(join(w, dir));
     const projects = [
-      pkg("@f/anchors-midnight", "0.1.0", { private: true, dir: "/w/packages/anchors-midnight" }),
-      pkg("@f/core", "0.2.0", { dir: "/w/packages/core" }),
-      pkg("@f/a", "1.0.0", { dir: "/w/packages/a", dependencies: { midnight: "workspace:@f/anchors-midnight@*", core: "workspace:@f/core@^" } }),
-      pkg("@f/b", "1.0.0", { dir: "/w/packages/b", optionalDependencies: { m: "npm:@f/anchors-midnight@0.1.0", c: "npm:@f/core@0.2.0" } }),
-      pkg("@f/c", "1.0.0", { dir: "/w/packages/c", peerDependencies: { m: "workspace:../anchors-midnight", c: "workspace:../core" } }),
+      pkg("@f/anchors-midnight", "0.1.0", { private: true, dir: join(w, "anchors-midnight") }),
+      pkg("@f/core", "0.2.0", { dir: join(w, "core") }),
+      pkg("@f/a", "1.0.0", { dir: join(w, "a"), dependencies: { midnight: "workspace:@f/anchors-midnight@*", core: "workspace:@f/core@^" } }),
+      pkg("@f/b", "1.0.0", { dir: join(w, "b"), optionalDependencies: { m: "npm:@f/anchors-midnight@0.1.0", c: "npm:@f/core@0.2.0" } }),
+      pkg("@f/c", "1.0.0", { dir: join(w, "c"), peerDependencies: { m: "workspace:../anchors-midnight", c: "workspace:../core" } }),
     ];
     expect(privateRuntimeDeps(projects)).toEqual([
       "@f/a@1.0.0 -> @f/anchors-midnight as midnight (dependencies) is private",
@@ -59,6 +66,64 @@ describe("privateRuntimeDeps", () => {
       "@f/a@1.0.0 -> x (dependencies) is link:../p, a local path npm cannot install",
       "@f/b@1.0.0 -> z (optionalDependencies) is file:../p, a local path npm cannot install",
     ]);
+  });
+
+  describe("on local paths, resolved through symlinks the way npm-package-arg classifies them", () => {
+    const tree = (): string => {
+      const root = mkdtempSync(join(tmpdir(), "release-guard-paths-"));
+      tempRoots.push(root);
+      for (const dir of ["priv", "core", "pub"]) mkdirSync(join(root, dir));
+      symlinkSync("../priv", join(root, "pub", "privlink"));
+      return root;
+    };
+    const members = (root: string, deps: Record<string, string>) => [
+      pkg("@f/priv", "0.1.0", { private: true, dir: join(root, "priv") }),
+      pkg("@f/core", "0.2.0", { dir: join(root, "core") }),
+      pkg("@f/pub", "9.9.9", { dir: join(root, "pub"), dependencies: deps }),
+    ];
+
+    it("refuses a bare relative path, which npm publishes verbatim, and names the private package it reaches", () => {
+      const root = tree();
+      expect(privateRuntimeDeps(members(root, { midnight: "../priv", core: "../core" }))).toEqual([
+        "@f/pub@9.9.9 -> midnight (dependencies) is ../priv, a local path npm cannot install; it reaches private @f/priv",
+        "@f/pub@9.9.9 -> core (dependencies) is ../core, a local path npm cannot install",
+      ]);
+    });
+
+    it("refuses bare ./, ~/ and absolute paths and file: paths, through a symlink too", () => {
+      const root = tree();
+      expect(privateRuntimeDeps(members(root, { a: "./privlink", b: `${join(root, "priv")}`, c: "file:./privlink" }))).toEqual([
+        "@f/pub@9.9.9 -> a (dependencies) is ./privlink, a local path npm cannot install; it reaches private @f/priv",
+        `@f/pub@9.9.9 -> b (dependencies) is ${join(root, "priv")}, a local path npm cannot install; it reaches private @f/priv`,
+        "@f/pub@9.9.9 -> c (dependencies) is file:./privlink, a local path npm cannot install; it reaches private @f/priv",
+      ]);
+    });
+
+    it("follows a workspace: path through a symlink to the private package pnpm pack would name", () => {
+      const root = tree();
+      expect(privateRuntimeDeps(members(root, { midnight: "workspace:./privlink", core: "workspace:../core" }))).toEqual([
+        "@f/pub@9.9.9 -> @f/priv as midnight (dependencies) is private",
+      ]);
+    });
+
+    it("refuses a workspace: path that reaches no workspace package, and a spec npm cannot classify", () => {
+      const root = tree();
+      expect(privateRuntimeDeps(members(root, { gone: "workspace:../missing", linked: "workspace:link:../priv", caret: "^" }))).toEqual([
+        "@f/pub@9.9.9 -> gone (dependencies) is workspace:../missing, which reaches no workspace package",
+        '@f/pub@9.9.9 -> linked (dependencies) is workspace:link:../priv, which npm cannot classify: Unsupported URL Type "link:": link:../priv',
+        '@f/pub@9.9.9 -> caret (dependencies) is ^, which npm cannot classify: Invalid tag name "^" of package "caret@^": Tags may not have any characters that encodeURIComponent encodes.',
+      ]);
+    });
+
+    it("positive control: pnpm's workspace:*, workspace:^ and workspace:~ name the dependency itself", () => {
+      const root = tree();
+      const projects = [
+        pkg("@f/priv", "0.1.0", { private: true, dir: join(root, "priv") }),
+        pkg("@f/core", "0.2.0", { dir: join(root, "core") }),
+        pkg("@f/pub", "9.9.9", { dir: join(root, "pub"), dependencies: { "@f/core": "workspace:^", "@f/priv": "workspace:~" } }),
+      ];
+      expect(privateRuntimeDeps(projects)).toEqual(["@f/pub@9.9.9 -> @f/priv (dependencies) is private"]);
+    });
   });
 
   it("lets a private package depend on anything", () => {
@@ -183,6 +248,26 @@ describe("release-guard CLI", () => {
       expect(r.status).toBe(1);
       expect(r.stderr).toContain("@f/alias@9.9.9 -> @f/anchors-midnight as midnight (dependencies) is private");
       expect(r.stderr).toContain("@f/path@9.9.9 -> @f/anchors-midnight as midnight (dependencies) is private");
+    } finally {
+      reg.close();
+    }
+  });
+
+  it("exits 1 on a private package reached by a bare relative path or a workspace: path through a symlink", async () => {
+    const root = workspace([
+      ["anchors-midnight", { name: "@f/anchors-midnight", version: "0.1.0", private: true }],
+      ["bare", { name: "@f/bare", version: "9.9.9", dependencies: { midnight: "../anchors-midnight" } }],
+      ["linked", { name: "@f/linked", version: "9.9.9", dependencies: { midnight: "workspace:./privlink" } }],
+    ]);
+    symlinkSync("../anchors-midnight", join(root, "packages", "linked", "privlink"));
+    const reg = await registry({});
+    try {
+      const r = await run(root, reg.url);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain(
+        "@f/bare@9.9.9 -> midnight (dependencies) is ../anchors-midnight, a local path npm cannot install; it reaches private @f/anchors-midnight",
+      );
+      expect(r.stderr).toContain("@f/linked@9.9.9 -> @f/anchors-midnight as midnight (dependencies) is private");
     } finally {
       reg.close();
     }
