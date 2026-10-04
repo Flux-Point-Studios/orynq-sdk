@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { pureCircuits } from "../../contract/managed/contract/index.js";
 import { windowHits } from "./privacy-scan.js";
 import { deployedRegistry, random32, unprovenRegistryCall } from "./registry-call.js";
@@ -45,5 +46,22 @@ describe("anchor keeps the author secret out of every public byte", () => {
 
   it("the published bytes hold no window of the author secret", () => {
     expect(windowHits(published, authorSecret)).toBe(0);
+  });
+});
+
+// The fixture's calls were proven and bound in-process, so these are the bytes a node receives.
+describe("the proven, bound registry calls in the fixtures", () => {
+  const f = JSON.parse(readFileSync(new URL("./fixtures/registry-transactions.json", import.meta.url), "utf8"));
+  const bytes = (hex: string) => new Uint8Array(Buffer.from(hex, "hex"));
+  const opening = Object.fromEntries(Object.entries(f.hiding.opening as Record<string, string>).map(([k, v]) => [k, bytes(v)]));
+
+  it("positive control: every disclosed value is in the bytes, all 25 windows", () => {
+    for (const value of [f.anchor.commitment, f.author.key]) expect(windowHits(bytes(f.anchor.tx), bytes(value))).toBe(25);
+    for (const value of [f.hiding.commitment, f.hiding.attribute, f.author.key]) expect(windowHits(bytes(f.hiding.tx), bytes(value))).toBe(25);
+  });
+
+  it("hold no window of the author secret or of the kind-2 opening in any encoding", () => {
+    for (const tx of [f.anchor.tx, f.hiding.tx]) expect(windowHits(bytes(tx), bytes(f.author.secret))).toBe(0);
+    for (const [name, value] of Object.entries(opening)) expect(windowHits(bytes(f.hiding.tx), value), name).toBe(0);
   });
 });

@@ -66,6 +66,45 @@ a file group or others can read or write.
 Each entry pins its address, deploy transaction, the runtime whose extrinsic layout the decoder
 knows (spec 1000300), and this contract's verifier keys, which `assertRegistryGenerations` checks.
 
+## Verifying an anchor
+
+`verifyMidnightAnchor({ network, txHash, expect }, { source })` checks an anchor from the
+transaction's own bytes, never from what a source says about them. Each step is a named check
+in the result:
+
+1. The indexer's bytes must decode to a transaction whose own hash is `txHash`, before anything
+   else is asked of them.
+2. The transaction must write exactly one anchor to a registry generation in
+   `MIDNIGHT_REGISTRIES`, with a guaranteed transcript equal, op for op, to what the compiled
+   circuits write; `anchor()` never with kind 2 or a nonzero attribute. A deploy or maintenance
+   update aimed at the registry in the same transaction is refused.
+3. The node's block at the indexer's height must have the indexer's hash, hash to it from its
+   header, and commit to its body through `extrinsicsRoot`; its runtime must be one whose
+   extrinsic layout the decoder knows, and one extrinsic must be exactly the bare
+   `Midnight.send_mn_transaction` of these bytes.
+4. GRANDPA must show the block final from a trusted checkpoint (the KNOWN_AUTHORS document's,
+   or the caller's).
+5. The registry's pinned deploy goes through the same steps and must deploy exactly the
+   immutable registry state at the registry's address, in the pinned block; the indexer's and the
+   node's state snapshots are cross-checks.
+6. The anchor must match the request, and its author must be known for that height.
+
+Statuses, most severe first: `invalid`, `conflict` (sources disagree with each other or with
+consensus), `unavailable`, `unverified-finality`, `unauthenticated`, `author-revoked`, and
+`valid`. Assurance says how far inclusion is established: `consensus-verified`, `multi-path`
+(indexer and node agree; on Blockfrost that is one operator running two pieces of software),
+`single-path` or `none`. A result is `valid` only at `consensus-verified`: skipping finality
+(`finality: "skip"`), a checkpoint more than `maxSetChanges` set changes away, or a node that
+cannot answer leaves it `unverified-finality` or `unavailable`, never `valid`.
+
+`verifiedFields` names only what the commitment binds and the request matched: `rootHash`,
+`manifestHash` and `merkleRoot` for a kind-1 entry, `commitment` for a bare kind-1 commitment,
+and `committedAttribute` for kind 2, plus the entry's hashes when the caller supplies the
+private opening, which is checked locally. A kind-2 result always carries a note that the
+circuit binds the attribute to the commitment and never checks it against the trace. No proof is re-verified
+locally: the npm ledger WASM cannot verify one, and inclusion in a final block is what shows
+consensus did.
+
 ## Known authors
 
 Which author keys a verifier recognizes, over which block heights and in which role, and which

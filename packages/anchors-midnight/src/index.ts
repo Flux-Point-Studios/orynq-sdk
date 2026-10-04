@@ -1,3 +1,7 @@
+export { anchorCallsIn, decodeAnchorTransaction } from "./anchor-transaction.js";
+export type { AnchorCall, AnchorTransaction } from "./anchor-transaction.js";
+export { verifyMidnightAnchor } from "./verify.js";
+export type { AnchorStatus, Assurance, Check, Expectation, VerifyOptions, VerifyRequest, VerifyResult } from "./verify.js";
 export {
   ANCHOR_KIND,
   authorKey,

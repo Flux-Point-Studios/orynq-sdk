@@ -152,5 +152,5 @@ export function syntheticChain(spec: ChainSpec) {
   };
   const block = (height: number) => ({ height, hash: toHex(headerHash(header(height))) });
 
-  return { rpc, answering, checkpoint, block, header, endOf, setOf, justification, proof, rpcHeader, authorities };
+  return { rpc, answering, checkpoint, block, header, byHash, endOf, setOf, justification, proof, rpcHeader, authorities };
 }

@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
 import * as rt from "@midnight-ntwrk/compact-runtime";
 import * as L from "@midnight-ntwrk/ledger-v8";
+import { provingProvider } from "@midnight-ntwrk/zkir-v2";
 import { Contract, ledger, type HiddenEntry, type Ledger } from "../../contract/managed/contract/index.js";
 import { buildRegistryDeploy } from "../registry.js";
 
@@ -100,4 +102,25 @@ export function flipBindingRandomness<P extends L.Proofish>(tx: L.Transaction<L.
   if (!bytes.subarray(-scalar.length).equals(scalar)) throw new Error("the transaction does not end with its binding randomness");
   bytes[bytes.length - scalar.length + 1]! ^= 1;
   return bytes;
+}
+
+// Final-form bytes for a transaction without proving it: the circuit is checked by zkir as a
+// prover would, and every proof is the one real registry proof recorded in the fixtures. The
+// ledger WASM never verifies a proof, so these decode and hash exactly as submitted bytes do.
+const managed = new URL("../../contract/managed/", import.meta.url);
+const recordedProof = () =>
+  Buffer.from((JSON.parse(readFileSync(new URL("./fixtures/registry-transactions.json", import.meta.url), "utf8")) as { proof: string }).proof, "hex");
+export async function finalBytes(tx: L.UnprovenTransaction): Promise<Uint8Array> {
+  const read = (rel: string) => new Uint8Array(readFileSync(new URL(rel, managed)));
+  const zkir = provingProvider({
+    async lookupKey(location: string) {
+      return { proverKey: read(`keys/${location}.prover`), verifierKey: read(`keys/${location}.verifier`), ir: read(`zkir/${location}.bzkir`) };
+    },
+    async getParams() {
+      throw new Error("finalBytes never proves");
+    },
+  });
+  const proof = new Uint8Array(recordedProof());
+  const stub: L.ProvingProvider = { check: (preimage, location) => zkir.check(preimage, location), prove: async () => proof };
+  return (await tx.prove(stub, L.CostModel.initialCostModel())).bind().serialize();
 }
