@@ -21,15 +21,20 @@ export function readPrivateFile(path: string): string {
   }
 }
 
-// Writes 32 fresh random bytes, as 64 hex characters, to a new file only its owner can read,
-// and returns them. It never replaces an existing file or follows a symlink.
-export function createSecretFile(path: string): Uint8Array {
-  const secret = crypto.getRandomValues(new Uint8Array(32));
+// Writes `text` to a new file only its owner can read. It never replaces an existing file or
+// follows a symlink.
+export function writePrivateFile(path: string, text: string): void {
   const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   try {
-    writeSync(fd, `${Buffer.from(secret).toString("hex")}\n`);
+    writeSync(fd, text);
   } finally {
     closeSync(fd);
   }
+}
+
+// Writes 32 fresh random bytes, as 64 hex characters, to a new private file and returns them.
+export function createSecretFile(path: string): Uint8Array {
+  const secret = crypto.getRandomValues(new Uint8Array(32));
+  writePrivateFile(path, `${Buffer.from(secret).toString("hex")}\n`);
   return secret;
 }

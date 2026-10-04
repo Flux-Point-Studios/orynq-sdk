@@ -62,6 +62,13 @@ An author key is a fresh random 32-byte secret, never derived from a wallet seed
 public author key; `readAuthorSecret(path)` refuses a symlink, a file the caller does not own and
 a file group or others can read or write.
 
+A user anchoring with their own key holds a user key file instead: `createUserKeyFile(path)`
+writes a fresh author secret and a fresh salt key (from which a kind-2 anchor derives its hiding
+salt) as `{"format":"orynq-midnight-user-key/v1","authorSecret":…,"saltKey":…}`, under the same
+rules, and returns the public author key. `readUserKey(path)` refuses everything
+`readAuthorSecret` refuses, any other format, unknown fields, and equal keys. It refuses a bare
+author key file too, so a tool that anchors with a user's key never takes a service's key file.
+
 `MIDNIGHT_REGISTRIES` lists the deployed registry generations per network. None is deployed yet.
 Each entry pins its address, deploy transaction, the runtime whose extrinsic layout the decoder
 knows (spec 1000300), and this contract's verifier keys, which `assertRegistryGenerations` checks.
@@ -100,10 +107,18 @@ cannot answer leaves it `unverified-finality` or `unavailable`, never `valid`.
 `verifiedFields` names only what the commitment binds and the request matched: `rootHash`,
 `manifestHash` and `merkleRoot` for a kind-1 entry, `commitment` for a bare kind-1 commitment,
 and `committedAttribute` for kind 2, plus the entry's hashes when the caller supplies the
-private opening, which is checked locally. A kind-2 result always carries a note that the
+private opening, which is checked locally. `expect: { kind: "any" }` expects nothing: every
+other check runs, the anchor's commitment is reported, and `verifiedFields` stays empty. A kind-2 result always carries a note that the
 circuit binds the attribute to the commitment and never checks it against the trace. No proof is
 re-verified locally: the npm ledger WASM cannot verify one, and inclusion in a final block is
 what shows consensus did.
+
+`verifyReport(result)` is the result as a terminal prints it and a model reads it: the finality
+checkpoint is dropped (its weights are bigints, which JSON cannot carry), a block hash that is not
+64 hex characters drops the block, and every check, note, operator and the transaction hash pass
+through `printable`, which turns control, format, private-use and unassigned characters and line
+separators into `?` and cuts text at 300 characters. A source's text can still say anything
+printable; the status and assurance are what to act on.
 
 ## Finding anchors
 
@@ -192,7 +207,11 @@ or another transaction's bytes is not included.
 
 `midnightSource` reads a Midnight indexer (GraphQL) and node (JSON-RPC); `blockfrostEndpoints`
 points it at Blockfrost, with the project id read from a file only its owner can read and sent
-as a header. No error, status or echoed body carries the project id.
+as a header. No error, status or echoed body carries the project id. `sourceEndpoints(network,
+{ blockfrostProjectIdFile } | { indexer, node })` is what a user configures: Blockfrost through a
+project id file, or an http or https indexer GraphQL URL and node JSON-RPC URL that need no
+credential, such as a self-hosted node. It returns null when neither is given and refuses both,
+or half a pair.
 
 ## Reproducing the build
 
