@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { ed25519PublicKey, ed25519Sign } from "./test-ed25519.js";
+import { ed25519PublicKey, ed25519Sign } from "../ed25519.js";
 import { concatBytes, toHex, u32le, u64le } from "../scale.js";
 import { headerHash } from "../substrate.js";
 import { DEFAULT_MAX_SET_CHANGES, decodeFinalityProof, decodeJustification, justifiedTarget, supermajority, verifyFinality, type FinalityCheckpoint, type FinalityRpc } from "../grandpa.js";

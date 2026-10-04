@@ -30,6 +30,8 @@ export {
   scheduledAuthorityChange,
 } from "./substrate.js";
 export type { BlockHeader, RpcHeader, WeightedAuthority } from "./substrate.js";
+export { KNOWN_AUTHORS_FORMAT, KNOWN_AUTHORS_TRUST_ROOTS, SHIPPED_KNOWN_AUTHORS, knownAuthors, openKnownAuthors, signKnownAuthors } from "./known-authors.js";
+export type { AuthorStatus, CheckpointJson, KnownAuthor, KnownAuthors, KnownAuthorsDocument, SignedKnownAuthors } from "./known-authors.js";
 export { KNOWN_RUNTIME_SPEC_VERSIONS, MIDNIGHT_REGISTRIES, assertRegistryGenerations } from "./registries.js";
 export type { MidnightNetwork, RegistryInfo } from "./registries.js";
 export {

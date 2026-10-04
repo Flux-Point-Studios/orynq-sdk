@@ -14,6 +14,7 @@
   },
   "files": [
     "dist",
+    "known-authors.json",
     "contract/orynq-anchor-registry.compact",
     "contract/HASHES.txt",
     "contract/managed/compiler",

@@ -67,6 +67,21 @@
       "status": "experimental"
     },
     {
+      "id": "known-authors-document",
+      "name": "Signed KNOWN_AUTHORS document",
+      "desc": "orynq-known-authors/v1: the author keys a Midnight anchor verifier recognizes, each with a role (relay) and an inclusive window of block heights, plus the GRANDPA finality checkpoints it trusts, as a JSON string signed with Ed25519 by an offline trust-root key over a domain-separated message. Parsing is strict (unknown fields, networks, roles and overlapping windows refused). Revocation is a higher-serial document closing a key's window, so no verifier scans the permissionless registry; the highest serial wins and an older one never rolls a revocation back. scripts/known-authors.ts creates the root key and signs documents offline. No root or document ships until deci signs the first.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight/src/known-authors.ts",
+        "packages/anchors-midnight/known-authors.json",
+        "packages/anchors-midnight/scripts/known-authors.ts"
+      ],
+      "consumes": [
+        "grandpa-finality-verifier"
+      ],
+      "status": "experimental"
+    },
+    {
       "id": "anchors-midnight",
       "name": "Midnight anchor toolkit",
       "desc": "Computes commitments with the compiled contract's own pure circuits (entryCommitment, hiddenDigest, hidingCommitment, deriveSalt, authorKey), writes and reads random author key files only their owner can read, lists the deployed registry generations per network (none yet) with their pinned verifier keys and runtime, reads a Midnight indexer and node through midnightSource (Blockfrost endpoints with the project id read from an owner-only file and kept out of every error), and builds the registry's exact deploy state from the compiled constructor and the sha256-pinned verifier keys, and refuses anything else: assertImmutableAuthority (committee [], threshold 1, counter 0), assertRegistryState (operations, canonical verifier keys, schema) and assertRegistryDeployBytes, which decodes the exact deploy bytes before or after proving and requires the initial state byte for byte. Private until the mainnet registry exists.",
@@ -76,6 +91,7 @@
       ],
       "consumes": [
         "grandpa-finality-verifier",
+        "known-authors-document",
         "orynq-anchor-registry",
         "process-trace"
       ],

@@ -66,6 +66,29 @@ a file group or others can read or write.
 Each entry pins its address, deploy transaction, the runtime whose extrinsic layout the decoder
 knows (spec 1000300), and this contract's verifier keys, which `assertRegistryGenerations` checks.
 
+## Known authors
+
+Which author keys a verifier recognizes, over which block heights and in which role, and which
+GRANDPA checkpoints it trusts, come from a KNOWN_AUTHORS document (`orynq-known-authors/v1`)
+signed with Ed25519 by an offline trust-root key over `"orynq-known-authors/v1\n" ‖ document`.
+The document is shipped as the exact string that was signed, in `known-authors.json`, so no
+JSON canonicalization sits between a signature and what it covers. Parsing is strict: unknown
+fields, networks and roles, malformed keys, and overlapping windows for one key are refused.
+
+Each author has a role (`relay`: an anchor the FPS service wrote for whoever asked it) and a
+window of block heights, `validFrom` to `validTo` inclusive. Revoking a key is a later document
+with a higher serial that closes its window at the height the compromise began; anchors below
+it stay valid and anchors above it read `outside-window`. A verifier learns of a revocation from
+the documents it is given, never by scanning the permissionless registry. `knownAuthors()` keeps
+the highest serial among the shipped documents and any newer ones a caller passes, so an older
+document cannot roll a revocation back, and a document that fails to verify is an error.
+
+No trust root and no document ship yet: the first trust-root key is generated, and the first
+document signed, by deci on a machine no model drives, with
+`node --import tsx scripts/known-authors.ts new-root-key SEED_FILE` and
+`... sign DOCUMENT_FILE SEED_FILE`. Until then every author is `unknown`, and no checkpoint is
+trusted.
+
 ## Finality and inclusion
 
 `verifyFinality` decides whether a block is final under GRANDPA from data any untrusted source

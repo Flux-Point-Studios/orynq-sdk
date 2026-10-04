@@ -1,4 +1,4 @@
-import { ed25519PublicKey, ed25519Sign } from "./test-ed25519.js";
+import { ed25519PublicKey, ed25519Sign } from "../ed25519.js";
 import { blake2b256, encodeHeader, headerHash, type BlockHeader, type RpcHeader, type WeightedAuthority } from "../substrate.js";
 import { compactAt, concatBytes, encodeCompact, toHex, u32le, u64le } from "../scale.js";
 import type { FinalityCheckpoint, FinalityRpc } from "../grandpa.js";

@@ -1,6 +1,5 @@
-import { closeSync, constants, openSync, writeSync } from "node:fs";
 import { pureCircuits } from "../contract/managed/contract/index.js";
-import { readPrivateFile } from "./private-file.js";
+import { createSecretFile, readPrivateFile } from "./private-file.js";
 
 // The kinds the registry writes: anchor() refuses kind 2, which only anchor_hiding() writes.
 // A verifier rejects every other kind.
@@ -59,18 +58,11 @@ export function authorKey(secret: Hash32): Uint8Array {
   return pureCircuits.author_key(hash32(secret, "author secret"));
 }
 
-// Writes a fresh random author secret, as 64 hex characters, to a new file only its owner can
-// read, and returns the public author key. It never replaces an existing file. The secret is 32
-// bytes from the platform CSPRNG, unrelated to any wallet seed.
+// Writes a fresh random author secret to a new file only its owner can read and returns the
+// public author key. The secret is 32 bytes from the platform CSPRNG, unrelated to any wallet
+// seed.
 export function createAuthorKeyFile(path: string): string {
-  const secret = crypto.getRandomValues(new Uint8Array(32));
-  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-  try {
-    writeSync(fd, `${Buffer.from(secret).toString("hex")}\n`);
-  } finally {
-    closeSync(fd);
-  }
-  return Buffer.from(authorKey(secret)).toString("hex");
+  return Buffer.from(authorKey(createSecretFile(path))).toString("hex");
 }
 
 // Reads an author secret written by createAuthorKeyFile, refusing a symlink, anything but a
