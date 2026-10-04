@@ -1,0 +1,64 @@
+{
+  "name": "@fluxpointstudios/orynq-sdk-anchors-midnight-submit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deploys the orynq-anchor-registry on Midnight and writes anchors to it: a WalletFacade operator, in-process proving from sha256-pinned key material, and write-ahead submission",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@fluxpointstudios/orynq-sdk-anchors-midnight": "workspace:*",
+    "@midnight-ntwrk/ledger-v8": "8.1.3",
+    "@midnight-ntwrk/wallet-sdk-abstractions": "2.1.0",
+    "@midnight-ntwrk/wallet-sdk-address-format": "3.1.2",
+    "@midnight-ntwrk/wallet-sdk-capabilities": "3.3.1",
+    "@midnight-ntwrk/wallet-sdk-dust-wallet": "4.2.0",
+    "@midnight-ntwrk/wallet-sdk-facade": "4.1.0",
+    "@midnight-ntwrk/wallet-sdk-hd": "3.0.3",
+    "@midnight-ntwrk/wallet-sdk-shielded": "3.0.2",
+    "@midnight-ntwrk/wallet-sdk-unshielded-wallet": "3.1.0",
+    "@midnight-ntwrk/zkir-v2": "2.1.1",
+    "@scure/bip39": "2.0.1",
+    "rxjs": "7.8.2"
+  },
+  "devDependencies": {
+    "@scure/base": "2.4.0",
+    "@types/node": "^24.19.1",
+    "tsup": "^8.0.1",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3",
+    "vitest": "^4.1.11"
+  },
+  "keywords": [
+    "orynq",
+    "midnight",
+    "anchor",
+    "wallet"
+  ],
+  "author": "Flux Point Studios",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
+    "directory": "packages/anchors-midnight-submit"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "sideEffects": false
+}

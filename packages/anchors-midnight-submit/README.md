@@ -1,0 +1,56 @@
+# @fluxpointstudios/orynq-sdk-anchors-midnight-submit
+
+Deploys the immutable `orynq-anchor-registry` on Midnight and writes anchors to it. The verify
+side, the contract and the journal live in `@fluxpointstudios/orynq-sdk-anchors-midnight`; this
+package holds everything that spends DUST or touches a key. It is private until the mainnet
+registry exists.
+
+## Pieces
+
+| Module | What it does |
+|---|---|
+| `keys` | `createWalletMnemonicFile` writes a fresh 24-word mnemonic to a new 0600 file; `walletAddresses` derives the public addresses (HD account 0, index 0, Midnight's published test vector) and nothing else; `ensurePrivateDir` creates or accepts a 0700 directory. |
+| `zk` | `keyMaterial(zkDir)` serves the registry circuits from the committed build (each file checked against `contract/HASHES.txt`) and the DUST spend circuit and k=13/14 parameters from `zkDir`, each checked against the sha256 midnight-ledger 8.1.3 pins. `provingService(zkDir)` proves with zkir-v2 in a worker thread of this process. Nothing is fetched. |
+| `relay` | `credentialRelay(endpoints)`: the wallet SDK's indexer clients take a bare URL and echo it into errors, so a Blockfrost project id cannot ride in the URL. A loopback relay adds the credential header instead; its URLs carry only a random path prefix. |
+| `wallet` | `openWallet` runs a `WalletFacade` (wallet-sdk 1.2.0) over the network's indexer, refuses a mnemonic that does not derive the recorded addresses, pays fees from DUST only, and submits through the source's node. |
+| `broadcast` | Sends the exact final bytes as the bare extrinsic `Midnight.send_mn_transaction` over JSON-RPC (`author_submitExtrinsic`), the same framing the verifier's strict inclusion check reads. |
+| `deployer` | `registryDeployer`: `prepare()` builds, proves, pays and binds a deploy and refuses it unless the final bytes deploy exactly the registry's initial state; `submit(prepared)` sends those bytes through the write-ahead journal at most once per network and reads the address back from the landed transaction. |
+| `operator` | `registryOperator`: `anchor(entry)` (kind 1) and `anchorHiding(entry, attribute)` (kind 2, salt derived from a salt key so every opening is recoverable) under the FPS author key, through the journal; the final bytes must decode to exactly the intended anchor before they leave. |
+| `preflight` | Chain identity (system_chain, genesis, runtime), the exact deploy summary, and the terminal-only confirmation `scripts/deploy-mainnet.ts` uses. |
+
+## Endpoints
+
+Mainnet reads and writes go through Blockfrost (the Midnight-hosted mainnet endpoints were
+retired on 2026-09-30), with the project id read from an owner-only file. Preprod can use
+Midnight's hosted endpoints (`indexer.preprod.midnight.network`, `rpc.preprod.midnight.network`)
+or Blockfrost.
+
+## Custody
+
+- The FPS author key is a 32-byte random secret in a 0600 file, never derived from a wallet seed.
+  `registryOperator` takes its path; nothing accepts the key itself, and no environment variable
+  carries it. On mainnet it refuses to load the key in a process an agent drives
+  (`CLAUDECODE` or any `CLAUDE_CODE_*` variable). This check is defence in depth; the custody
+  boundary is the key file's owner and mode.
+- `scripts/deploy-mainnet.ts` sends a mainnet deploy only after deci types, at an interactive
+  terminal, the token it prints (`DEPLOY` and the first 16 hex characters of the final bytes'
+  transaction hash). A pipe, a file, a flag or an environment variable cannot confirm, and it
+  refuses outright in a process an agent drives.
+
+## Keys
+
+```
+node --import tsx scripts/keys.ts private-dir ~/.secrets/orynq-midnight-preprod
+node --import tsx scripts/keys.ts new-wallet ~/.secrets/orynq-midnight-preprod/wallet-a.mnemonic preprod
+node --import tsx scripts/keys.ts new-author ~/.secrets/orynq-midnight-preprod/author-relay.key
+node --import tsx scripts/keys.ts addresses MNEMONIC_FILE mainnet --equals RECORD.json
+```
+
+Each prints only public derivations (addresses, an author key, a boolean).
+
+## Tests
+
+`MIDNIGHT_PP=<the ZK directory tools/compactc/install.sh filled> pnpm test` (Node 22.13 or later,
+for `node:sqlite`). The operator and deployer suites run the real circuits through zkir's check
+with the one recorded registry proof, so the bytes they judge decode and hash exactly as
+submitted bytes do.

@@ -46,6 +46,18 @@ steps:
       - pnpm install --frozen-lockfile --filter @fluxpointstudios/orynq-sdk-anchors-midnight...
       - cd packages/anchors-midnight && pnpm test:journal && MIDNIGHT_PP=~/.cache/midnight/zk-params nice -n 19 pnpm test:slow
 
+  # The submitter proves with the installer's pinned DUST spend keys and parameters and journals
+  # in node:sqlite, hence Node 24 and the installed ZK directory.
+  - name: midnight-submit
+    image: node:24-bookworm
+    depends_on: []
+    commands:
+      - corepack enable
+      - tools/compactc/install.sh ~/.cache/midnight/compactc ~/.cache/midnight/zk-params
+      - pnpm install --frozen-lockfile --filter @fluxpointstudios/orynq-sdk-anchors-midnight-submit...
+      - pnpm --filter @fluxpointstudios/orynq-sdk-anchors-midnight build
+      - cd packages/anchors-midnight-submit && pnpm typecheck && MIDNIGHT_PP=~/.cache/midnight/zk-params pnpm test
+
   - name: path-check
     image: alpine:3.20
     depends_on: []
