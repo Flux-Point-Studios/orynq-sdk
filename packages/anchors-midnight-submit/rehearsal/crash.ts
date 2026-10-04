@@ -7,9 +7,13 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { midnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { MIDNIGHT_HOSTED_PREPROD, openWallet, provingService, registryOperator } from "../src/index.js";
+import { CRASH_WINDOWS } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
 
-const [mode, label] = process.argv.slice(2) as ["kill-before" | "kill-after" | "recover", string];
+const [mode, label] = process.argv.slice(2) as ["kill-before" | "kill-after" | "recover", keyof typeof CRASH_WINDOWS];
+// Each label has the one kill mode the evidence gate expects, and dies with the gate's words.
+const crashWindow = CRASH_WINDOWS[label];
+if (!crashWindow || (mode !== "recover" && mode !== crashWindow.mode)) throw new Error(`crash.ts: ${mode} ${label} is not a crash window the evidence gate knows`);
 const HOME = process.env.HOME!;
 const SECRETS = `${HOME}/.secrets/orynq-midnight-preprod`;
 const JOURNAL = `${SECRETS}/journal-crash.sqlite`;
@@ -47,9 +51,9 @@ const fee = {
   payFee: wallet.payFee,
   discard: wallet.discard,
   submit: async (tx: Parameters<typeof wallet.submit>[0]) => {
-    if (mode === "kill-before") return die("dying before broadcast", tx.transactionHash());
+    if (mode === "kill-before") return die(crashWindow.dying, tx.transactionHash());
     await wallet.submit(tx);
-    if (mode === "kill-after") return die("dying after the node accepted the bytes", tx.transactionHash());
+    if (mode === "kill-after") return die(crashWindow.dying, tx.transactionHash());
     say("broadcast", { txHash: tx.transactionHash() });
   },
 };

@@ -1,11 +1,18 @@
 // A complete, honest preprod rehearsal as its files would hold it, with fresh random hashes:
 // what run.ts and crash.ts record, what verify-all.mjs returns, the journals, the drill's
-// KNOWN_AUTHORS documents and the 0600 secrets compose.ts scans for. Tests break one thing.
-import { randomBytes } from "node:crypto";
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+// KNOWN_AUTHORS documents (signed by a fresh Ed25519 trust root), the kind-2 openings and the
+// 0600 secrets compose.ts scans for. Tests break one thing.
+import { createHash, randomBytes } from "node:crypto";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { hiddenDigest, hidingCommitment } from "../../../anchors-midnight/src/commitment.js";
+import { ed25519PublicKey } from "../../../anchors-midnight/src/ed25519.js";
+import { signKnownAuthors } from "../../../anchors-midnight/src/known-authors.js";
 
 const h = () => randomBytes(32).toString("hex");
+const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
+// The built verify package, whose KNOWN_AUTHORS code the stand-in verify package runs.
+export const VERIFY_DIST = new URL("../../../anchors-midnight/dist/index.js", import.meta.url).pathname;
 
 // Every directory a test makes lives under the rehearsal's own .tmp and is removed after its file.
 const made: string[] = [];
@@ -31,21 +38,31 @@ export interface Rehearsal {
   journals: Record<string, Array<{ tx_hash: string; state: string }>>;
   documents: Array<{ document: string; signatures: Array<{ key: string; signature: string }> }>;
   root: string;
+  rootSeed: string;
+  openings: Record<string, { txHash: string; rootHash: string; manifestHash: string; merkleRoot: string; salt: string }>;
 }
 
 export function honestRehearsal(): Rehearsal {
   const keys = { relay1: h(), relay2: h() };
   const bundles: Array<Record<string, any>> = [];
   const anchors: Record<string, Anchor> = {};
+  const openings: Rehearsal["openings"] = {};
   const anchor = (name: string, kind: 1 | 2, height: number, wallet = "walletA", author = keys.relay1, extra: Anchor = {}) => {
     const bundle = { label: name, kind, exit: 0, rootHash: h(), manifestHash: h(), merkleRoot: h(), modelManifestHash: h() };
     bundles.push(bundle);
+    const txHash = h();
+    let commitment = h();
+    if (kind === 2) {
+      const salt = h();
+      openings[name] = { txHash, rootHash: bundle.rootHash, manifestHash: bundle.manifestHash, merkleRoot: bundle.merkleRoot, salt };
+      commitment = hex(hidingCommitment(hiddenDigest(bundle, bundle.modelManifestHash), salt));
+    }
     anchors[name] = {
-      txHash: h(),
+      txHash,
       blockHeight: height,
       blockHash: h(),
       kind,
-      commitment: h(),
+      commitment,
       attribute: kind === 2 ? bundle.modelManifestHash : "00".repeat(32),
       author,
       wallet,
@@ -62,7 +79,7 @@ export function honestRehearsal(): Rehearsal {
   ["git-head", "contract-hashes", "compactc-version", "zk-material", "preprod-chain", "preprod-runtime", "preprod-ledger", "git-log", "commitment-suite", "node-version", "pnpm-lock-midnight", "uname"].forEach((l, i) => anchor(l, 1, 1010 + i));
   ["hidden-broadcast-suite", "hidden-relay-suite", "hidden-keys-suite"].forEach((l, i) => anchor(l, 2, 1030 + i));
   anchor("same-block-a-1", 1, 1040, "walletA", keys.relay1, { round: 1 });
-  anchor("same-block-b-1", 1, 1040, "walletB", keys.relay1, { round: 1 });
+  anchor("same-block-b-1", 1, 1040, "walletB", keys.relay1, { round: 1, blockHash: anchors["same-block-a-1"]!.blockHash });
   anchor("crash-before-broadcast", 1, 1050, "walletA", keys.relay1, { drill: "journal crash window" });
   anchor("crash-after-broadcast", 1, 1052, "walletA", keys.relay1, { drill: "journal crash window" });
   anchor("rotation-old-before", 1, 1060);
@@ -98,7 +115,8 @@ export function honestRehearsal(): Rehearsal {
     rotation: { keys },
   };
 
-  const root = h();
+  const rootSeed = randomBytes(32);
+  const root = hex(ed25519PublicKey(rootSeed));
   const relay = (key: string, id: string, validFrom: number, validTo: number | null) => ({ key, id, role: "relay", validFrom, validTo });
   const rotatedAt = anchors["rotation-old-before"]!.blockHeight;
   const revokedAt = anchors["rotation-new-after"]!.blockHeight;
@@ -106,29 +124,41 @@ export function honestRehearsal(): Rehearsal {
     [relay(keys.relay1, "fluxpoint-relay-preprod-1", DEPLOY, null)],
     [relay(keys.relay1, "fluxpoint-relay-preprod-1", DEPLOY, rotatedAt), relay(keys.relay2, "fluxpoint-relay-preprod-2", rotatedAt + 1, null)],
     [relay(keys.relay1, "fluxpoint-relay-preprod-1", DEPLOY, rotatedAt), relay(keys.relay2, "fluxpoint-relay-preprod-2", rotatedAt + 1, revokedAt)],
-  ].map((authors, i) => ({
-    document: `${JSON.stringify({ format: "orynq-known-authors/v1", serial: i + 1, issued: "2026-10-05T00:00:00.000Z", networks: { preprod: { authors, checkpoints: [] } } }, null, 2)}\n`,
-    signatures: [{ key: root, signature: h() + h() }],
-  }));
+  ].map((authors, i) => signKnownAuthors(`${JSON.stringify({ format: "orynq-known-authors/v1", serial: i + 1, issued: "2026-10-05T00:00:00.000Z", networks: { preprod: { authors, checkpoints: [] } } }, null, 2)}\n`, rootSeed));
 
   const rotation = ["rotation-old-before", "rotation-old-after", "rotation-new-after", "revoked-new-after"];
-  const valid = (a: Anchor) => ({ txHash: a.txHash, kind: a.kind, status: "valid", assurance: "consensus-verified", block: { height: a.blockHeight, hash: a.blockHash }, author: { status: "known", id: "fluxpoint-relay-preprod-1", role: "relay" }, verifiedFields: a.kind === 1 ? ["rootHash", "manifestHash", "merkleRoot"] : ["committedAttribute"], finality: { setChanges: 3, justified: a.blockHeight + 2, requests: 4 }, failed: [], notes: [] });
+  const valid = (a: Anchor) => ({ txHash: a.txHash, kind: a.kind, status: "valid", assurance: "consensus-verified", block: { height: a.blockHeight, hash: a.blockHash }, commitment: a.commitment, author: { status: "known", id: "fluxpoint-relay-preprod-1", role: "relay" }, verifiedFields: a.kind === 1 ? ["rootHash", "manifestHash", "merkleRoot"] : ["committedAttribute"], finality: { setChanges: 3, justified: a.blockHeight + 2, requests: 4 }, failed: [], notes: [] });
   const matrix: Record<string, Record<string, string>> = {
     "serial 1": { "rotation-old-before": "valid", "rotation-old-after": "valid", "rotation-new-after": "unauthenticated", "revoked-new-after": "unauthenticated" },
     "serial 2": { "rotation-old-before": "valid", "rotation-old-after": "author-revoked", "rotation-new-after": "valid", "revoked-new-after": "valid" },
     "serial 3": { "rotation-old-before": "valid", "rotation-old-after": "author-revoked", "rotation-new-after": "valid", "revoked-new-after": "author-revoked" },
     "serial 3 with serial 1 passed again": { "rotation-old-before": "valid", "rotation-old-after": "author-revoked", "rotation-new-after": "valid", "revoked-new-after": "author-revoked" },
   };
-  const negative = (status: string, assurance: string, ...failed: string[]) => ({ status, assurance, block: null, author: null, verifiedFields: [], finality: null, failed: failed.map((c) => `${c}: as recorded`), notes: [] });
+  const negative = (status: string, assurance: string, ...failed: string[]) => ({ status, assurance, block: null, commitment: null, author: null, verifiedFields: [], finality: null, failed: failed.map((c) => `${c}: as recorded`), notes: [] });
+  const signatureFails = "refused: the known-authors document's signature by a trust root does not verify";
+  const tarball = randomBytes(64);
   const verified = {
     verifier: "@fluxpointstudios/orynq-sdk-anchors-midnight (packed tarball), separate process, no wallet",
     source: "blockfrost preprod",
-    trustRoot: root,
-    anchors: Object.fromEntries(Object.entries(anchors).filter(([n]) => !rotation.includes(n)).map(([n, a]) => [n, valid(a)])),
-    rotation: {
-      ...Object.fromEntries(Object.entries(matrix).map(([set, want]) => [set, Object.fromEntries(Object.entries(want).map(([label, status]) => [label, { height: anchors[label]!.blockHeight, author: null, status, assurance: "consensus-verified" }]))])),
-      forgedSignature: "refused: the known-authors document carries no signature by a trust root",
+    package: {
+      name: "@fluxpointstudios/orynq-sdk-anchors-midnight",
+      version: "0.1.0",
+      resolved: "file:fluxpointstudios-orynq-sdk-anchors-midnight-0.1.0.tgz",
+      integrity: `sha512-${createHash("sha512").update(tarball).digest("base64")}`,
+      sha256: createHash("sha256").update(tarball).digest("hex"),
     },
+    trustRoot: root,
+    shippedTrustRoots: [],
+    knownAuthorsDocuments: [1, 2, 3].map((serial) => ({ serial, networks: ["preprod"] })),
+    anchors: Object.fromEntries(Object.entries(anchors).filter(([n]) => !rotation.includes(n)).map(([n, a]) => [n, valid(a)])),
+    rotation: Object.fromEntries(Object.entries(matrix).map(([set, want]) => [set, Object.fromEntries(Object.entries(want).map(([label, status]) => [label, { block: { height: anchors[label]!.blockHeight, hash: anchors[label]!.blockHash }, author: null, status, assurance: "consensus-verified" }]))])),
+    forgedDocuments: {
+      "serial 3 with every author window reopened, under the trust root's signature on serial 3": { outcome: signatureFails },
+      "that document signed by a stranger, under the trust root's key": { outcome: signatureFails },
+      "that document signed by a stranger, under the stranger's key": { outcome: "refused: the known-authors document carries no signature by a trust root" },
+      "positive control: that document signed by a stranger, with the stranger as the trust root": { outcome: "opened" },
+    },
+    refusedTransactions: Object.fromEntries(Object.entries(raw.negatives).map(([name, n]) => [name, { ...negative("invalid", "none"), txHash: n.txHash, failed: [`indexer: the indexer knows no transaction ${n.txHash}`] }])),
     negatives: {
       "kind 1 against another bundle's entry": negative("invalid", "consensus-verified", "expectation"),
       "kind 2 against another attribute": negative("invalid", "consensus-verified", "expectation"),
@@ -176,7 +206,7 @@ export function honestRehearsal(): Rehearsal {
     "journal-deploy.sqlite": [{ tx_hash: raw.deploy.txHash, state: "landed" }],
   };
   bundles.push({ label: "unused-extra", kind: 1, exit: 0, rootHash: h(), manifestHash: h(), merkleRoot: h(), modelManifestHash: h() });
-  return { raw, verified, crash, crashStatus, bundles, journals, documents, root };
+  return { raw, verified, crash, crashStatus, bundles, journals, documents, root, rootSeed: hex(rootSeed), openings };
 }
 
 // Writes the rehearsal where the scripts read it: DIR/evidence/{raw.json, verified.json,
@@ -196,9 +226,9 @@ export function writeRehearsal(dir: string, home: string, r: Rehearsal) {
   r.documents.forEach((d, i) => json(`${dir}/evidence/known-authors/signed-${i + 1}.json`, [d]));
   writeFileSync(`${dir}/evidence/known-authors/root.pub`, `${r.root}\n`);
   const secret = (name: string, text: string) => writeFileSync(`${secrets}/${name}`, `${text}\n`, { mode: 0o600 });
-  for (const name of ["author-relay.key", "author-relay-2.key", "salt.key", "known-authors-root.seed"]) secret(name, h());
-  const openings = Object.fromEntries(Object.entries(r.raw.anchors as Record<string, Anchor>).filter(([, a]) => a.kind === 2).map(([n, a]) => [n, { txHash: a.txHash, rootHash: h(), manifestHash: h(), merkleRoot: h(), salt: h() }]));
-  secret("receipts.json", JSON.stringify(openings));
+  for (const name of ["author-relay.key", "author-relay-2.key", "salt.key"]) secret(name, h());
+  secret("known-authors-root.seed", r.rootSeed);
+  secret("receipts.json", JSON.stringify(r.openings));
   for (const [name, rows] of Object.entries(r.journals)) {
     const db = new DatabaseSync(`${secrets}/${name}`);
     db.exec("create table attempts (id integer primary key, key text not null, tx_hash text not null unique, bytes blob not null, ttl_ms integer not null, state text not null, broadcasts integer not null default 0, height integer, block_hash text)");
@@ -219,17 +249,23 @@ export function fakeChain(r: Rehearsal, verdicts: Record<string, { status: strin
   };
   for (const [name, a] of Object.entries(r.raw.anchors as Record<string, any>)) {
     const b = bundle(a.bundle);
-    transactions[a.txHash] = { height: a.blockHeight, blockHash: a.blockHash, anchor: { kind: a.kind, rootHash: b.rootHash, attribute: a.attribute, author: a.author }, ...(verdicts[name] ? { verdict: verdicts[name] } : {}) };
+    transactions[a.txHash] = { height: a.blockHeight, blockHash: a.blockHash, anchor: { kind: a.kind, rootHash: b.rootHash, commitment: a.commitment, attribute: a.attribute, author: a.author }, ...(verdicts[name] ? { verdict: verdicts[name] } : {}) };
   }
   return { registry: { address: r.raw.deploy.address, deployHeight: r.raw.deploy.blockHeight }, transactions };
 }
 
 // A consumer directory whose only package is the stand-in verify package, installed as a copy
-// the way npm installs a packed tarball, or linked to its source the way npm installs a directory.
+// the way npm installs a packed tarball, with the tarball beside it and npm's lock entry for it,
+// or linked to its source the way npm installs a directory.
+export const FAKE_TARBALL = "fluxpointstudios-orynq-sdk-anchors-midnight-0.0.0-fake.tgz";
 export function fakeConsumer(consumer: string, install: "copy" | "link" = "copy") {
   const source = new URL("./fake-verifier", import.meta.url).pathname;
   const target = `${consumer}/node_modules/@fluxpointstudios/orynq-sdk-anchors-midnight`;
   mkdirSync(`${consumer}/node_modules/@fluxpointstudios`, { recursive: true });
-  if (install === "copy") cpSync(source, target, { recursive: true });
-  else symlinkSync(source, target);
+  if (install === "link") return symlinkSync(source, target);
+  cpSync(source, target, { recursive: true });
+  const tarball = readFileSync(`${source}/index.js`);
+  writeFileSync(`${consumer}/${FAKE_TARBALL}`, tarball);
+  const entry = { version: "0.0.0-fake", resolved: `file:${FAKE_TARBALL}`, integrity: `sha512-${createHash("sha512").update(tarball).digest("base64")}` };
+  writeFileSync(`${consumer}/package-lock.json`, JSON.stringify({ name: "consumer", lockfileVersion: 3, packages: { "node_modules/@fluxpointstudios/orynq-sdk-anchors-midnight": entry } }, null, 1));
 }

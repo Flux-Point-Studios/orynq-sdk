@@ -41,6 +41,7 @@ export const VERIFIER_NEGATIVES = {
 // no member. Any other 1010 (another guard, a stale transaction, a fee the wallet cannot pay)
 // proves nothing about the authority, nor does a transport failure or a timeout.
 export const INVALID_TRANSACTION = 1010;
+const INVALID_TRANSACTION_MESSAGE = "Invalid Transaction";
 const THRESHOLD_MISSED = { data: "Custom error: 136", refusedBy: "ThresholdMissed" };
 const KEY_NOT_IN_COMMITTEE = { data: "Custom error: 134", refusedBy: "KeyNotInCommittee" };
 export const NODE_NEGATIVES = {
@@ -49,6 +50,46 @@ export const NODE_NEGATIVES = {
   "VerifierKeyInsert(rewrite), signed by a stranger at index 0": KEY_NOT_IN_COMMITTEE,
 };
 export const MIN_ANCHORS = { 1: 10, 2: 2 };
+
+// KNOWN_AUTHORS documents forged from serial 3, and the verify package's only answer that counts
+// for each. The verifier refuses each failed check with its own message, so the two forgeries
+// under the trust root's key, which carry 64 bytes of hex, count only when Ed25519 verification
+// refused them; the trust-root allow-list refuses the stranger's own key first; and the control
+// opens the same document with the stranger as trust root, so nothing but the signature is wrong.
+const NOT_SIGNED_BY_A_TRUST_ROOT = "the known-authors document carries no signature by a trust root";
+const SIGNATURE_DOES_NOT_VERIFY = "the known-authors document's signature by a trust root does not verify";
+const REOPENED = "serial 3 with every author window reopened, under the trust root's signature on serial 3";
+const UNDER_ROOT_KEY = "that document signed by a stranger, under the trust root's key";
+const UNDER_OWN_KEY = "that document signed by a stranger, under the stranger's key";
+const CONTROL = "positive control: that document signed by a stranger, with the stranger as the trust root";
+const FORGED_DOCUMENTS = {
+  [REOPENED]: `refused: ${SIGNATURE_DOES_NOT_VERIFY}`,
+  [UNDER_ROOT_KEY]: `refused: ${SIGNATURE_DOES_NOT_VERIFY}`,
+  [UNDER_OWN_KEY]: `refused: ${NOT_SIGNED_BY_A_TRUST_ROOT}`,
+  [CONTROL]: "opened",
+};
+
+// Builds each forged document with the trust roots to open it under. `sign` is the verify
+// package's signKnownAuthors; the stranger's seed is fresh and never written anywhere.
+export function forgeKnownAuthors(serial3, root, sign, strangerSeed) {
+  const reopened = JSON.parse(serial3.document);
+  for (const network of Object.values(reopened.networks)) for (const author of network.authors) author.validTo = null;
+  const document = `${JSON.stringify(reopened, null, 2)}\n`;
+  const byStranger = sign(document, strangerSeed);
+  const [{ key: stranger, signature }] = byStranger.signatures;
+  return {
+    [REOPENED]: { signed: { document, signatures: serial3.signatures }, trustRoots: [root] },
+    [UNDER_ROOT_KEY]: { signed: { document, signatures: [{ key: root, signature }] }, trustRoots: [root] },
+    [UNDER_OWN_KEY]: { signed: byStranger, trustRoots: [root] },
+    [CONTROL]: { signed: byStranger, trustRoots: [stranger] },
+  };
+}
+
+// Each crash window's kill mode, and the words crash.ts logs as it dies there.
+export const CRASH_WINDOWS = {
+  "crash-before-broadcast": { mode: "kill-before", dying: "dying before broadcast" },
+  "crash-after-broadcast": { mode: "kill-after", dying: "dying after the node accepted the bytes" },
+};
 
 // The crash drill's log: one JSON object per line, and one "crash.ts MODE LABEL exit=N" line per
 // step in its status file.
@@ -63,15 +104,18 @@ export const parseCrashStatus = (text) =>
 const isValid = (v) => v?.status === "valid" && v.assurance === "consensus-verified";
 const verdict = (v) => (v ? `${v.status} at ${v.assurance ?? "no"} assurance${v.failed?.length ? ` (${v.failed.join("; ")})` : ""}` : "not verified");
 
-// One journal crash window: the kill step must die by SIGKILL after writing the journal row, and
-// the recovery must land exactly the bytes that row holds, broadcasting them again only if they
-// never left.
+// One journal crash window: its kill step must die by SIGKILL where the window says, after
+// writing the journal row, and the recovery must land exactly the bytes that row holds,
+// broadcasting them again only if they never left.
 function crashDrill(label, crash, status, raw) {
   const failures = [];
+  const { mode, dying: said } = CRASH_WINDOWS[label];
   const events = crash.filter((e) => e.label === label);
-  const dying = events.filter((e) => e.mode.startsWith("kill-") && e.event.startsWith("dying"));
-  if (dying.length !== 1) return { failures: [`crash drill ${label}: ${dying.length} kill steps logged, not 1`] };
-  const { mode, txHash } = dying[0];
+  const dying = events.filter((e) => e.mode !== "recover");
+  if (dying.length !== 1 || dying[0].mode !== mode || dying[0].event !== said) {
+    return { failures: [`crash drill ${label}: its kill step logged ${JSON.stringify(dying.map((e) => [e.mode, e.event]))}, not one ${mode} step that said "${said}"`] };
+  }
+  const { txHash } = dying[0];
   const steps = status.filter((s) => s.label === label);
   const exits = Object.fromEntries(steps.map((s) => [s.mode, s.exit]));
   if (steps.length !== 2 || exits[mode] !== 137 || exits.recover !== 0) failures.push(`crash drill ${label}: steps exited ${JSON.stringify(exits)}, not ${mode} 137 (SIGKILL) and recover 0`);
@@ -89,25 +133,55 @@ function crashDrill(label, crash, status, raw) {
   }
   const wantResent = mode === "kill-before" ? [txHash] : [];
   if (JSON.stringify(resent) !== JSON.stringify(wantResent)) failures.push(`crash drill ${label}: the recovery broadcast ${JSON.stringify(resent)}, not ${JSON.stringify(wantResent)}`);
-  return { failures, fact: { label, mode, txHash, resent: resent.length } };
+  return { failures, fact: { label, mode, said, txHash, resent: resent.length } };
 }
+
+/**
+ * What the gate established; every field is complete only when it returns no failure.
+ * @typedef {object} Facts
+ * @property {{ total: number, byKind: { 1: number, 2: number }, crash: number }} anchors
+ * @property {Array<{ label: string, mode: string, said: string, txHash: string, resent: number }>} crashDrill
+ * @property {Array<{ name: string, txHash: string, refusal: { code: number, message: string, data: string }, refusedBy: string }>} nodeNegatives
+ * @property {number} verifierNegatives
+ * @property {{ height: number, hash: string, anchors: [string, string], wallets: [string, string], round: number } | null} sameBlock
+ * @property {Array<{ name: string, outcome: string }>} forgedDocuments
+ * @property {{ name: string, version: string, resolved: string, integrity: string, sha256: string } | null} package
+ * @property {string | null} trustRoot
+ */
 
 export function judge({ raw, verified, crash, crashStatus }) {
   const failures = [];
   const anchors = Object.entries(raw.anchors ?? {});
-  const facts = { anchors: { total: 0, byKind: { 1: 0, 2: 0 }, crash: 0 }, crashDrill: [], nodeNegatives: [], verifierNegatives: 0, sameBlock: null };
+  /** @type {Facts} */
+  const facts = { anchors: { total: 0, byKind: { 1: 0, 2: 0 }, crash: 0 }, crashDrill: [], nodeNegatives: [], verifierNegatives: 0, sameBlock: null, forgedDocuments: [], package: null, trustRoot: null };
 
   if (raw.deploy?.readback?.immutable !== true || raw.deploy?.readback?.byteEqual !== true) failures.push("the registry deploy's readback did not show the same immutable state from the indexer and the node");
 
-  // Every anchor outside the rotation drill: valid at consensus-verified, for the hash recorded.
+  // The verify package came from a packed tarball, as npm recorded the install.
+  const pkg = verified.package;
+  if (!/^file:[^/]+\.tgz$/.test(pkg?.resolved ?? "") || !/^sha512-[A-Za-z0-9+/]{86}==$/.test(pkg?.integrity ?? "") || !/^[0-9a-f]{64}$/.test(pkg?.sha256 ?? "")) {
+    failures.push(`the verifier recorded no install of the verify package from a packed tarball (${JSON.stringify(pkg ?? null)})`);
+  } else facts.package = pkg;
+
+  // Every recorded anchor is its own transaction, of a kind the registry writes.
+  const named = new Map();
+  for (const [name, a] of anchors) {
+    if (named.has(a.txHash)) failures.push(`anchors ${named.get(a.txHash)} and ${name} record the same transaction ${a.txHash}`);
+    else named.set(a.txHash, name);
+    if (a.kind !== 1 && a.kind !== 2) failures.push(`anchor ${name}: kind ${a.kind} is not one the registry writes`);
+  }
+
+  // Every anchor outside the rotation drill: valid at consensus-verified, for the hash and the
+  // commitment recorded.
   for (const [name, a] of anchors) {
     if (ROTATION_LABELS.includes(name)) continue;
     const v = verified.anchors?.[name];
     if (!isValid(v)) failures.push(`anchor ${name}: ${verdict(v)}`);
     else if (v.txHash !== a.txHash) failures.push(`anchor ${name}: the verifier checked ${v.txHash}, not the recorded ${a.txHash}`);
-    else {
+    else if (v.commitment !== a.commitment) failures.push(`anchor ${name}: the verifier read commitment ${v.commitment}, not the recorded ${a.commitment}`);
+    else if (a.kind === 1 || a.kind === 2) {
       facts.anchors.total++;
-      facts.anchors.byKind[a.kind] = (facts.anchors.byKind[a.kind] ?? 0) + 1;
+      facts.anchors.byKind[a.kind]++;
     }
   }
   for (const [kind, min] of Object.entries(MIN_ANCHORS)) {
@@ -118,25 +192,29 @@ export function judge({ raw, verified, crash, crashStatus }) {
   for (const e of crash.filter((e) => e.event === "landed")) {
     if (raw.anchors?.[e.label]?.txHash !== e.receipt?.txHash) failures.push(`crash drill anchor ${e.label} (${e.receipt?.txHash}) is not among the recorded anchors`);
   }
-  for (const label of ["crash-before-broadcast", "crash-after-broadcast"]) {
+  for (const label of Object.keys(CRASH_WINDOWS)) {
     const drill = crashDrill(label, crash, crashStatus, raw);
     failures.push(...drill.failures);
     if (drill.fact) facts.crashDrill.push(drill.fact);
   }
   facts.anchors.crash = facts.crashDrill.length;
 
-  // Two wallets, one block, both anchors valid.
+  // Two wallets, one block, both anchors valid, and the verifier places both in that block.
   const pair = raw.sameBlock?.coLanded;
   const pairAnchors = (pair?.txHashes ?? []).map((t) => anchors.find(([, a]) => a.txHash === t));
   if (!pair || pairAnchors.length !== 2 || pairAnchors.some((x) => !x)) failures.push("no same-block pair was recorded among the anchors");
   else {
     const [[nameA, a], [nameB, b]] = pairAnchors;
+    const [va, vb] = [verified.anchors?.[nameA], verified.anchors?.[nameB]];
     if (a.wallet === b.wallet || a.blockHeight !== pair.height || b.blockHeight !== pair.height) failures.push(`same-block pair ${nameA} and ${nameB}: wallets ${a.wallet} and ${b.wallet} at heights ${a.blockHeight} and ${b.blockHeight}, not two wallets in block ${pair.height}`);
-    else if (!isValid(verified.anchors?.[nameA]) || !isValid(verified.anchors?.[nameB])) failures.push(`same-block pair ${nameA} and ${nameB}: not both verified valid`);
-    else facts.sameBlock = { height: pair.height, anchors: [nameA, nameB], round: pair.round };
+    else if (!isValid(va) || !isValid(vb)) failures.push(`same-block pair ${nameA} and ${nameB}: not both verified valid`);
+    else if (va.block?.height !== pair.height || vb.block?.height !== pair.height || va.block.hash !== vb.block.hash) {
+      failures.push(`same-block pair ${nameA} and ${nameB}: the verifier places them in blocks ${va.block?.height} (${va.block?.hash}) and ${vb.block?.height} (${vb.block?.hash}), not both in block ${pair.height}`);
+    } else facts.sameBlock = { height: pair.height, hash: va.block.hash, anchors: [nameA, nameB], wallets: [a.wallet, b.wallet], round: pair.round };
   }
 
-  // The maintenance authority itself refused every maintenance update, and none of them landed.
+  // The maintenance authority itself refused every maintenance update, and none of them landed:
+  // the hosted indexer run.ts asked lists none, and Blockfrost, asked by the verifier, knows none.
   const negatives = raw.negatives ?? {};
   for (const name of Object.keys(negatives)) {
     if (!Object.hasOwn(NODE_NEGATIVES, name)) failures.push(`negative ${name} is not one of the maintenance updates the gate knows the refusal for`);
@@ -148,12 +226,17 @@ export function judge({ raw, verified, crash, crashStatus }) {
       continue;
     }
     const { refusal } = n;
-    if (refusal?.code !== INVALID_TRANSACTION || refusal.data !== data) {
+    const asked = verified.refusedTransactions?.[name];
+    const absent = `indexer: the indexer knows no transaction ${n.txHash}`;
+    if (refusal?.code !== INVALID_TRANSACTION || refusal.message !== INVALID_TRANSACTION_MESSAGE || refusal.data !== data) {
       const shown = refusal?.data === undefined ? "" : ` (${typeof refusal.data === "string" ? refusal.data : JSON.stringify(refusal.data)})`;
       const got = refusal ? `the node answered ${refusal.code} ${refusal.message}${shown}` : `no refusal by the node was recorded (${n.unresolved ?? n.error ?? n.note ?? "accepted"})`;
-      failures.push(`negative ${name}: ${got}, not ${INVALID_TRANSACTION} Invalid Transaction (${data}, ${refusedBy})`);
+      failures.push(`negative ${name}: ${got}, not ${INVALID_TRANSACTION} ${INVALID_TRANSACTION_MESSAGE} (${data}, ${refusedBy})`);
     } else if (n.onChain !== 0) failures.push(`negative ${name}: the indexer lists it ${n.onChain} times`);
-    else facts.nodeNegatives.push({ name, txHash: n.txHash, code: refusal.code, message: refusal.message, data, refusedBy });
+    else if (asked?.txHash !== n.txHash || asked.status !== "invalid" || !(asked.failed ?? []).includes(absent)) {
+      const answer = !asked ? "not verified" : asked.txHash !== n.txHash ? `about ${asked.txHash}` : verdict(asked);
+      failures.push(`negative ${name}: Blockfrost, asked by the verifier, answered ${answer}, not invalid with "${absent}"`);
+    } else facts.nodeNegatives.push({ name, txHash: n.txHash, refusal: { code: refusal.code, message: refusal.message, data: refusal.data }, refusedBy });
   }
   if (raw.negativesAfter?.registryStillImmutable !== true) failures.push("the registry state was not re-checked after the negatives");
 
@@ -171,7 +254,27 @@ export function judge({ raw, verified, crash, crashStatus }) {
       if (got?.status !== status || (status === "valid" && got.assurance !== "consensus-verified")) failures.push(`rotation ${set}, ${label}: ${verdict(got)}, expected ${status}`);
     }
   }
-  if (!String(verified.rotation?.forgedSignature).startsWith("refused:")) failures.push(`a KNOWN_AUTHORS document with a forged signature was ${verified.rotation?.forgedSignature ?? "not tried"}`);
+
+  // Each forged document got the verify package's answer from the check it targets.
+  const forged = verified.forgedDocuments ?? {};
+  for (const name of Object.keys(forged)) {
+    if (!Object.hasOwn(FORGED_DOCUMENTS, name)) failures.push(`forged KNOWN_AUTHORS document "${name}" is not one the gate holds an answer for`);
+  }
+  for (const [name, want] of Object.entries(FORGED_DOCUMENTS)) {
+    const got = forged[name]?.outcome;
+    if (got !== want) failures.push(`forged KNOWN_AUTHORS document "${name}": ${got ?? "not tried"}, not ${want}`);
+    else facts.forgedDocuments.push({ name, outcome: got });
+  }
+
+  // The drill's trust root is not one the verify package ships, and its documents name preprod alone.
+  const shipped = verified.shippedTrustRoots;
+  if (!Array.isArray(shipped)) failures.push("the verifier did not record the trust roots the verify package ships");
+  else if (shipped.includes(verified.trustRoot)) failures.push(`the drill's trust root ${verified.trustRoot} is one the verify package ships`);
+  else facts.trustRoot = verified.trustRoot;
+  const networks = (verified.knownAuthorsDocuments ?? []).map((d) => d.networks);
+  if (networks.length !== 3 || networks.some((n) => JSON.stringify(n) !== '["preprod"]')) {
+    failures.push(`the drill's KNOWN_AUTHORS documents name the networks ${JSON.stringify(networks)}, not preprod alone in each of three`);
+  }
 
   // Each verifier negative fails with its expected status, for its expected cause.
   for (const [name, [status, cause]] of Object.entries(VERIFIER_NEGATIVES)) {

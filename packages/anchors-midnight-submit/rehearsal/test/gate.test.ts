@@ -10,20 +10,39 @@ const failuresOf = (edit: (r: Rehearsal) => void) => {
 };
 const journalLanded = (r: Rehearsal) => Object.values(r.journals).flat().filter((x) => x.state === "landed").map((x) => x.tx_hash);
 
+// The verify package's own answers: Ed25519 verification refuses the first two, the trust-root
+// allow-list the third, and the control shows the forged document is otherwise well-formed.
+const SIGNATURE_FAILS = "refused: the known-authors document's signature by a trust root does not verify";
+const NO_TRUST_ROOT = "refused: the known-authors document carries no signature by a trust root";
+const REOPENED = "serial 3 with every author window reopened, under the trust root's signature on serial 3";
+const UNDER_ROOT_KEY = "that document signed by a stranger, under the trust root's key";
+const FORGED: Record<string, string> = {
+  [REOPENED]: SIGNATURE_FAILS,
+  [UNDER_ROOT_KEY]: SIGNATURE_FAILS,
+  "that document signed by a stranger, under the stranger's key": NO_TRUST_ROOT,
+  "positive control: that document signed by a stranger, with the stranger as the trust root": "opened",
+};
+
 describe("the evidence gate", () => {
   it("passes a complete, honest rehearsal and counts what it may claim", () => {
     const r = honestRehearsal();
     const { failures, facts } = run(r);
     expect(failures).toEqual([]);
     expect(facts.anchors).toEqual({ total: 19, byKind: { 1: 16, 2: 3 }, crash: 2 });
-    expect(facts.crashDrill.map((d: { mode: string; resent: number }) => [d.mode, d.resent])).toEqual([["kill-before", 1], ["kill-after", 0]]);
-    expect(facts.nodeNegatives.map((n: { name: string; code: number; data: string; refusedBy: string }) => [n.name, n.code, n.data, n.refusedBy])).toEqual([
-      ["ReplaceAuthority, unsigned", 1010, "Custom error: 136", "ThresholdMissed"],
-      ["VerifierKeyRemove(anchor), signed by a stranger at index 0", 1010, "Custom error: 134", "KeyNotInCommittee"],
-      ["VerifierKeyInsert(rewrite), signed by a stranger at index 0", 1010, "Custom error: 134", "KeyNotInCommittee"],
+    expect(facts.crashDrill.map((d: { label: string; mode: string; said: string; resent: number }) => [d.label, d.mode, d.said, d.resent])).toEqual([
+      ["crash-before-broadcast", "kill-before", "dying before broadcast", 1],
+      ["crash-after-broadcast", "kill-after", "dying after the node accepted the bytes", 0],
+    ]);
+    expect(facts.nodeNegatives.map((n: { name: string; refusal: unknown; refusedBy: string }) => [n.name, n.refusal, n.refusedBy])).toEqual([
+      ["ReplaceAuthority, unsigned", { code: 1010, message: "Invalid Transaction", data: "Custom error: 136" }, "ThresholdMissed"],
+      ["VerifierKeyRemove(anchor), signed by a stranger at index 0", { code: 1010, message: "Invalid Transaction", data: "Custom error: 134" }, "KeyNotInCommittee"],
+      ["VerifierKeyInsert(rewrite), signed by a stranger at index 0", { code: 1010, message: "Invalid Transaction", data: "Custom error: 134" }, "KeyNotInCommittee"],
     ]);
     expect(facts.verifierNegatives).toBe(12);
-    expect(facts.sameBlock).toMatchObject({ height: 1040, anchors: ["same-block-a-1", "same-block-b-1"] });
+    expect(facts.sameBlock).toEqual({ height: 1040, hash: r.raw.anchors["same-block-a-1"].blockHash, anchors: ["same-block-a-1", "same-block-b-1"], wallets: ["walletA", "walletB"], round: 1 });
+    expect(facts.forgedDocuments).toEqual(Object.entries(FORGED).map(([name, outcome]) => ({ name, outcome })));
+    expect(facts.package).toEqual(r.verified.package);
+    expect(facts.trustRoot).toBe(r.root);
     expect(unrecordedAnchors(r.raw, journalLanded(r))).toEqual([]);
   });
 
@@ -52,6 +71,19 @@ describe("the evidence gate", () => {
 
     it("refuses a verdict on another transaction than the one recorded", () => {
       expect(failuresOf((r) => (r.verified.anchors["git-log"].txHash = "ab".repeat(32)))[0]).toMatch(/^anchor git-log: the verifier checked abab/);
+    });
+
+    it("counts distinct transactions: refuses one transaction recorded under two names, and a kind the registry never writes", () => {
+      const r = honestRehearsal();
+      const twice = r.raw.anchors["hidden-relay-suite"].txHash;
+      r.raw.anchors["hidden-keys-suite"] = { ...r.raw.anchors["hidden-relay-suite"] };
+      r.verified.anchors["hidden-keys-suite"] = { ...r.verified.anchors["hidden-relay-suite"] };
+      expect(run(r).failures).toEqual([`anchors hidden-relay-suite and hidden-keys-suite record the same transaction ${twice}`]);
+      expect(failuresOf((r) => (r.raw.anchors.uname.kind = 3))).toEqual(["anchor uname: kind 3 is not one the registry writes"]);
+    });
+
+    it("refuses an anchor whose commitment the verifier read differently from the one recorded", () => {
+      expect(failuresOf((r) => (r.verified.anchors["git-log"].commitment = "ee".repeat(32)))).toEqual([expect.stringMatching(/^anchor git-log: the verifier read commitment e{64}, not the recorded [0-9a-f]{64}$/)]);
     });
 
     it("refuses fewer than 10 kind-1 or 2 kind-2 anchors", () => {
@@ -101,6 +133,28 @@ describe("the evidence gate", () => {
       );
     });
 
+    it("refuses the authority's code under a message other than Invalid Transaction", () => {
+      expect(failuresOf((r) => (r.raw.negatives[unsigned].refusal.message = "Transaction is outdated"))).toEqual([
+        `negative ${unsigned}: the node answered 1010 Transaction is outdated (Custom error: 136), not ${want[unsigned]}`,
+      ]);
+    });
+
+    it("refuses a refused transaction that Blockfrost, asked by the verifier, holds or could not look up", () => {
+      const absent = (r: Rehearsal, name: string) => `not invalid with "indexer: the indexer knows no transaction ${r.raw.negatives[name].txHash}"`;
+      const r1 = honestRehearsal();
+      Object.assign(r1.verified.refusedTransactions[negative], { failed: ["anchor: as recorded"] });
+      expect(run(r1).failures).toEqual([`negative ${negative}: Blockfrost, asked by the verifier, answered invalid at none assurance (anchor: as recorded), ${absent(r1, negative)}`]);
+      const r2 = honestRehearsal();
+      r2.verified.refusedTransactions[negative].status = "unavailable";
+      expect(run(r2).failures).toEqual([`negative ${negative}: Blockfrost, asked by the verifier, answered unavailable at none assurance (indexer: the indexer knows no transaction ${r2.raw.negatives[negative].txHash}), ${absent(r2, negative)}`]);
+      const r3 = honestRehearsal();
+      r3.verified.refusedTransactions[negative].txHash = "ab".repeat(32);
+      expect(run(r3).failures).toEqual([`negative ${negative}: Blockfrost, asked by the verifier, answered about ${"ab".repeat(32)}, ${absent(r3, negative)}`]);
+      const r4 = honestRehearsal();
+      delete r4.verified.refusedTransactions[unsigned];
+      expect(run(r4).failures).toEqual([`negative ${unsigned}: Blockfrost, asked by the verifier, answered not verified, ${absent(r4, unsigned)}`]);
+    });
+
     it("refuses each authority code for the case it does not belong to, and a 1010 with no custom code", () => {
       expect(failuresOf((r) => (r.raw.negatives[unsigned].refusal.data = "Custom error: 134"))).toEqual([`negative ${unsigned}: the node answered 1010 Invalid Transaction (Custom error: 134), not ${want[unsigned]}`]);
       expect(failuresOf((r) => (r.raw.negatives[insert].refusal.data = "Custom error: 136"))).toEqual([`negative ${insert}: the node answered 1010 Invalid Transaction (Custom error: 136), not ${want[insert]}`]);
@@ -124,10 +178,57 @@ describe("the evidence gate", () => {
       expect(failuresOf((r) => (r.verified.rotation["serial 1"]["rotation-new-after"].status = "unavailable"))).toHaveLength(1);
     });
 
-    it("refuses an accepted forged document, an anchor by the wrong key, and anchors out of order", () => {
-      expect(failuresOf((r) => (r.verified.rotation.forgedSignature = "ACCEPTED"))).toEqual(["a KNOWN_AUTHORS document with a forged signature was ACCEPTED"]);
+    it("refuses an anchor by the wrong key, and anchors out of order", () => {
       expect(failuresOf((r) => (r.raw.anchors["rotation-new-after"].author = r.raw.rotation.keys.relay1))[0]).toMatch(/^rotation anchor rotation-new-after: written by [0-9a-f]{64}, not relay2/);
       expect(failuresOf((r) => (r.raw.anchors["rotation-old-after"].blockHeight = 1060))[0]).toMatch(/^the rotation anchors are not four anchors in increasing blocks/);
+    });
+  });
+
+  describe("forged KNOWN_AUTHORS documents count only with the verify package's answer from the check each targets", () => {
+    const answered = (name: string, outcome: string) => (r: Rehearsal) => (r.verified.forgedDocuments[name] = { outcome });
+
+    // The allow-list refuses a stranger's key beside the root's signature before any signature
+    // is verified, so a verifier that skipped Ed25519 verification gives that answer too.
+    it("refuses the allow-list's refusal of a trust-root forgery, which never reached the signature check", () => {
+      expect(failuresOf(answered(REOPENED, NO_TRUST_ROOT))).toEqual([`forged KNOWN_AUTHORS document "${REOPENED}": ${NO_TRUST_ROOT}, not ${SIGNATURE_FAILS}`]);
+      expect(failuresOf(answered(UNDER_ROOT_KEY, NO_TRUST_ROOT))).toEqual([`forged KNOWN_AUTHORS document "${UNDER_ROOT_KEY}": ${NO_TRUST_ROOT}, not ${SIGNATURE_FAILS}`]);
+    });
+
+    it("refuses a forgery that opened, one refused for a malformed signature or by the document parser, and a control that did not open", () => {
+      expect(failuresOf(answered(REOPENED, "opened"))).toEqual([`forged KNOWN_AUTHORS document "${REOPENED}": opened, not ${SIGNATURE_FAILS}`]);
+      const malformed = "refused: the known-authors document's signature by a trust root is not 64 bytes of lowercase hex";
+      expect(failuresOf(answered(UNDER_ROOT_KEY, malformed))).toEqual([`forged KNOWN_AUTHORS document "${UNDER_ROOT_KEY}": ${malformed}, not ${SIGNATURE_FAILS}`]);
+      expect(failuresOf(answered(REOPENED, "refused: preprod.authors gives overlapping windows for key aa"))).toHaveLength(1);
+      const control = "positive control: that document signed by a stranger, with the stranger as the trust root";
+      expect(failuresOf(answered(control, "refused: preprod.authors gives overlapping windows for key aa"))).toEqual([
+        `forged KNOWN_AUTHORS document "${control}": refused: preprod.authors gives overlapping windows for key aa, not opened`,
+      ]);
+    });
+
+    it("refuses a forgery not tried and one the gate holds no answer for", () => {
+      expect(failuresOf((r) => delete r.verified.forgedDocuments[UNDER_ROOT_KEY])).toEqual([`forged KNOWN_AUTHORS document "${UNDER_ROOT_KEY}": not tried, not ${SIGNATURE_FAILS}`]);
+      expect(failuresOf(answered("a stranger's key beside the root's signature", NO_TRUST_ROOT))).toEqual([
+        `forged KNOWN_AUTHORS document "a stranger's key beside the root's signature" is not one the gate holds an answer for`,
+      ]);
+    });
+  });
+
+  describe("the drill's trust root", () => {
+    it("refuses a trust root the verify package ships, and documents naming any network but preprod", () => {
+      expect(failuresOf((r) => (r.verified.shippedTrustRoots = [r.root]))).toEqual([expect.stringMatching(/^the drill's trust root [0-9a-f]{64} is one the verify package ships$/)]);
+      expect(failuresOf((r) => delete r.verified.shippedTrustRoots)).toEqual(["the verifier did not record the trust roots the verify package ships"]);
+      expect(failuresOf((r) => (r.verified.knownAuthorsDocuments[1].networks = ["mainnet", "preprod"]))).toEqual([
+        'the drill\'s KNOWN_AUTHORS documents name the networks [["preprod"],["mainnet","preprod"],["preprod"]], not preprod alone in each of three',
+      ]);
+    });
+  });
+
+  describe("the verify package", () => {
+    it("refuses a verify package not recorded as installed from a packed tarball", () => {
+      const refused = "the verifier recorded no install of the verify package from a packed tarball";
+      expect(failuresOf((r) => (r.verified.package.resolved = "file:../../anchors-midnight"))).toEqual([expect.stringMatching(new RegExp(`^${refused} \\(`))]);
+      expect(failuresOf((r) => (r.verified.package.integrity = "sha1-abc"))).toEqual([expect.stringMatching(new RegExp(`^${refused} \\(`))]);
+      expect(failuresOf((r) => delete r.verified.package)).toEqual([`${refused} (null)`]);
     });
   });
 
@@ -157,6 +258,21 @@ describe("the evidence gate", () => {
       expect(failuresOf((r) => r.crash.splice(r.crash.indexOf(at(r, "crash-before-broadcast", "broadcast")), 1))[0]).toMatch(/^crash drill crash-before-broadcast: the recovery broadcast \[\], not \["/);
     });
 
+    // Each window has one kill mode, and the kill step must say where it died in crash.ts's words.
+    it("refuses a window run in the other kill mode, or a kill step that died elsewhere", () => {
+      const asAfter = (r: Rehearsal) => {
+        Object.assign(at(r, "crash-before-broadcast", "dying"), { mode: "kill-after", event: "dying after the node accepted the bytes" });
+        r.crashStatus[0] = "crash.ts kill-after crash-before-broadcast exit=137";
+      };
+      expect(failuresOf(asAfter)).toEqual(['crash drill crash-before-broadcast: its kill step logged [["kill-after","dying after the node accepted the bytes"]], not one kill-before step that said "dying before broadcast"']);
+      expect(failuresOf((r) => (at(r, "crash-after-broadcast", "dying").event = "dying before broadcast"))).toEqual([
+        'crash drill crash-after-broadcast: its kill step logged [["kill-after","dying before broadcast"]], not one kill-after step that said "dying after the node accepted the bytes"',
+      ]);
+      expect(failuresOf((r) => (at(r, "crash-before-broadcast", "dying").mode = "kill-after"))).toEqual([
+        'crash drill crash-before-broadcast: its kill step logged [["kill-after","dying before broadcast"]], not one kill-before step that said "dying before broadcast"',
+      ]);
+    });
+
     it("refuses a kill step that was not a SIGKILL, and a death before the journal row existed", () => {
       expect(failuresOf((r) => (r.crashStatus[0] = "crash.ts kill-before crash-before-broadcast exit=0"))[0]).toMatch(/^crash drill crash-before-broadcast: steps exited \{"kill-before":0,"recover":0\}/);
       expect(failuresOf((r) => (at(r, "crash-after-broadcast", "dying").rows = []))).toEqual([expect.stringMatching(/^crash drill crash-after-broadcast: the journal held no pending row/)]);
@@ -167,6 +283,14 @@ describe("the evidence gate", () => {
     expect(failuresOf((r) => delete r.raw.sameBlock.coLanded)).toEqual(["no same-block pair was recorded among the anchors"]);
     expect(failuresOf((r) => (r.raw.anchors["same-block-b-1"].wallet = "walletA"))[0]).toMatch(/^same-block pair same-block-a-1 and same-block-b-1: wallets walletA and walletA/);
     expect(failuresOf((r) => (r.raw.anchors["same-block-b-1"].blockHeight = 1041))[0]).toMatch(/at heights 1040 and 1041, not two wallets in block 1040/);
+  });
+
+  it("refuses a same-block pair the verifier places in two blocks, though the rehearsal recorded one", () => {
+    const r = honestRehearsal();
+    r.verified.anchors["same-block-b-1"].block = { height: 1041, hash: "dd".repeat(32) };
+    expect(run(r).failures).toEqual([
+      `same-block pair same-block-a-1 and same-block-b-1: the verifier places them in blocks 1040 (${r.raw.anchors["same-block-a-1"].blockHash}) and 1041 (${"dd".repeat(32)}), not both in block 1040`,
+    ]);
   });
 
   it("refuses a deploy whose readback did not show the immutable state from both paths", () => {

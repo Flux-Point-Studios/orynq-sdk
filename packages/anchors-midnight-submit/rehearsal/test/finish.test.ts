@@ -3,7 +3,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
-import { fakeChain, fakeConsumer, honestRehearsal, removeScratch, scratch, writeRehearsal } from "./fixture.js";
+import { VERIFY_DIST, fakeChain, fakeConsumer, honestRehearsal, removeScratch, scratch, writeRehearsal } from "./fixture.js";
 
 const HERE = new URL("..", import.meta.url).pathname;
 
@@ -18,11 +18,11 @@ function finish(verdicts: Record<string, { status: string; assurance: string }> 
   const out = `${root}/pack.json`;
   const run = spawnSync("bash", [`${root}/rehearsal/finish.sh`, out], {
     encoding: "utf8",
-    env: { ...process.env, HOME: `${root}/home`, CONSUMER: `${root}/consumer`, FAKE_CHAIN: `${root}/chain.json`, FAKE_LOG: `${root}/asked.log`, ...consumer },
+    env: { ...process.env, HOME: `${root}/home`, CONSUMER: `${root}/consumer`, FAKE_CHAIN: `${root}/chain.json`, FAKE_LOG: `${root}/asked.log`, ORYNQ_VERIFY_DIST: VERIFY_DIST, ...consumer },
     timeout: 120_000,
   });
   const verified = existsSync(`${root}/rehearsal/evidence/verified.json`) ? JSON.parse(readFileSync(`${root}/rehearsal/evidence/verified.json`, "utf8")) : null;
-  const asked = readFileSync(`${root}/asked.log`, "utf8").split("\n").filter(Boolean);
+  const asked = readFileSync(`${root}/asked.log`, "utf8").split("\n").filter(Boolean).map((l) => l.split(" ")[0]);
   return { run, verified, asked, pack: existsSync(out) ? JSON.parse(readFileSync(out, "utf8")) : null };
 }
 
@@ -33,7 +33,9 @@ describe("finish.sh", () => {
     const { run, verified, pack } = finish();
     expect(run.status, run.stderr).toBe(0);
     expect(verified.gate.failures).toEqual([]);
-    expect(pack.statements[0]).toMatch(/^All 19 anchors this rehearsal wrote outside the rotation drill/);
+    expect(pack.statements[0]).toMatch(/^All 19 anchors this rehearsal wrote outside the rotation drill, 19 distinct transactions/);
+    expect(pack.verifier.package).toEqual(verified.package);
+    expect(pack.knownAuthorsDrill.forgedDocuments).toEqual(verified.forgedDocuments);
   });
 
   it("refuses to run without CONSUMER, the directory that installed only the packed verify package", () => {

@@ -1,13 +1,15 @@
 // Composes the preprod evidence pack from what the rehearsal recorded (evidence/raw.json, the
 // crash drill's log), the separate verifier's output (evidence/verified.json), the KNOWN_AUTHORS
-// drill documents and the rehearsal's journals. It writes nothing unless gate.mjs passes every
-// claim and the scan finds no window of any secret the rehearsal held, in five encodings, with
-// positive controls; each statement is built from what the gate established. Prints counts only.
+// drill documents, the rehearsal's journals and the private kind-2 openings. It writes nothing
+// unless gate.mjs passes every claim, every kind-2 opening recomputes the commitment the verifier
+// read, and the scan finds no window of any secret the rehearsal held, in five encodings, with
+// positive controls. Each statement is built only from what those checks established; README.md
+// maps every statement to its check. Prints counts only.
 //   node --import tsx compose.ts REHEARSAL_DIR OUT.json
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { readAuthorSecret, readPrivateFile, REGISTRY_VERIFIER_KEY_SHA256 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { hiddenDigest, hidingCommitment, readAuthorSecret, readPrivateFile, REGISTRY_VERIFIER_KEY_SHA256 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { windowHits } from "../../anchors-midnight/src/__tests__/privacy-scan.js";
 import { INVALID_TRANSACTION, judge, parseCrashLog, parseCrashStatus, ROTATION_EXPECTED, ROTATION_LABELS, unrecordedAnchors } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
@@ -34,8 +36,20 @@ const journalLanded = readdirSync(SECRETS)
       db.close();
     }
   });
+type Opening = { txHash: string; rootHash: string; manifestHash: string; merkleRoot: string; salt: string };
+const openings: Record<string, Opening> = JSON.parse(readPrivateFile(`${SECRETS}/receipts.json`));
+const kind2 = Object.entries(raw.anchors as Record<string, { kind: number; txHash: string; attribute: string }>).filter(([, a]) => a.kind === 2);
+// Each kind-2 opening, checked here on the operator host, recomputes the commitment the verifier
+// read from the chain for its anchor.
+const unopened = kind2.flatMap(([name, a]) => {
+  const o = openings[name];
+  if (o?.txHash !== a.txHash) return [`kind-2 anchor ${name}: the private receipts hold no opening for ${a.txHash}`];
+  const opened = Buffer.from(hidingCommitment(hiddenDigest(o, a.attribute), o.salt)).toString("hex");
+  const read = verified.anchors[name]?.commitment;
+  return opened === read ? [] : [`kind-2 anchor ${name}: its opening recomputes ${opened}, not the commitment ${read} the verifier read`];
+});
 const { failures, facts } = judge({ raw, verified, crash, crashStatus });
-failures.push(...unrecordedAnchors(raw, journalLanded));
+failures.push(...unrecordedAnchors(raw, journalLanded), ...unopened);
 if (failures.length) {
   for (const failure of failures) process.stderr.write(`GATE: ${failure}\n`);
   process.stderr.write(`no pack written: ${failures.length} claims are not established\n`);
@@ -72,24 +86,29 @@ const timed = (kind: number, field: string) => anchors.filter((a) => a.kind === 
 const stats = (xs: number[]) => (xs.length ? { n: xs.length, p50: quantile(xs, 0.5), p95: quantile(xs, 0.95), max: Math.max(...xs) } : null);
 const fees = anchors.map((a) => BigInt(a.declaredFeeSpeck ?? 0));
 
-const { anchors: counted, crashDrill, nodeNegatives } = facts;
-const sameBlock: { height: number; anchors: string[] } = facts.sameBlock!;
+const { anchors: counted, crashDrill, nodeNegatives, forgedDocuments, verifierNegatives } = facts;
+const sameBlock = facts.sameBlock!;
 const rotation = Object.entries(ROTATION_EXPECTED as Record<string, Record<string, string>>)
   .map(([set, want]) => `${set}: ${ROTATION_LABELS.map((l: string) => `${l} ${want[l]}`).join(", ")}`)
   .join("; ");
-const refusals = nodeNegatives.map((n: { name: string; data: string; refusedBy: string }) => `${n.name}: ${n.data}, ${n.refusedBy}`).join("; ");
-const windows = crashDrill.map((d: { mode: string }) =>
-  d.mode === "kill-before" ? "once after its journal row was written and before any byte was broadcast (the restart broadcast those bytes once)" : "once after the node had accepted the bytes (the restart broadcast nothing)",
+const refusals = nodeNegatives.map((n) => `${n.name}: ${n.refusal.data}, ${n.refusedBy}`).join("; ");
+const windows = crashDrill.map((d) =>
+  d.mode === "kill-before"
+    ? `once after the journal row was written and before the bytes went to the node (crash.ts logged "${d.said}", and the restart broadcast those bytes once)`
+    : `once after the node accepted the bytes (crash.ts logged "${d.said}", and the restart broadcast nothing)`,
 );
 const statements = [
-  `All ${counted.total} anchors this rehearsal wrote outside the rotation drill (${counted.byKind[1]} kind 1, ${counted.byKind[2]} kind 2), the ${counted.crash} crash-drill anchors and the same-block pair among them, verified valid at consensus-verified assurance with the W2 verifier, run in a separate process that installed only the packed verify package (no wallet, no key, no repository) and read through Blockfrost preprod, while every write went through Midnight's hosted preprod endpoints. Every transaction the rehearsal's journals saw land, other than the registry deploy, is one of these anchors or one of the rotation drill's four.`,
-  `Wallets A and B each wrote one of these anchors into block ${sameBlock.height} (${sameBlock.anchors.join(" and ")}).`,
-  `The four rotation-drill anchors gave the expected verdict under each set of KNOWN_AUTHORS documents (${rotation}), and a document with a forged signature was refused.`,
-  `The node refused each of the ${nodeNegatives.length} maintenance transactions at submission with its own JSON-RPC answer ${INVALID_TRANSACTION} Invalid Transaction and the maintenance authority's own custom code (${refusals}); the indexer lists none of them, and the registry state the node reported afterwards still passes the immutability check.`,
-  `The journal crash drill killed the submitter with SIGKILL ${windows.join(", and ")}; each restart landed exactly the transaction its journal held.`,
-  `Each of the ${facts.verifierNegatives} verifier negatives returned its expected status from its expected check.`,
-  "Kind-2 openings (root, manifest, merkle, salt) were checked privately on the operator host and are not in this pack; the scan below finds no window of any of them.",
-  "The KNOWN_AUTHORS documents here are signed with a preprod-only trust-root key generated for this drill; they are not the mainnet trust root.",
+  `All ${counted.total} anchors this rehearsal wrote outside the rotation drill, ${counted.total} distinct transactions (${counted.byKind[1]} kind 1, ${counted.byKind[2]} kind 2) with the ${counted.crash} crash-drill anchors and the same-block pair among them, verified valid at consensus-verified assurance, each with the commitment the rehearsal recorded.`,
+  `The verifier ran in verify-all.mjs, a separate process that imports nothing but Node built-ins, gate.mjs and the verify package, and reads through Blockfrost preprod. It loaded the verify package only from its own node_modules, where npm installed it from ${facts.package!.resolved} (sha256 ${facts.package!.sha256}), a tarball that still had the integrity npm recorded.`,
+  "Every transaction the rehearsal's journals recorded as landed, other than the registry deploy, is one of these anchors or one of the rotation drill's four, and every recorded anchor is in a journal as landed.",
+  `The rehearsal submitted ${sameBlock.anchors[0]} from ${sameBlock.wallets[0]} and ${sameBlock.anchors[1]} from ${sameBlock.wallets[1]} in round ${sameBlock.round}, and the verifier places both in block ${sameBlock.height} (${sameBlock.hash}).`,
+  `The four rotation-drill anchors gave the expected verdict under each set of KNOWN_AUTHORS documents (${rotation}).`,
+  `The verify package answered each forged KNOWN_AUTHORS document as the gate requires (${forgedDocuments.map((f) => `${f.name}: ${f.outcome}`).join("; ")}). Ed25519 verification refused both forgeries under the trust root's key, and the same document opened under the stranger's signature with the stranger as trust root.`,
+  `Midnight's hosted node answered each of the ${nodeNegatives.length} maintenance transactions at submission with JSON-RPC error ${INVALID_TRANSACTION} "Invalid Transaction" and the maintenance authority's own custom code (${refusals}). Neither Midnight's hosted indexer, asked after each refusal, nor Blockfrost, asked by the verifier, lists any of them, and the registry state the hosted node reported afterwards still passes the immutability check.`,
+  `The journal crash drill killed the submitter with SIGKILL (exit 137) ${windows.join(", and ")}; each restart landed exactly the transaction its journal held.`,
+  `Each of the ${verifierNegatives} verifier negatives returned its expected status from its expected check.`,
+  `The operator's private receipts hold an opening (root, manifest, merkle, salt) for each of the ${kind2.length} kind-2 anchors, and each recomputes the commitment the verifier read for its anchor. None of them is in this pack: the scan below finds no 8-byte window of any of them in five encodings, and finds windows of the salts and root hashes in the receipts.`,
+  `The KNOWN_AUTHORS documents here are signed by trust root ${facts.trustRoot}, which is not among the trust roots the verify package ships, and each names only the preprod network.`,
 ];
 
 const pack = {
@@ -113,8 +132,8 @@ const pack = {
     dustSpeck: { before: raw.deploy.dustBefore, after: raw.deploy.dustAfter },
   },
   anchors,
-  sameBlock: { ...raw.sameBlock, anchors: sameBlock.anchors },
-  nodeEnforcedNegatives: nodeNegatives.map((n: { name: string; txHash: string; code: number; message: string; data: string; refusedBy: string }) => ({ name: n.name, txHash: n.txHash, refusal: { code: n.code, message: n.message, data: n.data }, refusedBy: n.refusedBy, onChain: 0 })),
+  sameBlock: { ...raw.sameBlock, anchors: sameBlock.anchors, verifiedBlock: { height: sameBlock.height, hash: sameBlock.hash } },
+  nodeEnforcedNegatives: nodeNegatives.map((n) => ({ name: n.name, txHash: n.txHash, refusal: n.refusal, refusedBy: n.refusedBy, onChain: 0, blockfrost: verified.refusedTransactions[n.name] })),
   registryAfterNegatives: raw.negativesAfter,
   knownAuthorsDrill: {
     trustRoot: verified.trustRoot,
@@ -122,10 +141,12 @@ const pack = {
     documents: [1, 2, 3].map((n) => json(`evidence/known-authors/signed-${n}.json`)[0]),
     expected: ROTATION_EXPECTED,
     verdicts: verified.rotation,
+    forgedDocuments: verified.forgedDocuments,
+    shippedTrustRoots: verified.shippedTrustRoots,
   },
   journalCrashDrill: { windows: crashDrill, steps: crashStatus, log: crash },
   verifierNegatives: verified.negatives,
-  verifier: { process: verified.verifier, source: verified.source },
+  verifier: { process: verified.verifier, source: verified.source, package: verified.package },
   measurements: {
     declaredFeeSpeck: { perTransaction: [...new Set(fees.map(String))], total: String(fees.reduce((s, f) => s + f, 0n)), deploy: raw.deploy.prepared.declaredFee },
     proveMs: { kind1: stats(timed(1, "proveMs")), kind2: stats(timed(2, "proveMs")) },
@@ -138,7 +159,6 @@ const body = `${JSON.stringify(pack, (_, v) => (typeof v === "bigint" ? v.toStri
 
 // Every secret the rehearsal held, and the private receipts that must hold the openings.
 const hex = (s: string) => new Uint8Array(Buffer.from(s, "hex"));
-const openings: Record<string, { rootHash: string; manifestHash: string; merkleRoot: string; salt: string }> = JSON.parse(readPrivateFile(`${SECRETS}/receipts.json`));
 const secrets: Array<[string, Uint8Array]> = [
   ["author-relay.key", readAuthorSecret(`${SECRETS}/author-relay.key`)],
   ["author-relay-2.key", readAuthorSecret(`${SECRETS}/author-relay-2.key`)],
