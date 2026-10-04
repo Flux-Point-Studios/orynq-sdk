@@ -101,9 +101,9 @@ cannot answer leaves it `unverified-finality` or `unavailable`, never `valid`.
 `manifestHash` and `merkleRoot` for a kind-1 entry, `commitment` for a bare kind-1 commitment,
 and `committedAttribute` for kind 2, plus the entry's hashes when the caller supplies the
 private opening, which is checked locally. A kind-2 result always carries a note that the
-circuit binds the attribute to the commitment and never checks it against the trace. No proof is re-verified
-locally: the npm ledger WASM cannot verify one, and inclusion in a final block is what shows
-consensus did.
+circuit binds the attribute to the commitment and never checks it against the trace. No proof is
+re-verified locally: the npm ledger WASM cannot verify one, and inclusion in a final block is
+what shows consensus did.
 
 ## Finding anchors
 
@@ -116,7 +116,8 @@ the window, when the subscription has delivered the newest action the indexer kn
 `maxActions` actions (default 2,000), returning a cursor to resume from, so strangers anchoring
 in the same window cannot make one call read more than `maxActions` actions. A result is a list
 of candidates: each one is shown final and authentic only by `verifyMidnightAnchor`. Nothing on
-a critical path scans the registry; the submitter reconciles by transaction hash.
+a critical path scans the registry; the submitter reconciles by transaction hash. The search
+needs a global `WebSocket`, which Node has from version 22.
 
 ## Submission journal
 
@@ -211,7 +212,15 @@ keys and zkir when the pure circuits are not exported. The verifier keys hash to
 
 ## Tests
 
-`pnpm test` runs the simulator and ledger suites. `MIDNIGHT_PP=~/.cache/midnight/zk-params nice -n 19 pnpm test:slow`
-proves both circuits in-process (about a minute on one core) and scans the proven, bound bytes.
-The npm ledger WASM does not verify contract proofs; the slow suite pins that, and nothing in
-this package presents a local `wellFormed()` as proof verification.
+`pnpm test` runs the contract, ledger, decoder, finality, known-authors, verifier, search and
+journal suites; `pnpm test:journal` runs the journal alone, which needs Node 22.13 or later for
+`node:sqlite`. The verifier's golden vectors are real: mainnet and preprod blocks, set-change
+headers and a state read proof, and recordings of the finality walk, the verifier and the search
+run against Blockfrost, which the tests replay and which fail on any request that was not
+recorded. The registry transactions in `src/__tests__/fixtures/registry-transactions.json` were
+proven in-process with the committed keys by `scripts/registry-fixtures.ts`.
+
+`MIDNIGHT_PP=~/.cache/midnight/zk-params nice -n 19 pnpm test:slow` proves both circuits
+in-process (about a minute on one core) and scans the proven, bound bytes. The npm ledger WASM
+does not verify contract proofs; the slow suite pins that, and nothing in this package presents
+a local `wellFormed()` as proof verification.
