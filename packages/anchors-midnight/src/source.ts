@@ -47,15 +47,21 @@ export interface MidnightSource {
   };
 }
 
+// A Blockfrost project id: a lowercase prefix, then 32 letters and digits. Nothing else is sent
+// as one, so naming the wrong file (a mnemonic, an author key) never sends that secret away.
+const PROJECT_ID = /^[a-z]{1,32}[A-Za-z0-9]{32}$/;
+
 // Blockfrost's Midnight indexer and node, authenticated by the project id in `projectIdFile`,
 // which must be a file only its owner can read.
 export function blockfrostEndpoints(network: MidnightNetwork, projectIdFile: string): SourceEndpoints {
+  const projectId = readPrivateFile(projectIdFile).trim();
+  if (!PROJECT_ID.test(projectId)) throw new Error(`${projectIdFile} does not hold a Blockfrost project id: a lowercase prefix, then 32 letters and digits`);
   return {
     operator: "blockfrost",
     indexer: `https://midnight-${network}.blockfrost.io/api/v0`,
     indexerWs: `wss://midnight-${network}.blockfrost.io/api/v0/ws`,
     node: `https://rpc.midnight-${network}.blockfrost.io`,
-    headers: { project_id: readPrivateFile(projectIdFile).trim() },
+    headers: { project_id: projectId },
   };
 }
 

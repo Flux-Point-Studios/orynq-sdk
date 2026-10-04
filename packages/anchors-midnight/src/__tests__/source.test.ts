@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { blockfrostEndpoints, finalityRpc, midnightSource, sourceEndpoints } from "../source.js";
 
-const TOKEN = "mainnetSECRETtoken0123456789abcdefABCDEF";
+// The shape of a Blockfrost project id: a lowercase prefix, then 32 letters and digits.
+const TOKEN = "mainnetSECRETtoken0123456789abcdefABCDE";
 
 // A node and indexer that answer from `handlers`, and echo every request header back in their
 // error bodies, the way a misconfigured proxy might.
@@ -130,6 +131,26 @@ describe("blockfrostEndpoints", () => {
       headers: { project_id: TOKEN },
     });
     expect(blockfrostEndpoints("preprod", file).node).toBe("https://rpc.midnight-preprod.blockfrost.io");
+  });
+
+  it("refuses a file holding anything but a project id, so no other secret is ever sent as one", () => {
+    const secrets = {
+      "author.key": `${"8a".repeat(32)}\n`,
+      "mnemonic.txt": "abandon ability able about above absent absorb abstract absurd abuse access accident\n",
+      "user-key.json": JSON.stringify({ format: "orynq-midnight-user-key/v1", authorSecret: "8a".repeat(32), saltKey: "4c".repeat(32) }),
+      "short.project_id": "mainnetSECRET\n",
+    };
+    for (const [name, content] of Object.entries(secrets)) {
+      const file = join(dir, name);
+      writeFileSync(file, content, { mode: 0o600 });
+      let message = "";
+      try {
+        blockfrostEndpoints("mainnet", file);
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      expect(message).toBe(`${file} does not hold a Blockfrost project id: a lowercase prefix, then 32 letters and digits`);
+    }
   });
 
   it("refuses a project id file group or others can read, without echoing it", () => {

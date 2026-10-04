@@ -207,7 +207,9 @@ or another transaction's bytes is not included.
 
 `midnightSource` reads a Midnight indexer (GraphQL) and node (JSON-RPC); `blockfrostEndpoints`
 points it at Blockfrost, with the project id read from a file only its owner can read and sent
-as a header. No error, status or echoed body carries the project id. `sourceEndpoints(network,
+as a header. No error, status or echoed body carries the project id, and a file that does not
+hold one (a lowercase prefix, then 32 letters and digits) is refused, so naming the wrong file,
+a mnemonic or an author key, never sends that secret to Blockfrost. `sourceEndpoints(network,
 { blockfrostProjectIdFile } | { indexer, node })` is what a user configures: Blockfrost through a
 project id file, or an http or https indexer GraphQL URL and node JSON-RPC URL that need no
 credential, such as a self-hosted node. It returns null when neither is given and refuses both,
