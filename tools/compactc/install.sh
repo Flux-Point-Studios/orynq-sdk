@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Installs compactc 0.31.1 into DEST and the ZK public parameters the registry circuits need
 # (k=13 and k=14) into PARAMS_DIR, refusing any file whose sha256 differs from compactc.sha256
-# beside this script. The zip pins are the digests GitHub publishes for the release assets;
-# every file in each zip is pinned too, and so are the params, to the digests midnight-ledger
-# 8.1.3 compiles into its data provider.
+# beside this script. The zip pins are the digests GitHub publishes for the release assets,
+# and every file inside each zip is pinned as well; the params pins are the ones
+# midnight-ledger 8.1.3 compiles into its data provider.
 # An existing install counts only if no one but the caller could have changed it: both
-# directories must be owned by the caller and not writable by group or others, and each
-# installed file must be a regular file under the same rule whose digest matches its pin.
+# directories must be real directories the caller owns that group and others cannot write,
+# and each installed file a regular file under the same rule whose digest matches its pin.
 #   tools/compactc/install.sh DEST [PARAMS_DIR]
 # PARAMS_DIR defaults to $MIDNIGHT_PP, then ~/.cache/midnight/zk-params, where zkir looks.
 set -euo pipefail
@@ -29,6 +29,7 @@ pin() {
 }
 others_can_write() { [ -n "$(find "$1" -maxdepth 0 \( -perm -g+w -o -perm -o+w \) -print)" ]; }
 private_dir() {
+  [ ! -L "$1" ] || die "$1 is a symlink; pass the directory it points to"
   mkdir -p "$1"
   [ -O "$1" ] || die "$1 is not owned by $(id -un)"
   ! others_can_write "$1" || die "$1 is writable by group or others (chmod go-w it, or choose a directory only you can write)"

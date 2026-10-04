@@ -203,6 +203,16 @@ describe("compactc installer", () => {
     expect(r.stderr).toContain(`${dir} is writable by group or others`);
   });
 
+  it.each(["compactc", "params"])("refuses a %s directory reached through a symlink", async (which) => {
+    const { script, dest, params, env } = await installed();
+    const link = join(temp("compactc-link-"), which);
+    symlinkSync(which === "compactc" ? dest : params, link);
+    const args = which === "compactc" ? [link, params] : [dest, link];
+    const r = await run(script, args, env);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(`${link} is a symlink; pass the directory it points to`);
+  });
+
   // Only root can hand a directory to another user; anyone else is handed one by the system.
   it("refuses an install directory owned by another user", async () => {
     const release = fakeRelease();
