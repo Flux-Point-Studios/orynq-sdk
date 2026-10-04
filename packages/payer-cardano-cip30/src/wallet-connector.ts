@@ -192,7 +192,8 @@ export type WalletName =
   | "gerowallet"
   | "nufi"
   | "yoroi"
-  | "begin";
+  | "begin"
+  | "1am";
 
 /**
  * All known wallet names for iteration.
@@ -208,6 +209,7 @@ export const KNOWN_WALLETS: readonly WalletName[] = [
   "nufi",
   "yoroi",
   "begin",
+  "1am",
 ] as const;
 
 /**
@@ -224,6 +226,7 @@ export const WALLET_DISPLAY_NAMES: Record<WalletName, string> = {
   nufi: "NuFi",
   yoroi: "Yoroi",
   begin: "Begin",
+  "1am": "1AM",
 };
 
 // ---------------------------------------------------------------------------
@@ -244,6 +247,7 @@ export interface CardanoWindow {
   nufi?: Cip30WalletApi;
   yoroi?: Cip30WalletApi;
   begin?: Cip30WalletApi;
+  "1am"?: Cip30WalletApi;
   [key: string]: Cip30WalletApi | undefined;
 }
 
