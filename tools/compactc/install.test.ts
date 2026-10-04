@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -34,7 +34,7 @@ afterAll(() => {
 function fakeRelease(version = "0.31.1") {
   const dir = temp("compactc-release-");
   const files: Record<string, string> = {
-    compactc: '#!/usr/bin/env bash\nthisdir="$(cd $(dirname $0) ; pwd -P)"\nexec "$thisdir/compactc.bin" "$@"\n',
+    compactc: '#!/usr/bin/env bash\nthisdir="$(cd $(dirname $0) ; pwd -P)"\nPATH="$thisdir:$PATH"\nexec "$thisdir/compactc.bin" "$@"\n',
     "compactc.bin": `#!/usr/bin/env bash\necho ${version}\n`,
     zkir: "#!/usr/bin/env bash\necho zkir\n",
     "zkir-v3": "#!/usr/bin/env bash\n",
@@ -48,8 +48,7 @@ function fakeRelease(version = "0.31.1") {
   for (const [name, body] of Object.entries(params)) writeFileSync(join(dir, name), body);
   const pins = [
     `${sha256(readFileSync(zip))}  ${zipName}`,
-    `${sha256(files["compactc.bin"]!)}  ${platform}/compactc.bin`,
-    `${sha256(files.zkir!)}  ${platform}/zkir`,
+    ...Object.entries(files).map(([name, body]) => `${sha256(body)}  ${platform}/${name}`),
     ...Object.entries(params).map(([name, body]) => `${sha256(body)}  ${name}`),
   ];
   return { dir, url: pathToFileURL(dir).href, zip, files, params, pins };
@@ -75,10 +74,12 @@ describe("compactc installer", () => {
   it("pins compactc 0.31.1 for every published platform and the k=13/14 parameters", () => {
     expect(pinned).toContain("e291b4bab4d4e857707008f8b1c25c2b8e0c843f6c737d0ee6c0d9ac69a6bbfb  compactc_v0.31.1_x86_64-unknown-linux-musl.zip");
     expect(pinned).toContain("3054ffa89d7a4dfe24afd31c27ef37e87a95757de0fc24485f335635e26dce57  x86_64-unknown-linux-musl/compactc.bin");
+    expect(pinned).toContain("15646793d3ff7f36cd81aa63419163e29d9893538bb4a6911a21012e8735b537  x86_64-unknown-linux-musl/compactc");
     expect(pinned).toContain("d3324910969c4cc54143b8045b649e5c3a4bd5fb7b8f85fe1b770f640ce1c803  bls_midnight_2p13");
     expect(pinned).toContain("fc253016885ec830e97808c9ec920bb5cab5c21af590380a6cb5eb0538e2b244  bls_midnight_2p14");
     for (const p of ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "x86_64-darwin", "aarch64-darwin"]) {
-      for (const f of [`compactc_v0.31.1_${p}.zip`, `${p}/compactc.bin`, `${p}/zkir`]) expect(pinned).toMatch(new RegExp(`^[0-9a-f]{64}  ${f}$`, "m"));
+      const files = ["compactc", "compactc.bin", "zkir", "zkir-v3", "fixup-compact", "format-compact"].map((f) => `${p}/${f}`);
+      for (const f of [`compactc_v0.31.1_${p}.zip`, ...files]) expect(pinned).toMatch(new RegExp(`^[0-9a-f]{64}  ${f}$`, "m"));
     }
   });
 
@@ -134,7 +135,7 @@ describe("compactc installer", () => {
   it("re-verifies an existing install and replaces a binary that no longer matches its pin", async () => {
     const release = fakeRelease();
     const dest = join(temp("compactc-dest-"), "bin");
-    mkdirSync(dest);
+    mkdirSync(dest, { mode: 0o755 });
     writeFileSync(join(dest, "compactc.bin"), "#!/usr/bin/env bash\necho tampered\n");
     const r = await run(installerWith(release.pins), [dest, temp("zk-params-")], {
       COMPACTC_RELEASE_URL: release.url,
@@ -142,5 +143,80 @@ describe("compactc installer", () => {
     });
     expect(r.status).toBe(0);
     expect(readFileSync(join(dest, "compactc.bin"), "utf8")).toBe(release.files["compactc.bin"]);
+  });
+
+  // A release installed by the installer itself, ready to be tampered with.
+  async function installed() {
+    const release = fakeRelease();
+    const script = installerWith(release.pins);
+    const dest = join(temp("compactc-dest-"), "bin");
+    const params = temp("zk-params-");
+    const env = { COMPACTC_RELEASE_URL: release.url, MIDNIGHT_PARAM_SOURCE: release.url };
+    const first = await run(script, [dest, params], env);
+    expect(first.status).toBe(0);
+    return { release, script, dest, params, env };
+  }
+
+  it("positive control: re-verifies an intact install without fetching anything", async () => {
+    const { script, dest, params } = await installed();
+    const gone = pathToFileURL(join(temp("compactc-gone-"), "missing")).href;
+    const r = await run(script, [dest, params], { COMPACTC_RELEASE_URL: gone, MIDNIGHT_PARAM_SOURCE: gone });
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+  });
+
+  it.each(["compactc", "zkir-v3", "fixup-compact", "format-compact"])(
+    "replaces an installed %s that no longer matches its pin, and never runs it",
+    async (name) => {
+      const { release, script, dest, params, env } = await installed();
+      const marker = join(temp("compactc-marker-"), "ran");
+      const tampered = `#!/usr/bin/env bash\necho "$@" >> ${marker}\necho 0.31.1\n`;
+      chmodSync(join(dest, name), 0o755);
+      writeFileSync(join(dest, name), tampered);
+      const r = await run(script, [dest, params], env);
+      expect(r.stderr).toBe("");
+      expect(r.status).toBe(0);
+      expect(existsSync(marker)).toBe(false);
+      expect(readFileSync(join(dest, name), "utf8")).toBe(release.files[name]);
+    },
+  );
+
+  it("replaces an installed file that is a symlink, even to a file that matches its pin", async () => {
+    const { release, script, dest, params, env } = await installed();
+    const elsewhere = join(temp("compactc-elsewhere-"), "zkir");
+    writeFileSync(elsewhere, release.files.zkir!);
+    chmodSync(join(dest, "zkir"), 0o755);
+    rmSync(join(dest, "zkir"));
+    symlinkSync(elsewhere, join(dest, "zkir"));
+    const r = await run(script, [dest, params], env);
+    expect(r.status).toBe(0);
+    expect(lstatSync(join(dest, "zkir")).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(dest, "zkir"), "utf8")).toBe(release.files.zkir);
+  });
+
+  it.each(["compactc", "params"])("refuses a %s directory that group or others can write", async (which) => {
+    const { script, dest, params, env } = await installed();
+    const dir = which === "compactc" ? dest : params;
+    chmodSync(dir, 0o777);
+    const r = await run(script, [dest, params], env);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(`${dir} is writable by group or others`);
+  });
+
+  // Only root can hand a directory to another user; anyone else is handed one by the system.
+  it("refuses an install directory owned by another user", async () => {
+    const release = fakeRelease();
+    let dest = "/usr/share";
+    if (process.getuid?.() === 0) {
+      dest = temp("compactc-foreign-");
+      chmodSync(dest, 0o755);
+      chownSync(dest, 65534, 65534);
+    }
+    const r = await run(installerWith(release.pins), [dest, temp("zk-params-")], {
+      COMPACTC_RELEASE_URL: release.url,
+      MIDNIGHT_PARAM_SOURCE: release.url,
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(`${dest} is not owned by`);
   });
 });

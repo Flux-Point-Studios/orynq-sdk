@@ -2,10 +2,15 @@
 # Installs compactc 0.31.1 into DEST and the ZK public parameters the registry circuits need
 # (k=13 and k=14) into PARAMS_DIR, refusing any file whose sha256 differs from compactc.sha256
 # beside this script. The zip pins are the digests GitHub publishes for the release assets;
-# the params pins are the ones midnight-ledger 8.1.3 compiles into its data provider.
+# every file in each zip is pinned too, and so are the params, to the digests midnight-ledger
+# 8.1.3 compiles into its data provider.
+# An existing install counts only if no one but the caller could have changed it: both
+# directories must be owned by the caller and not writable by group or others, and each
+# installed file must be a regular file under the same rule whose digest matches its pin.
 #   tools/compactc/install.sh DEST [PARAMS_DIR]
 # PARAMS_DIR defaults to $MIDNIGHT_PP, then ~/.cache/midnight/zk-params, where zkir looks.
 set -euo pipefail
+umask 022
 
 version=0.31.1
 here=$(cd "$(dirname "$0")" && pwd)
@@ -22,8 +27,14 @@ pin() {
   [ -n "$want" ] || die "no pin for $1"
   echo "$want"
 }
-matches() { [ -f "$1" ] && [ "$(sha256 "$1")" = "$(pin "$2")" ]; }
-verify() { matches "$1" "$2" || die "sha256 mismatch for $2: got $(sha256 "$1"), pinned $(pin "$2")"; }
+others_can_write() { [ -n "$(find "$1" -maxdepth 0 \( -perm -g+w -o -perm -o+w \) -print)" ]; }
+private_dir() {
+  mkdir -p "$1"
+  [ -O "$1" ] || die "$1 is not owned by $(id -un)"
+  ! others_can_write "$1" || die "$1 is writable by group or others (chmod go-w it, or choose a directory only you can write)"
+}
+installed() { [ -f "$1" ] && [ ! -L "$1" ] && [ -O "$1" ] && ! others_can_write "$1" && [ "$(sha256 "$1")" = "$(pin "$2")" ]; }
+verify() { [ "$(sha256 "$1")" = "$(pin "$2")" ] || die "sha256 mismatch for $2: got $(sha256 "$1"), pinned $(pin "$2")"; }
 
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) platform=x86_64-unknown-linux-musl ;;
@@ -33,32 +44,40 @@ case "$(uname -s)-$(uname -m)" in
   *) die "no compactc $version build for $(uname -s) $(uname -m)" ;;
 esac
 
+files=$(awk -v p="$platform/" 'index($2, p) == 1 { print substr($2, length(p) + 1) }' "$here/compactc.sha256")
+[ -n "$files" ] || die "no file pins for $platform"
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-if ! { matches "$dest/compactc.bin" "$platform/compactc.bin" && matches "$dest/zkir" "$platform/zkir" && [ -x "$dest/compactc" ]; }; then
+private_dir "$dest"
+private_dir "$params"
+
+intact=1
+for f in $files; do installed "$dest/$f" "$platform/$f" || intact=0; done
+if [ "$intact" = 0 ]; then
   zip=compactc_v${version}_$platform.zip
   curl -sSfL -o "$work/$zip" "$release/$zip"
   verify "$work/$zip" "$zip"
   mkdir "$work/release"
   unzip -q "$work/$zip" -d "$work/release"
-  verify "$work/release/compactc.bin" "$platform/compactc.bin"
-  verify "$work/release/zkir" "$platform/zkir"
-  mkdir -p "$dest"
-  for f in "$work/release"/*; do
-    rm -f "$dest/$(basename "$f")"
-    cp "$f" "$dest/"
+  for f in $files; do verify "$work/release/$f" "$platform/$f"; done
+  for f in $files; do
+    rm -f "$dest/$f"
+    cp "$work/release/$f" "$dest/$f"
+    chmod 0555 "$dest/$f"
   done
 fi
 reported=$("$dest/compactc" --version)
 [ "$reported" = "$version" ] || die "compactc reports $reported, expected $version"
 
-mkdir -p "$params"
 for k in 13 14; do
   name=bls_midnight_2p$k
-  matches "$params/$name" "$name" && continue
+  installed "$params/$name" "$name" && continue
   curl -sSfL -o "$work/$name" "$param_source/$name"
   verify "$work/$name" "$name"
+  chmod 0444 "$work/$name"
+  rm -f "$params/$name"
   mv "$work/$name" "$params/$name"
 done
 

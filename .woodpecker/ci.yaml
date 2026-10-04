@@ -40,10 +40,10 @@ steps:
     depends_on: []
     commands:
       - corepack enable
-      - tools/compactc/install.sh /tmp/compactc /tmp/zk-params
-      - COMPACTC=/tmp/compactc/compactc MIDNIGHT_PP=/tmp/zk-params nice -n 19 packages/anchors-midnight/contract/compile.sh --check
+      - tools/compactc/install.sh ~/.cache/midnight/compactc ~/.cache/midnight/zk-params
+      - COMPACTC=~/.cache/midnight/compactc/compactc MIDNIGHT_PP=~/.cache/midnight/zk-params nice -n 19 packages/anchors-midnight/contract/compile.sh --check
       - pnpm install --frozen-lockfile --filter @fluxpointstudios/orynq-sdk-anchors-midnight...
-      - cd packages/anchors-midnight && MIDNIGHT_PP=/tmp/zk-params nice -n 19 pnpm test:slow
+      - cd packages/anchors-midnight && MIDNIGHT_PP=~/.cache/midnight/zk-params nice -n 19 pnpm test:slow
 
   - name: path-check
     image: alpine:3.20

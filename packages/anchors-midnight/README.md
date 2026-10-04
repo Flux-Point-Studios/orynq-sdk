@@ -51,18 +51,20 @@ byte, and touch no other contract.
 ## Reproducing the build
 
 ```
-tools/compactc/install.sh /tmp/compactc /tmp/zk-params
-COMPACTC=/tmp/compactc/compactc MIDNIGHT_PP=/tmp/zk-params packages/anchors-midnight/contract/compile.sh --check
+tools/compactc/install.sh ~/.cache/midnight/compactc ~/.cache/midnight/zk-params
+COMPACTC=~/.cache/midnight/compactc/compactc MIDNIGHT_PP=~/.cache/midnight/zk-params packages/anchors-midnight/contract/compile.sh --check
 ```
 
-The installer verifies compactc and the k=13/14 parameters by sha256. The check recompiles the
+The installer verifies every compactc file and the k=13/14 parameters by sha256, and refuses
+either directory unless you own it and no group or other user can write it: an install anyone
+else can change would no longer be the pinned compiler by the time it runs. The check recompiles the
 contract and requires `managed/` and `HASHES.txt` to match byte for byte, and requires the same
 keys and zkir when the pure circuits are not exported. The verifier keys hash to
 `85dc57a4…77c5` (`anchor`, k=13) and `081384ce…790f` (`anchor_hiding`, k=14).
 
 ## Tests
 
-`pnpm test` runs the simulator and ledger suites. `MIDNIGHT_PP=/tmp/zk-params nice -n 19 pnpm test:slow`
+`pnpm test` runs the simulator and ledger suites. `MIDNIGHT_PP=~/.cache/midnight/zk-params nice -n 19 pnpm test:slow`
 proves both circuits in-process (about a minute on one core) and scans the proven, bound bytes.
 The npm ledger WASM does not verify contract proofs; the slow suite pins that, and nothing in
 this package presents a local `wellFormed()` as proof verification.
