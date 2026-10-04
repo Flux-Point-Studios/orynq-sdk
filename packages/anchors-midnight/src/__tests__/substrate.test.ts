@@ -8,6 +8,7 @@ import {
   headerFromRpc,
   headerHash,
   includedTransactionIndex,
+  midnightExtrinsic,
   midnightTransactionIn,
   orderedTrieRoot,
   scheduledAuthorityChange,
@@ -163,6 +164,14 @@ describe("strict inclusion: the extrinsic must BE Midnight.send_mn_transaction(t
     expect(toHex(body[3]!.subarray(2, 5))).toBe("040500");
     expect(includedTransactionIndex(body, raw)).toBe(3);
     for (const i of [0, 1, 2]) expect(midnightTransactionIn(body[i]!)).toBeNull();
+  });
+
+  it("midnightExtrinsic frames a transaction exactly as the chain did, the bytes a submitter sends", () => {
+    expect(toHex(midnightExtrinsic(raw))).toBe(toHex(body[3]!));
+    for (const other of mainnet.blocks.slice(1)) {
+      const extrinsic = extrinsicsOf(other)[3]!;
+      expect(toHex(midnightExtrinsic(midnightTransactionIn(extrinsic)!))).toBe(toHex(extrinsic));
+    }
   });
 
   it("a bare v5 send_mn_transaction is accepted too", () => {

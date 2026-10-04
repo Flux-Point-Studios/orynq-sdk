@@ -7,6 +7,7 @@ import {
   REGISTRY_CIRCUITS,
   REGISTRY_VERIFIER_KEY_SHA256,
   canonicalVerifierKey,
+  compiledContractFile,
   compiledVerifierKeys,
   registryInitialState,
 } from "../registry.js";
@@ -56,6 +57,54 @@ describe("the registry's verifier keys", () => {
     try {
       const tampered = await import("../registry.js");
       expect(() => tampered.compiledVerifierKeys()).toThrow(/^anchor\.verifier hashes to [0-9a-f]{64}, pinned 85dc57a4/);
+    } finally {
+      vi.doUnmock("node:fs");
+      vi.resetModules();
+    }
+  });
+});
+
+// A submitter proves with the prover keys and zkir of the committed build; contract/HASHES.txt,
+// which compile.sh --check reproduces, pins every one of them.
+describe("compiledContractFile", () => {
+  const hashes = new Map(
+    readFileSync(new URL("../../contract/HASHES.txt", import.meta.url), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => line.split(/\s+/) as [string, string])
+      .map(([digest, path]) => [path, digest]),
+  );
+
+  it("returns each prover key, verifier key and binary zkir exactly as HASHES.txt pins it", () => {
+    for (const name of REGISTRY_CIRCUITS) {
+      for (const path of [`keys/${name}.prover`, `keys/${name}.verifier`, `zkir/${name}.bzkir`]) {
+        const bytes = compiledContractFile(path);
+        expect(createHash("sha256").update(bytes).digest("hex"), path).toBe(hashes.get(`managed/${path}`));
+      }
+    }
+  });
+
+  it("refuses a path HASHES.txt does not pin, and any way out of the managed directory", () => {
+    expect(() => compiledContractFile("keys/other.prover")).toThrow(/contract\/HASHES\.txt pins no managed\/keys\/other\.prover/);
+    expect(() => compiledContractFile("../orynq-anchor-registry.compact")).toThrow(/pins no managed\/\.\.\/orynq-anchor-registry\.compact/);
+  });
+
+  it("refuses a file that no longer matches its pin", async () => {
+    vi.resetModules();
+    vi.doMock("node:fs", async (original) => {
+      const fs = await original<typeof import("node:fs")>();
+      const readFileSync = (path: Parameters<typeof fs.readFileSync>[0], ...rest: unknown[]) => {
+        const out = (fs.readFileSync as (...a: unknown[]) => unknown)(path, ...rest);
+        if (typeof out === "string" || !String(path).endsWith("/anchor.prover")) return out;
+        const bytes = Buffer.from(out as Buffer);
+        bytes[1000]! ^= 1;
+        return bytes;
+      };
+      return { ...fs, readFileSync, default: { ...fs, readFileSync } };
+    });
+    try {
+      const tampered = await import("../registry.js");
+      expect(() => tampered.compiledContractFile("keys/anchor.prover")).toThrow(/^managed\/keys\/anchor\.prover hashes to [0-9a-f]{64}, pinned 46fe9db4/);
     } finally {
       vi.doUnmock("node:fs");
       vi.resetModules();

@@ -136,17 +136,27 @@ export function openJournal(path: string, { ttlMarginMillis = 5 * 60_000 }: { tt
     return broadcastRow(byHash.get(txHash) as unknown as Row, broadcast);
   };
 
+  // One operation at a time per journal: a wallet must never balance two at once. The caller
+  // receives each operation's error; the queue only waits for it to settle.
+  const serialized = <T>(operation: () => Promise<T>): Promise<T> => {
+    const run = queue.then(operation);
+    queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
+
   return {
-    // One submission at a time per journal: a wallet must never balance two at once. The caller
-    // receives each submission's error; the queue only waits for it to settle.
-    submitOnce(key: AnchorKey, how: Parameters<typeof once>[1]): Promise<JournalRow> {
-      const run = queue.then(() => once(key, how));
-      queue = run.then(
-        () => undefined,
-        () => undefined,
-      );
-      return run;
-    },
+    submitOnce: (key: AnchorKey, how: Parameters<typeof once>[1]): Promise<JournalRow> => serialized(() => once(key, how)),
+    // Settles every pending row from the chain by its txHash, after a restart or while waiting
+    // for inclusion; nothing is prepared or broadcast. Returns those rows as they now stand.
+    reconcile: (chain: ChainView): Promise<JournalRow[]> =>
+      serialized(async () => {
+        const rows = pending.all() as unknown as Row[];
+        for (const row of rows) await reconcile(row, chain);
+        return rows.map((row) => view(byHash.get(row.tx_hash) as unknown as Row));
+      }),
     history: (key: AnchorKey) => (history.all(keyOf(key)) as unknown as Row[]).map(view),
     pending: () => (pending.all() as unknown as Row[]).map(view),
     close: () => db.close(),

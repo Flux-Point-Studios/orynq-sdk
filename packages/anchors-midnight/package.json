@@ -23,8 +23,9 @@
     "contract/HASHES.txt",
     "contract/managed/compiler",
     "contract/managed/contract",
-    "contract/managed/keys/anchor.verifier",
-    "contract/managed/keys/anchor_hiding.verifier"
+    "contract/managed/keys",
+    "contract/managed/zkir/anchor.bzkir",
+    "contract/managed/zkir/anchor_hiding.bzkir"
   ],
   "scripts": {
     "build": "tsup",

@@ -208,6 +208,13 @@ export function midnightTransactionIn(extrinsic: Uint8Array): Uint8Array | null 
   return extrinsic.subarray(tx.next);
 }
 
+// The bare v4 extrinsic Midnight.send_mn_transaction(tx): what author_submitExtrinsic takes, and
+// exactly what midnightTransactionIn reads back.
+export function midnightExtrinsic(tx: Uint8Array): Uint8Array {
+  const call = concatBytes(new Uint8Array([4, MIDNIGHT_PALLET, SEND_MN_TRANSACTION]), encodeCompact(tx.length), tx);
+  return concatBytes(encodeCompact(call.length), call);
+}
+
 // The index of the one extrinsic in a block body that is exactly the bare
 // Midnight.send_mn_transaction(tx), or null when there is none or more than one.
 export function includedTransactionIndex(extrinsics: Uint8Array[], tx: Uint8Array): number | null {

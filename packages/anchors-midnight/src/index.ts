@@ -31,6 +31,7 @@ export {
   headerFromRpc,
   headerHash,
   includedTransactionIndex,
+  midnightExtrinsic,
   midnightTransactionIn,
   orderedTrieRoot,
   scheduledAuthorityChange,
@@ -38,6 +39,7 @@ export {
 export type { BlockHeader, RpcHeader, WeightedAuthority } from "./substrate.js";
 export { KNOWN_AUTHORS_FORMAT, KNOWN_AUTHORS_TRUST_ROOTS, SHIPPED_KNOWN_AUTHORS, knownAuthors, openKnownAuthors, signKnownAuthors } from "./known-authors.js";
 export type { AuthorStatus, CheckpointJson, KnownAuthor, KnownAuthors, KnownAuthorsDocument, SignedKnownAuthors } from "./known-authors.js";
+export { readPrivateFile, writePrivateFile } from "./private-file.js";
 export { KNOWN_RUNTIME_SPEC_VERSIONS, MIDNIGHT_REGISTRIES, assertRegistryGenerations } from "./registries.js";
 export type { MidnightNetwork, RegistryInfo } from "./registries.js";
 export {
@@ -49,7 +51,10 @@ export {
   assertRegistryState,
   buildRegistryDeploy,
   canonicalVerifierKey,
+  compiledContractFile,
   compiledVerifierKeys,
   registryInitialState,
 } from "./registry.js";
 export type { DeployStage, RegistryCircuit, VerifierKeys } from "./registry.js";
+export { unprovenRegistryCall } from "./registry-call.js";
+export type { HiddenEntry, RegistryCallArgs, RegistryWitnesses } from "./registry-call.js";

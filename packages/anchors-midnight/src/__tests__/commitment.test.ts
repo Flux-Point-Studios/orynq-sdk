@@ -83,7 +83,7 @@ describe("author key files", () => {
   it("createAuthorKeyFile never replaces an existing file", () => {
     const path = join(dir, "existing.key");
     writeFileSync(path, "keep me\n", { mode: 0o600 });
-    expect(() => createAuthorKeyFile(path)).toThrow(/EEXIST/);
+    expect(() => createAuthorKeyFile(path)).toThrow(/existing\.key already exists/);
     expect(readFileSync(path, "utf8")).toBe("keep me\n");
   });
 

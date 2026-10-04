@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Installs compactc 0.31.1 into DEST and the ZK public parameters the registry circuits need
-# (k=13 and k=14) into PARAMS_DIR, refusing any file whose sha256 differs from compactc.sha256
-# beside this script. The zip pins are the digests GitHub publishes for the release assets,
-# and every file inside each zip is pinned as well; the params pins are the ones
-# midnight-ledger 8.1.3 compiles into its data provider.
+# Installs compactc 0.31.1 into DEST, and into PARAMS_DIR the ZK public parameters the registry
+# circuits need (k=13 and k=14) and the DUST spend circuit's keys and zkir (dust/9/, k=13), whose
+# proof pays every registry transaction's fee; it refuses any file whose sha256 differs from
+# compactc.sha256 beside this script. The zip pins are the digests GitHub publishes for the
+# release assets, and every file inside each zip is pinned as well; the params pins are the ones
+# midnight-ledger 8.1.3 compiles into its data provider, and the DUST pins the ones it keeps in
+# ledger/static/dust.
 # An existing install counts only if no one but the caller could have changed it: both
 # directories must be real directories the caller owns that group and others cannot write,
 # and each installed file a regular file under the same rule whose digest matches its pin.
@@ -92,14 +94,16 @@ fi
 reported=$("$dest/compactc" --version)
 [ "$reported" = "$version" ] || die "compactc reports $reported, expected $version"
 
-for k in 13 14; do
-  name=bls_midnight_2p$k
+private_dir "$params/dust"
+private_dir "$params/dust/9"
+for name in bls_midnight_2p13 bls_midnight_2p14 dust/9/spend.prover dust/9/spend.verifier dust/9/spend.bzkir; do
   installed "$params/$name" "$name" && continue
-  curl -sSfL -o "$work/$name" "$param_source/$name"
-  verify "$work/$name" "$name"
-  chmod 0444 "$work/$name"
+  fetched=$work/$(basename "$name")
+  curl -sSfL -o "$fetched" "$param_source/$name"
+  verify "$fetched" "$name"
+  chmod 0444 "$fetched"
   rm -f "$params/$name"
-  mv "$work/$name" "$params/$name"
+  mv "$fetched" "$params/$name"
 done
 
-echo "compactc $version ($platform) verified in $dest; bls_midnight_2p13 and 2p14 verified in $params"
+echo "compactc $version ($platform) verified in $dest; bls_midnight_2p13, 2p14 and the dust/9 spend keys verified in $params"

@@ -31,6 +31,20 @@ export function compiledVerifierKeys(): VerifierKeys {
   return { anchor: read("anchor"), anchor_hiding: read("anchor_hiding") };
 }
 
+// A file of the committed build, contract/managed/<path>, refused unless its sha256 is the one
+// contract/HASHES.txt pins: a submitter proves with exactly the keys and zkir compile.sh --check
+// reproduces.
+export function compiledContractFile(path: string): Uint8Array {
+  const name = `managed/${path}`;
+  const pins = readFileSync(new URL("../contract/HASHES.txt", import.meta.url), "utf8");
+  const pin = pins.split("\n").find((line) => line.endsWith(`  ${name}`))?.slice(0, 64);
+  if (!pin || path.split("/").includes("..")) throw new Error(`contract/HASHES.txt pins no ${name}`);
+  const bytes = new Uint8Array(readFileSync(new URL(path, managed)));
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  if (digest !== pin) throw new Error(`${name} hashes to ${digest}, pinned ${pin}`);
+  return bytes;
+}
+
 // Parsing through ContractOperation validates the key and yields its canonical encoding
 // (ledger 8.1.3 rejects trailing bytes), so compiler output and on-chain state compare equal
 // exactly when they denote the same key.

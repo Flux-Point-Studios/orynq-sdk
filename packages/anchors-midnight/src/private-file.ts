@@ -21,15 +21,27 @@ export function readPrivateFile(path: string): string {
   }
 }
 
-// Writes 32 fresh random bytes, as 64 hex characters, to a new file only its owner can read,
-// and returns them. It never replaces an existing file or follows a symlink.
-export function createSecretFile(path: string): Uint8Array {
-  const secret = crypto.getRandomValues(new Uint8Array(32));
-  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+// Writes `text` and a newline to a new file only its owner can read. It never replaces an
+// existing file or follows a symlink, and its errors name the path, never the text.
+export function writePrivateFile(path: string, text: string): void {
+  let fd: number;
   try {
-    writeSync(fd, `${Buffer.from(secret).toString("hex")}\n`);
+    fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`${path} already exists`);
+    throw error;
+  }
+  try {
+    writeSync(fd, `${text}\n`);
   } finally {
     closeSync(fd);
   }
+}
+
+// Writes 32 fresh random bytes, as 64 hex characters, to a new file only its owner can read,
+// and returns them.
+export function createSecretFile(path: string): Uint8Array {
+  const secret = crypto.getRandomValues(new Uint8Array(32));
+  writePrivateFile(path, Buffer.from(secret).toString("hex"));
   return secret;
 }

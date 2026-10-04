@@ -184,6 +184,30 @@ describe("the write-ahead journal", () => {
     b.close();
   });
 
+  it("reconcile settles every pending row by txHash alone, preparing and broadcasting nothing", async () => {
+    const path = file();
+    const first = openJournal(path);
+    const net = network();
+    const hidingKey: AnchorKey = { ...key, kind: 2, commitment: fixture.hiding.commitment, attribute: fixture.hiding.attribute };
+    await first.submitOnce(key, { prepare: prepared("anchor", { n: 0 }), broadcast: net.send("anchor"), chain: net.chain });
+    await first.submitOnce(hidingKey, { prepare: prepared("hiding", { n: 0 }), broadcast: net.send("hiding"), chain: net.chain });
+    first.close();
+
+    const restarted = openJournal(path);
+    expect(await restarted.reconcile(net.chain)).toEqual([
+      expect.objectContaining({ txHash: fixture.anchor.txHash, state: "pending" }),
+      expect.objectContaining({ txHash: fixture.hiding.txHash, state: "pending" }),
+    ]);
+    net.index();
+    expect(await restarted.reconcile(net.chain)).toEqual([
+      expect.objectContaining({ txHash: fixture.anchor.txHash, state: "landed", height: 7 }),
+      expect.objectContaining({ txHash: fixture.hiding.txHash, state: "landed", height: 7 }),
+    ]);
+    expect(restarted.pending()).toEqual([]);
+    expect(net.arrived).toEqual([fixture.anchor.txHash, fixture.hiding.txHash]);
+    restarted.close();
+  });
+
   it("refuses bytes that are not a final transaction before writing anything", async () => {
     const journal = openJournal(file());
     const net = network();

@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { chmodSync, chownSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -45,7 +45,14 @@ function fakeRelease(version = "0.31.1") {
   const zip = join(dir, zipName);
   const zipper = "import sys, zipfile\nwith zipfile.ZipFile(sys.argv[1], 'w') as z:\n  for name, body in zip(sys.argv[2::2], sys.argv[3::2]):\n    i = zipfile.ZipInfo(name); i.external_attr = 0o100555 << 16; z.writestr(i, body)\n";
   execFileSync("python3", ["-c", zipper, zip, ...Object.entries(files).flat()]);
-  const params = { bls_midnight_2p13: "params for k=13", bls_midnight_2p14: "params for k=14" };
+  const params: Record<string, string> = {
+    bls_midnight_2p13: "params for k=13",
+    bls_midnight_2p14: "params for k=14",
+    "dust/9/spend.prover": "dust spend prover key",
+    "dust/9/spend.verifier": "dust spend verifier key",
+    "dust/9/spend.bzkir": "dust spend zkir",
+  };
+  mkdirSync(join(dir, "dust", "9"), { recursive: true });
   for (const [name, body] of Object.entries(params)) writeFileSync(join(dir, name), body);
   const pins = [
     `${sha256(readFileSync(zip))}  ${zipName}`,
@@ -78,6 +85,11 @@ describe("compactc installer", () => {
     expect(pinned).toContain("15646793d3ff7f36cd81aa63419163e29d9893538bb4a6911a21012e8735b537  x86_64-unknown-linux-musl/compactc");
     expect(pinned).toContain("d3324910969c4cc54143b8045b649e5c3a4bd5fb7b8f85fe1b770f640ce1c803  bls_midnight_2p13");
     expect(pinned).toContain("fc253016885ec830e97808c9ec920bb5cab5c21af590380a6cb5eb0538e2b244  bls_midnight_2p14");
+    // The DUST spend circuit (k=13) whose proof pays every registry transaction's fee, as
+    // midnight-ledger 8.1.3 pins it in ledger/static/dust/*.sha256.
+    expect(pinned).toContain("996602da7ca386284e656c78ea03e55bffdba29475e6a67965c50de05e13efc2  dust/9/spend.prover");
+    expect(pinned).toContain("3f1569ebcab0655c5c145b28947c74edc4e3f5c6b276e4404b661cf0905b49d3  dust/9/spend.verifier");
+    expect(pinned).toContain("904181287e75b0fb596ba5fcc116c882ee5d28e3115304c93ebd913722ce5841  dust/9/spend.bzkir");
     for (const p of ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "x86_64-darwin", "aarch64-darwin"]) {
       const files = ["compactc", "compactc.bin", "zkir", "zkir-v3", "fixup-compact", "format-compact"].map((f) => `${p}/${f}`);
       for (const f of [`compactc_v0.31.1_${p}.zip`, ...files]) expect(pinned).toMatch(new RegExp(`^[0-9a-f]{64}  ${f}$`, "m"));
@@ -92,7 +104,8 @@ describe("compactc installer", () => {
     expect(r.stderr).toBe("");
     expect(r.status).toBe(0);
     expect(execFileSync(join(dest, "compactc"), ["--version"], { encoding: "utf8" }).trim()).toBe("0.31.1");
-    expect(readFileSync(join(params, "bls_midnight_2p14"), "utf8")).toBe(release.params.bls_midnight_2p14);
+    for (const name of Object.keys(release.params)) expect(readFileSync(join(params, name), "utf8"), name).toBe(release.params[name]);
+    expect(statSync(join(params, "dust", "9")).mode & 0o022).toBe(0);
     expect(r.stdout).toContain(`compactc 0.31.1 (${platform}) verified in ${dest}`);
   });
 
@@ -131,6 +144,19 @@ describe("compactc installer", () => {
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("sha256 mismatch for bls_midnight_2p14");
     expect(existsSync(join(params, "bls_midnight_2p14"))).toBe(false);
+  });
+
+  it("refuses a DUST spend key that does not match its pin and leaves it out of the cache", async () => {
+    const release = fakeRelease();
+    writeFileSync(join(release.dir, "dust/9/spend.prover"), "tampered");
+    const params = temp("zk-params-");
+    const r = await run(installerWith(release.pins), [join(temp("compactc-dest-"), "bin"), params], {
+      COMPACTC_RELEASE_URL: release.url,
+      MIDNIGHT_PARAM_SOURCE: release.url,
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("sha256 mismatch for dust/9/spend.prover");
+    expect(existsSync(join(params, "dust/9/spend.prover"))).toBe(false);
   });
 
   it("re-verifies an existing install and replaces a binary that no longer matches its pin", async () => {
