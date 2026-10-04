@@ -9,7 +9,7 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { readAuthorSecret, readPrivateFile, REGISTRY_VERIFIER_KEY_SHA256 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { windowHits } from "../../anchors-midnight/src/__tests__/privacy-scan.js";
-import { judge, parseCrashLog, parseCrashStatus, ROTATION_EXPECTED, ROTATION_LABELS, unrecordedAnchors } from "./gate.mjs";
+import { INVALID_TRANSACTION, judge, parseCrashLog, parseCrashStatus, ROTATION_EXPECTED, ROTATION_LABELS, unrecordedAnchors } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
 
 const [dir, out] = process.argv.slice(2) as [string, string];
@@ -77,7 +77,7 @@ const sameBlock: { height: number; anchors: string[] } = facts.sameBlock!;
 const rotation = Object.entries(ROTATION_EXPECTED as Record<string, Record<string, string>>)
   .map(([set, want]) => `${set}: ${ROTATION_LABELS.map((l: string) => `${l} ${want[l]}`).join(", ")}`)
   .join("; ");
-const refusals = [...new Set(nodeNegatives.map((n: { code: number; message: string; data?: unknown }) => `${n.code} ${n.message}${n.data === undefined ? "" : ` (${typeof n.data === "string" ? n.data : JSON.stringify(n.data)})`}`))].join(", ");
+const refusals = nodeNegatives.map((n: { name: string; data: string; refusedBy: string }) => `${n.name}: ${n.data}, ${n.refusedBy}`).join("; ");
 const windows = crashDrill.map((d: { mode: string }) =>
   d.mode === "kill-before" ? "once after its journal row was written and before any byte was broadcast (the restart broadcast those bytes once)" : "once after the node had accepted the bytes (the restart broadcast nothing)",
 );
@@ -85,7 +85,7 @@ const statements = [
   `All ${counted.total} anchors this rehearsal wrote outside the rotation drill (${counted.byKind[1]} kind 1, ${counted.byKind[2]} kind 2), the ${counted.crash} crash-drill anchors and the same-block pair among them, verified valid at consensus-verified assurance with the W2 verifier, run in a separate process that installed only the packed verify package (no wallet, no key, no repository) and read through Blockfrost preprod, while every write went through Midnight's hosted preprod endpoints. Every transaction the rehearsal's journals saw land, other than the registry deploy, is one of these anchors or one of the rotation drill's four.`,
   `Wallets A and B each wrote one of these anchors into block ${sameBlock.height} (${sameBlock.anchors.join(" and ")}).`,
   `The four rotation-drill anchors gave the expected verdict under each set of KNOWN_AUTHORS documents (${rotation}), and a document with a forged signature was refused.`,
-  `The node refused each of the ${nodeNegatives.length} maintenance transactions (${nodeNegatives.map((n: { name: string }) => n.name).join("; ")}) at submission with its own JSON-RPC answer ${refusals}; the indexer lists none of them, and the registry state the node reported afterwards still passes the immutability check.`,
+  `The node refused each of the ${nodeNegatives.length} maintenance transactions at submission with its own JSON-RPC answer ${INVALID_TRANSACTION} Invalid Transaction and the maintenance authority's own custom code (${refusals}); the indexer lists none of them, and the registry state the node reported afterwards still passes the immutability check.`,
   `The journal crash drill killed the submitter with SIGKILL ${windows.join(", and ")}; each restart landed exactly the transaction its journal held.`,
   `Each of the ${facts.verifierNegatives} verifier negatives returned its expected status from its expected check.`,
   "Kind-2 openings (root, manifest, merkle, salt) were checked privately on the operator host and are not in this pack; the scan below finds no window of any of them.",
@@ -114,7 +114,7 @@ const pack = {
   },
   anchors,
   sameBlock: { ...raw.sameBlock, anchors: sameBlock.anchors },
-  nodeEnforcedNegatives: Object.entries(raw.negatives as Record<string, any>).map(([name, n]) => ({ name, txHash: n.txHash, refusal: n.refusal, onChain: n.onChain })),
+  nodeEnforcedNegatives: nodeNegatives.map((n: { name: string; txHash: string; code: number; message: string; data: string; refusedBy: string }) => ({ name: n.name, txHash: n.txHash, refusal: { code: n.code, message: n.message, data: n.data }, refusedBy: n.refusedBy, onChain: 0 })),
   registryAfterNegatives: raw.negativesAfter,
   knownAuthorsDrill: {
     trustRoot: verified.trustRoot,

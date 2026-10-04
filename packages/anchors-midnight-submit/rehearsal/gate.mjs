@@ -34,11 +34,20 @@ export const VERIFIER_NEGATIVES = {
   "a checkpoint too far below for a zero set-change budget": ["unverified-finality", "finality"],
 };
 
-// The maintenance updates the node must refuse, and the refusal that counts: the node's own
-// JSON-RPC answer 1010, Invalid Transaction. A transport failure, a timeout or any other code
-// proves nothing about the registry.
-export const NODE_NEGATIVES = ["ReplaceAuthority", "VerifierKeyRemove", "VerifierKeyInsert"];
+// The maintenance updates the node must refuse, and the only refusal that counts for each: the
+// node's own JSON-RPC answer 1010 Invalid Transaction carrying the maintenance authority's own
+// custom code from midnight-node's ledger error map. The registry's authority has no committee
+// and threshold 1, so an unsigned update misses the threshold and a signature at index 0 names
+// no member. Any other 1010 (another guard, a stale transaction, a fee the wallet cannot pay)
+// proves nothing about the authority, nor does a transport failure or a timeout.
 export const INVALID_TRANSACTION = 1010;
+const THRESHOLD_MISSED = { data: "Custom error: 136", refusedBy: "ThresholdMissed" };
+const KEY_NOT_IN_COMMITTEE = { data: "Custom error: 134", refusedBy: "KeyNotInCommittee" };
+export const NODE_NEGATIVES = {
+  "ReplaceAuthority, unsigned": THRESHOLD_MISSED,
+  "VerifierKeyRemove(anchor), signed by a stranger at index 0": KEY_NOT_IN_COMMITTEE,
+  "VerifierKeyInsert(rewrite), signed by a stranger at index 0": KEY_NOT_IN_COMMITTEE,
+};
 export const MIN_ANCHORS = { 1: 10, 2: 2 };
 
 // The crash drill's log: one JSON object per line, and one "crash.ts MODE LABEL exit=N" line per
@@ -127,18 +136,24 @@ export function judge({ raw, verified, crash, crashStatus }) {
     else facts.sameBlock = { height: pair.height, anchors: [nameA, nameB], round: pair.round };
   }
 
-  // The node itself refused every maintenance update, and none of them landed.
-  const negatives = Object.entries(raw.negatives ?? {});
-  for (const kind of NODE_NEGATIVES) {
-    const found = negatives.filter(([name]) => name.startsWith(kind));
-    if (found.length !== 1) {
-      failures.push(`${found.length} ${kind} negatives recorded, not 1`);
+  // The maintenance authority itself refused every maintenance update, and none of them landed.
+  const negatives = raw.negatives ?? {};
+  for (const name of Object.keys(negatives)) {
+    if (!Object.hasOwn(NODE_NEGATIVES, name)) failures.push(`negative ${name} is not one of the maintenance updates the gate knows the refusal for`);
+  }
+  for (const [name, { data, refusedBy }] of Object.entries(NODE_NEGATIVES)) {
+    const n = negatives[name];
+    if (!n) {
+      failures.push(`negative ${name} was not recorded`);
       continue;
     }
-    const [name, n] = found[0];
-    if (n.refusal?.code !== INVALID_TRANSACTION) failures.push(`negative ${name}: ${n.refusal ? `the node answered ${n.refusal.code} ${n.refusal.message}` : `no refusal by the node was recorded (${n.unresolved ?? n.error ?? n.note ?? "accepted"})`}, not ${INVALID_TRANSACTION} Invalid Transaction`);
-    else if (n.onChain !== 0) failures.push(`negative ${name}: the indexer lists it ${n.onChain} times`);
-    else facts.nodeNegatives.push({ name, txHash: n.txHash, code: n.refusal.code, message: n.refusal.message, data: n.refusal.data });
+    const { refusal } = n;
+    if (refusal?.code !== INVALID_TRANSACTION || refusal.data !== data) {
+      const shown = refusal?.data === undefined ? "" : ` (${typeof refusal.data === "string" ? refusal.data : JSON.stringify(refusal.data)})`;
+      const got = refusal ? `the node answered ${refusal.code} ${refusal.message}${shown}` : `no refusal by the node was recorded (${n.unresolved ?? n.error ?? n.note ?? "accepted"})`;
+      failures.push(`negative ${name}: ${got}, not ${INVALID_TRANSACTION} Invalid Transaction (${data}, ${refusedBy})`);
+    } else if (n.onChain !== 0) failures.push(`negative ${name}: the indexer lists it ${n.onChain} times`);
+    else facts.nodeNegatives.push({ name, txHash: n.txHash, code: refusal.code, message: refusal.message, data, refusedBy });
   }
   if (raw.negativesAfter?.registryStillImmutable !== true) failures.push("the registry state was not re-checked after the negatives");
 

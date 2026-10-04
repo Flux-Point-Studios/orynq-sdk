@@ -17,7 +17,11 @@ describe("the evidence gate", () => {
     expect(failures).toEqual([]);
     expect(facts.anchors).toEqual({ total: 19, byKind: { 1: 16, 2: 3 }, crash: 2 });
     expect(facts.crashDrill.map((d: { mode: string; resent: number }) => [d.mode, d.resent])).toEqual([["kill-before", 1], ["kill-after", 0]]);
-    expect(facts.nodeNegatives.map((n: { code: number }) => n.code)).toEqual([1010, 1010, 1010]);
+    expect(facts.nodeNegatives.map((n: { name: string; code: number; data: string; refusedBy: string }) => [n.name, n.code, n.data, n.refusedBy])).toEqual([
+      ["ReplaceAuthority, unsigned", 1010, "Custom error: 136", "ThresholdMissed"],
+      ["VerifierKeyRemove(anchor), signed by a stranger at index 0", 1010, "Custom error: 134", "KeyNotInCommittee"],
+      ["VerifierKeyInsert(rewrite), signed by a stranger at index 0", 1010, "Custom error: 134", "KeyNotInCommittee"],
+    ]);
     expect(facts.verifierNegatives).toBe(12);
     expect(facts.sameBlock).toMatchObject({ height: 1040, anchors: ["same-block-a-1", "same-block-b-1"] });
     expect(unrecordedAnchors(r.raw, journalLanded(r))).toEqual([]);
@@ -59,22 +63,56 @@ describe("the evidence gate", () => {
     });
   });
 
-  describe("the node-enforced negatives count only the node's own refusal", () => {
+  describe("the node-enforced negatives count only the maintenance authority's own refusal", () => {
     const negative = "VerifierKeyRemove(anchor), signed by a stranger at index 0";
+    const unsigned = "ReplaceAuthority, unsigned";
+    const insert = "VerifierKeyInsert(rewrite), signed by a stranger at index 0";
+    const want: Record<string, string> = { [unsigned]: "1010 Invalid Transaction (Custom error: 136, ThresholdMissed)", [negative]: "1010 Invalid Transaction (Custom error: 134, KeyNotInCommittee)", [insert]: "1010 Invalid Transaction (Custom error: 134, KeyNotInCommittee)" };
+    const answering = (data: string) => (r: Rehearsal) => {
+      for (const n of Object.values(r.raw.negatives as Record<string, any>)) n.refusal = { code: 1010, message: "Invalid Transaction", data };
+    };
+
     it("refuses a transport failure recorded as a rejection", () => {
       const failures = failuresOf((r) => (r.raw.negatives[negative] = { txHash: "cd".repeat(32), rejected: true, by: "node author_submitExtrinsic", error: "midnight node: fetch failed", onChain: 0 }));
-      expect(failures).toEqual([`negative ${negative}: no refusal by the node was recorded (midnight node: fetch failed), not 1010 Invalid Transaction`]);
+      expect(failures).toEqual([`negative ${negative}: no refusal by the node was recorded (midnight node: fetch failed), not ${want[negative]}`]);
     });
 
-    it("refuses a node answer other than 1010 Invalid Transaction", () => {
+    it("refuses a node answer other than 1010 Invalid Transaction, even one carrying the authority's code", () => {
       expect(failuresOf((r) => (r.raw.negatives[negative].refusal = { code: 1012, message: "Transaction is temporarily banned" }))).toEqual([
-        `negative ${negative}: the node answered 1012 Transaction is temporarily banned, not 1010 Invalid Transaction`,
+        `negative ${negative}: the node answered 1012 Transaction is temporarily banned, not ${want[negative]}`,
+      ]);
+      expect(failuresOf((r) => (r.raw.negatives[negative].refusal = { code: 1002, message: "Verification Error: Runtime error", data: "Custom error: 134" }))).toEqual([
+        `negative ${negative}: the node answered 1002 Verification Error: Runtime error (Custom error: 134), not ${want[negative]}`,
       ]);
     });
 
-    it("refuses a refused transaction the indexer lists anyway, a missing case, and a registry not re-checked", () => {
+    // Codes from midnight-node's ledger custom-error map: each is a 1010 Invalid Transaction from a
+    // guard other than the maintenance authority, and 196 comes from the application stage, after
+    // the authority check passed. "Transaction is outdated" is Substrate's 1010 for a stale one.
+    it.each([
+      ["110 VerifierKeyNotSet", "Custom error: 110"],
+      ["138 BalanceCheckOverspend", "Custom error: 138"],
+      ["196 DustDoubleSpend", "Custom error: 196"],
+      ["170 InvalidDustSpendProof", "Custom error: 170"],
+      ["a stale transaction", "Transaction is outdated"],
+    ])("refuses a 1010 Invalid Transaction for another reason: %s", (_, data) => {
+      expect(failuresOf(answering(data))).toEqual(
+        [unsigned, negative, insert].map((name) => `negative ${name}: the node answered 1010 Invalid Transaction (${data}), not ${want[name]}`),
+      );
+    });
+
+    it("refuses each authority code for the case it does not belong to, and a 1010 with no custom code", () => {
+      expect(failuresOf((r) => (r.raw.negatives[unsigned].refusal.data = "Custom error: 134"))).toEqual([`negative ${unsigned}: the node answered 1010 Invalid Transaction (Custom error: 134), not ${want[unsigned]}`]);
+      expect(failuresOf((r) => (r.raw.negatives[insert].refusal.data = "Custom error: 136"))).toEqual([`negative ${insert}: the node answered 1010 Invalid Transaction (Custom error: 136), not ${want[insert]}`]);
+      expect(failuresOf((r) => delete r.raw.negatives[negative].refusal.data)).toEqual([`negative ${negative}: the node answered 1010 Invalid Transaction, not ${want[negative]}`]);
+    });
+
+    it("refuses a refused transaction the indexer lists anyway, a missing or unknown case, and a registry not re-checked", () => {
       expect(failuresOf((r) => (r.raw.negatives[negative].onChain = 1))).toEqual([`negative ${negative}: the indexer lists it 1 times`]);
-      expect(failuresOf((r) => delete r.raw.negatives["ReplaceAuthority, unsigned"])).toEqual(["0 ReplaceAuthority negatives recorded, not 1"]);
+      expect(failuresOf((r) => delete r.raw.negatives[unsigned])).toEqual([`negative ${unsigned} was not recorded`]);
+      expect(failuresOf((r) => (r.raw.negatives["ReplaceAuthority, signed by a stranger at index 0"] = { ...r.raw.negatives[negative] }))).toEqual([
+        "negative ReplaceAuthority, signed by a stranger at index 0 is not one of the maintenance updates the gate knows the refusal for",
+      ]);
       expect(failuresOf((r) => delete r.raw.negativesAfter)).toEqual(["the registry state was not re-checked after the negatives"]);
     });
   });

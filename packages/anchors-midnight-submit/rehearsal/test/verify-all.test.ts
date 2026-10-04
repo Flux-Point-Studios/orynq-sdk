@@ -71,6 +71,6 @@ describe("verify-all.mjs", () => {
   it("exits non-zero when a node negative records a transport failure", () => {
     const { run, out } = verifyAll((r) => (r.raw.negatives["ReplaceAuthority, unsigned"] = { txHash: "cd".repeat(32), rejected: true, by: "node author_submitExtrinsic", error: "midnight node: fetch failed", onChain: 0 }));
     expect(run.status).toBe(1);
-    expect(out.gate.failures).toEqual(["negative ReplaceAuthority, unsigned: no refusal by the node was recorded (midnight node: fetch failed), not 1010 Invalid Transaction"]);
+    expect(out.gate.failures).toEqual(["negative ReplaceAuthority, unsigned: no refusal by the node was recorded (midnight node: fetch failed), not 1010 Invalid Transaction (Custom error: 136, ThresholdMissed)"]);
   });
 });

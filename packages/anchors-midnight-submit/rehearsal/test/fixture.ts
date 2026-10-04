@@ -70,7 +70,9 @@ export function honestRehearsal(): Rehearsal {
   anchor("rotation-new-after", 1, 1064, "walletA", keys.relay2);
   anchor("revoked-new-after", 1, 1066, "walletA", keys.relay2);
 
-  const refusal = { code: 1010, message: "Invalid Transaction", data: "Custom error: 110" };
+  // midnight-node's custom codes for the maintenance authority's own refusals: 136 ThresholdMissed
+  // for an unsigned update, 134 KeyNotInCommittee for a signature at index 0 of an empty committee.
+  const refusal = (custom: number) => ({ code: 1010, message: "Invalid Transaction", data: `Custom error: ${custom}` });
   const raw = {
     chain: { hosted: { chain: "Midnight Preprod", specVersion: 1000300 } },
     funding: { walletA: { registration: { txHash: h() } }, walletB: { registration: { txHash: h() } } },
@@ -88,9 +90,9 @@ export function honestRehearsal(): Rehearsal {
     anchors,
     sameBlock: { rounds: [{ round: 1 }], coLanded: { round: 1, height: 1040, blockHash: anchors["same-block-a-1"]!.blockHash, txHashes: [anchors["same-block-a-1"]!.txHash, anchors["same-block-b-1"]!.txHash] } },
     negatives: {
-      "ReplaceAuthority, unsigned": { txHash: h(), rejected: true, by: "node author_submitExtrinsic", refusal, onChain: 0 },
-      "VerifierKeyRemove(anchor), signed by a stranger at index 0": { txHash: h(), rejected: true, by: "node author_submitExtrinsic", refusal, onChain: 0 },
-      "VerifierKeyInsert(rewrite), signed by a stranger at index 0": { txHash: h(), rejected: true, by: "node author_submitExtrinsic", refusal, onChain: 0 },
+      "ReplaceAuthority, unsigned": { txHash: h(), rejected: true, by: "node author_submitExtrinsic", refusal: refusal(136), onChain: 0 },
+      "VerifierKeyRemove(anchor), signed by a stranger at index 0": { txHash: h(), rejected: true, by: "node author_submitExtrinsic", refusal: refusal(134), onChain: 0 },
+      "VerifierKeyInsert(rewrite), signed by a stranger at index 0": { txHash: h(), rejected: true, by: "node author_submitExtrinsic", refusal: refusal(134), onChain: 0 },
     },
     negativesAfter: { registryStillImmutable: true, checkedAt: "2026-10-05T00:00:00.000Z" },
     rotation: { keys },

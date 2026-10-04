@@ -28,6 +28,7 @@ import {
   registryOperator,
   type OperatorWallet,
 } from "../src/index.js";
+import { NODE_NEGATIVES } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
 
 const HOME = process.env.HOME!;
@@ -270,18 +271,20 @@ const phases: Record<string, () => Promise<void>> = {
     const w = instrument(await wallet("walletA"), "walletA");
     const address = raw.deploy.address as string;
     const stranger = L.sampleSigningKey();
-    const cases: Array<[string, () => L.MaintenanceUpdate]> = [
-      ["ReplaceAuthority, unsigned", () => new L.MaintenanceUpdate(address, [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority([], 0, 1n))], 0n)],
-      ["VerifierKeyRemove(anchor), signed by a stranger at index 0", () => {
+    // Keyed by the evidence gate's case names, so the type check refuses a case the gate holds no
+    // expected refusal for, and a case the gate expects but nothing sends.
+    const cases: Record<keyof typeof NODE_NEGATIVES, () => L.MaintenanceUpdate> = {
+      "ReplaceAuthority, unsigned": () => new L.MaintenanceUpdate(address, [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority([], 0, 1n))], 0n),
+      "VerifierKeyRemove(anchor), signed by a stranger at index 0": () => {
         const u = new L.MaintenanceUpdate(address, [new L.VerifierKeyRemove("anchor", new L.ContractOperationVersion("v3"))], 0n);
         return u.addSignature(0n, L.signData(stranger, u.dataToSign));
-      }],
-      ["VerifierKeyInsert(rewrite), signed by a stranger at index 0", () => {
+      },
+      "VerifierKeyInsert(rewrite), signed by a stranger at index 0": () => {
         const u = new L.MaintenanceUpdate(address, [new L.VerifierKeyInsert("rewrite", new L.ContractOperationVersionedVerifierKey("v3", compiledVerifierKeys().anchor))], 0n);
         return u.addSignature(0n, L.signData(stranger, u.dataToSign));
-      }],
-    ];
-    for (const [name, update] of cases) {
+      },
+    };
+    for (const [name, update] of Object.entries(cases)) {
       if (raw.negatives[name]) continue;
       const ttl = new Date(Date.now() + 15 * 60_000);
       const tx = L.Transaction.fromParts("preprod", undefined, undefined, L.Intent.new(ttl).addMaintenanceUpdate(update()));

@@ -26,11 +26,17 @@ describe("compose.ts", () => {
     const { r, run, pack } = compose();
     expect(run.status, run.stderr).toBe(0);
     expect(pack.statements[0]).toMatch(/^All 19 anchors this rehearsal wrote outside the rotation drill \(16 kind 1, 3 kind 2\), the 2 crash-drill anchors and the same-block pair among them, verified valid at consensus-verified assurance/);
-    expect(pack.statements.join("\n")).toMatch(/refused each of the 3 maintenance transactions .* with its own JSON-RPC answer 1010 Invalid Transaction/);
+    expect(pack.statements).toContain(
+      "The node refused each of the 3 maintenance transactions at submission with its own JSON-RPC answer 1010 Invalid Transaction and the maintenance authority's own custom code (ReplaceAuthority, unsigned: Custom error: 136, ThresholdMissed; VerifierKeyRemove(anchor), signed by a stranger at index 0: Custom error: 134, KeyNotInCommittee; VerifierKeyInsert(rewrite), signed by a stranger at index 0: Custom error: 134, KeyNotInCommittee); the indexer lists none of them, and the registry state the node reported afterwards still passes the immutability check.",
+    );
     const names = pack.anchors.map((a: { name: string }) => a.name);
     expect(names).toEqual(expect.arrayContaining(["crash-before-broadcast", "crash-after-broadcast"]));
     expect(pack.anchors.find((a: { name: string }) => a.name === "crash-after-broadcast").verifier).toMatchObject({ status: "valid", assurance: "consensus-verified", txHash: r.raw.anchors["crash-after-broadcast"].txHash });
-    expect(pack.nodeEnforcedNegatives.map((n: { refusal: { code: number } }) => n.refusal.code)).toEqual([1010, 1010, 1010]);
+    expect(pack.nodeEnforcedNegatives.map((n: { refusal: { code: number; data: string }; refusedBy: string }) => [n.refusal.code, n.refusal.data, n.refusedBy])).toEqual([
+      [1010, "Custom error: 136", "ThresholdMissed"],
+      [1010, "Custom error: 134", "KeyNotInCommittee"],
+      [1010, "Custom error: 134", "KeyNotInCommittee"],
+    ]);
     expect(pack.privacyScan.windowsOfSecretsInPack).toBe(0);
   });
 
@@ -50,6 +56,16 @@ describe("compose.ts", () => {
     expect(run.stderr).toMatch(/anchor git-head: unverified-finality at multi-path assurance/);
     expect(run.stderr).toMatch(/crash drill anchor crash-before-broadcast \([0-9a-f]{64}\) is not among the recorded anchors/);
     expect(run.stderr).toMatch(/negative ReplaceAuthority, unsigned: no refusal by the node was recorded \(midnight node: fetch failed\)/);
+  });
+
+  it("refuses review2's pack: every maintenance update refused as Custom error: 196 (DustDoubleSpend), which the authority never answers", () => {
+    const { run, pack } = compose((r) => {
+      for (const n of Object.values(r.raw.negatives as Record<string, any>)) n.refusal = { code: 1010, message: "Invalid Transaction", data: "Custom error: 196" };
+    });
+    expect(pack).toBeNull();
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("GATE: negative ReplaceAuthority, unsigned: the node answered 1010 Invalid Transaction (Custom error: 196), not 1010 Invalid Transaction (Custom error: 136, ThresholdMissed)");
+    expect(run.stderr).toContain("no pack written: 3 claims are not established");
   });
 
   it("writes nothing when the privacy scan finds a secret in the pack", () => {

@@ -24,11 +24,37 @@ package publishes only `dist`, so nothing here ships.
 | `docs.ts` | Signs the drill's KNOWN_AUTHORS documents with a preprod-only trust root through `anchors-midnight/scripts/known-authors.ts`. |
 | `rehearse.sh` | All of the above in order, at nice 19; the crash drill runs once. |
 | `verify-all.mjs` | Verifies every recorded anchor, the rotation matrix and twelve verifier negatives through Blockfrost, from a consumer directory that installed only the packed verify package, and exits 1 on any gate failure. |
-| `gate.mjs` | The claims the pack may make, from what was recorded and what the verifier returned. |
+| `gate.mjs` | The claims the pack may make, from what was recorded and what the verifier returned. Each maintenance update counts as refused only on the node's answer 1010 Invalid Transaction with the maintenance authority's own custom code (below). |
 | `compose.ts` | Writes the pack only when the gate passes, every journal's landed transactions match the recorded anchors, and the privacy scan finds no window of any secret. |
 | `finish.sh` | `verify-all.mjs` from `$CONSUMER`, then `compose.ts`. |
 | `record-golden.ts` | Records the verifier's reads of three real anchors as a fixture the anchors-midnight suite can replay. |
 | `wallets.json` | The public addresses of preprod wallets A and B. `openWallet` refuses a mnemonic that derives anything else. |
+
+## The node's refusals
+
+The registry's maintenance authority has no committee and threshold 1, so midnight-node's ledger
+refuses each update with its own custom code, which Substrate's author RPC reports as error 1010
+Invalid Transaction with data `Custom error: N`:
+
+| Case (`run.ts`) | The only refusal that counts |
+|---|---|
+| `ReplaceAuthority, unsigned` | `Custom error: 136` (ThresholdMissed) |
+| `VerifierKeyRemove(anchor), signed by a stranger at index 0` | `Custom error: 134` (KeyNotInCommittee) |
+| `VerifierKeyInsert(rewrite), signed by a stranger at index 0` | `Custom error: 134` (KeyNotInCommittee) |
+
+Any other answer fails the gate, 1010 included: `Custom error: 110` (VerifierKeyNotSet), `138`
+(BalanceCheckOverspend) and `170` (InvalidDustSpendProof) come from other guards, `196`
+(DustDoubleSpend) from the application stage, which runs only after the authority check has
+passed, and `Transaction is outdated` marks a stale transaction. `run.ts` builds exactly the cases `gate.mjs` names, which the
+type check enforces, and the pack prints each code with its name.
+
+A positive control is planned for the preprod run and has not run. Deploy a control contract, the
+registry's initial state with threshold 0 instead of 1, through a deploy path of its own (since
+`registryDeployer` builds only the registry), then send it the same three updates unsigned, each
+with the counter the previous one left. The node should accept and land all three, which shows the
+construction, the fee payment and the framing reach the authority check, so the registry's
+refusals come from its authority alone. It costs one deploy and three updates in DUST, and the
+gate does not require it yet.
 
 ## Tests
 
