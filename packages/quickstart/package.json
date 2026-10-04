@@ -61,6 +61,7 @@
   "dependencies": {
     "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*",
     "@fluxpointstudios/orynq-sdk-anchors-materios": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-anchors-midnight": "workspace:*",
     "@polkadot/keyring": "^13.0.0",
     "@polkadot/util": "^13.0.0",
     "@polkadot/util-crypto": "^13.0.0"

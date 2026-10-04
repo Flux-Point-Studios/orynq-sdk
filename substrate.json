@@ -223,14 +223,16 @@
     {
       "id": "orynq-quickstart",
       "name": "Orynq quickstart",
-      "desc": "Solo-developer quickstart: generates an identity, faucet-drips MATRA and anchors a first trace in minutes.",
+      "desc": "Solo-developer quickstart: generates an identity, faucet-drips MATRA and anchors a first trace in minutes. For Midnight: `orynq verify midnight <txHash|bundle>` verifies an anchor read-only and prints its status, assurance, author, matched fields and every check (Blockfrost project id file or any indexer and node URL); `orynq keys init midnight` writes the user's own key file; `orynq anchor midnight` plans an anchor with that key only, refusing bare service key files and every KNOWN_AUTHORS key, as a dry run unless --submit is confirmed at a TTY by typing the commitment's first 8 characters (no registry or submitter in this build, so it stops before asking).",
       "kind": "toolkit",
       "paths": [
         "packages/quickstart"
       ],
       "consumes": [
         "anchors-materios",
-        "gateway-faucet"
+        "anchors-midnight",
+        "gateway-faucet",
+        "process-trace"
       ],
       "status": "live"
     },
