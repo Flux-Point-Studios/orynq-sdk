@@ -19,7 +19,7 @@
     "build": "tsup",
     "test": "vitest run",
     "test:slow": "vitest run --config vitest.slow.config.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p rehearsal",
     "clean": "rimraf dist"
   },
   "dependencies": {
@@ -38,6 +38,8 @@
     "rxjs": "7.8.2"
   },
   "devDependencies": {
+    "@fluxpointstudios/orynq-sdk-anchors-cardano": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*",
     "@scure/base": "2.4.0",
     "@types/node": "^24.19.1",
     "tsup": "^8.0.1",

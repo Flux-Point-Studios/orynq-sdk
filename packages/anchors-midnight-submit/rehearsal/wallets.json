@@ -1,0 +1,19 @@
+{
+  "network": "preprod",
+  "walletA": {
+    "role": "registry deployer and anchor fee payer",
+    "addresses": {
+      "unshielded": "mn_addr_preprod18hnkqxax2qyjrkm8ats9dkmr9vlwh0v6mvtfhtt4t5tvzq5t4l7sc2xpu6",
+      "shielded": "mn_shield-addr_preprod1ke3tqh6rgun2s6g94zn5yn9ej65gqy9p56u75ljvn7vmudq9wtdyvffr6lqjs7upjrqehg5hrxjhdf4349fvhtcp8e96jt52ec9pytchgcse2",
+      "dust": "mn_dust_preprod1wwmvavrnykeg3clwjqwlgtnxmxtyhsvepa7umwy7lafrt4sq88t979670ug"
+    }
+  },
+  "walletB": {
+    "role": "second fee payer for the same-block test",
+    "addresses": {
+      "unshielded": "mn_addr_preprod1jyy8gesdrewxa9sz6ujm63wx4w390psjtce9ueq5ps3u3hy5077s2859zm",
+      "shielded": "mn_shield-addr_preprod1w3j97nuj0gda50vjahxr056um6g3vlu4hxnx8nydecfwn2znhvg8sy543f9x3pf30qf2fvgu60xae6xq65tvk4r7anu0d7q434qmnxg2vr90k",
+      "dust": "mn_dust_preprod1wvrc4755r3ft22zqlj4nkskhaj8509qchq6up34rlzfgu2ku7jv5qv97as3"
+    }
+  }
+}

@@ -204,6 +204,12 @@ importers:
         specifier: 7.8.2
         version: 7.8.2
     devDependencies:
+      '@fluxpointstudios/orynq-sdk-anchors-cardano':
+        specifier: workspace:*
+        version: link:../anchors-cardano
+      '@fluxpointstudios/orynq-sdk-process-trace':
+        specifier: workspace:*
+        version: link:../process-trace
       '@scure/base':
         specifier: 2.4.0
         version: 2.4.0

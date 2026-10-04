@@ -124,6 +124,23 @@
       "status": "experimental"
     },
     {
+      "id": "midnight-preprod-rehearsal",
+      "name": "Midnight preprod rehearsal and evidence gate",
+      "desc": "The Midnight submitter's preprod rehearsal, committed so its evidence is reproducible. bundles.ts traces real read-only processes into process-trace bundles (entries via anchors-cardano); run.ts and crash.ts, on preprod test tokens only, deploy the registry and write kind-1 and kind-2 anchors, a same-block pair from two wallets, three maintenance updates the node must refuse, a SIGKILL drill on each journal crash window and a KNOWN_AUTHORS rotation and revocation. verify-all.mjs verifies every recorded anchor through Blockfrost from a separate process that loads only the packed verify package, refusing one resolved anywhere but its own node_modules. gate.mjs decides what the evidence pack may claim: every anchor valid at consensus-verified for its recorded hash, each crash window's journal behaviour, the same-block pair, each node refusal as the node's own JSON-RPC 1010 answer, the rotation verdict matrix and each verifier negative failing for its expected check. compose.ts writes the pack only when the gate passes, the journals' landed transactions equal the recorded anchors and a privacy scan finds no window of any secret. The offline suite runs in CI; the network steps run by hand after the faucet (README runbook).",
+      "kind": "pipeline",
+      "paths": [
+        "packages/anchors-midnight-submit/rehearsal"
+      ],
+      "consumes": [
+        "anchors-midnight-submit",
+        "anchors-midnight",
+        "anchors-cardano",
+        "process-trace",
+        "known-authors-document"
+      ],
+      "status": "experimental"
+    },
+    {
       "id": "tool-receipts",
       "name": "Tool-call receipts",
       "desc": "Verifiable tool-call receipts with RFC 9421, webhook-signature and JWS verifiers for the process-trace SDK.",

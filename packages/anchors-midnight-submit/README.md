@@ -56,3 +56,10 @@ for `node:sqlite`). The operator and deployer suites run the real circuits throu
 with the one recorded registry proof, so the bytes they judge decode and hash exactly as
 submitted bytes do. `MIDNIGHT_PP=... nice -n 19 pnpm test:slow` proves a registry anchor for real
 through `provingService`, in the wallet SDK's worker thread, in about half a minute.
+
+## Preprod rehearsal
+
+`rehearsal/` deploys the registry and writes anchors on Midnight preprod with test tokens,
+verifies every anchor from a separate process with the packed verify package, and writes an
+evidence pack only for what its gate establishes. Its offline tests run with `pnpm test`; the
+runbook is `rehearsal/README.md`.
