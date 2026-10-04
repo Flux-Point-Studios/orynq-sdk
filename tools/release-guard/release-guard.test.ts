@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,8 +69,14 @@ describe("inversions", () => {
 });
 
 describe("release-guard CLI", () => {
+  const roots: string[] = [];
+  afterAll(() => {
+    for (const root of roots) rmSync(root, { recursive: true, force: true });
+  });
+
   function workspace(members: Array<[string, Record<string, unknown>]>): string {
     const root = mkdtempSync(join(tmpdir(), "release-guard-"));
+    roots.push(root);
     const { packageManager } = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
     writeFileSync(join(root, "package.json"), JSON.stringify({ name: "root", private: true, packageManager }));
     writeFileSync(join(root, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");

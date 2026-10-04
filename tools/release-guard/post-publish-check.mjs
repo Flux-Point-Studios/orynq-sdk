@@ -4,7 +4,7 @@
 // an object made by one is rejected by the other at runtime.
 //   node tools/release-guard/post-publish-check.mjs PACKED_DIR [REGISTRY]
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -88,27 +88,31 @@ async function importProblem(dir, spec) {
 }
 
 async function checkLayout(specs, { registry, singletons }, importsToCheck) {
-  const dir = mkdtempSync(join(tmpdir(), "post-publish-"));
-  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "post-publish-probe", private: true, type: "module" }));
+  const dir = mkdtempSync(join(tmpdir(), "post-publish-probe-"));
   const label = specs.join(" + ");
   try {
-    await exec("npm", ["i", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error", `--registry=${registry}`, ...specs], {
-      cwd: dir,
-      maxBuffer: 64 << 20,
-    });
-  } catch (e) {
-    return { problems: [`${label}: npm install failed: ${lastLine(e.stderr) || e.message}`], layout: null };
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "post-publish-probe", private: true, type: "module" }));
+    try {
+      await exec("npm", ["i", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error", `--registry=${registry}`, ...specs], {
+        cwd: dir,
+        maxBuffer: 64 << 20,
+      });
+    } catch (e) {
+      return { problems: [`${label}: npm install failed: ${lastLine(e.stderr) || e.message}`], layout: null };
+    }
+    const problems = [];
+    for (const spec of importsToCheck) {
+      const problem = await importProblem(dir, spec);
+      if (problem) problems.push(problem);
+    }
+    const copies = singletonCopies(dir, singletons);
+    for (const [name, versions] of Object.entries(copies)) {
+      if (versions.length > 1) problems.push(`${label}: ${name} has ${versions.length} copies (${versions.join(", ")})`);
+    }
+    return { problems, layout: { specs, copies: Object.fromEntries(Object.entries(copies).filter(([, v]) => v.length)) } };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
-  const problems = [];
-  for (const spec of importsToCheck) {
-    const problem = await importProblem(dir, spec);
-    if (problem) problems.push(problem);
-  }
-  const copies = singletonCopies(dir, singletons);
-  for (const [name, versions] of Object.entries(copies)) {
-    if (versions.length > 1) problems.push(`${label}: ${name} has ${versions.length} copies (${versions.join(", ")})`);
-  }
-  return { problems, layout: { specs, copies: Object.fromEntries(Object.entries(copies).filter(([, v]) => v.length)) } };
 }
 
 export async function checkLayouts(specs, { registry, singletons = SINGLETONS, visibility = { attempts: 30, delayMs: 10_000 } }) {

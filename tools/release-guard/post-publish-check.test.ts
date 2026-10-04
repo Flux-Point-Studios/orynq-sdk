@@ -1,14 +1,22 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkLayouts, packedSpecs, singletonCopies } from "./post-publish-check.mjs";
 
-const scratch = () => mkdtempSync(join(tmpdir(), "post-publish-"));
+const scratchDirs: string[] = [];
+const scratch = () => {
+  const dir = mkdtempSync(join(tmpdir(), "post-publish-test-"));
+  scratchDirs.push(dir);
+  return dir;
+};
+afterAll(() => {
+  for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
+});
 
 // Packs `files` (package.json included) the way npm does: everything under package/.
 function tarball(files: Record<string, string>): Buffer {
@@ -151,6 +159,23 @@ describe("checkLayouts against a registry", () => {
       ["@f/serve-on-import@1.0.0"],
       ["@f/cli-only@1.0.0", "@f/serve-on-import@1.0.0"],
     ]);
+  });
+
+  it("removes every probe project it installed", async () => {
+    // Any directory under tmpdir() holding the probe manifest; other users' entries may be unreadable.
+    const probes = () =>
+      readdirSync(tmpdir()).filter((d) => {
+        try {
+          return readFileSync(join(tmpdir(), d, "package.json"), "utf8").includes('"name":"post-publish-probe"');
+        } catch (e) {
+          if (["ENOENT", "ENOTDIR", "EACCES"].includes((e as NodeJS.ErrnoException).code ?? "")) return false;
+          throw e;
+        }
+      });
+    const before = probes();
+    const { layouts } = await checkLayouts(["@f/good@1.0.0", "@f/cli-only@1.0.0"], options());
+    expect(layouts).toHaveLength(3);
+    expect(probes()).toEqual(before);
   });
 
   it("waits for a version the registry does not serve yet, and gives up after the last attempt", async () => {

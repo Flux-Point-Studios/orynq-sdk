@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -16,9 +16,23 @@ const platform = (() => {
 })();
 const zipName = `compactc_v0.31.1_${platform}.zip`;
 
+// Installed binaries are read-only, so cleanup restores write permission before removing.
+const temps: string[] = [];
+const temp = (prefix: string) => {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  temps.push(dir);
+  return dir;
+};
+afterAll(() => {
+  for (const dir of temps) {
+    execFileSync("chmod", ["-R", "u+w", dir]);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // A release laid out like GitHub's, with a compactc whose --version answers like the real one.
 function fakeRelease(version = "0.31.1") {
-  const dir = mkdtempSync(join(tmpdir(), "compactc-release-"));
+  const dir = temp("compactc-release-");
   const files: Record<string, string> = {
     compactc: '#!/usr/bin/env bash\nthisdir="$(cd $(dirname $0) ; pwd -P)"\nexec "$thisdir/compactc.bin" "$@"\n',
     "compactc.bin": `#!/usr/bin/env bash\necho ${version}\n`,
@@ -44,7 +58,7 @@ function fakeRelease(version = "0.31.1") {
 // The installer reads its pins from beside itself, so a copy with its own pins file is a
 // complete installer for the fake release.
 function installerWith(pins: string[]) {
-  const dir = mkdtempSync(join(tmpdir(), "compactc-installer-"));
+  const dir = temp("compactc-installer-");
   copyFileSync(installer, join(dir, "install.sh"));
   writeFileSync(join(dir, "compactc.sha256"), pins.join("\n") + "\n");
   return join(dir, "install.sh");
@@ -70,8 +84,8 @@ describe("compactc installer", () => {
 
   it("installs a release and parameters whose every file matches its pin", async () => {
     const release = fakeRelease();
-    const dest = join(mkdtempSync(join(tmpdir(), "compactc-dest-")), "bin");
-    const params = mkdtempSync(join(tmpdir(), "zk-params-"));
+    const dest = join(temp("compactc-dest-"), "bin");
+    const params = temp("zk-params-");
     const r = await run(installerWith(release.pins), [dest, params], { COMPACTC_RELEASE_URL: release.url, MIDNIGHT_PARAM_SOURCE: release.url });
     expect(r.stderr).toBe("");
     expect(r.status).toBe(0);
@@ -83,8 +97,8 @@ describe("compactc installer", () => {
   it("refuses a release zip that does not match its pin and installs nothing", async () => {
     const release = fakeRelease();
     const pins = release.pins.map((l) => (l.endsWith(zipName) ? `${"0".repeat(64)}  ${zipName}` : l));
-    const dest = join(mkdtempSync(join(tmpdir(), "compactc-dest-")), "bin");
-    const r = await run(installerWith(pins), [dest, mkdtempSync(join(tmpdir(), "zk-params-"))], {
+    const dest = join(temp("compactc-dest-"), "bin");
+    const r = await run(installerWith(pins), [dest, temp("zk-params-")], {
       COMPACTC_RELEASE_URL: release.url,
       MIDNIGHT_PARAM_SOURCE: release.url,
     });
@@ -95,8 +109,8 @@ describe("compactc installer", () => {
 
   it("refuses a compactc that does not report the pinned version", async () => {
     const release = fakeRelease("0.31.0");
-    const dest = join(mkdtempSync(join(tmpdir(), "compactc-dest-")), "bin");
-    const r = await run(installerWith(release.pins), [dest, mkdtempSync(join(tmpdir(), "zk-params-"))], {
+    const dest = join(temp("compactc-dest-"), "bin");
+    const r = await run(installerWith(release.pins), [dest, temp("zk-params-")], {
       COMPACTC_RELEASE_URL: release.url,
       MIDNIGHT_PARAM_SOURCE: release.url,
     });
@@ -107,8 +121,8 @@ describe("compactc installer", () => {
   it("refuses a parameters file that does not match its pin and leaves it out of the cache", async () => {
     const release = fakeRelease();
     writeFileSync(join(release.dir, "bls_midnight_2p14"), "tampered");
-    const params = mkdtempSync(join(tmpdir(), "zk-params-"));
-    const r = await run(installerWith(release.pins), [join(mkdtempSync(join(tmpdir(), "compactc-dest-")), "bin"), params], {
+    const params = temp("zk-params-");
+    const r = await run(installerWith(release.pins), [join(temp("compactc-dest-"), "bin"), params], {
       COMPACTC_RELEASE_URL: release.url,
       MIDNIGHT_PARAM_SOURCE: release.url,
     });
@@ -119,10 +133,10 @@ describe("compactc installer", () => {
 
   it("re-verifies an existing install and replaces a binary that no longer matches its pin", async () => {
     const release = fakeRelease();
-    const dest = join(mkdtempSync(join(tmpdir(), "compactc-dest-")), "bin");
+    const dest = join(temp("compactc-dest-"), "bin");
     mkdirSync(dest);
     writeFileSync(join(dest, "compactc.bin"), "#!/usr/bin/env bash\necho tampered\n");
-    const r = await run(installerWith(release.pins), [dest, mkdtempSync(join(tmpdir(), "zk-params-"))], {
+    const r = await run(installerWith(release.pins), [dest, temp("zk-params-")], {
       COMPACTC_RELEASE_URL: release.url,
       MIDNIGHT_PARAM_SOURCE: release.url,
     });
