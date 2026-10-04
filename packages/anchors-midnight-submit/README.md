@@ -20,10 +20,11 @@ registry exists.
 
 ## Endpoints
 
-Mainnet reads and writes go through Blockfrost (the Midnight-hosted mainnet endpoints were
-retired on 2026-09-30), with the project id read from an owner-only file. Preprod can use
-Midnight's hosted endpoints (`indexer.preprod.midnight.network`, `rpc.preprod.midnight.network`)
-or Blockfrost.
+`networkEndpoints(network, { blockfrostProjectIdFile })` chooses where a submitter reads and
+writes. Mainnet goes through Blockfrost only (Midnight retired its hosted mainnet endpoints on
+2026-09-30), with the project id read from an owner-only file. Preprod uses Midnight's hosted
+endpoints (`indexer.preprod.midnight.network`, `rpc.preprod.midnight.network`) unless a Blockfrost
+project id file is given.
 
 ## Custody
 
@@ -53,4 +54,5 @@ Each prints only public derivations (addresses, an author key, a boolean).
 `MIDNIGHT_PP=<the ZK directory tools/compactc/install.sh filled> pnpm test` (Node 22.13 or later,
 for `node:sqlite`). The operator and deployer suites run the real circuits through zkir's check
 with the one recorded registry proof, so the bytes they judge decode and hash exactly as
-submitted bytes do.
+submitted bytes do. `MIDNIGHT_PP=... nice -n 19 pnpm test:slow` proves a registry anchor for real
+through `provingService`, in the wallet SDK's worker thread, in about half a minute.

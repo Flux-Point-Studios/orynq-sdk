@@ -97,8 +97,17 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
       if (kind === 2 && hex(built.after.last_commitment) !== commitment) throw new Error("the circuit computed a different kind-2 commitment than the opening");
       const { bytes } = await finalizeChecked(wallet, prover, built.tx, ttl, (bytes) => {
         const { calls, touches } = decodeAnchorTransaction(bytes, [registry]);
-        const intended = { address: registry, entryPoint: kind === 1 ? "anchor" : "anchor_hiding", kind, commitment, attribute, author };
-        if (touches.length !== 0 || calls.length !== 1 || JSON.stringify(calls[0]) !== JSON.stringify(intended)) {
+        const [call] = calls;
+        const exact =
+          touches.length === 0 &&
+          calls.length === 1 &&
+          call!.address === registry &&
+          call!.entryPoint === (kind === 1 ? "anchor" : "anchor_hiding") &&
+          call!.kind === kind &&
+          call!.commitment === commitment &&
+          call!.attribute === attribute &&
+          call!.author === author;
+        if (!exact) {
           throw new Error("the final bytes do not carry exactly the intended anchor; nothing was submitted");
         }
       });

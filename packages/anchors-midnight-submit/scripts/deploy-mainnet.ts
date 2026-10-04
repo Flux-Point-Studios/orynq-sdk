@@ -12,10 +12,11 @@
 import { homedir } from "node:os";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { assertRegistryState, blockfrostEndpoints, midnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { assertRegistryState, midnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { agentDriven } from "../src/custody.js";
 import { registryDeployer } from "../src/deployer.js";
+import { networkEndpoints } from "../src/endpoints.js";
 import { assertChainIdentity, confirmOnTerminal, confirmationToken, deploySummary, formatDust } from "../src/preflight.js";
 import { openWallet } from "../src/wallet.js";
 import { provingService } from "../src/zk.js";
@@ -44,7 +45,7 @@ const journalPath = option("journal", `${home}/.local/state/orynq-midnight/mainn
 const floor = BigInt(Math.round(Number(option("dust-floor", "20")) * 1e6)) * 10n ** 9n;
 
 try {
-  const endpoints = blockfrostEndpoints("mainnet", blockfrost);
+  const endpoints = networkEndpoints("mainnet", { blockfrostProjectIdFile: blockfrost });
   const source = midnightSource(endpoints);
   const chain = await assertChainIdentity(source, "mainnet");
   const expectedAddresses = (JSON.parse(readFileSync(walletRecord, "utf8")) as { addresses: { unshielded: string; shielded: string; dust: string } }).addresses;

@@ -56,7 +56,7 @@ steps:
       - tools/compactc/install.sh ~/.cache/midnight/compactc ~/.cache/midnight/zk-params
       - pnpm install --frozen-lockfile --filter @fluxpointstudios/orynq-sdk-anchors-midnight-submit...
       - pnpm --filter @fluxpointstudios/orynq-sdk-anchors-midnight build
-      - cd packages/anchors-midnight-submit && pnpm typecheck && MIDNIGHT_PP=~/.cache/midnight/zk-params pnpm test
+      - cd packages/anchors-midnight-submit && pnpm typecheck && MIDNIGHT_PP=~/.cache/midnight/zk-params pnpm test && MIDNIGHT_PP=~/.cache/midnight/zk-params nice -n 19 pnpm test:slow
 
   - name: path-check
     image: alpine:3.20

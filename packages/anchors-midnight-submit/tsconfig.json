@@ -3,6 +3,6 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts", "test-slow/**/*.ts", "scripts/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
