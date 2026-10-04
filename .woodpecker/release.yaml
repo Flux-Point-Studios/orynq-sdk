@@ -7,6 +7,10 @@
 # token: the npm_token secret's image filter names the digest pinned below, so no step that
 # runs an install, build or package script can receive it. The plugin refuses restarts, so a
 # failed publish is retried by the next push to main, which packs only what is still missing.
+#
+# release-guard runs before anything is packed: it refuses a public package with a runtime
+# dependency on a private one, and a version below one npm already has. post-publish-check
+# installs what was published from npm and requires one copy of each WASM singleton.
 when:
   - event: pull_request
   - event: push
@@ -25,6 +29,7 @@ steps:
     image: node:20-bookworm
     commands:
       - corepack enable
+      - node tools/release-guard/release-guard.mjs
       - pnpm install --frozen-lockfile
       - pnpm build
       - node scripts/pack-unpublished.mjs /woodpecker/npm-publish
@@ -35,6 +40,14 @@ steps:
       dir: /woodpecker/npm-publish
       token:
         from_secret: npm_token
+    when:
+      - event: push
+        branch: main
+
+  - name: post-publish-check
+    image: node:20-bookworm
+    commands:
+      - node tools/release-guard/post-publish-check.mjs /woodpecker/npm-publish
     when:
       - event: push
         branch: main

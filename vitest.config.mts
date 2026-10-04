@@ -43,6 +43,7 @@ export default defineConfig({
       'services/**/src/**/*.test.ts',
       'services/**/tests/**/*.test.ts',
       'tests/**/*.test.ts',
+      'tools/**/*.test.ts',
     ],
     // Integration tests have longer timeouts
     testTimeout: 120_000,

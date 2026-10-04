@@ -232,11 +232,12 @@
     {
       "id": "npm-release",
       "name": "npm release",
-      "desc": "Publishes every workspace package version npm lacks on a push to main: a token-less step installs, builds and packs them (scripts/pack-unpublished.mjs, the choice changeset publish makes), and only the digest-pinned npm-publish plugin, named by the npm_token secret's image filter, holds the token.",
+      "desc": "Publishes every workspace package version npm lacks on a push to main: a token-less step runs release-guard (refuses a public package with a runtime dependency on a private one, and a version below one npm already has), then installs, builds and packs them (scripts/pack-unpublished.mjs, the choice changeset publish makes); only the digest-pinned npm-publish plugin, named by the npm_token secret's image filter, holds the token; post-publish-check then installs each published version from npm, alone and together, imports it and requires one copy of each WASM singleton.",
       "kind": "pipeline",
       "paths": [
         ".woodpecker/release.yaml",
-        "scripts/pack-unpublished.mjs"
+        "scripts/pack-unpublished.mjs",
+        "tools/release-guard"
       ],
       "consumes": [
         "npm-publish-plugin"
