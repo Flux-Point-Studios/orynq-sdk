@@ -55,7 +55,7 @@
     {
       "id": "anchors-midnight",
       "name": "Midnight anchor toolkit",
-      "desc": "Builds the registry's exact deploy state from the compiled constructor and the sha256-pinned verifier keys, and refuses anything else: assertImmutableAuthority (committee [], threshold 1, counter 0), assertRegistryState (operations, canonical verifier keys, schema) and assertRegistryDeployBytes, which decodes the exact deploy bytes before or after proving and requires the initial state byte for byte. Private until the mainnet registry exists.",
+      "desc": "Computes commitments with the compiled contract's own pure circuits (entryCommitment, hiddenDigest, hidingCommitment, deriveSalt, authorKey), writes and reads random author key files only their owner can read, lists the deployed registry generations per network (none yet) with their pinned verifier keys and runtime, and builds the registry's exact deploy state from the compiled constructor and the sha256-pinned verifier keys, and refuses anything else: assertImmutableAuthority (committee [], threshold 1, counter 0), assertRegistryState (operations, canonical verifier keys, schema) and assertRegistryDeployBytes, which decodes the exact deploy bytes before or after proving and requires the initial state byte for byte. Private until the mainnet registry exists.",
       "kind": "toolkit",
       "paths": [
         "packages/anchors-midnight"

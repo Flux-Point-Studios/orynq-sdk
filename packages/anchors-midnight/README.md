@@ -48,6 +48,24 @@ one. `assertRegistryDeployBytes` decodes the exact transaction bytes, before or 
 and binding, and refuses them unless they deploy exactly `registryInitialState()`, byte for
 byte, and touch no other contract.
 
+## Commitments and author keys
+
+`entryCommitment`, `hiddenDigest`, `hidingCommitment`, `deriveSalt` and `authorKey` call the
+compiled contract's own pure circuits, so the SDK and the registry cannot compute a commitment
+differently. They take 32-byte hashes as bytes or as hex, bare or prefixed `sha256:` or `0x`, the
+forms process-trace bundles and anchors-cardano entries use. A kind-1 commitment is
+`entry_digest(rootHash, manifestHash, merkleRoot)`, with 32 zero bytes when the entry has no
+merkle root.
+
+An author key is a fresh random 32-byte secret, never derived from a wallet seed.
+`createAuthorKeyFile(path)` writes one to a new file only its owner can read and returns the
+public author key; `readAuthorSecret(path)` refuses a symlink, a file the caller does not own and
+a file group or others can read or write.
+
+`MIDNIGHT_REGISTRIES` lists the deployed registry generations per network. None is deployed yet.
+Each entry pins its address, deploy transaction, the runtime whose extrinsic layout the decoder
+knows (spec 1000300), and this contract's verifier keys, which `assertRegistryGenerations` checks.
+
 ## Reproducing the build
 
 ```
