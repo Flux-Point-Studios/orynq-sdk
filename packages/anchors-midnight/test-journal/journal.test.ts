@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -206,6 +206,16 @@ describe("the write-ahead journal", () => {
     expect(restarted.pending()).toEqual([]);
     expect(net.arrived).toEqual([fixture.anchor.txHash, fixture.hiding.txHash]);
     restarted.close();
+  });
+
+  it("keeps its file, which holds final transaction bytes until they land, readable only by its owner", () => {
+    const path = file();
+    openJournal(path).close();
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    const open = file();
+    writeFileSync(open, "");
+    chmodSync(open, 0o644);
+    expect(() => openJournal(open)).toThrow(/journal-\d+\.sqlite can be read or written by group or others/);
   });
 
   it("refuses bytes that are not a final transaction before writing anything", async () => {

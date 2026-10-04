@@ -1,3 +1,4 @@
+import { closeSync, constants, openSync, statSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import type { MidnightSource } from "./source.js";
@@ -83,6 +84,14 @@ const hashOf = (bytes: Uint8Array) => {
 // as a second transaction. A pending row is retired only when the indexer reports its
 // transaction, or has read past its TTL plus `ttlMarginMillis` in chain time without seeing it.
 export function openJournal(path: string, { ttlMarginMillis = 5 * 60_000 }: { ttlMarginMillis?: number } = {}) {
+  // Final bytes are a bearer instrument until they land or expire, so only the owner may read
+  // the journal; SQLite gives its -wal and -shm files the same mode.
+  try {
+    closeSync(openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  if (statSync(path).mode & 0o077) throw new Error(`${path} can be read or written by group or others`);
   const db = new DatabaseSync(path);
   db.exec("pragma journal_mode = wal; pragma synchronous = full; pragma busy_timeout = 10000;");
   db.exec(SCHEMA);
