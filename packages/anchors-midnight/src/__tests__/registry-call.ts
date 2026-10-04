@@ -81,3 +81,23 @@ export function unprovenRegistryCall({
 export function opNames(ops: ReadonlyArray<unknown>): string[] {
   return [...new Set(ops.map((op) => (typeof op === "string" ? op : Object.keys(op as object)[0]!)))].sort();
 }
+
+// A one-intent pre-binding transaction ends with its binding randomness, an embedded-curve
+// scalar written as a SCALE compact integer in big-integer mode: a header byte, then the
+// scalar little-endian with no trailing zero. Flipping the last byte (the scalar's top byte)
+// can leave a trailing zero or pass the field order, and deserialization then fails before
+// any binding check. Flipping the low bit of the lowest-order byte moves the scalar by one
+// and keeps the encoding canonical.
+const EMBEDDED_FR_TAG = Buffer.from("midnight:embedded-fr[v1]:");
+export function flipBindingRandomness<P extends L.Proofish>(tx: L.Transaction<L.SignatureEnabled, P, L.PreBinding>): Uint8Array {
+  const bytes = Buffer.from(tx.serialize());
+  const intents = [...(tx.intents?.values() ?? [])];
+  if (intents.length !== 1) throw new Error(`expected one intent, got ${intents.length}`);
+  const binding = Buffer.from(intents[0]!.binding.serialize());
+  if (!binding.subarray(0, EMBEDDED_FR_TAG.length).equals(EMBEDDED_FR_TAG)) throw new Error("the intent's pre-binding is not an embedded-fr scalar");
+  const scalar = binding.subarray(EMBEDDED_FR_TAG.length);
+  if ((scalar[0]! & 3) !== 3 || (scalar[0]! >> 2) + 5 !== scalar.length) throw new Error("the binding randomness is not a big-integer-mode SCALE compact");
+  if (!bytes.subarray(-scalar.length).equals(scalar)) throw new Error("the transaction does not end with its binding randomness");
+  bytes[bytes.length - scalar.length + 1]! ^= 1;
+  return bytes;
+}

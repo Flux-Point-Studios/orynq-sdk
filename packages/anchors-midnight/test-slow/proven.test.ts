@@ -5,7 +5,7 @@ import { provingProvider } from "@midnight-ntwrk/zkir-v2";
 import { pureCircuits } from "../contract/managed/contract/index.js";
 import { registryInitialState } from "../src/registry.js";
 import { windowHits } from "../src/__tests__/privacy-scan.js";
-import { NETWORK, random32, unprovenRegistryCall } from "../src/__tests__/registry-call.js";
+import { flipBindingRandomness, NETWORK, random32, unprovenRegistryCall } from "../src/__tests__/registry-call.js";
 
 // Proves real registry calls in-process with zkir-v2: prover keys and zkir come from
 // contract/managed, public parameters only from MIDNIGHT_PP, and nothing is fetched.
@@ -49,6 +49,7 @@ const commitment = random32();
 const entry = { root_hash: random32(), manifest_hash: random32(), merkle_root: random32(), salt: random32() };
 const attribute = random32();
 let anchorProven: Uint8Array;
+let anchorBindingTampered: Uint8Array;
 let anchorFinal: Uint8Array;
 let hidingFinal: Uint8Array;
 let hidingCommitment: Uint8Array;
@@ -62,6 +63,7 @@ beforeAll(async () => {
   const anchor = unprovenRegistryCall({ address, state, call: { circuit: "anchor", args: [commitment, 1n] }, witnesses: { authorSecret }, ttl });
   const anchorTx = await anchor.tx.prove(provider(), costModel);
   anchorProven = anchorTx.serialize();
+  anchorBindingTampered = flipBindingRandomness(anchorTx);
   anchorFinal = anchorTx.bind().serialize();
 
   const hiding = unprovenRegistryCall({
@@ -100,9 +102,7 @@ describe("canary: ledger-v8 WASM does not verify contract proofs", () => {
   });
 
   it("rejects a tampered binding", () => {
-    const tampered = Buffer.from(anchorProven);
-    tampered[tampered.length - 1]! ^= 1;
-    expect(() => reparse(tampered).wellFormed(ledgerState, strictness(), now)).toThrow(/binding commitment calculation mismatch/);
+    expect(() => reparse(anchorBindingTampered).wellFormed(ledgerState, strictness(), now)).toThrow(/binding commitment calculation mismatch/);
   });
 
   it("accepts a transcript that no longer matches its proof", () => {
