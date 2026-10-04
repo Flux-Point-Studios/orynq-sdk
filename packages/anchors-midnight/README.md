@@ -118,6 +118,21 @@ in the same window cannot make one call read more than `maxActions` actions. A r
 of candidates: each one is shown final and authentic only by `verifyMidnightAnchor`. Nothing on
 a critical path scans the registry; the submitter reconciles by transaction hash.
 
+## Submission journal
+
+`@fluxpointstudios/orynq-sdk-anchors-midnight/journal` keeps a write-ahead journal of anchor
+submissions in SQLite (`node:sqlite`, Node 22.13 or later). `submitOnce(key, { prepare,
+broadcast, chain })` allows one live attempt per anchor key (network, registry, author, kind,
+commitment, attribute). It writes the attempt's row, with the hash it computes from the final
+bytes `prepare` returns, before `broadcast` sees those bytes, so a broadcast that times out after
+the node accepted it, or a process that dies before or during it, is answered later by that
+hash and never sent as a second transaction. A row whose broadcast never returned is resent with
+the same bytes. A pending row is retired only when the indexer reports its transaction (landed
+or failed), or when the indexer's newest block is past the transaction's TTL plus a margin, in
+chain time rather than the local clock. Calls are serialized per journal, and across processes
+the attempt that writes its row second never broadcasts. `chainView(source)` reads both answers
+from a source's indexer.
+
 ## Known authors
 
 Which author keys a verifier recognizes, over which block heights and in which role, and which

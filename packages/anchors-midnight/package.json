@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./journal": {
+      "types": "./dist/journal.d.ts",
+      "import": "./dist/journal.js"
     }
   },
   "files": [
@@ -26,6 +30,7 @@
     "build": "tsup",
     "test": "vitest run",
     "test:slow": "vitest run --config vitest.slow.config.ts",
+    "test:journal": "vitest run test-journal",
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist"
   },
@@ -38,7 +43,7 @@
   "devDependencies": {
     "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*",
     "@midnight-ntwrk/zkir-v2": "2.1.1",
-    "@types/node": "^20.11.0",
+    "@types/node": "^24.19.1",
     "tsup": "^8.0.1",
     "typescript": "^5.3.3",
     "vitest": "^4.1.11"
