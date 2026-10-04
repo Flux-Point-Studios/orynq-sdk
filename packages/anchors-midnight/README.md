@@ -56,8 +56,10 @@ COMPACTC=~/.cache/midnight/compactc/compactc MIDNIGHT_PP=~/.cache/midnight/zk-pa
 ```
 
 The installer verifies every compactc file and the k=13/14 parameters by sha256, and refuses
-either directory unless you own it and no group or other user can write it: an install anyone
-else can change would no longer be the pinned compiler by the time it runs. The check recompiles the
+either directory unless you own it, no group or other user can write it, and every directory
+above it is a real directory owned by you or root that no group or other user can write; it
+installs nothing below a shared sticky directory such as /tmp. An install anyone else can change
+or swap out would no longer be the pinned compiler by the time it runs. The check recompiles the
 contract and requires `managed/` and `HASHES.txt` to match byte for byte, and requires the same
 keys and zkir when the pure circuits are not exported. The verifier keys hash to
 `85dc57a4…77c5` (`anchor`, k=13) and `081384ce…790f` (`anchor_hiding`, k=14).

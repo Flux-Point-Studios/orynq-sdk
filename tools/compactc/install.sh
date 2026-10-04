@@ -7,6 +7,10 @@
 # An existing install counts only if no one but the caller could have changed it: both
 # directories must be real directories the caller owns that group and others cannot write,
 # and each installed file a regular file under the same rule whose digest matches its pin.
+# Every directory above them must be a real directory owned by the caller or root that group
+# and others cannot write, since whoever can write a directory can rename what lies below it.
+# A root-owned sticky directory such as /tmp only stops others deleting what they do not own,
+# so nothing is installed below one.
 #   tools/compactc/install.sh DEST [PARAMS_DIR]
 # PARAMS_DIR defaults to $MIDNIGHT_PP, then ~/.cache/midnight/zk-params, where zkir looks.
 set -euo pipefail
@@ -28,7 +32,23 @@ pin() {
   echo "$want"
 }
 others_can_write() { [ -n "$(find "$1" -maxdepth 0 \( -perm -g+w -o -perm -o+w \) -print)" ]; }
+safe_ancestors() {
+  local dir
+  case /$1/ in */./* | */../*) die "$1 has a . or .. component; pass the directory itself" ;; esac
+  case $1 in /*) dir=$1 ;; *) dir=$PWD/$1 ;; esac
+  while [ "$dir" != / ]; do
+    dir=$(dirname "$dir")
+    [ -e "$dir" ] || [ -L "$dir" ] || continue
+    [ ! -L "$dir" ] || die "$dir, above $1, is a symlink; pass a path with no symlink in it"
+    [ -n "$(find "$dir" -maxdepth 0 \( -uid 0 -o -uid "$(id -u)" \) -print)" ] ||
+      die "$dir, above $1, is owned by another account, which could replace what is installed below it"
+    [ -z "$(find "$dir" -maxdepth 0 -uid 0 -perm -1000 -perm -o+w -print)" ] ||
+      die "$dir, above $1, is a shared sticky directory; install below a directory only you can write, such as ~/.cache/midnight"
+    ! others_can_write "$dir" || die "$dir, above $1, is writable by group or others, who could replace what is installed below it"
+  done
+}
 private_dir() {
+  safe_ancestors "$1"
   [ ! -L "$1" ] || die "$1 is a symlink; pass the directory it points to"
   mkdir -p "$1"
   [ -O "$1" ] || die "$1 is not owned by $(id -un)"

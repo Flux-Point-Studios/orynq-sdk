@@ -1,8 +1,9 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { chmodSync, chownSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -16,13 +17,13 @@ const platform = (() => {
 })();
 const zipName = `compactc_v0.31.1_${platform}.zip`;
 
+// The installer refuses anything below a shared sticky directory such as /tmp, so every test
+// directory lives under a private root in the caller's home, the way ~/.cache/midnight does.
 // Installed binaries are read-only, so cleanup restores write permission before removing.
-const temps: string[] = [];
-const temp = (prefix: string) => {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  temps.push(dir);
-  return dir;
-};
+mkdirSync(join(homedir(), ".cache"), { recursive: true, mode: 0o700 });
+const testRoot = mkdtempSync(join(homedir(), ".cache", "compactc-install-test-"));
+const temps: string[] = [testRoot];
+const temp = (prefix: string) => mkdtempSync(join(testRoot, prefix));
 afterAll(() => {
   for (const dir of temps) {
     execFileSync("chmod", ["-R", "u+w", dir]);
@@ -211,6 +212,63 @@ describe("compactc installer", () => {
     const r = await run(script, args, env);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain(`${link} is a symlink; pass the directory it points to`);
+  });
+
+  // What a fresh install below `parent` does, for either directory; nothing may be created.
+  async function installBelow(which: string, parent: string) {
+    const release = fakeRelease();
+    const fresh = join(parent, `fresh-${which}`, which);
+    const dest = which === "compactc" ? fresh : join(temp("compactc-dest-"), "bin");
+    const params = which === "params" ? fresh : temp("zk-params-");
+    const r = await run(installerWith(release.pins), [dest, params], { COMPACTC_RELEASE_URL: release.url, MIDNIGHT_PARAM_SOURCE: release.url });
+    return { ...r, dir: fresh, created: existsSync(join(parent, `fresh-${which}`)) };
+  }
+
+  it.each(["compactc", "params"])("refuses a %s directory below an ancestor that group or others can write", async (which) => {
+    const parent = temp("compactc-shared-parent-");
+    chmodSync(parent, 0o777);
+    const r = await installBelow(which, parent);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(`${parent}, above ${r.dir}, is writable by group or others`);
+    expect(r.created).toBe(false);
+  });
+
+  it.each(["compactc", "params"])("refuses a %s directory below /tmp outright, even in a directory only the caller can write", async (which) => {
+    const mine = mkdtempSync("/tmp/compactc-sticky-");
+    temps.push(mine);
+    const r = await installBelow(which, mine);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(`/tmp, above ${r.dir}, is a shared sticky directory`);
+    expect(r.created).toBe(false);
+  });
+
+  it.each(["compactc", "params"])("refuses a %s directory with a symlink anywhere above it", async (which) => {
+    const link = join(temp("compactc-ancestor-link-"), "link");
+    symlinkSync(temp("compactc-ancestor-target-"), link);
+    const r = await installBelow(which, link);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(`${link}, above ${r.dir}, is a symlink`);
+  });
+
+  // Root hands a directory to another account; anyone else finds one the system already gave
+  // to a service account, such as apt's partial directory.
+  it.each(["compactc", "params"])("refuses a %s directory below an ancestor owned by another account", async (which) => {
+    let parent: string;
+    if (process.getuid?.() === 0) {
+      parent = temp("compactc-foreign-parent-");
+      chmodSync(parent, 0o755);
+      chownSync(parent, 65534, 65534);
+    } else {
+      const uid = String(process.getuid?.());
+      const found = spawnSync("find", ["/var", "/run", "/srv", "/opt", "-maxdepth", "4", "-type", "d", "!", "-uid", "0", "!", "-uid", uid, "-print", "-quit"], {
+        encoding: "utf8",
+      });
+      parent = found.stdout.trim();
+      expect(parent, "a directory owned by another non-root account").not.toBe("");
+    }
+    const r = await installBelow(which, parent);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(`${parent}, above ${r.dir}, is owned by another account`);
   });
 
   // Only root can hand a directory to another user; anyone else is handed one by the system.
