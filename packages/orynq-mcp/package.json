@@ -53,6 +53,7 @@
   "dependencies": {
     "@fluxpointstudios/orynq-sdk-anchors-cardano": "workspace:*",
     "@fluxpointstudios/orynq-sdk-anchors-materios": "workspace:^",
+    "@fluxpointstudios/orynq-sdk-anchors-midnight": "workspace:*",
     "@fluxpointstudios/orynq-sdk-core": "workspace:*",
     "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.12.0",

@@ -353,6 +353,9 @@ importers:
       '@fluxpointstudios/orynq-sdk-anchors-materios':
         specifier: workspace:^
         version: link:../anchors-materios
+      '@fluxpointstudios/orynq-sdk-anchors-midnight':
+        specifier: workspace:*
+        version: link:../anchors-midnight
       '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core

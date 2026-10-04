@@ -152,15 +152,16 @@
     {
       "id": "orynq-mcp",
       "name": "Orynq MCP server",
-      "desc": "MCP server exposing process tracing, Cardano anchoring and verification as agent tools.",
+      "desc": "MCP server exposing process tracing, Cardano and Materios anchoring and verification as agent tools. verify_midnight_anchor (read-only) verifies a Midnight anchor with anchors-midnight and returns its verifyReport; its schema is strict (txHash, network, one of entry, commitment or attribute, expectedAuthor), so a model can pass it no key, file or URL, and the source comes from the server's environment as a file path or URLs. There is no Midnight anchoring tool and no tool takes a Flux Point Studios key: anchoring with the user's own key goes through the quickstart CLI's terminal confirmation.",
       "kind": "agent",
       "paths": [
         "packages/orynq-mcp"
       ],
       "consumes": [
-        "process-trace",
         "anchors-cardano",
-        "anchors-materios"
+        "anchors-materios",
+        "anchors-midnight",
+        "process-trace"
       ],
       "status": "live"
     },
