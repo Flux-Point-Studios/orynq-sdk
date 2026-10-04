@@ -9,7 +9,7 @@ import { ShieldedWallet } from "@midnight-ntwrk/wallet-sdk-shielded";
 import { PublicKey, UnshieldedWallet } from "@midnight-ntwrk/wallet-sdk-unshielded-wallet";
 import { filter, firstValueFrom, timeout } from "rxjs";
 import { readPrivateFile, writePrivateFile, type MidnightNetwork, type MidnightSource, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { broadcast } from "./broadcast.js";
+import { broadcast, nodeRefusal } from "./broadcast.js";
 import { addressesOf, walletSecrets, type WalletAddresses } from "./keys.js";
 import { credentialRelay } from "./relay.js";
 import { provingService } from "./zk.js";
@@ -161,7 +161,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       await submitTo(tx);
     } catch (error) {
       // An answer from the node is a refusal; anything else may have been delivered.
-      if (/ node: author_submitExtrinsic failed: /.test((error as Error).message)) await facade.revert(tx);
+      if (nodeRefusal(error)) await facade.revert(tx);
       throw error;
     }
   };

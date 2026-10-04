@@ -1,5 +1,6 @@
 export { agentDriven } from "./custody.js";
-export { broadcast } from "./broadcast.js";
+export { broadcast, nodeRefusal } from "./broadcast.js";
+export type { NodeRefusal } from "./broadcast.js";
 export { registryDeployer } from "./deployer.js";
 export { MIDNIGHT_HOSTED_PREPROD, networkEndpoints } from "./endpoints.js";
 export type { DeployerOptions, Deployment, PreparedDeploy, RegistryDeployer } from "./deployer.js";
