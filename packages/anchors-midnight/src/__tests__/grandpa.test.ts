@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { ed25519PublicKey, ed25519Sign } from "../ed25519.js";
-import { concatBytes, toHex, u32le, u64le } from "../scale.js";
+import { compactAt, concatBytes, toHex, u32le, u64le } from "../scale.js";
 import { headerHash } from "../substrate.js";
 import { DEFAULT_MAX_SET_CHANGES, decodeFinalityProof, decodeJustification, justifiedTarget, supermajority, verifyFinality, type FinalityCheckpoint, type FinalityRpc } from "../grandpa.js";
 import { finalityRpc } from "../source.js";
@@ -10,6 +10,16 @@ import { syntheticChain, testKeys, withUnknownHeaders } from "./grandpa-chain.js
 
 const uniform = (setCount: number, extra: Partial<Parameters<typeof syntheticChain>[0]> = {}) =>
   syntheticChain({ firstSetId: 100n, genesisEnd: 1000, setLengths: () => 300, setCount, ...extra });
+
+// The finality proof with its justification's unsigned target number set to `number`, every
+// signed byte kept, and no headers between the target and the block.
+const relabeled = (proof: Uint8Array, number: number) => {
+  const at = compactAt(proof, 32);
+  if ("error" in at) throw new Error(at.error);
+  const out = withUnknownHeaders(proof, []);
+  out.set(u32le(number), at.next + 8 + 32);
+  return out;
+};
 
 describe("justifiedTarget: a supermajority of the set's weight signed for this set id", () => {
   const chain = uniform(3);
@@ -50,6 +60,14 @@ describe("justifiedTarget: a supermajority of the set's weight signed for this s
     const message = concatBytes(new Uint8Array([1]), headerHash(other), u32le(other.number), u64le(elsewhere.round), u64le(100n));
     elsewhere.precommits[2] = { target: { hash: headerHash(other), number: other.number }, signature: ed25519Sign(message, sk), id: ed25519PublicKey(sk) };
     expect(justifiedTarget(elsewhere, set)).toEqual({ error: expect.stringMatching(/carries 2 of 4/) });
+  });
+
+  it("refuses a target number the precommits did not sign, above or below the signed one", () => {
+    for (const number of [target.number + 1, target.number - 1]) {
+      const relabel = j();
+      relabel.target = { ...relabel.target, number };
+      expect(justifiedTarget(relabel, set)).toEqual({ error: `the justification for block ${number} carries 0 of 4 weight under set 100; finality needs 3` });
+    }
   });
 
   it("counts a precommit for a descendant of the target when the ancestry headers link it", () => {
@@ -177,6 +195,22 @@ describe("verifyFinality on a synthetic chain", () => {
     expect(r).toMatchObject({ finalized: false, reason: expect.stringMatching(/does not hash to its justified hash/) });
   });
 
+  it("never reports a block's hash at a height above it: a justification relabeled within the set's predicted range", async () => {
+    // Set 1 is 250 blocks long, so the walk's first prediction (300) covers the block after its end.
+    const lengths = [300, 250, 300, 300];
+    const chain = syntheticChain({ firstSetId: 9n, genesisEnd: 50, setLengths: (k) => lengths[k]!, setCount: lengths.length });
+    const end = chain.endOf(1);
+    const relabeling: FinalityRpc = {
+      proveFinality: async (heights) => Promise.all(heights.map(async (h) => (h === end + 1 ? relabeled((await chain.rpc.proveFinality([end]))[0]!, end + 1) : (await chain.rpc.proveFinality([h]))[0]!))),
+      headers: chain.rpc.headers,
+    };
+    expect(await verifyFinality({ rpc: relabeling, block: { height: end + 1, hash: chain.block(end).hash }, checkpoints: [chain.checkpoint(1)] })).toMatchObject({
+      finalized: false,
+      reason: expect.stringMatching(/carries 0 of 4 weight/),
+    });
+    expect(await verifyFinality({ rpc: relabeling, block: chain.block(end), checkpoints: [chain.checkpoint(1)] })).toMatchObject({ finalized: true, justified: chain.block(end) });
+  });
+
   it("refuses a proof whose headers do not chain from the justified block down to the block", async () => {
     const chain = uniform(4);
     const block = chain.block(chain.endOf(0) - 20);
@@ -272,6 +306,22 @@ describe.each(["mainnet", "preprod"])("golden: real %s finality, replayed", (net
     const flipped = decodeFinalityProof(raw!).justification;
     flipped.precommits[0]!.signature[0]! ^= 1;
     expect(justifiedTarget(flipped, own)).toEqual({ error: expect.stringMatching(/finality needs 87/) });
+  });
+
+  it("the real justification relabeled one block up carries no weight, and its hash is never reported final at that height", async () => {
+    const [raw] = await rpc().proveFinality([f.block.height]);
+    const j = decodeFinalityProof(raw!).justification;
+    expect(justifiedTarget({ ...j, target: { ...j.target, number: f.setEnd + 1 } }, own)).toEqual({ error: expect.stringMatching(/carries 0 of 130 weight/) });
+    // The recorded justification is for a set's last block; the live attack relabeled the latest
+    // justified block of a running set. A trusted checkpoint one block later puts the relabeled
+    // height inside the set's predicted range, as the running set did.
+    const forged = relabeled(raw!, f.setEnd + 1);
+    const lying: FinalityRpc = { proveFinality: async (heights) => heights.map(() => forged), headers: rpc().headers };
+    const shifted = { ...own, startsAfter: { ...own.startsAfter, height: own.startsAfter.height + 1 } };
+    expect(await verifyFinality({ rpc: lying, block: { height: f.setEnd + 1, hash: toHex(j.target.hash) }, checkpoints: [shifted] })).toMatchObject({
+      finalized: false,
+      reason: expect.stringMatching(/carries 0 of 130 weight/),
+    });
   });
 
   it("refuses a block hash the finalized chain does not hold at that height", async () => {

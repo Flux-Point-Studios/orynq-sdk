@@ -186,7 +186,10 @@ the verifier follows each set change: the outgoing set must justify the set-chan
 supermajority of its weight (finality-grandpa's threshold, `total - (total - 1) / 3`), and that
 block's header, which must hash to the justified hash, names the next set in its FRNK log; a
 forced or delayed change stops the walk. The set that finalized the block must then justify a block
-at or above it, and the headers in its proof must chain down to the block's hash.
+at or above it, and the headers in its proof must chain down to the block's hash. A
+justification's own target is not signed, so a precommit counts for it only when it signed that
+hash at that number, or a descendant whose ancestry headers lead down to it at that number: a
+source cannot relabel a final block's justification as a higher block.
 
 Trust assumption: "consensus-verified" means that the checkpoint really is that GRANDPA set, and
 that every set from it to the block had more than two thirds of its weight honest. Signatures

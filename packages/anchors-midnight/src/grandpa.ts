@@ -58,11 +58,14 @@ export const supermajority = (total: bigint): bigint => total - (total - 1n) / 3
 // weight signed precommits, for this set id and round, for that block or a descendant shown
 // by the justification's ancestry headers; otherwise why not. A precommit that is unsigned,
 // from a non-voter, a repeat voter, or for a block outside the target's subtree adds no weight.
+// The justification's own target is unsigned: a precommit vouches for it only by signing that
+// hash at that number, or a descendant whose ancestry headers lead down to it at that number.
 export function justifiedTarget(j: GrandpaJustification, set: AuthoritySet): Target | { error: string } {
   const weightOf = new Map(set.authorities.map((a) => [a.key, a.weight]));
   const total = set.authorities.reduce((s, a) => s + a.weight, 0n);
   const ancestry = new Map(j.ancestries.map((h) => [toHex(headerHash(h)), h]));
   const descends = (from: Target): boolean => {
+    if (from.number < j.target.number) return false;
     let hash = from.hash;
     for (let n = from.number; n > j.target.number; n--) {
       const header = ancestry.get(toHex(hash));
