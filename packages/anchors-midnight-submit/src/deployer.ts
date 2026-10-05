@@ -87,6 +87,12 @@ export function registryDeployer(options: DeployerOptions) {
     },
 
     async submit(prepared: PreparedDeploy): Promise<Deployment> {
+      // Only bytes that deploy exactly the registry leave, and only the ones the human confirmed:
+      // the confirmation token names their transaction hash, the summary their address.
+      const deploys = assertRegistryDeployBytes(prepared.bytes, "final");
+      const txHash = finalTransaction(prepared.bytes).transactionHash();
+      if (txHash !== prepared.txHash) throw new Error(`the bytes hash to ${txHash}, not the confirmed ${prepared.txHash}; nothing was sent`);
+      if (deploys !== prepared.address) throw new Error(`the bytes deploy ${deploys}, not the confirmed ${prepared.address}; nothing was sent`);
       await assertKnownRuntime(source, network);
       const live = journal.history(key).find((row) => row.state !== "failed");
       if (live && live.txHash !== prepared.txHash) {

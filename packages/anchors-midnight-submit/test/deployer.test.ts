@@ -58,6 +58,23 @@ describe("registryDeployer", () => {
     deployer.close();
   });
 
+  it("sends only the bytes prepare() checked, at the transaction hash and address the human confirmed, and refuses others before the journal", async () => {
+    const { deployer, wallet: w, rows } = setup();
+    const prepared = await deployer.prepare();
+    const sentNothing = () => expect([w.submitted.length, rows().length]).toEqual([0, 0]);
+    const mutable = (await mutableDeploy()).serialize();
+    await expect(deployer.submit({ ...prepared, bytes: mutable })).rejects.toThrow(/threshold must be exactly 1, got 0/);
+    sentNothing();
+    const other = await deployer.prepare();
+    await expect(deployer.submit({ ...prepared, bytes: other.bytes })).rejects.toThrow(`the bytes hash to ${other.txHash}, not the confirmed ${prepared.txHash}; nothing was sent`);
+    sentNothing();
+    await expect(deployer.submit({ ...prepared, address: "ff".repeat(32) })).rejects.toThrow(`the bytes deploy ${prepared.address}, not the confirmed ${"ff".repeat(32)}; nothing was sent`);
+    sentNothing();
+    expect((await deployer.submit(prepared)).txHash).toBe(prepared.txHash);
+    expect(w.submitted.map((t) => t.transactionHash())).toEqual([prepared.txHash]);
+    deployer.close();
+  });
+
   it("never sends a second deploy of the registry: bytes prepared after one is journalled are discarded", async () => {
     const { deployer, wallet: w } = setup();
     const first = await deployer.submit(await deployer.prepare());
