@@ -149,7 +149,7 @@ describe("the author key", () => {
     expect(() => setup({ authorKeyFile: open })).toThrow(/open\.key can be read or written by group or others/);
   });
 
-  it("is refused on mainnet in a process an agent drives, and only there", () => {
+  it("is refused on mainnet in a process that carries Claude Code's environment, and only there", () => {
     const saved = { ...process.env };
     const agentless = () => {
       for (const name of Object.keys(process.env)) if (name === "CLAUDECODE" || name.startsWith("CLAUDE_CODE_")) delete process.env[name];
@@ -158,10 +158,10 @@ describe("the author key", () => {
       agentless();
       expect(() => setup({ network: "mainnet" }).operator.close()).not.toThrow();
       process.env.CLAUDECODE = "1";
-      expect(() => setup({ network: "mainnet" })).toThrow(/refuses to load a mainnet author key in a process an agent drives/);
+      expect(() => setup({ network: "mainnet" })).toThrow(/refuses to load a mainnet author key in a process that carries Claude Code's environment/);
       agentless();
       process.env.CLAUDE_CODE_ENTRYPOINT = "cli";
-      expect(() => setup({ network: "mainnet" })).toThrow(/refuses to load a mainnet author key in a process an agent drives/);
+      expect(() => setup({ network: "mainnet" })).toThrow(/refuses to load a mainnet author key in a process that carries Claude Code's environment/);
       expect(() => setup({ network: "preprod" }).operator.close()).not.toThrow();
     } finally {
       for (const name of Object.keys(process.env)) delete process.env[name];

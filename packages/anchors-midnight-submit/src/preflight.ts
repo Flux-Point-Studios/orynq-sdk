@@ -58,8 +58,10 @@ export function deploySummary({ chain, wallet, dust, prepared }: { chain: ChainF
 // Binds the confirmation to these exact final bytes: a token typed for other bytes never matches.
 export const confirmationToken = (prepared: PreparedDeploy) => `DEPLOY ${prepared.txHash.slice(0, 16)}`;
 
-// Asks the human at the terminal to type `token`. Only an interactive terminal in a process no
-// agent drives may confirm: a flag, a pipe, a file or an environment variable never can.
+// Asks the human at the terminal to type `token`. Only an interactive terminal, in a process
+// without Claude Code's environment, may confirm: a flag, a pipe, a file or an environment
+// variable never can. A process running as deci that drives a pseudo-terminal can, so this
+// guards against accidents, not against code with deci's privileges.
 export async function confirmOnTerminal({
   input,
   output,
@@ -71,7 +73,7 @@ export async function confirmOnTerminal({
   token: string;
   env?: NodeJS.ProcessEnv;
 }): Promise<boolean> {
-  if (agentDriven(env)) throw new Error("an agent drives this process; only deci, at his own terminal, confirms a mainnet deploy");
+  if (agentDriven(env)) throw new Error("this process carries Claude Code's environment; deci confirms a mainnet deploy himself, at his own terminal");
   if (!input.isTTY || !output.isTTY) throw new Error("needs deci at an interactive terminal; a pipe or a file cannot confirm a mainnet deploy");
   const lines = createInterface({ input, output, terminal: false });
   output.write(`\nType exactly "${token}" to send these bytes to mainnet, anything else to discard them: `);

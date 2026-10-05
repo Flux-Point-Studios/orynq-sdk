@@ -106,23 +106,46 @@ describe("confirmOnTerminal", () => {
     await expect(confirmOnTerminal({ ...terminal("DEPLOY 0123456789abcdef\n", false), token: "DEPLOY 0123456789abcdef", env: human })).rejects.toThrow(/needs deci at an interactive terminal/);
   });
 
-  it("refuses a process an agent drives, even at a terminal with the token", async () => {
+  it("refuses a process that carries Claude Code's environment, even at a terminal with the token", async () => {
     for (const env of [{ CLAUDECODE: "1" }, { CLAUDE_CODE_ENTRYPOINT: "cli" }]) {
-      await expect(confirmOnTerminal({ ...terminal("DEPLOY 0123456789abcdef\n"), token: "DEPLOY 0123456789abcdef", env })).rejects.toThrow(/an agent drives this process/);
+      await expect(confirmOnTerminal({ ...terminal("DEPLOY 0123456789abcdef\n"), token: "DEPLOY 0123456789abcdef", env })).rejects.toThrow(/this process carries Claude Code's environment; deci confirms a mainnet deploy himself/);
     }
   });
 });
 
+// Every input is a path that does not exist, so a run that gets past the gates stops at its first
+// read, before any network request.
+const NOWHERE = ["--mnemonic", "/nonexistent/mnemonic.txt", "--wallet-record", "/nonexistent/wallet.json", "--blockfrost", "/nonexistent/blockfrost.project_id", "--zk", "/nonexistent/zk", "--journal", "/nonexistent/journal.sqlite"];
+const withoutClaudeCode = () => Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== "CLAUDECODE" && !name.startsWith("CLAUDE_CODE_")));
+const quoted = (arg: string) => `'${arg.replaceAll("'", `'\\''`)}'`;
+
+// deploy-mainnet with `env`, its stdin and stdout pipes, or a pseudo-terminal from util-linux script.
+function deployMainnet(env: NodeJS.ProcessEnv, terminal: "pipe" | "pty") {
+  const command = [process.execPath, "--import", "tsx", fileURLToPath(new URL("../scripts/deploy-mainnet.ts", import.meta.url)), ...NOWHERE];
+  const [file, args] = terminal === "pty" ? ["script", ["-qec", command.map(quoted).join(" "), "/dev/null"]] : [command[0]!, command.slice(1)];
+  return new Promise<{ code: number; out: string }>((resolve) =>
+    execFile(file, args, { env, encoding: "utf8", timeout: 60_000 }, (error, stdout, stderr) => resolve({ code: error ? Number(error.code) : 0, out: stdout + stderr })),
+  );
+}
+
 describe("scripts/deploy-mainnet.ts", () => {
-  it("refuses before reading any secret when it is not run by a human at a terminal", async () => {
-    const script = fileURLToPath(new URL("../scripts/deploy-mainnet.ts", import.meta.url));
-    const r = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) =>
-      execFile(process.execPath, ["--import", "tsx", script, "--mnemonic", "/nonexistent/mnemonic.txt"], { encoding: "utf8" }, (error, stdout, stderr) =>
-        resolve({ code: error ? Number(error.code) : 0, stdout, stderr }),
-      ),
-    );
-    expect(r.code).not.toBe(0);
-    expect(r.stderr).toMatch(/deploy-mainnet: (needs deci at an interactive terminal|an agent drives this process)/);
-    expect(r.stderr).not.toMatch(/nonexistent/);
+  it("refuses before reading anything when its input and output are not a terminal", async () => {
+    const r = await deployMainnet(withoutClaudeCode(), "pipe");
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/deploy-mainnet: needs deci at an interactive terminal/);
+    expect(r.out).not.toMatch(/nonexistent/);
+  });
+
+  it("refuses at a terminal when the process carries Claude Code's environment", async () => {
+    const r = await deployMainnet({ ...withoutClaudeCode(), CLAUDECODE: "1" }, "pty");
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/deploy-mainnet: this process carries Claude Code's environment; deci runs a mainnet deploy himself, at his own terminal/);
+    expect(r.out).not.toMatch(/nonexistent/);
+  });
+
+  it("is passed by any process of deci's that drops that environment and drives a pty: the gates stop accidents, not code running as deci", async () => {
+    const r = await deployMainnet(withoutClaudeCode(), "pty");
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/deploy-mainnet: ENOENT: no such file or directory, open '\/nonexistent\/blockfrost\.project_id'/);
   });
 });

@@ -1,12 +1,18 @@
 // Deploys the immutable orynq-anchor-registry on Midnight MAINNET, for deci to run at his own
 // terminal. Every check fails closed and comes before anything is sent:
-//   the process is not driven by an agent and talks to an interactive terminal;
+//   the process carries no Claude Code environment, and its input and output are a terminal;
 //   the node is Midnight Mainnet (system_chain, genesis) on runtime 1000300;
 //   the mnemonic derives exactly the recorded wallet, which holds at least the DUST floor;
 //   the final, balanced bytes deploy exactly the registry's initial state (committee [],
 //   threshold 1, counter 0, the pinned verifier keys).
-// It then prints the exact summary and sends those bytes only after deci types the token it
-// shows, which names the bytes' transaction hash. Nothing else confirms: no flag, pipe or file.
+// It then prints the exact summary and sends those bytes only after the token it shows, which
+// names the bytes' transaction hash, is typed at that terminal; no flag, pipe, file or
+// environment variable confirms. These gates stop accidents: an agent session running the
+// script as it is, input from a pipe or a file, bytes other than the summarized ones. They do
+// not stop code running as deci, which can drop Claude Code's variables, drive a
+// pseudo-terminal and type back the token it reads. Under the "ship now, harden after"
+// decision the protection is procedural, deci running this himself; the custody boundary is the
+// planned separate-uid or FIDO2 signer.
 //   node --import tsx scripts/deploy-mainnet.ts [--mnemonic F] [--wallet-record F] [--blockfrost F]
 //        [--zk DIR] [--journal F] [--dust-floor DUST]
 import { homedir } from "node:os";
@@ -26,7 +32,7 @@ const fail = (message: string): never => {
   process.exit(1);
 };
 
-if (agentDriven()) fail("an agent drives this process; only deci, at his own terminal, deploys to mainnet");
+if (agentDriven()) fail("this process carries Claude Code's environment; deci runs a mainnet deploy himself, at his own terminal");
 if (!process.stdin.isTTY || !process.stdout.isTTY) fail("needs deci at an interactive terminal; a pipe or a file cannot confirm a mainnet deploy");
 
 const flags = new Map<string, string>();

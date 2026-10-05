@@ -28,15 +28,24 @@ project id file is given.
 
 ## Custody
 
+Under deci's "ship now, harden after" decision these checks are accident guards. The key files'
+owner and mode keep other users out; nothing in this package stops code running as deci, which
+can read every key file and drive a terminal. The custody boundary is the planned separate-uid
+or FIDO2 signer.
+
 - The FPS author key is a 32-byte random secret in a 0600 file, never derived from a wallet seed.
   `registryOperator` takes its path; nothing accepts the key itself, and no environment variable
-  carries it. On mainnet it refuses to load the key in a process an agent drives
-  (`CLAUDECODE` or any `CLAUDE_CODE_*` variable). This check is defence in depth; the custody
-  boundary is the key file's owner and mode.
-- `scripts/deploy-mainnet.ts` sends a mainnet deploy only after deci types, at an interactive
-  terminal, the token it prints (`DEPLOY` and the first 16 hex characters of the final bytes'
-  transaction hash). A pipe, a file, a flag or an environment variable cannot confirm, and it
-  refuses outright in a process an agent drives.
+  carries it. On mainnet it refuses to load the key in a process that carries Claude Code's
+  environment (`CLAUDECODE` or any `CLAUDE_CODE_*` variable), which stops an agent session that
+  loads it as it is, not code that drops those variables.
+- `scripts/deploy-mainnet.ts` sends a mainnet deploy only after the token it prints (`DEPLOY` and
+  the first 16 hex characters of the final bytes' transaction hash) is typed at an interactive
+  terminal, in a process without Claude Code's environment. That stops an agent session running
+  the script as it is, a pipe, a file, a flag or an environment variable, and bytes other than
+  the ones summarized. It does not stop a process running as deci that drops Claude Code's
+  variables, drives a pseudo-terminal and types back the token it reads: the preflight suite does
+  exactly that, with inputs that do not exist, so it stops at its first read. The protection is
+  procedural: deci runs the deploy himself, at his own terminal.
 
 ## Keys
 

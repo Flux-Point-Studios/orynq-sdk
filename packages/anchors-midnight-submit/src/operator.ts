@@ -75,7 +75,7 @@ const ZERO = "00".repeat(32);
 // exactly what was meant before those bytes reach the node.
 export function registryOperator(options: OperatorOptions): RegistryOperator {
   const { network, wallet, source, prover } = options;
-  if (network === "mainnet" && agentDriven()) throw new Error("registryOperator refuses to load a mainnet author key in a process an agent drives");
+  if (network === "mainnet" && agentDriven()) throw new Error("registryOperator refuses to load a mainnet author key in a process that carries Claude Code's environment");
   const authorSecret = readAuthorSecret(options.authorKeyFile);
   const author = hex(authorKey(authorSecret));
   const journal = openJournal(options.journalPath);
