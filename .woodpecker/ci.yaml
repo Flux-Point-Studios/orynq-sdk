@@ -54,6 +54,9 @@ steps:
     image: node:24-bookworm
     depends_on: []
     commands:
+      # The rehearsal tests run git as root, and build-test re-owns the shared workspace to node
+      # in parallel; without this, git refuses the checkout as having dubious ownership.
+      - git config --global --add safe.directory "$CI_WORKSPACE"
       - corepack enable
       - tools/compactc/install.sh ~/.cache/midnight/compactc ~/.cache/midnight/zk-params
       - pnpm install --frozen-lockfile --filter @fluxpointstudios/orynq-sdk-anchors-midnight-submit...
