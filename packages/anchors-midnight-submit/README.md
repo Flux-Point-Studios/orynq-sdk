@@ -38,6 +38,12 @@ or FIDO2 signer.
   carries it. On mainnet it refuses to load the key in a process that carries Claude Code's
   environment (`CLAUDECODE` or any `CLAUDE_CODE_*` variable), which stops an agent session that
   loads it as it is, not code that drops those variables.
+- Off mainnet, the FPS mainnet keys are refused by identity and by place. `registryOperator`
+  refuses an author key file holding the mainnet relay's author key (`MAINNET_AUTHOR_KEYS`) and a
+  salt key file whose `saltKeyId` is the mainnet salt key's (`MAINNET_SALT_KEY_IDS`), wherever the
+  file lives, so a copy or a hard link is refused like the original. It and `openWallet` refuse
+  any author key, salt key or mnemonic path inside `~/.secrets/orynq-midnight-mainnet`, however
+  the path reaches it (a symlinked directory, `..`), before opening it.
 - `scripts/deploy-mainnet.ts` sends a mainnet deploy only after the token it prints (`DEPLOY` and
   the first 16 hex characters of the final bytes' transaction hash) is typed at an interactive
   terminal, in a process without Claude Code's environment. That stops an agent session running

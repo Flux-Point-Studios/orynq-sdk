@@ -10,6 +10,7 @@ import { PublicKey, UnshieldedWallet } from "@midnight-ntwrk/wallet-sdk-unshield
 import { filter, firstValueFrom, timeout } from "rxjs";
 import { readPrivateFile, writePrivateFile, type MidnightNetwork, type MidnightSource, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { broadcast, nodeRefusal } from "./broadcast.js";
+import { refuseMainnetSecretsPath } from "./custody.js";
 import { addressesOf, walletSecrets, type WalletAddresses } from "./keys.js";
 import { credentialRelay } from "./relay.js";
 import { provingService } from "./zk.js";
@@ -105,6 +106,7 @@ export interface WalletOptions {
 // submitting through the source's node. The secret keys stay inside this closure.
 export async function openWallet(options: WalletOptions): Promise<OperatorWallet> {
   const { network, mnemonicFile, endpoints, source, zkDir } = options;
+  refuseMainnetSecretsPath(network, mnemonicFile);
   const secrets = walletSecrets(mnemonicFile, network);
   const addresses = addressesOf(secrets, network);
   if (options.expectedAddresses) {

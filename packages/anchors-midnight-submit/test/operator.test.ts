@@ -15,6 +15,7 @@ import {
   unprovenRegistryCall,
 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { windowHits } from "../../anchors-midnight/src/__tests__/privacy-scan.js";
+import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS } from "../src/custody.js";
 import { registryOperator, type OperatorOptions } from "../src/operator.js";
 import { bytes32, chain, deployed, fresh, hex, prover, wallet } from "./fakes.js";
 
@@ -138,6 +139,13 @@ describe("registryOperator.anchorHiding", () => {
     await expect(operator.anchorHiding(entry(), bytes32())).rejects.toThrow(/anchorHiding needs a salt key file/);
     expect(w.submitted).toHaveLength(0);
     operator.close();
+  });
+});
+
+describe("the FPS mainnet keys an operator off mainnet refuses by identity", () => {
+  it("are the relay's author key and the salt key's id, as recorded when they were made", () => {
+    expect(MAINNET_AUTHOR_KEYS).toEqual(["6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08"]);
+    expect(MAINNET_SALT_KEY_IDS).toEqual(["448a1b1a6a289af3e432a9533af92250b92f8b7c91768f60b87a9de90df2ee41"]);
   });
 });
 

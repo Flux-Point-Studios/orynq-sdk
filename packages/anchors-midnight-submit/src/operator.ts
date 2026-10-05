@@ -10,6 +10,7 @@ import {
   hidingCommitment,
   readAuthorSecret,
   readPrivateFile,
+  saltKeyId,
   unprovenRegistryCall,
   type EntryHashes,
   type Hash32,
@@ -19,7 +20,7 @@ import {
   type RegistryWitnesses,
 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { chainView, openJournal, type AnchorKey, type JournalRow } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
-import { agentDriven } from "./custody.js";
+import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS, agentDriven, refuseMainnetSecretsPath } from "./custody.js";
 import { assertKnownRuntime, finalizeChecked, submitJournalled, type FeeWallet, type Prover } from "./submission.js";
 
 export interface AnchorReceipt {
@@ -76,8 +77,10 @@ const ZERO = "00".repeat(32);
 export function registryOperator(options: OperatorOptions): RegistryOperator {
   const { network, wallet, source, prover } = options;
   if (network === "mainnet" && agentDriven()) throw new Error("registryOperator refuses to load a mainnet author key in a process that carries Claude Code's environment");
+  for (const file of [options.authorKeyFile, options.saltKeyFile]) if (file !== undefined) refuseMainnetSecretsPath(network, file);
   const authorSecret = readAuthorSecret(options.authorKeyFile);
   const author = hex(authorKey(authorSecret));
+  if (network !== "mainnet" && MAINNET_AUTHOR_KEYS.includes(author)) throw new Error(`${options.authorKeyFile} holds the FPS mainnet author key ${author}; a ${network} operator never loads it`);
   const journal = openJournal(options.journalPath);
   const chain = chainView(source);
   const ttlMillis = (options.ttlMinutes ?? 15) * 60_000;
@@ -125,6 +128,8 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
     async anchorHiding(entry, attribute) {
       if (!options.saltKeyFile) throw new Error("anchorHiding needs a salt key file");
       const saltKey = hash32(readPrivateFile(options.saltKeyFile), options.saltKeyFile);
+      const id = hex(saltKeyId(saltKey));
+      if (network !== "mainnet" && MAINNET_SALT_KEY_IDS.includes(id)) throw new Error(`${options.saltKeyFile} holds the FPS mainnet salt key ${id}; a ${network} operator never uses it`);
       const attr = hash32(attribute, "attribute");
       const digest = hiddenDigest(entry, attr);
       const salt = deriveSalt(saltKey, digest);
