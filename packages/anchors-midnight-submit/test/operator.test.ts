@@ -14,7 +14,7 @@ import {
   registryInitialState,
   unprovenRegistryCall,
 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { windowHits } from "../../anchors-midnight/src/__tests__/privacy-scan.js";
+import { encodedWindows, windowHits } from "../../anchors-midnight/src/__tests__/privacy-scan.js";
 import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS } from "../src/custody.js";
 import { registryOperator, type OperatorOptions } from "../src/operator.js";
 import { bytes32, chain, deployed, fresh, hex, prover, wallet } from "./fakes.js";
@@ -129,7 +129,7 @@ describe("registryOperator.anchorHiding", () => {
     expect(receipt).toMatchObject({ kind: 2, attribute: hex(attribute), commitment: hex(hidingCommitment(digest, salt)) });
     expect(receipt.opening).toEqual({ rootHash: hex(e.rootHash), manifestHash: hex(e.manifestHash), merkleRoot: hex(e.merkleRoot), salt: hex(salt) });
     const sent = w.submitted[0]!.serialize();
-    expect(windowHits(sent, attribute)).toBe(25);
+    expect(windowHits(sent, attribute)).toBe(encodedWindows(attribute));
     for (const secret of [e.rootHash, e.manifestHash, e.merkleRoot, salt, readAuthorSecret(authorKeyFile), readAuthorSecret(saltKeyFile)]) expect(windowHits(sent, secret)).toBe(0);
     operator.close();
   });

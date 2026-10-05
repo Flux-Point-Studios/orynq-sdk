@@ -4,7 +4,7 @@ import * as L from "@midnight-ntwrk/ledger-v8";
 import { provingProvider } from "@midnight-ntwrk/zkir-v2";
 import { pureCircuits } from "../contract/managed/contract/index.js";
 import { registryInitialState } from "../src/registry.js";
-import { windowHits } from "../src/__tests__/privacy-scan.js";
+import { encodedWindows, windowHits } from "../src/__tests__/privacy-scan.js";
 import { flipBindingRandomness, NETWORK, random32, unprovenRegistryCall } from "../src/__tests__/registry-call.js";
 
 // Proves real registry calls in-process with zkir-v2: prover keys and zkir come from
@@ -78,11 +78,11 @@ beforeAll(async () => {
 });
 
 describe("the proven, bound bytes a submitter sends", () => {
-  it("positive control: they carry every disclosed value, all 25 windows", () => {
+  it("positive control: they carry every window of every disclosed value they encode", () => {
     const author = pureCircuits.author_key(authorSecret);
-    expect(windowHits(anchorFinal, commitment)).toBe(25);
-    expect(windowHits(anchorFinal, author)).toBe(25);
-    for (const value of [hidingCommitment, attribute, author]) expect(windowHits(hidingFinal, value)).toBe(25);
+    expect(windowHits(anchorFinal, commitment)).toBe(encodedWindows(commitment));
+    expect(windowHits(anchorFinal, author)).toBe(encodedWindows(author));
+    for (const value of [hidingCommitment, attribute, author]) expect(windowHits(hidingFinal, value)).toBe(encodedWindows(value));
   });
 
   it("hold no window of the author secret or of the kind-2 opening in any encoding", () => {
