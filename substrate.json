@@ -84,7 +84,7 @@
     {
       "id": "anchors-midnight",
       "name": "Midnight anchor toolkit",
-      "desc": "verifyMidnightAnchor checks an anchor from the transaction's own bytes: hash binding first, then exactly one registry call whose guaranteed transcript equals the compiled circuits' op for op, the node's block (hash, header, extrinsicsRoot, known runtime, strict send_mn_transaction inclusion), GRANDPA finality from a signed or caller checkpoint, the registry's pinned deploy verified the same way, the request's expectation and a KNOWN_AUTHORS author window; statuses invalid, conflict, unavailable, unverified-finality, unauthenticated, author-revoked and valid, which exists only at consensus-verified assurance; verifiedFields name only what the commitment binds (kind 2: committedAttribute, never the trace). findMidnightAnchors lists an author set's anchor candidates in a window of at most 20,000 blocks from the indexer's contractActions subscription (WebSocket, credential in a header), decoding each from its own bytes, bounded by maxActions with a resumable cursor. It also computes commitments with the compiled contract's own pure circuits (entryCommitment, hiddenDigest, hidingCommitment, deriveSalt, authorKey), writes and reads random author key files only their owner can read, lists the deployed registry generations per network (none yet) with their pinned verifier keys and runtime, reads a Midnight indexer and node through midnightSource (Blockfrost endpoints with the project id read from an owner-only file and kept out of every error), builds registry calls for a given network from the compiled circuits (unprovenRegistryCall), serves each file of the committed build only while it matches contract/HASHES.txt (compiledContractFile), frames a transaction as the bare Midnight.send_mn_transaction extrinsic a node accepts (midnightExtrinsic, the inverse of the strict inclusion decode), and builds the registry's exact deploy state from the compiled constructor and the sha256-pinned verifier keys, and refuses anything else: assertImmutableAuthority (committee [], threshold 1, counter 0), assertRegistryState (operations, canonical verifier keys, schema) and assertRegistryDeployBytes, which decodes the exact deploy bytes before or after proving and requires the initial state byte for byte. Private until the mainnet registry exists.",
+      "desc": "verifyMidnightAnchor checks an anchor from the transaction's own bytes: hash binding first, then exactly one registry call whose guaranteed transcript equals the compiled circuits' op for op, the node's block (hash, header, extrinsicsRoot, known runtime, strict send_mn_transaction inclusion), GRANDPA finality from a signed or caller checkpoint, the registry's pinned deploy verified the same way, the request's expectation (or kind \"any\", which matches nothing and reports the anchor) and a KNOWN_AUTHORS author window; statuses invalid, conflict, unavailable, unverified-finality, unauthenticated, author-revoked and valid, which exists only at consensus-verified assurance; verifiedFields name only what the commitment binds (kind 2: committedAttribute, never the trace). verifyReport makes a result printable for a terminal or a model: no finality checkpoint, source-shaped text stripped of control, format and unassigned characters and cut at 300 characters, a block hash that is not one dropped. findMidnightAnchors lists an author set's anchor candidates in a window of at most 20,000 blocks from the indexer's contractActions subscription (WebSocket, credential in a header), decoding each from its own bytes, bounded by maxActions with a resumable cursor. It also computes commitments with the compiled contract's own pure circuits (entryCommitment, hiddenDigest, hidingCommitment, deriveSalt, authorKey), writes and reads random author key files only their owner can read, and user key files (orynq-midnight-user-key/v1: author secret and salt key) whose reader refuses a bare service author key file, lists the deployed registry generations per network (none yet) with their pinned verifier keys and runtime, reads a Midnight indexer and node through midnightSource (Blockfrost endpoints with the project id read from an owner-only file, refused unless shaped like a project id so no other secret is sent as one, and kept out of every error, or a configured indexer and node URL through sourceEndpoints), builds registry calls for a given network from the compiled circuits (unprovenRegistryCall), serves each file of the committed build only while it matches contract/HASHES.txt (compiledContractFile), frames a transaction as the bare Midnight.send_mn_transaction extrinsic a node accepts (midnightExtrinsic, the inverse of the strict inclusion decode), and builds the registry's exact deploy state from the compiled constructor and the sha256-pinned verifier keys, and refuses anything else: assertImmutableAuthority (committee [], threshold 1, counter 0), assertRegistryState (operations, canonical verifier keys, schema) and assertRegistryDeployBytes, which decodes the exact deploy bytes before or after proving and requires the initial state byte for byte. Private until the mainnet registry exists.",
       "kind": "toolkit",
       "paths": [
         "packages/anchors-midnight"
@@ -184,15 +184,16 @@
     {
       "id": "orynq-mcp",
       "name": "Orynq MCP server",
-      "desc": "MCP server exposing process tracing, Cardano anchoring and verification as agent tools.",
+      "desc": "MCP server exposing process tracing, Cardano and Materios anchoring and verification as agent tools. verify_midnight_anchor (read-only) verifies a Midnight anchor with anchors-midnight and returns its verifyReport; its schema is strict (txHash, network, one of entry, commitment or attribute, expectedAuthor), so a model can pass it no key, file or URL, and the source comes from the server's environment as a file path or URLs. There is no Midnight anchoring tool and no tool takes a Flux Point Studios key: anchoring with the user's own key goes through the quickstart CLI's terminal confirmation.",
       "kind": "agent",
       "paths": [
         "packages/orynq-mcp"
       ],
       "consumes": [
-        "process-trace",
         "anchors-cardano",
-        "anchors-materios"
+        "anchors-materios",
+        "anchors-midnight",
+        "process-trace"
       ],
       "status": "live"
     },
@@ -255,14 +256,16 @@
     {
       "id": "orynq-quickstart",
       "name": "Orynq quickstart",
-      "desc": "Solo-developer quickstart: generates an identity, faucet-drips MATRA and anchors a first trace in minutes.",
+      "desc": "Solo-developer quickstart: generates an identity, faucet-drips MATRA and anchors a first trace in minutes. For Midnight: `orynq verify midnight <txHash|bundle>` verifies an anchor read-only and prints its status, assurance, author, matched fields and every check (Blockfrost project id file or any indexer and node URL); `orynq keys init midnight` writes the user's own key file; `orynq anchor midnight` plans an anchor with that key only, refusing bare service key files and every KNOWN_AUTHORS key, as a dry run unless --submit is confirmed at a TTY by typing the commitment's first 8 characters (no registry or submitter in this build, so it stops before asking).",
       "kind": "toolkit",
       "paths": [
         "packages/quickstart"
       ],
       "consumes": [
         "anchors-materios",
-        "gateway-faucet"
+        "anchors-midnight",
+        "gateway-faucet",
+        "process-trace"
       ],
       "status": "live"
     },

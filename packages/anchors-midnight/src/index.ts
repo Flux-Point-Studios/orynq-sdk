@@ -4,6 +4,10 @@ export { DEFAULT_MAX_ACTIONS, MAX_FIND_WINDOW, findMidnightAnchors } from "./fin
 export type { FindCursor, FindRequest, FindResult, FoundAnchor } from "./find.js";
 export { verifyMidnightAnchor } from "./verify.js";
 export type { AnchorStatus, Assurance, Check, Expectation, VerifyOptions, VerifyRequest, VerifyResult } from "./verify.js";
+export { printable, verifyReport } from "./report.js";
+export type { VerifyReport } from "./report.js";
+export { USER_KEY_FORMAT, createUserKeyFile, readUserKey } from "./user-key.js";
+export type { UserKey } from "./user-key.js";
 export {
   ANCHOR_KIND,
   authorKey,
@@ -25,7 +29,7 @@ export {
   verifyFinality,
 } from "./grandpa.js";
 export type { AuthoritySet, BlockRef, FinalityCheckpoint, FinalityProof, FinalityResult, FinalityRpc, GrandpaJustification } from "./grandpa.js";
-export { blockfrostEndpoints, finalityRpc, midnightSource } from "./source.js";
+export { blockfrostEndpoints, finalityRpc, midnightSource, sourceEndpoints } from "./source.js";
 export type { IndexedAction, IndexedTransaction, MidnightSource, SourceEndpoints } from "./source.js";
 export {
   headerFromRpc,

@@ -1,9 +1,10 @@
 # @fluxpointstudios/orynq-mcp
 
-MCP server for Orynq SDK — process tracing, Cardano anchoring, and verification tools.
+MCP server for Orynq SDK — process tracing, Cardano and Materios anchoring, and verification tools.
 
-Exposes 10 high-level MCP tools for the full trace-to-anchor lifecycle:
-create traces, add spans/events, finalize, prepare Cardano anchors, verify on-chain, and estimate costs.
+Exposes 12 high-level MCP tools for the full trace-to-anchor lifecycle:
+create traces, add spans/events, finalize, prepare and submit anchors, verify Cardano and Midnight
+anchors, and estimate costs.
 
 ## Quick start
 
@@ -41,8 +42,13 @@ node packages/orynq-mcp/dist/index.js
 | `BLOCKFROST_PROJECT_ID` | No | — | Blockfrost API key (enables `verify_cardano_anchor`) |
 | `KOIOS_NETWORK` | No | — | Koios fallback (if no Blockfrost key) |
 | `CARDANO_SIGNER_KEY` | No | — | Enables `anchor_cardano_submit` |
+| `MATERIOS_RPC_URL`, `MATERIOS_SIGNER_URI` | No | — | Enable `anchor_materios_submit` (the signer URI is a mnemonic or derivation path) |
+| `MATERIOS_BLOB_GATEWAY_URL`, `MATERIOS_BLOB_GATEWAY_API_KEY` | No | Materios preprod gateway | Where `anchor_materios_submit` uploads the bundle |
+| `MIDNIGHT_NETWORK` | No | `mainnet` | `mainnet` or `preprod`, for `verify_midnight_anchor` |
+| `MIDNIGHT_BLOCKFROST_PROJECT_ID_FILE` | No | — | Path to a file, readable only by its owner, holding a Blockfrost Midnight project id |
+| `MIDNIGHT_INDEXER_URL`, `MIDNIGHT_RPC_URL` | No | — | Any Midnight indexer (GraphQL) and node (JSON-RPC), in place of Blockfrost |
 
-## Tools (10)
+## Tools (12)
 
 ### Trace lifecycle
 
@@ -62,11 +68,18 @@ node packages/orynq-mcp/dist/index.js
 | `anchor_cardano_prepare` | Prepare anchor metadata from finalized trace | Safe |
 | `anchor_cardano_submit` | Submit anchor tx (v1: outputs CLI instructions) | HIGH |
 
+### Materios anchoring
+
+| Tool | Description | Risk |
+|------|-------------|------|
+| `anchor_materios_submit` | Submit a finalized trace as a Materios receipt, wait for certification and optionally the Cardano checkpoint | HIGH |
+
 ### Verification & cost
 
 | Tool | Description | Risk |
 |------|-------------|------|
 | `verify_cardano_anchor` | Verify on-chain anchor by tx hash | Safe |
+| `verify_midnight_anchor` | Verify a Midnight anchor by tx hash: status, assurance, author, matched fields, checks | Safe |
 | `estimate_cost` | Estimate ADA fee for anchoring | Safe |
 
 ## Safety model
@@ -74,7 +87,18 @@ node packages/orynq-mcp/dist/index.js
 - All trace tools are safe — they only modify in-memory state
 - `anchor_cardano_prepare` computes hashes but never signs or submits
 - `anchor_cardano_submit` requires `confirm: true` and `CARDANO_SIGNER_KEY`; in v1 it returns serialized metadata for manual CLI submission
-- `verify_cardano_anchor` and `estimate_cost` are read-only
+- `anchor_materios_submit` is a dry run unless `confirm: true`, an argument the model supplies, not a person's approval; it needs `MATERIOS_RPC_URL` and `MATERIOS_SIGNER_URI`
+- `verify_cardano_anchor`, `verify_midnight_anchor` and `estimate_cost` are read-only
+- `verify_midnight_anchor` takes a transaction hash and at most one expectation (a bundle's `entry`
+  hashes, a kind-1 `commitment` or a kind-2 `attribute`), plus an optional `expectedAuthor`. It
+  refuses any other argument, so a model can pass it no key, file or URL; the source comes from
+  the server's environment. Its result is the anchors-midnight `verifyReport`: `valid` only at
+  `consensus-verified` assurance, with every source's text made printable and cut at 300 characters.
+- There is no Midnight anchoring tool. Anchoring spends the user's own DUST with the user's own
+  key, and an MCP server cannot tell a person's answer from a client's: a tool argument is the
+  model's, and an elicitation reply is whatever the client sends. Anchor with
+  `orynq anchor midnight --submit` from `@fluxpointstudios/orynq-sdk-quickstart`, which needs a
+  person at a terminal. No tool here ever takes a Flux Point Studios key.
 
 ## Architecture
 

@@ -22,10 +22,13 @@ const SEVERITY: readonly Exclude<AnchorStatus, "valid">[] = ["invalid", "conflic
 // indexer), none.
 export type Assurance = "consensus-verified" | "multi-path" | "single-path" | "none";
 
+// kind "any" expects nothing of the anchor: it is checked like any other and reported, and no
+// field is matched against a trace.
 export type Expectation =
   | { kind: 1; entry: EntryHashes }
   | { kind: 1; commitment: Hash32 }
-  | { kind: 2; attribute: Hash32; opening?: EntryHashes & { salt: Hash32 } };
+  | { kind: 2; attribute: Hash32; opening?: EntryHashes & { salt: Hash32 } }
+  | { kind: "any" };
 
 export interface VerifyRequest {
   network: MidnightNetwork;
@@ -210,6 +213,7 @@ const stateCheck = (checks: Checks, name: string, stateHex: string | undefined, 
 
 // The fields a commitment binds that match the request, or why the request does not match.
 function expectation(expect: Expectation, anchor: AnchorCall): { fields: string[] } | { error: string } {
+  if (expect.kind === "any") return { fields: [] };
   if (!("kind" in expect) || (expect.kind !== 1 && expect.kind !== 2)) return { error: `kind ${String((expect as { kind: unknown }).kind)} is not one the registry writes` };
   if (anchor.kind !== expect.kind) return { error: `the anchor is kind ${anchor.kind}, not kind ${expect.kind}` };
   if (expect.kind === 1) {
@@ -325,6 +329,7 @@ export async function verifyMidnightAnchor(request: VerifyRequest, options: Veri
 
   const matched = expectation(request.expect, anchor);
   if ("error" in matched) checks.fail("expectation", "invalid", matched.error);
+  else if (matched.fields.length === 0) checks.pass("expectation", "nothing was expected: the anchor's commitment is reported, not matched against a trace");
   else {
     result.verifiedFields = matched.fields;
     checks.pass("expectation", `the anchor binds ${matched.fields.join(", ")}`);

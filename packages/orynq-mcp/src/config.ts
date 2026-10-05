@@ -15,6 +15,12 @@ export interface Config {
   materiosSignerUri: string | undefined;
   materiosBlobGatewayUrl: string | undefined;
   materiosBlobGatewayApiKey: string | undefined;
+  // Midnight verification: a network and where to read it, as a file path or URLs, never a
+  // credential itself.
+  midnightNetwork: string | undefined;
+  midnightBlockfrostProjectIdFile: string | undefined;
+  midnightIndexerUrl: string | undefined;
+  midnightRpcUrl: string | undefined;
   transport: "stdio";
   port: number;
 }
@@ -30,6 +36,10 @@ export function loadConfig(): Config {
     materiosSignerUri: process.env["MATERIOS_SIGNER_URI"],
     materiosBlobGatewayUrl: process.env["MATERIOS_BLOB_GATEWAY_URL"],
     materiosBlobGatewayApiKey: process.env["MATERIOS_BLOB_GATEWAY_API_KEY"],
+    midnightNetwork: process.env["MIDNIGHT_NETWORK"],
+    midnightBlockfrostProjectIdFile: process.env["MIDNIGHT_BLOCKFROST_PROJECT_ID_FILE"],
+    midnightIndexerUrl: process.env["MIDNIGHT_INDEXER_URL"],
+    midnightRpcUrl: process.env["MIDNIGHT_RPC_URL"],
     transport: "stdio",
     port: Number(process.env["ORYNQ_MCP_PORT"] ?? "3100"),
   };

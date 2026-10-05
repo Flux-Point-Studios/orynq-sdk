@@ -4,9 +4,10 @@ import type { AddressInfo } from "node:net";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { blockfrostEndpoints, finalityRpc, midnightSource } from "../source.js";
+import { blockfrostEndpoints, finalityRpc, midnightSource, sourceEndpoints } from "../source.js";
 
-const TOKEN = "mainnetSECRETtoken0123456789abcdefABCDEF";
+// The shape of a Blockfrost project id: a lowercase prefix, then 32 letters and digits.
+const TOKEN = "mainnetSECRETtoken0123456789abcdefABCDE";
 
 // A node and indexer that answer from `handlers`, and echo every request header back in their
 // error bodies, the way a misconfigured proxy might.
@@ -132,6 +133,26 @@ describe("blockfrostEndpoints", () => {
     expect(blockfrostEndpoints("preprod", file).node).toBe("https://rpc.midnight-preprod.blockfrost.io");
   });
 
+  it("refuses a file holding anything but a project id, so no other secret is ever sent as one", () => {
+    const secrets = {
+      "author.key": `${"8a".repeat(32)}\n`,
+      "mnemonic.txt": "abandon ability able about above absent absorb abstract absurd abuse access accident\n",
+      "user-key.json": JSON.stringify({ format: "orynq-midnight-user-key/v1", authorSecret: "8a".repeat(32), saltKey: "4c".repeat(32) }),
+      "short.project_id": "mainnetSECRET\n",
+    };
+    for (const [name, content] of Object.entries(secrets)) {
+      const file = join(dir, name);
+      writeFileSync(file, content, { mode: 0o600 });
+      let message = "";
+      try {
+        blockfrostEndpoints("mainnet", file);
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      expect(message).toBe(`${file} does not hold a Blockfrost project id: a lowercase prefix, then 32 letters and digits`);
+    }
+  });
+
   it("refuses a project id file group or others can read, without echoing it", () => {
     const file = join(dir, "open.project_id");
     writeFileSync(file, `${TOKEN}\n`, { mode: 0o600 });
@@ -144,6 +165,43 @@ describe("blockfrostEndpoints", () => {
     }
     expect(message).toMatch(/open\.project_id can be read or written by group or others/);
     expect(message).not.toContain(TOKEN.slice(4, 20));
+  });
+});
+
+describe("sourceEndpoints: a source from a Blockfrost project id file or from an indexer and node URL", () => {
+  const dir = mkdtempSync(join(tmpdir(), "orynq-endpoints-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("a project id file gives Blockfrost's endpoints for the network", () => {
+    const file = join(dir, "preprod.project_id");
+    writeFileSync(file, `${TOKEN}\n`, { mode: 0o600 });
+    expect(sourceEndpoints("preprod", { blockfrostProjectIdFile: file })).toEqual(blockfrostEndpoints("preprod", file));
+  });
+
+  it("an indexer and a node URL give an unauthenticated source the node and indexer answer through", async () => {
+    const e = sourceEndpoints("mainnet", { indexer: `${base}/api/v3/graphql/`, node: `${base}/rpc` })!;
+    expect(e).toEqual({ operator: new URL(base).host, indexer: `${base}/api/v3/graphql`, indexerWs: `${base.replace("http", "ws")}/api/v3/graphql/ws`, node: `${base}/rpc`, headers: {} });
+    expect(sourceEndpoints("mainnet", { indexer: "https://indexer.example/api", node: "https://node.example" })!.indexerWs).toBe("wss://indexer.example/api/ws");
+    seen.length = 0;
+    handler = (b) => ({ json: b.query ? { data: { block: { height: 7, hash: "ab".repeat(32), timestamp: 1 } } } : { jsonrpc: "2.0", id: b.id, result: "Midnight Mainnet" } });
+    const s = midnightSource(e);
+    expect(await s.node.call("system_chain")).toBe("Midnight Mainnet");
+    expect(await s.indexer.head()).toEqual({ height: 7, hash: "ab".repeat(32), timestamp: 1 });
+    expect(seen.map((r) => r.url)).toEqual(["/rpc", "/api/v3/graphql"]);
+  });
+
+  it("is null with neither, and refuses both, half a pair, and a URL that is not http or https", () => {
+    const file = join(dir, "both.project_id");
+    writeFileSync(file, `${TOKEN}\n`, { mode: 0o600 });
+    expect(sourceEndpoints("mainnet", {})).toBeNull();
+    const cases: Array<[Parameters<typeof sourceEndpoints>[1], RegExp]> = [
+      [{ blockfrostProjectIdFile: file, indexer: `${base}/i`, node: `${base}/n` }, /a Blockfrost project id file or an indexer and node URL, not both/],
+      [{ indexer: `${base}/i` }, /an indexer URL needs a node URL, and a node URL an indexer URL/],
+      [{ node: `${base}/n` }, /an indexer URL needs a node URL, and a node URL an indexer URL/],
+      [{ indexer: "file:///etc/passwd", node: `${base}/n` }, /the indexer URL must be http or https/],
+      [{ indexer: `${base}/i`, node: "not a url" }, /the node URL must be http or https/],
+    ];
+    for (const [config, expected] of cases) expect(() => sourceEndpoints("mainnet", config)).toThrow(expected);
   });
 });
 

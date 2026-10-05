@@ -239,6 +239,18 @@ describe("expectations: only what the commitment binds is reported as verified",
     expect((await verify(chain, request("hiding", KIND1))).status).toBe("invalid");
     expect((await verify(chain, request("anchor", { kind: 3, commitment: fixture.anchor.commitment } as never))).status).toBe("invalid");
   });
+
+  it("with nothing expected, every other check still runs, the anchor is reported, and nothing is matched", async () => {
+    const chain = anchorChain();
+    for (const name of ["anchor", "hiding"] as const) {
+      const r = await verify(chain, request(name, { kind: "any" }));
+      expect(r.checks.filter((c) => !c.ok)).toEqual([]);
+      expect(r).toMatchObject({ status: "valid", assurance: "consensus-verified", verifiedFields: [], anchor: { commitment: fixture[name].commitment } });
+      expect(check(r, "expectation")).toEqual({ name: "expectation", ok: true, detail: "nothing was expected: the anchor's commitment is reported, not matched against a trace" });
+    }
+    expect(await verify(chain, request("stranger", { kind: "any" }))).toMatchObject({ status: "unauthenticated", verifiedFields: [] });
+    expect(await verify(chain, request("anchor", { kind: "any" }), { finality: "skip" })).toMatchObject({ status: "unverified-finality" });
+  });
 });
 
 describe("critique2 (c): authors come from the signed KNOWN_AUTHORS document", () => {

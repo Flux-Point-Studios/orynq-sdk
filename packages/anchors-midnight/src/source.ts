@@ -47,16 +47,52 @@ export interface MidnightSource {
   };
 }
 
+// A Blockfrost project id: a lowercase prefix, then 32 letters and digits. Nothing else is sent
+// as one, so naming the wrong file (a mnemonic, an author key) never sends that secret away.
+const PROJECT_ID = /^[a-z]{1,32}[A-Za-z0-9]{32}$/;
+
 // Blockfrost's Midnight indexer and node, authenticated by the project id in `projectIdFile`,
 // which must be a file only its owner can read.
 export function blockfrostEndpoints(network: MidnightNetwork, projectIdFile: string): SourceEndpoints {
+  const projectId = readPrivateFile(projectIdFile).trim();
+  if (!PROJECT_ID.test(projectId)) throw new Error(`${projectIdFile} does not hold a Blockfrost project id: a lowercase prefix, then 32 letters and digits`);
   return {
     operator: "blockfrost",
     indexer: `https://midnight-${network}.blockfrost.io/api/v0`,
     indexerWs: `wss://midnight-${network}.blockfrost.io/api/v0/ws`,
     node: `https://rpc.midnight-${network}.blockfrost.io`,
-    headers: { project_id: readPrivateFile(projectIdFile).trim() },
+    headers: { project_id: projectId },
   };
+}
+
+const httpUrl = (value: string, name: string) => {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`the ${name} URL must be http or https`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`the ${name} URL must be http or https`);
+  return url;
+};
+
+// The endpoints a user configured: Blockfrost's for `network`, authenticated by a project id
+// file, or a Midnight indexer's GraphQL URL and a node's JSON-RPC URL that need no credential
+// (a self-hosted node, say). Null when neither is configured.
+export function sourceEndpoints(
+  network: MidnightNetwork,
+  config: { blockfrostProjectIdFile?: string | undefined; indexer?: string | undefined; node?: string | undefined },
+): SourceEndpoints | null {
+  const { blockfrostProjectIdFile, indexer, node } = config;
+  if (blockfrostProjectIdFile !== undefined && (indexer !== undefined || node !== undefined)) {
+    throw new Error("give a Blockfrost project id file or an indexer and node URL, not both");
+  }
+  if (blockfrostProjectIdFile !== undefined) return blockfrostEndpoints(network, blockfrostProjectIdFile);
+  if (indexer === undefined && node === undefined) return null;
+  if (indexer === undefined || node === undefined) throw new Error("an indexer URL needs a node URL, and a node URL an indexer URL");
+  const graphql = httpUrl(indexer, "indexer").href.replace(/\/$/, "");
+  const rpc = httpUrl(node, "node").href;
+  return { operator: new URL(graphql).host, indexer: graphql, indexerWs: `${graphql.replace(/^http/, "ws")}/ws`, node: rpc, headers: {} };
 }
 
 const HASH = /^[0-9a-f]{64}$/;
