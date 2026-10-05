@@ -145,6 +145,13 @@ describe("GRANDPA authority set changes in set-change headers", () => {
     expect(() => scheduledAuthorityChange(withFrnk(concat(new Uint8Array([2, 9, 0, 0, 0]), oneAuthority, new Uint8Array(4))))).toThrow(/forced authority change/);
   });
 
+  it("refuses a change to a set with no voting weight: no authorities, or every weight 0", () => {
+    const zeroWeight = concat(encodeCompact(2), new Uint8Array(32).fill(7), new Uint8Array(8), new Uint8Array(32).fill(8), new Uint8Array(8));
+    for (const seats of [encodeCompact(0), zeroWeight]) {
+      expect(() => scheduledAuthorityChange(withFrnk(concat(new Uint8Array([1]), seats, new Uint8Array(4))))).toThrow(/^block \d+ schedules an authority set with no voting weight$/);
+    }
+  });
+
   it("positive control: the synthetic encoding of an immediate change decodes", () => {
     expect(scheduledAuthorityChange(withFrnk(concat(new Uint8Array([1]), oneAuthority, new Uint8Array(4))))).toEqual([{ key: "07".repeat(32), weight: 1n }]);
   });

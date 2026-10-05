@@ -189,7 +189,11 @@ forced or delayed change stops the walk. The set that finalized the block must t
 at or above it, and the headers in its proof must chain down to the block's hash. A
 justification's own target is not signed, so a precommit counts for it only when it signed that
 hash at that number, or a descendant whose ancestry headers lead down to it at that number: a
-source cannot relabel a final block's justification as a higher block.
+source cannot relabel a final block's justification as a higher block. A set finalizes only
+with more than two thirds of a total weight above 0, from distinct authorities: a checkpoint
+with no voting weight (no authorities, or every weight 0) or with a negative weight is refused
+before anything is asked of the source, and so is a set change that schedules a set with no
+voting weight.
 
 Trust assumption: "consensus-verified" means that the checkpoint really is that GRANDPA set, and
 that every set from it to the block had more than two thirds of its weight honest. Signatures

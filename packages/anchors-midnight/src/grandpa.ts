@@ -54,6 +54,15 @@ export interface AuthoritySet {
 // finality-grandpa's VoterSet threshold: total weight minus the most a third can be faulty.
 export const supermajority = (total: bigint): bigint => total - (total - 1n) / 3n;
 
+// The set's total weight, or why it can finalize nothing: with no weight its supermajority is 0,
+// so a justification without one precommit would finalize any block, and a negative weight
+// shrinks the total a supermajority is measured against.
+function votingWeight(set: AuthoritySet): bigint | { error: string } {
+  if (set.authorities.some((a) => a.weight < 0n)) return { error: `set ${set.setId} gives an authority a negative weight` };
+  const total = set.authorities.reduce((s, a) => s + a.weight, 0n);
+  return total > 0n ? total : { error: `set ${set.setId} has no voting weight, so it finalizes nothing` };
+}
+
 // The block a justification finalizes, when voters of `set` holding a supermajority of its
 // weight signed precommits, for this set id and round, for that block or a descendant shown
 // by the justification's ancestry headers; otherwise why not. A precommit that is unsigned,
@@ -61,8 +70,9 @@ export const supermajority = (total: bigint): bigint => total - (total - 1n) / 3
 // The justification's own target is unsigned: a precommit vouches for it only by signing that
 // hash at that number, or a descendant whose ancestry headers lead down to it at that number.
 export function justifiedTarget(j: GrandpaJustification, set: AuthoritySet): Target | { error: string } {
+  const total = votingWeight(set);
+  if (typeof total !== "bigint") return total;
   const weightOf = new Map(set.authorities.map((a) => [a.key, a.weight]));
-  const total = set.authorities.reduce((s, a) => s + a.weight, 0n);
   const ancestry = new Map(j.ancestries.map((h) => [toHex(headerHash(h)), h]));
   const descends = (from: Target): boolean => {
     if (from.number < j.target.number) return false;
@@ -145,6 +155,8 @@ export async function verifyFinality({
   const notFinal = (reason: string): FinalityResult => ({ finalized: false, reason, ...progress });
   const start = checkpoints.filter((c) => c.startsAfter.height < block.height).sort((a, b) => b.startsAfter.height - a.startsAfter.height)[0];
   if (!start) return notFinal(`no finality checkpoint lies below block ${block.height}`);
+  const usable = votingWeight(start);
+  if (typeof usable !== "bigint") return notFinal(usable.error);
   let set: FinalityCheckpoint = { setId: start.setId, startsAfter: start.startsAfter, authorities: start.authorities };
   let setLength = SET_LENGTH;
   let covers = false;

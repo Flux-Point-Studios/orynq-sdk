@@ -3,12 +3,14 @@ import { readFileSync } from "node:fs";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { verifyMidnightAnchor, type VerifyRequest, type VerifyResult } from "../verify.js";
 import { buildRegistryDeploy, registryInitialState } from "../registry.js";
-import { concatBytes, encodeCompact, fromHex, toHex } from "../scale.js";
+import { concatBytes, encodeCompact, fromHex, toHex, u32le, u64le } from "../scale.js";
+import { decodeFinalityProof } from "../grandpa.js";
+import { encodeHeader } from "../substrate.js";
 import { DEPLOY_HEIGHT, HEIGHTS, anchorChain, fixture, sendMnTransaction } from "./anchor-chain.js";
 import { NETWORK, finalBytes, unprovenRegistryCall } from "./registry-call.js";
 import { replaySource } from "./recorded-source.js";
 import type { RegistryInfo } from "../registries.js";
-import type { IndexedTransaction } from "../source.js";
+import type { IndexedTransaction, MidnightSource } from "../source.js";
 
 type Chain = ReturnType<typeof anchorChain>;
 const request = (name: "anchor" | "hiding" | "stranger", expect: VerifyRequest["expect"], extra: Partial<VerifyRequest> = {}): VerifyRequest => ({
@@ -22,6 +24,12 @@ const KIND2 = { kind: 2 as const, attribute: fixture.hiding.attribute };
 const verify = (chain: Chain, req: VerifyRequest, options: Partial<Parameters<typeof verifyMidnightAnchor>[1]> = {}) =>
   verifyMidnightAnchor(req, { source: chain.source, registries: [chain.registry], knownAuthors: chain.authors(), ...options });
 const check = (r: VerifyResult, name: string) => r.checks.find((c) => c.name === name);
+const withoutPrecommits = (hex: string) => {
+  const proof = decodeFinalityProof(fromHex(hex, "proof"));
+  const { round, target, ancestries } = proof.justification;
+  const justification = concatBytes(u64le(round), target.hash, u32le(target.number), encodeCompact(0), encodeCompact(ancestries.length), ...ancestries.map(encodeHeader));
+  return `0x${toHex(concatBytes(proof.block, encodeCompact(justification.length), justification, encodeCompact(proof.unknownHeaders.length), ...proof.unknownHeaders.map(encodeHeader)))}`;
+};
 
 describe("a valid anchor: consensus-verified from the transaction's bytes to a GRANDPA-final block", () => {
   it("kind 1: the entry's rootHash, manifestHash and merkleRoot are what the commitment binds", async () => {
@@ -78,6 +86,27 @@ describe("critique2 (f): never valid without consensus finality, and every resul
     const r = await verifyMidnightAnchor(request("anchor", KIND1), { source: chain.source, registries: [chain.registry], knownAuthors: { ...chain.authors(), checkpoints: () => [] } });
     expect(r).toMatchObject({ status: "unverified-finality", assurance: "multi-path" });
     expect(check(r, "finality")!.detail).toMatch(/no finality checkpoint lies below block 2020/);
+  });
+
+  it("a caller checkpoint with no voting weight finalizes nothing, not even a justification with no precommits", async () => {
+    const chain = anchorChain();
+    // The anchor block's finality proofs, with every precommit removed.
+    const unsigned: MidnightSource = {
+      ...chain.source,
+      node: {
+        ...chain.source.node,
+        async batch<T>(calls: Array<[string, unknown[]]>) {
+          const answers = await chain.source.node.batch<string | null>(calls);
+          return answers.map((answer, i) => (calls[i]![0] === "grandpa_proveFinality" && calls[i]![1][0] === HEIGHTS.anchor ? withoutPrecommits(answer!) : answer)) as T[];
+        },
+      },
+    };
+    const weightless = { setId: 7n, startsAfter: { height: HEIGHTS.anchor - 1, hash: "00".repeat(32) }, authorities: [] };
+    const control = await verify(chain, request("anchor", KIND1), { source: unsigned });
+    expect(check(control, "finality")!.detail).toMatch(/carries 0 of 4 weight/);
+    const r = await verify(chain, request("anchor", KIND1), { source: unsigned, checkpoints: [weightless] });
+    expect(r).toMatchObject({ status: "unverified-finality", assurance: "multi-path" });
+    expect(check(r, "finality")!.detail).toBe("set 7 has no voting weight, so it finalizes nothing");
   });
 
   it("valid is reachable only at consensus-verified, even if every check passes below it", async () => {

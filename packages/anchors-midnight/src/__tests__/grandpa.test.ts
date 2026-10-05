@@ -70,6 +70,20 @@ describe("justifiedTarget: a supermajority of the set's weight signed for this s
     }
   });
 
+  it("refuses a set with no voting weight, under which a justification without one precommit would finalize anything", () => {
+    const unsigned = { ...j(), precommits: [] };
+    for (const authorities of [[], chain.authorities(0).map((a) => ({ ...a, weight: 0n }))]) {
+      expect(justifiedTarget(unsigned, { setId: 100n, authorities })).toEqual({ error: "set 100 has no voting weight, so it finalizes nothing" });
+    }
+  });
+
+  it("refuses a negative weight, which shrinks the total a supermajority is measured against", () => {
+    // Total 1: one voter's precommit would be a supermajority of the four.
+    const authorities = chain.authorities(0).map((a, i) => ({ ...a, weight: i === 3 ? -2n : 1n }));
+    const one = { ...j(), precommits: j().precommits.slice(0, 1) };
+    expect(justifiedTarget(one, { setId: 100n, authorities })).toEqual({ error: "set 100 gives an authority a negative weight" });
+  });
+
   it("counts a precommit for a descendant of the target when the ancestry headers link it", () => {
     const base = uniform(3);
     const child = base.header(base.endOf(0) + 1);
@@ -209,6 +223,26 @@ describe("verifyFinality on a synthetic chain", () => {
       reason: expect.stringMatching(/carries 0 of 4 weight/),
     });
     expect(await verifyFinality({ rpc: relabeling, block: chain.block(end), checkpoints: [chain.checkpoint(1)] })).toMatchObject({ finalized: true, justified: chain.block(end) });
+  });
+
+  it("refuses a checkpoint with no voting weight, or a negative weight, before asking the source anything", async () => {
+    const chain = uniform(4);
+    const at = chain.checkpoint(0);
+    for (const [authorities, reason] of [
+      [[], "set 100 has no voting weight, so it finalizes nothing"],
+      [at.authorities.map((a) => ({ ...a, weight: 0n })), "set 100 has no voting weight, so it finalizes nothing"],
+      [at.authorities.map((a, i) => ({ ...a, weight: i === 0 ? -1n : 1n })), "set 100 gives an authority a negative weight"],
+    ] as const) {
+      expect(await verifyFinality({ rpc: chain.rpc, block: chain.block(1100), checkpoints: [{ ...at, authorities: [...authorities] }] })).toEqual({ finalized: false, reason, setChanges: 0, requests: 0 });
+    }
+  });
+
+  it("refuses to follow a set change that schedules a set with no voting weight", async () => {
+    const chain = uniform(6, { keysFor: (k) => (k === 2 ? [] : testKeys("authority", 4)) });
+    expect(await verifyFinality({ rpc: chain.rpc, block: chain.block(chain.endOf(3) + 1), checkpoints: [chain.checkpoint(0)] })).toMatchObject({
+      finalized: false,
+      reason: `block ${chain.endOf(1)} schedules an authority set with no voting weight`,
+    });
   });
 
   it("refuses a proof whose headers do not chain from the justified block down to the block", async () => {

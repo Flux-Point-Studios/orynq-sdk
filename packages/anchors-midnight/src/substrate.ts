@@ -88,7 +88,8 @@ const FRNK = "FRNK";
 
 // The next GRANDPA authority set a set-change header schedules, with duplicate keys' seats
 // summed as finality-grandpa's VoterSet does, or null when the header schedules none. A
-// delayed or forced change is refused: both move the point where the next set starts.
+// delayed or forced change is refused: both move the point where the next set starts. So is a
+// set with no voting weight, which would finalize a justification without one precommit.
 export function scheduledAuthorityChange(h: BlockHeader): WeightedAuthority[] | null {
   let next: WeightedAuthority[] | null = null;
   for (const item of h.digest) {
@@ -108,6 +109,7 @@ export function scheduledAuthorityChange(h: BlockHeader): WeightedAuthority[] | 
     const byKey = new Map<string, bigint>();
     for (const { key, weight } of seats) byKey.set(key, (byKey.get(key) ?? 0n) + weight);
     next = [...byKey].map(([key, weight]) => ({ key, weight }));
+    if (next.every((a) => a.weight === 0n)) throw new Error(`block ${h.number} schedules an authority set with no voting weight`);
   }
   return next;
 }
