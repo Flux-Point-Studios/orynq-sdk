@@ -7,12 +7,14 @@ import {
   ANCHOR_KIND,
   authorKey,
   createAuthorKeyFile,
+  createSaltKeyFile,
   deriveSalt,
   entryCommitment,
   hash32,
   hiddenDigest,
   hidingCommitment,
   readAuthorSecret,
+  saltKeyId,
 } from "../commitment.js";
 import { hex, pad32, random32 } from "./registry-call.js";
 
@@ -78,6 +80,18 @@ describe("author key files", () => {
     expect(hex(authorKey(secret))).toBe(key);
     expect(readFileSync(path, "utf8")).toBe(`${hex(secret)}\n`);
     expect(createAuthorKeyFile(join(dir, "other.key"))).not.toBe(key);
+  });
+
+  it("createSaltKeyFile writes a fresh random salt key readable only by its owner and returns its public id, SHA-256(pad32(tag) ‖ key)", () => {
+    const path = join(dir, "salt.key");
+    const id = createSaltKeyFile(path);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    const key = readAuthorSecret(path);
+    expect(id).toBe(sha256(pad32("orynq:anchor-salt-key-id:v1"), key));
+    expect(hex(saltKeyId(key))).toBe(id);
+    expect(id).not.toBe(hex(authorKey(key)));
+    expect(createSaltKeyFile(join(dir, "other-salt.key"))).not.toBe(id);
+    expect(() => createSaltKeyFile(path)).toThrow(/salt\.key already exists/);
   });
 
   it("createAuthorKeyFile never replaces an existing file", () => {

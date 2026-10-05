@@ -44,10 +44,11 @@ project id file is given.
 node --import tsx scripts/keys.ts private-dir ~/.secrets/orynq-midnight-preprod
 node --import tsx scripts/keys.ts new-wallet ~/.secrets/orynq-midnight-preprod/wallet-a.mnemonic preprod
 node --import tsx scripts/keys.ts new-author ~/.secrets/orynq-midnight-preprod/author-relay.key
+node --import tsx scripts/keys.ts new-salt ~/.secrets/orynq-midnight-preprod/salt.key
 node --import tsx scripts/keys.ts addresses MNEMONIC_FILE mainnet --equals RECORD.json
 ```
 
-Each prints only public derivations (addresses, an author key, a boolean).
+Each prints only public derivations (addresses, an author key, a salt key id, a boolean).
 
 ## Tests
 

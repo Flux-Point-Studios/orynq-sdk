@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { authorKey, readAuthorSecret } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { authorKey, readAuthorSecret, saltKeyId } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { walletAddresses } from "../src/keys.js";
 
 const cli = fileURLToPath(new URL("../scripts/keys.ts", import.meta.url));
@@ -20,7 +20,7 @@ describe("the keys CLI an operator runs to create wallets and author keys", () =
   const dir = join(root, "secrets");
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-  it("creates a private directory, a wallet and an author key, printing only public derivations", async () => {
+  it("creates a private directory, a wallet, an author key and a salt key, printing only public derivations", async () => {
     expect((await run("private-dir", dir)).status).toBe(0);
     expect(statSync(dir).mode & 0o777).toBe(0o700);
 
@@ -35,10 +35,16 @@ describe("the keys CLI an operator runs to create wallets and author keys", () =
     expect(author.status).toBe(0);
     expect(author.stdout.trim()).toBe(Buffer.from(authorKey(readAuthorSecret(keyFile))).toString("hex"));
 
+    const saltFile = join(dir, "salt.key");
+    const salt = await run("new-salt", saltFile);
+    expect(salt.status).toBe(0);
+    expect(statSync(saltFile).mode & 0o777).toBe(0o600);
+    expect(salt.stdout.trim()).toBe(Buffer.from(saltKeyId(readAuthorSecret(saltFile))).toString("hex"));
+
     const words = readFileSync(mnemonicFile, "utf8").trim().split(" ");
-    const secret = readFileSync(keyFile, "utf8").trim();
-    for (const out of [wallet.stdout, wallet.stderr, author.stdout, author.stderr]) {
-      expect(out).not.toContain(secret);
+    const secrets = [readFileSync(keyFile, "utf8").trim(), readFileSync(saltFile, "utf8").trim()];
+    for (const out of [wallet.stdout, wallet.stderr, author.stdout, author.stderr, salt.stdout, salt.stderr]) {
+      for (const secret of secrets) expect(out).not.toContain(secret.slice(0, 16));
       for (const word of words) expect(out.split(/[^a-z]+/)).not.toContain(word);
     }
   });

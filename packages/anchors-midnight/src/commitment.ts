@@ -1,5 +1,7 @@
+import { sha256 } from "@noble/hashes/sha2.js";
 import { pureCircuits } from "../contract/managed/contract/index.js";
 import { createSecretFile, readPrivateFile } from "./private-file.js";
+import { concatBytes, toHex } from "./scale.js";
 
 // The kinds the registry writes: anchor() refuses kind 2, which only anchor_hiding() writes.
 // A verifier rejects every other kind.
@@ -63,6 +65,20 @@ export function authorKey(secret: Hash32): Uint8Array {
 // seed.
 export function createAuthorKeyFile(path: string): string {
   return Buffer.from(authorKey(createSecretFile(path))).toString("hex");
+}
+
+const SALT_KEY_ID_TAG = new Uint8Array(32);
+SALT_KEY_ID_TAG.set(new TextEncoder().encode("orynq:anchor-salt-key-id:v1"));
+
+// A salt key's public id: SHA-256(pad32("orynq:anchor-salt-key-id:v1") ‖ salt key). It names the
+// key without revealing it, so a key disclosed later to open kind-2 anchors can be matched to it.
+export function saltKeyId(saltKey: Hash32): Uint8Array {
+  return sha256(concatBytes(SALT_KEY_ID_TAG, hash32(saltKey, "salt key")));
+}
+
+// Writes a fresh random salt key to a new file only its owner can read and returns its public id.
+export function createSaltKeyFile(path: string): string {
+  return toHex(saltKeyId(createSecretFile(path)));
 }
 
 // Reads an author secret written by createAuthorKeyFile, refusing a symlink, anything but a

@@ -3,9 +3,10 @@
 //   private-dir DIR                                creates DIR (0700), or accepts it if it already is
 //   new-wallet MNEMONIC_FILE NETWORK               writes a fresh 24-word mnemonic (0600), prints its addresses
 //   new-author KEY_FILE                            writes a fresh 32-byte author secret (0600), prints its author key
+//   new-salt KEY_FILE                              writes a fresh 32-byte kind-2 salt key (0600), prints its public id
 //   addresses MNEMONIC_FILE NETWORK [--equals F]   prints the addresses, or whether they equal F's "addresses"
 import { readFileSync } from "node:fs";
-import { createAuthorKeyFile, type MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { createAuthorKeyFile, createSaltKeyFile, type MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { createWalletMnemonicFile, ensurePrivateDir, walletAddresses } from "../src/keys.js";
 
 const network = (name: string | undefined): MidnightNetwork => {
@@ -24,6 +25,8 @@ try {
     print(walletAddresses(args[0]!, net));
   } else if (command === "new-author" && args.length === 1) {
     print(createAuthorKeyFile(args[0]!));
+  } else if (command === "new-salt" && args.length === 1) {
+    print(createSaltKeyFile(args[0]!));
   } else if (command === "addresses" && (args.length === 2 || (args.length === 4 && args[2] === "--equals"))) {
     const addresses = walletAddresses(args[0]!, network(args[1]));
     if (args.length === 2) print(addresses);
@@ -34,7 +37,7 @@ try {
       if (!same) process.exitCode = 1;
     }
   } else {
-    throw new Error("usage: keys.ts private-dir DIR | new-wallet MNEMONIC_FILE NETWORK | new-author KEY_FILE | addresses MNEMONIC_FILE NETWORK [--equals FILE]");
+    throw new Error("usage: keys.ts private-dir DIR | new-wallet MNEMONIC_FILE NETWORK | new-author KEY_FILE | new-salt KEY_FILE | addresses MNEMONIC_FILE NETWORK [--equals FILE]");
   }
 } catch (error) {
   process.stderr.write(`keys: ${(error as Error).message}\n`);

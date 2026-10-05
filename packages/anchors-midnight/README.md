@@ -25,6 +25,9 @@ hiding_commitment(digest, salt)               = SHA-256(salt ‖ digest)
 derive_salt(salt_key, digest)                 = SHA-256(pad32("orynq:anchor-salt:v1")   ‖ salt_key ‖ digest)
 ```
 
+A salt key is published only by its id, `SHA-256(pad32("orynq:anchor-salt-key-id:v1") ‖ salt_key)`,
+which the contract never computes.
+
 ### What a kind-2 anchor binds
 
 `anchor_hiding` proves that the published commitment equals
@@ -60,7 +63,10 @@ merkle root.
 An author key is a fresh random 32-byte secret, never derived from a wallet seed.
 `createAuthorKeyFile(path)` writes one to a new file only its owner can read and returns the
 public author key; `readAuthorSecret(path)` refuses a symlink, a file the caller does not own and
-a file group or others can read or write.
+a file group or others can read or write. A service's salt key, from which its kind-2 anchors
+derive their hiding salts, is a fresh random 32-byte secret too: `createSaltKeyFile(path)` writes
+one under the same rules and returns `saltKeyId(key)`, its public id, so a salt key disclosed later
+to open kind-2 anchors can be matched to the id published when it was made.
 
 A user anchoring with their own key holds a user key file instead: `createUserKeyFile(path)`
 writes a fresh author secret and a fresh salt key (from which a kind-2 anchor derives its hiding

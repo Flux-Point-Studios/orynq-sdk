@@ -12,12 +12,14 @@ export {
   ANCHOR_KIND,
   authorKey,
   createAuthorKeyFile,
+  createSaltKeyFile,
   deriveSalt,
   entryCommitment,
   hash32,
   hiddenDigest,
   hidingCommitment,
   readAuthorSecret,
+  saltKeyId,
 } from "./commitment.js";
 export type { AnchorKind, EntryHashes, Hash32 } from "./commitment.js";
 export {
