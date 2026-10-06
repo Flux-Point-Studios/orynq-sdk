@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { assertRegistryState, compiledVerifierKeys, createAuthorKeyFile, midnightSource, readAuthorSecret, authorKey } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import {
+  DEFAULT_COST_PARAMETERS,
   assertChainIdentity,
   declaredFee,
   ensurePrivateDir,
@@ -30,7 +31,7 @@ const ZK = `${HOME}/.cache/orynq-midnight/zk`;
 const RAW = new URL("./evidence/raw.json", import.meta.url);
 mkdirSync(new URL("./evidence/", import.meta.url), { recursive: true });
 ensurePrivateDir(`${SECRETS}/state`);
-const OVERHEAD = BigInt(process.env.FEE_OVERHEAD_SPECK ?? "0");
+const OVERHEAD = process.env.FEE_OVERHEAD_SPECK === undefined ? DEFAULT_COST_PARAMETERS.additionalFeeOverhead : BigInt(process.env.FEE_OVERHEAD_SPECK);
 
 type Raw = Record<string, any>;
 const raw: Raw = existsSync(RAW) ? JSON.parse(readFileSync(RAW, "utf8")) : {};

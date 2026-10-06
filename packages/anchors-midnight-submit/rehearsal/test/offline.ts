@@ -9,6 +9,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import type { IndexedTransaction, MidnightSource, SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import type { OperatorWallet, StateSave, WalletOptions } from "../../src/index.js";
+import { costParametersOf } from "../../src/wallet.js";
 import { prover } from "../../test/prover.js";
 
 export * from "../../src/index.js";
@@ -75,7 +76,9 @@ export const WALLET_SYNC: SourceEndpoints = { operator: "offline", indexer: "htt
 export const provingService = () => prover;
 
 // A synced wallet with DUST to spare that binds without adding a fee and lands what it submits.
+// It takes only the fee parameters the real wallet takes.
 export async function openWallet(options: WalletOptions): Promise<OperatorWallet> {
+  costParametersOf(options.costParameters);
   const saveState = async (): Promise<StateSave> =>
     FAULTS.has("fail-save") ? { saved: false, failures: [{ part: "shielded", error: "ParseError: Could not serialize local state: RuntimeError: unreachable" }] } : { saved: true };
   return {

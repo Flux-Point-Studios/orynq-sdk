@@ -33,13 +33,26 @@ export interface SyncProgress {
 }
 
 export interface CostParameters {
-  // DUST (in SPECK) declared on top of the computed fee; the whole declared fee is burned.
+  // DUST (in SPECK, at least 1) declared on top of the computed fee; the whole declared fee is burned.
   additionalFeeOverhead: bigint;
   // Blocks of fee-price movement the computed fee absorbs.
   feeBlocksMargin: number;
 }
 
-export const DEFAULT_COST_PARAMETERS: CostParameters = { additionalFeeOverhead: 0n, feeBlocksMargin: 5 };
+export const DEFAULT_COST_PARAMETERS: CostParameters = { additionalFeeOverhead: 1n, feeBlocksMargin: 5 };
+
+// The cost parameters a wallet runs with. wallet-sdk-dust-wallet 4.2.0 pays a fee by selecting
+// DUST until it covers the fee its dry run computes; for a transaction whose computed fee is 0
+// (an anchor on a quiet chain, a maintenance update) it selects nothing, round after round, in a
+// synchronous loop whose ledger allocations grow the wasm heap until the ledger traps
+// (midnight-wallet#438, #700). An overhead of at least 1 SPECK keeps every computed fee above 0.
+export function costParametersOf(given: CostParameters | undefined): CostParameters {
+  const parameters = given ?? DEFAULT_COST_PARAMETERS;
+  if (parameters.additionalFeeOverhead < 1n) {
+    throw new Error(`additionalFeeOverhead must be at least 1 SPECK, not ${parameters.additionalFeeOverhead}: wallet-sdk-dust-wallet 4.2.0 never finishes paying a fee computed as 0`);
+  }
+  return parameters;
+}
 
 export interface OperatorWallet {
   readonly network: MidnightNetwork;
@@ -131,6 +144,7 @@ export interface WalletOptions {
 // submitting through the source's node. The secret keys stay inside this closure.
 export async function openWallet(options: WalletOptions): Promise<OperatorWallet> {
   const { network, mnemonicFile, endpoints, source, zkDir } = options;
+  const costParameters = costParametersOf(options.costParameters);
   refuseMainnetSecretsPath(network, mnemonicFile);
   const secrets = walletSecrets(mnemonicFile, network);
   const addresses = addressesOf(secrets, network);
@@ -150,7 +164,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     // Never dialled: submissionService below replaces the SDK's WebSocket submitter.
     relayURL: new URL(endpoints.node.replace(/^http/, "ws")),
     txHistoryStorage: new InMemoryTransactionHistoryStorage(WalletEntrySchema, mergeWalletEntries),
-    costParameters: options.costParameters ?? DEFAULT_COST_PARAMETERS,
+    costParameters,
   };
   let facade: WalletFacade;
   try {
