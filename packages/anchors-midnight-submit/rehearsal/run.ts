@@ -138,13 +138,16 @@ const phases: Record<string, () => Promise<void>> = {
     log("chain", raw.chain);
   },
 
+  // Records each wallet's first funding once, so a rerun keeps the registration the verifier
+  // reads, and waits every run until each wallet can spend DUST again: a DUST coin spent by bytes
+  // that never landed returns to the wallet only after the ledger's grace period.
   async funding() {
     raw.funding ??= {};
     for (const which of ["walletA", "walletB"] as const) {
       const w = await wallet(which);
-      const before = await balances(which);
-      raw.funding[which] = { before };
-      if (before.nightUtxos > before.registered) {
+      const now = await balances(which);
+      raw.funding[which] ??= { before: now };
+      if (now.nightUtxos > now.registered) {
         const t = Date.now();
         const txHash = await w.registerNightForDust();
         raw.funding[which].registration = { txHash, submittedAt: new Date(t).toISOString() };
@@ -154,16 +157,17 @@ const phases: Record<string, () => Promise<void>> = {
     }
     for (const which of ["walletA", "walletB"] as const) {
       const t = Date.now();
-      for (;;) {
+      for (let waited = false; ; waited = true) {
         const b = await balances(which);
         if (b.dust > 10n ** 15n) {
-          raw.funding[which].dustReady = { ...b, afterMs: Date.now() - t, at: new Date().toISOString() };
+          raw.funding[which].dustReady ??= { ...b, afterMs: Date.now() - t, at: new Date().toISOString() };
+          log(`${which} DUST ${b.dustDisplay}`);
           break;
         }
+        if (!waited) log(`${which} can spend ${b.dustDisplay} DUST; waiting for more than 1`);
         await new Promise((r) => setTimeout(r, 20_000));
       }
       save();
-      log(`${which} DUST ${raw.funding[which].dustReady.dustDisplay}`);
     }
   },
 

@@ -20,12 +20,12 @@ package publishes only `dist`, so nothing here ships.
 |---|---|
 | `bundles.ts` | Traces the real, read-only processes whose bundles the anchors commit to (`bundles/`, git-ignored), each same-block round's pair included. |
 | `endpoints.ts` | Where `run.ts` and `crash.ts` read and write: every broadcast and every read through Blockfrost preprod, the path a mainnet submitter takes, and the wallets' sync alone through Midnight's hosted indexer, whose event ids their saved state names. |
-| `run.ts` | The phases `chain funding deploy kind1 kind2 sameblock negatives rotation`. Records everything public in `evidence/raw.json` (git-ignored). A node negative counts as refused only on the node's own JSON-RPC answer (`nodeRefusal`), and a recorded case is never sent again. |
+| `run.ts` | The phases `chain funding deploy kind1 kind2 sameblock negatives rotation`. Records everything public in `evidence/raw.json` (git-ignored). `funding` records each wallet's first funding once and waits, every run, until each wallet can spend DUST. A node negative counts as refused only on the node's own JSON-RPC answer (`nodeRefusal`), and a recorded case is never sent again. |
 | `crash.ts` | One crash-window step per process: `kill-before`, `kill-after` (SIGKILL) and `recover`. |
 | `docs.ts` | Signs the drill's KNOWN_AUTHORS documents with a preprod-only trust root through `anchors-midnight/scripts/known-authors.ts`. |
 | `rehearse.sh` | All of the above in order, at nice 19; the crash drill runs once. |
 | `verify-all.mjs` | Verifies every recorded anchor, the rotation matrix, twelve verifier negatives and the absence of every refused maintenance transaction through Blockfrost, and opens the forged KNOWN_AUTHORS documents, from a consumer directory into which npm installed the packed verify package. It exits 1 on any gate failure. |
-| `gate.mjs` | The claims the pack may make, from what was recorded and what the verifier returned. Each maintenance update counts as refused only on the node's answer 1010 Invalid Transaction with the maintenance authority's own custom code, and each forged document only on the verify package's answer from the check it targets (below). |
+| `gate.mjs` | The claims the pack may make, from what was recorded and what the verifier returned. Each maintenance update counts as refused only on the node's answer 1010 Invalid Transaction with the maintenance authority's own custom code, and each forged document only on the verify package's answer from the check it targets (below). The deploy the pack describes must be the one that landed: a prepared record whose transaction hash or address differs, such as a prepare a later run abandoned, fails the gate. |
 | `compose.ts` | Writes the pack only when the gate passes, every journal's landed transactions match the recorded anchors, every kind-2 opening recomputes the commitment the verifier read, and the privacy scan finds no window of any secret. |
 | `finish.sh` | `verify-all.mjs` from `$CONSUMER`, then `compose.ts`. |
 | `record-golden.ts` | Records the verifier's reads of three real anchors as a fixture the anchors-midnight suite can replay. |
@@ -161,9 +161,14 @@ copied into `wallets.json`.
 ```
 
 The `funding` phase registers each wallet's NIGHT for DUST generation and waits until each holds
-more than 1 DUST. Every phase resumes from `evidence/raw.json`, so a rerun after an interruption
-finishes what is missing. The crash drill runs once: a second pass would add to its log, and the
-gate would refuse the pack.
+more than 1 DUST it can spend. Every phase resumes from `evidence/raw.json`, so a rerun after an
+interruption finishes what is missing. A rerun keeps the first funding record, the registration
+the verifier reads among it. A DUST coin spent by bytes that never landed comes back to its
+wallet only after the ledger's grace period (about three hours on preprod), so a rerun soon after
+such a failure waits in `funding` until then. A registry deploy journalled earlier that the chain
+has carried past its TTL unseen is settled as failed before the new deploy is sent; one the chain
+has not yet ruled out makes `deploy` refuse the new bytes. The crash drill runs once: a second
+pass would add to its log, and the gate would refuse the pack.
 
 ### 3. The consumer
 

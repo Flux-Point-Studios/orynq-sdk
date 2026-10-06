@@ -293,6 +293,16 @@ describe("the evidence gate", () => {
     ]);
   });
 
+  it("refuses a deploy record whose prepared bytes are not the deploy that landed, such as a prepare a later run abandoned", () => {
+    const r = honestRehearsal();
+    const abandoned = "3c".repeat(32);
+    r.raw.deploy.prepared.txHash = abandoned;
+    expect(run(r).failures).toEqual([`the registry deploy recorded as prepared, ${abandoned} at ${r.raw.deploy.address}, is not the deploy that landed, ${r.raw.deploy.txHash} at ${r.raw.deploy.address}`]);
+    const elsewhere = honestRehearsal();
+    elsewhere.raw.deploy.prepared.address = "9e".repeat(32);
+    expect(run(elsewhere).failures).toEqual([`the registry deploy recorded as prepared, ${elsewhere.raw.deploy.txHash} at ${"9e".repeat(32)}, is not the deploy that landed, ${elsewhere.raw.deploy.txHash} at ${elsewhere.raw.deploy.address}`]);
+  });
+
   it("refuses a deploy whose readback did not show the immutable state from both paths", () => {
     expect(failuresOf((r) => (r.raw.deploy.readback.byteEqual = false))).toEqual(["the registry deploy's readback did not show the same immutable state from the indexer and the node"]);
   });

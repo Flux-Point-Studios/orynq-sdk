@@ -90,15 +90,16 @@ export function honestRehearsal(): Rehearsal {
   // midnight-node's custom codes for the maintenance authority's own refusals: 136 ThresholdMissed
   // for an unsigned update, 134 KeyNotInCommittee for a signature at index 0 of an empty committee.
   const refusal = (custom: number) => ({ code: 1010, message: "Invalid Transaction", data: `Custom error: ${custom}` });
+  const [deployAddress, deployTxHash] = [h(), h()];
   const raw = {
     chain: { hosted: { chain: "Midnight Preprod", specVersion: 1000300 } },
     funding: { walletA: { registration: { txHash: h() } }, walletB: { registration: { txHash: h() } } },
     deploy: {
-      address: h(),
-      txHash: h(),
+      address: deployAddress,
+      txHash: deployTxHash,
       blockHeight: DEPLOY,
       blockHash: h(),
-      prepared: { declaredFee: "420000000000000" },
+      prepared: { address: deployAddress, txHash: deployTxHash, declaredFee: "420000000000000" },
       readback: { indexerStateBytes: 4000, nodeStateBytes: 4000, byteEqual: true, immutable: true },
       landedAfterMs: 20_000,
       dustBefore: "9",

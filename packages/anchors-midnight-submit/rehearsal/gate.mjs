@@ -155,7 +155,13 @@ export function judge({ raw, verified, crash, crashStatus }) {
   /** @type {Facts} */
   const facts = { anchors: { total: 0, byKind: { 1: 0, 2: 0 }, crash: 0 }, crashDrill: [], nodeNegatives: [], verifierNegatives: 0, sameBlock: null, forgedDocuments: [], package: null, trustRoot: null };
 
-  if (raw.deploy?.readback?.immutable !== true || raw.deploy?.readback?.byteEqual !== true) failures.push("the registry deploy's readback did not show the same immutable state from the indexer and the node");
+  // The pack describes the deploy by its prepared record, so that record must be the deploy that
+  // landed, never a prepare whose bytes a later run abandoned.
+  const deploy = raw.deploy ?? {};
+  if (deploy.prepared?.txHash !== deploy.txHash || deploy.prepared?.address !== deploy.address) {
+    failures.push(`the registry deploy recorded as prepared, ${deploy.prepared?.txHash} at ${deploy.prepared?.address}, is not the deploy that landed, ${deploy.txHash} at ${deploy.address}`);
+  }
+  if (deploy.readback?.immutable !== true || deploy.readback?.byteEqual !== true) failures.push("the registry deploy's readback did not show the same immutable state from the indexer and the node");
 
   // The verify package came from a packed tarball, as npm recorded the install.
   const pkg = verified.package;

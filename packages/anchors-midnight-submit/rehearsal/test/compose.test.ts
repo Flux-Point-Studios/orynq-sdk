@@ -49,6 +49,14 @@ describe("compose.ts", () => {
     expect(pack.privacyScan.windowsOfSecretsInPack).toBe(0);
   });
 
+  it("describes the deploy that landed, not a prepare an earlier run journalled and the chain later ruled out", () => {
+    const abandoned = "3c".repeat(32);
+    const { r, run, pack } = compose((r) => (r.journals["journal-deploy.sqlite"] = [{ tx_hash: abandoned, state: "failed" }, ...r.journals["journal-deploy.sqlite"]!]));
+    expect(run.status, run.stderr).toBe(0);
+    expect(pack.registry).toMatchObject({ deployTxHash: r.raw.deploy.txHash, preparedOnFinalBytes: { txHash: r.raw.deploy.txHash, address: r.raw.deploy.address } });
+    expect(JSON.stringify(pack)).not.toContain(abandoned);
+  });
+
   it("refuses a kind-2 opening that does not recompute the commitment the verifier read, and a kind-2 anchor with no opening", () => {
     const wrong = compose((r) => (r.openings["hidden-relay-suite"]!.salt = "11".repeat(32)));
     expect(wrong.pack).toBeNull();
