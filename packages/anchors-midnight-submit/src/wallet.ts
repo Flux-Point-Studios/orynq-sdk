@@ -1,4 +1,6 @@
-import { existsSync, renameSync, rmSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { InMemoryTransactionHistoryStorage } from "@midnight-ntwrk/wallet-sdk-abstractions";
 import { MidnightBech32m, DustAddress } from "@midnight-ntwrk/wallet-sdk-address-format";
@@ -119,12 +121,44 @@ export function readWalletState(file: string, network: MidnightNetwork, addresse
   return { shielded: saved.shielded, unshielded: saved.unshielded, dust: saved.dust };
 }
 
-// Replaces the saved state atomically with a file only its owner can read.
+// Each save writes a file of its own beside the state file, named for the saving process and a
+// random suffix (a dead process's pid can be reused), and renames it over the state file, so two
+// processes saving one state file never install or remove each other's unfinished write.
+const SAVE_IN_PROGRESS = /^(\d{1,9})\.[0-9a-f]{16}\.next$/;
+
+// Replaces the saved state atomically with a file only its owner can read, leaving nothing
+// beside it when it fails.
 export function writeWalletState(file: string, network: MidnightNetwork, addresses: WalletAddresses, indexer: string, snapshot: WalletSnapshot): void {
-  const next = `${file}.next`;
-  rmSync(next, { force: true });
+  const next = `${file}.${process.pid}.${randomBytes(8).toString("hex")}.next`;
   writePrivateFile(next, JSON.stringify({ network, addresses, indexer, ...snapshot }));
-  renameSync(next, file);
+  try {
+    renameSync(next, file);
+  } catch (error) {
+    rmSync(next, { force: true });
+    throw error;
+  }
+}
+
+// Removes what saves of the state file left when their process died before renaming it into
+// place. A save whose process still runs, or runs as another user, is left to finish.
+function removeAbandonedSaves(file: string): void {
+  const gone = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ESRCH") return true;
+      if (code === "EPERM") return false;
+      throw error;
+    }
+  };
+  const dir = dirname(file);
+  const prefix = `${basename(file)}.`;
+  for (const name of readdirSync(dir)) {
+    const pid = name.startsWith(prefix) ? SAVE_IN_PROGRESS.exec(name.slice(prefix.length))?.[1] : undefined;
+    if (pid !== undefined && gone(Number(pid))) rmSync(join(dir, name), { force: true });
+  }
 }
 
 export interface WalletOptions {
@@ -155,6 +189,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       }
     }
   }
+  if (options.stateFile) removeAbandonedSaves(options.stateFile);
   const saved = options.stateFile ? readWalletState(options.stateFile, network, addresses, endpoints.indexer) : null;
   const transport = await credentialRelay(endpoints);
   const submitTo = (tx: L.FinalizedTransaction) => broadcast(source, tx.serialize());
