@@ -14,10 +14,10 @@ registry exists.
 | `relay` | `credentialRelay(endpoints)`: the wallet SDK's indexer clients take a bare URL and echo it into errors, so a Blockfrost project id cannot ride in the URL. A loopback relay adds the credential header instead; its URLs carry only a random path prefix. |
 | `wallet` | `openWallet` runs a `WalletFacade` (wallet-sdk 1.2.0) over the network's indexer, refuses a mnemonic that does not derive the recorded addresses, pays fees from DUST only, and submits through the source's node. |
 | `broadcast` | Sends the exact final bytes as the bare extrinsic `Midnight.send_mn_transaction` over JSON-RPC (`author_submitExtrinsic`), the same framing the verifier's strict inclusion check reads. `nodeRefusal(error)` gives the node's own JSON-RPC refusal (code, message, data) and is null for anything else, such as a transport failure, after which the bytes may still have been delivered. |
-| `deployer` | `registryDeployer`: `prepare()` builds, proves, pays and binds a deploy and refuses it unless the final bytes deploy exactly the registry's initial state; `submit(prepared)` checks the bytes again, refusing any that do not deploy exactly the registry or do not hash to the confirmed transaction hash and address, then, once the journal has settled any earlier deploy from the chain, sends them through the write-ahead journal at most once per network and reads the address back from the landed transaction. An earlier deploy that never landed blocks new bytes until the chain, as the node confirms it, is past that deploy's TTL plus the journal's margin and, at the block whose time shows that, the node holds no contract at the address that deploy's bytes deploy. If the node holds the registry there, the deploy is landed and blocks new bytes for good, however far the indexer's lookup lags. `journalled()` settles the journal from the chain and returns the deploy it still holds, rebuilt from its journalled bytes, or null when none is live: a caller that lost its own record of a deploy, after a failure between the broadcast and the readback, submits that one, which the journal resumes (resending the same bytes only if no broadcast of them ever returned), instead of preparing bytes the journal would refuse. |
+| `deployer` | `registryDeployer`: `prepare()` builds, proves, pays and binds a deploy and refuses it unless the final bytes deploy exactly the registry's initial state; `submit(prepared)` checks the bytes again, refusing any that do not deploy exactly the registry or do not hash to the confirmed transaction hash and address, then, once the journal has settled any earlier deploy from the chain, sends them through the write-ahead journal at most once per network and reads the address back from the landed transaction. An earlier deploy that never landed blocks new bytes until the chain, as the node confirms it, is past that deploy's TTL plus the journal's margin and, at the block whose time shows that, the node holds no contract at the address that deploy's bytes deploy. If the node holds the registry there, the deploy is landed and blocks new bytes for good, however far the indexer's lookup lags. `journalled()` settles the journal from the chain and returns the deploy it still holds, rebuilt from its journalled bytes and marked with how the journal holds it (`journal`: its state and how many broadcasts returned), or null when none is live: a caller that lost its own record of a deploy, after a failure between the broadcast and the readback, submits that one, which the journal resumes (resending the same bytes only if no broadcast of them ever returned), instead of preparing bytes the journal would refuse. |
 | `submission` | `registryStateOnNode(source, address, at?)` reads `midnight_contractState`, returns null when no contract is there (the node answers with an empty string), and refuses a contract that is not the immutable registry. `submitJournalled` sends through the journal and returns the landed transaction with its block as the indexer lists it. |
 | `operator` | `registryOperator`: `anchor(entry)` (kind 1) and `anchorHiding(entry, attribute)` (kind 2, salt derived from a salt key so every opening is recoverable) under the FPS author key, through the journal; the final bytes must decode to exactly the intended anchor before they leave. |
-| `preflight` | Chain identity (system_chain, genesis, runtime), the exact deploy summary, and the terminal-only confirmation `scripts/deploy-mainnet.ts` uses. |
+| `preflight` | Chain identity (system_chain, genesis, runtime), the exact deploy summary (a deploy resumed from the journal says so first, with what confirming then does with its bytes), and the terminal-only confirmation `scripts/deploy-mainnet.ts` uses. |
 
 ## Endpoints
 
@@ -50,10 +50,15 @@ or FIDO2 signer.
   the first 16 hex characters of the final bytes' transaction hash) is typed at an interactive
   terminal, in a process without Claude Code's environment. That stops an agent session running
   the script as it is, a pipe, a file, a flag or an environment variable, and bytes other than
-  the ones summarized. It does not stop a process running as deci that drops Claude Code's
-  variables, drives a pseudo-terminal and types back the token it reads: the preflight suite does
-  exactly that, with inputs that do not exist, so it stops at its first read. The protection is
-  procedural: deci runs the deploy himself, at his own terminal.
+  the ones summarized. A run that failed between the broadcast and the readback leaves the next
+  run the journalled deploy (`journalled()`), never a second one: it shows that deploy, marked as
+  resumed, and sends nothing before the same token is typed again; declining it releases no DUST,
+  since its bytes may already be with the node. The gates do not stop a process running as deci
+  that drops Claude Code's variables, drives a pseudo-terminal and types back the token it reads:
+  the preflight suite does exactly that, once with inputs that do not exist, so it stops at its
+  first read, and over an offline mainnet (`test/offline.ts` in place of the submit package),
+  where it deploys, declines, and resumes a deploy whose run failed after its broadcast. The
+  protection is procedural: deci runs the deploy himself, at his own terminal.
 
 ## Keys
 

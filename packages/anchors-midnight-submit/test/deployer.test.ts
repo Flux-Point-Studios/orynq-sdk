@@ -166,7 +166,7 @@ describe("registryDeployer", () => {
     lossyIndexer.close();
 
     const resumed = await deployer.journalled();
-    expect(resumed).toEqual(prepared);
+    expect(resumed).toEqual({ ...prepared, journal: { state: "landed", broadcasts: 1 } });
     expect(await deployer.submit(resumed!)).toEqual({ network: "preprod", address: prepared.address, txHash: prepared.txHash, blockHeight: 500, blockHash: "ab".repeat(32) });
     expect(w.submitted.map((t) => t.transactionHash())).toEqual([prepared.txHash]);
     expect(w.discarded).toEqual([]);
@@ -194,7 +194,7 @@ describe("registryDeployer", () => {
     net.advance(15 * MINUTE + 5 * MINUTE + 1_000);
 
     const lagging = registryDeployer({ ...options, wallet: w, source: { ...net.source, indexer: { ...net.source.indexer, transactions: async () => [] } } });
-    expect(await lagging.journalled()).toEqual(prepared);
+    expect(await lagging.journalled()).toEqual({ ...prepared, journal: { state: "landed", broadcasts: 0 } });
     expect(rows()).toEqual([{ tx_hash: prepared.txHash, state: "landed" }]);
     const second = await lagging.prepare();
     await expect(lagging.submit(second)).rejects.toThrow(`a registry deploy is already journalled on preprod: ${prepared.txHash} (landed); the prepared bytes were discarded`);
@@ -212,7 +212,7 @@ describe("registryDeployer", () => {
     const refused = await refusedByProxy();
     net.advance(10 * MINUTE);
     const resumed = await deployer.journalled();
-    expect(resumed).toEqual(refused);
+    expect(resumed).toEqual({ ...refused, journal: { state: "pending", broadcasts: 0 } });
     expect(await deployer.submit(resumed!)).toMatchObject({ txHash: refused.txHash, address: refused.address });
     expect(w.submitted.map((t) => hex(t.serialize()))).toEqual([hex(refused.bytes)]);
     expect(rows()).toEqual([{ tx_hash: refused.txHash, state: "landed" }]);
@@ -225,7 +225,7 @@ describe("registryDeployer", () => {
     net.advance(15 * MINUTE + 4 * MINUTE);
     const payFee = vi.spyOn(w, "payFee");
     const resumed = await deployer.journalled();
-    expect(resumed).toEqual(refused);
+    expect(resumed).toEqual({ ...refused, journal: { state: "pending", broadcasts: 0 } });
     await expect(deployer.submit(resumed!)).rejects.toThrow(OUTDATED);
     expect(w.submitted.map((t) => hex(t.serialize()))).toEqual([hex(refused.bytes)]);
     expect(payFee).not.toHaveBeenCalled();

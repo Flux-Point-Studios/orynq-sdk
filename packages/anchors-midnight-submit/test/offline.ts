@@ -1,23 +1,28 @@
-// What run.ts imports as ./endpoints.js and ../src/index.js when deploy.test.ts runs it offline:
-// the submit package itself, with its wallet and prover replaced, over a chain that lives in the
-// JSON file OFFLINE_CHAIN so it outlasts each run.ts process, and whose node refuses bytes whose
-// TTL the chain has passed. OFFLINE_FAULT breaks one step of a run: "refuse-broadcast" (a proxy
-// answers the broadcast with HTTP 403), "lose-read" (the first read of a landed transaction
-// fails) or "lose-sync" (the wallet stops syncing once a deploy landed).
+// What a script imports as the submit package (../src/index.js) when a test runs it offline: the
+// submit package itself, with its wallet, prover and endpoints replaced, over a chain that lives
+// in the JSON file OFFLINE_CHAIN so it outlasts each process, and whose node refuses bytes whose
+// TTL the chain has passed. The rehearsal's run.ts also imports it as ./endpoints.js. OFFLINE_FAULT
+// breaks one step of a run: "refuse-broadcast" (a proxy answers the broadcast with HTTP 403),
+// "lose-read" (the first read of a landed transaction fails) or "lose-sync" (the wallet stops
+// syncing once a deploy landed).
 import { readFileSync, writeFileSync } from "node:fs";
 import * as L from "@midnight-ntwrk/ledger-v8";
-import type { IndexedTransaction, MidnightSource, SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import type { OperatorWallet, WalletOptions } from "../../src/index.js";
-import { prover } from "../../test/prover.js";
+import type { IndexedTransaction, MidnightNetwork, MidnightSource, SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { NETWORK_IDENTITY, type OperatorWallet, type WalletOptions } from "../src/index.js";
+import { prover } from "./prover.js";
 
-export * from "../../src/index.js";
+export * from "../src/index.js";
 
 export interface OfflineChain {
+  // The network whose chain name and genesis the node reports.
+  network: MidnightNetwork;
   // How far time has moved past the host's clock, for the chain and for the process alike.
   aheadMs: number;
   // Every transaction handed to the node, in order, whether or not it landed.
   sent: string[];
   landed: Record<string, { raw: string; height: number; address: string; state: string }>;
+  // Every transaction whose DUST the wallet was asked to release.
+  discarded: string[];
 }
 
 const FILE = process.env.OFFLINE_CHAIN!;
@@ -39,8 +44,11 @@ export const source = {
   operator: "offline",
   node: {
     async call(method: string, params: unknown[] = []) {
+      const identity = NETWORK_IDENTITY[read().network];
+      if (method === "system_chain") return identity.chain;
+      if (method === "midnight_ledgerVersion") return "8.1.3";
       if (method === "state_getRuntimeVersion") return { specVersion: 1000300 };
-      if (method === "chain_getBlockHash") return `0x${HEAD}`;
+      if (method === "chain_getBlockHash") return `0x${params[0] === 0 ? identity.genesis : HEAD}`;
       if (method === "state_getStorage" && params[1] === `0x${HEAD}`) {
         const now = Buffer.alloc(8);
         now.writeBigUInt64LE(BigInt(Date.now()));
@@ -77,6 +85,43 @@ export const source = {
 
 export const WALLET_SYNC: SourceEndpoints = { operator: "offline", indexer: "http://127.0.0.1:9/never", indexerWs: "ws://127.0.0.1:9/never", node: "http://127.0.0.1:9/never", headers: {} };
 
+// A script that builds its own source with midnightSource(networkEndpoints(...)) reads this chain
+// too: fetch answers these two URLs from `source`, as the indexer's GraphQL and the node's
+// JSON-RPC would, and refuses every other, so nothing leaves the process.
+const ENDPOINTS: SourceEndpoints = { operator: "offline", indexer: "http://offline.invalid/indexer", indexerWs: "ws://offline.invalid/indexer/ws", node: "http://offline.invalid/node", headers: {} };
+export const networkEndpoints = () => ENDPOINTS;
+
+const graphqlTransaction = (t: IndexedTransaction) => ({
+  __typename: "RegularTransaction",
+  hash: t.hash,
+  raw: t.raw,
+  block: t.block,
+  transactionResult: { status: t.status },
+  contractActions: t.contractActions.map((a) => ({ __typename: a.kind, address: a.address, state: a.state })),
+});
+
+globalThis.fetch = async (url, init) => {
+  const request = JSON.parse(String(init?.body)) as { id?: number; method?: string; params?: unknown[]; query?: string; variables?: { hash: string } };
+  if (String(url) === ENDPOINTS.node) {
+    try {
+      return Response.json({ jsonrpc: "2.0", id: request.id, result: await source.node.call(request.method!, request.params) });
+    } catch (error) {
+      return Response.json({ jsonrpc: "2.0", id: request.id, error: { code: -32000, message: (error as Error).message } });
+    }
+  }
+  if (String(url) !== ENDPOINTS.indexer) throw new Error(`offline: nothing answers ${String(url)}`);
+  try {
+    if (request.query!.startsWith("query Head")) return Response.json({ data: { block: await source.indexer.head() } });
+    if (request.query!.startsWith("query Transactions")) return Response.json({ data: { transactions: (await source.indexer.transactions(request.variables!.hash)).map(graphqlTransaction) } });
+  } catch (error) {
+    // An HTTP failure of the offline indexer reaches midnightSource as that HTTP answer.
+    const [, status, text] = /HTTP (\d+): (.*)$/.exec((error as Error).message) ?? [];
+    if (status === undefined) throw error;
+    return new Response(text, { status: Number(status) });
+  }
+  throw new Error(`offline indexer: unexpected query ${request.query}`);
+};
+
 export const provingService = () => prover;
 
 // A synced wallet with DUST to spare that binds without adding a fee and lands what it submits.
@@ -111,7 +156,11 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       chain.landed[tx.transactionHash()] = { raw: hex(tx.serialize()), height: 500 + Object.keys(chain.landed).length, address: String(deploy.address), state: hex(deploy.initialState.serialize()) };
       write(chain);
     },
-    async discard() {},
+    async discard(tx) {
+      const chain = read();
+      chain.discarded.push(tx.transactionHash());
+      write(chain);
+    },
     async close() {},
   };
 }

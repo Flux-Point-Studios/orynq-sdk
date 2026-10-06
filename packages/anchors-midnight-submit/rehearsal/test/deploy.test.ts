@@ -1,6 +1,6 @@
 // run.ts's deploy phase, offline: each run is its own process over a copy of the real run.ts,
-// whose ./endpoints.js and ../src/index.js are offline.ts (the submit package with its wallet,
-// prover and chain replaced). A failure in one run must leave a deploy the next run finishes and
+// whose ./endpoints.js and ../src/index.js are the package's test/offline.ts (the submit package
+// with its wallet, prover and chain replaced). A failure in one run must leave a deploy the next run finishes and
 // records as the one that landed, which the evidence gate requires.
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -8,10 +8,10 @@ import { chmodSync, copyFileSync, mkdirSync, readFileSync, symlinkSync, writeFil
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, describe, it } from "vitest";
 import { removeScratch, scratch } from "./fixture.js";
-import type { OfflineChain } from "./offline.js";
+import type { OfflineChain } from "../../test/offline.js";
 
 const HERE = new URL("..", import.meta.url).pathname;
-const OFFLINE = new URL("./offline.ts", import.meta.url).pathname;
+const OFFLINE = new URL("../../test/offline.ts", import.meta.url).pathname;
 const MINUTE = 60_000;
 
 function rehearsal() {
@@ -28,7 +28,7 @@ function rehearsal() {
   symlinkSync(OFFLINE, `${root}/src/index.ts`);
   writeFileSync(`${root}/rehearsal/bundles/index.json`, "[]");
   const chainFile = `${root}/chain.json`;
-  writeFileSync(chainFile, JSON.stringify({ aheadMs: 0, sent: [], landed: {} } satisfies OfflineChain));
+  writeFileSync(chainFile, JSON.stringify({ network: "preprod", aheadMs: 0, sent: [], landed: {}, discarded: [] } satisfies OfflineChain));
   const chain = (): OfflineChain => JSON.parse(readFileSync(chainFile, "utf8"));
   const rawFile = `${root}/rehearsal/evidence/raw.json`;
   const raw = () => JSON.parse(readFileSync(rawFile, "utf8"));

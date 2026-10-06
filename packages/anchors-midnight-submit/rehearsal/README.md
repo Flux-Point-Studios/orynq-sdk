@@ -113,8 +113,8 @@ worktree's HEAD).
 
 `pnpm test` in the package runs `test/` (the gate, `verify-all.mjs`, `compose.ts` and `finish.sh`
 end to end over a synthetic rehearsal, a stand-in verify package and a fake `HOME` with 0600
-secrets and SQLite journals, and `run.ts deploy` in its own processes over `test/offline.ts`, the
-submit package with its wallet, prover and chain replaced, failing one run at a chosen step and
+secrets and SQLite journals, and `run.ts deploy` in its own processes over the package's
+`test/offline.ts`, the submit package with its wallet, prover and chain replaced, failing one run at a chosen step and
 checking the next run finishes the same deploy). The synthetic KNOWN_AUTHORS documents carry real
 Ed25519 signatures, and the stand-in verify package runs the real KNOWN_AUTHORS code from
 `../../anchors-midnight/dist`, so the anchors-midnight build must be current (CI builds it

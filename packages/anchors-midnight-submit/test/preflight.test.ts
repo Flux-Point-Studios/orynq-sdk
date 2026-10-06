@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { once } from "node:events";
+import { copyFileSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { REGISTRY_VERIFIER_KEY_SHA256, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { NETWORK_IDENTITY, assertChainIdentity, confirmOnTerminal, confirmationToken, deploySummary } from "../src/preflight.js";
 import type { PreparedDeploy } from "../src/deployer.js";
+import { fresh } from "./fakes.js";
+import type { OfflineChain } from "./offline.js";
 
 const source = (answers: Record<string, unknown>) =>
   ({
@@ -56,13 +61,16 @@ const prepared: PreparedDeploy = {
 };
 
 describe("the deploy summary a human approves", () => {
-  it("names the network, the contract address, the verifier keys, the authority form, the fee and the DUST balance", () => {
-    const text = deploySummary({
+  const summary = (deploy: PreparedDeploy) =>
+    deploySummary({
       chain: { chain: "Midnight Mainnet", genesis: "1941ca8e".padEnd(64, "0"), specVersion: 1000300, ledgerVersion: "8.1.1" },
       wallet: { unshielded: "mn_addr1example", dust: "mn_dust1example" },
       dust: 25_500_000_000_000_000n,
-      prepared,
+      prepared: deploy,
     });
+
+  it("names the network, the contract address, the verifier keys, the authority form, the fee and the DUST balance", () => {
+    const text = summary(prepared);
     for (const expected of [
       "network          mainnet (Midnight Mainnet, genesis 1941ca8e",
       "runtime          1000300, ledger 8.1.1",
@@ -78,6 +86,14 @@ describe("the deploy summary a human approves", () => {
     ]) {
       expect(text).toContain(expected);
     }
+  });
+
+  it("shows a deploy resumed from the journal as the journal holds it, and what confirming then does", () => {
+    expect(summary(prepared)).not.toContain("resumed");
+    expect(summary({ ...prepared, journal: { state: "landed", broadcasts: 1 } })).toMatch(/^journal {10}resumed: these bytes landed; confirming sends nothing and reads the deploy back\n/);
+    expect(summary({ ...prepared, journal: { state: "pending", broadcasts: 2 } })).toMatch(/^journal {10}resumed: these bytes were sent 2 times and have not landed; confirming waits for them and sends nothing new\n/);
+    expect(summary({ ...prepared, journal: { state: "pending", broadcasts: 1 } })).toContain("these bytes were sent 1 time and have not landed");
+    expect(summary({ ...prepared, journal: { state: "pending", broadcasts: 0 } })).toMatch(/^journal {10}resumed: no send of these bytes ever returned; confirming sends them again\n/);
   });
 
   it("asks for a token bound to these exact bytes", () => {
@@ -147,5 +163,117 @@ describe("scripts/deploy-mainnet.ts", () => {
     const r = await deployMainnet(withoutClaudeCode(), "pty");
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/deploy-mainnet: ENOENT: no such file or directory, open '\/nonexistent\/blockfrost\.project_id'/);
+  });
+});
+
+const MINUTE = 60_000;
+const PROMPT = /Type exactly "(DEPLOY [0-9a-f]{16})"/;
+const PACKAGE = new URL("..", import.meta.url).pathname;
+
+// deploy-mainnet itself, copied beside a src/index.ts that is test/offline.ts, so it runs every
+// gate in a pseudo-terminal and deploys through the submit package over an offline mainnet. At
+// the confirmation prompt, `answer` types its reply to the token the script asks for.
+function offlineMainnet() {
+  const root = fresh("deploy-mainnet");
+  mkdirSync(`${root}/scripts`, { recursive: true });
+  mkdirSync(`${root}/src`);
+  copyFileSync(`${PACKAGE}scripts/deploy-mainnet.ts`, `${root}/scripts/deploy-mainnet.ts`);
+  symlinkSync(`${PACKAGE}test/offline.ts`, `${root}/src/index.ts`);
+  symlinkSync(`${PACKAGE}node_modules`, `${root}/node_modules`);
+  writeFileSync(`${root}/package.json`, JSON.stringify({ type: "module" }));
+  const chainFile = `${root}/chain.json`;
+  writeFileSync(chainFile, JSON.stringify({ network: "mainnet", aheadMs: 0, sent: [], landed: {}, discarded: [] } satisfies OfflineChain));
+  writeFileSync(`${root}/wallet.json`, JSON.stringify({ addresses: { unshielded: "mn_addr1offline", shielded: "mn_shield-addr1offline", dust: "mn_dust1offline" } }));
+  const journalPath = `${root}/state/deploy.sqlite`;
+  // The offline wallet, prover and endpoints never open the mnemonic, ZK or Blockfrost paths.
+  const inputs = ["--mnemonic", "/nonexistent/mnemonic.txt", "--wallet-record", "wallet.json", "--blockfrost", "/nonexistent/blockfrost.project_id", "--zk", "/nonexistent/zk"];
+  const command = [process.execPath, "--import", "tsx", "scripts/deploy-mainnet.ts", ...inputs, "--journal", journalPath, "--dust-floor", "1"];
+  const chain = (): OfflineChain => JSON.parse(readFileSync(chainFile, "utf8"));
+  return {
+    async run(answer: (token: string) => string, fault = "") {
+      const child = spawn("script", ["-qec", command.map(quoted).join(" "), "/dev/null"], { cwd: root, env: { ...withoutClaudeCode(), OFFLINE_CHAIN: chainFile, OFFLINE_FAULT: fault }, timeout: 120_000 });
+      let output = "";
+      let token: string | undefined;
+      child.stdout.on("data", (chunk) => {
+        output += chunk;
+        const asked = token === undefined ? PROMPT.exec(output) : null;
+        if (asked) {
+          token = asked[1]!;
+          child.stdin.write(`${answer(token)}\n`);
+        }
+      });
+      const [status] = await once(child, "close");
+      return { status: status as number | null, output: output.replaceAll("\r\n", "\n"), token };
+    },
+    chain,
+    advance: (millis: number) => writeFileSync(chainFile, JSON.stringify({ ...chain(), aheadMs: chain().aheadMs + millis })),
+    journal() {
+      const db = new DatabaseSync(journalPath, { readOnly: true });
+      const rows = db.prepare("select tx_hash, state from attempts order by id").all();
+      db.close();
+      return rows;
+    },
+  };
+}
+
+// Each test runs its own script in its own directory, so they run side by side.
+describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
+  it("sends the bytes it summarized once their token is typed, and reads the registry back from the node", async ({ expect }) => {
+    const m = offlineMainnet();
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(0);
+    const [sent] = m.chain().sent;
+    expect(r.token).toBe(`DEPLOY ${sent!.slice(0, 16)}`);
+    expect(r.output).toContain(`deploy tx hash   ${sent}`);
+    expect(r.output).not.toContain("resumed");
+    expect(r.output).toContain("deployed and read back from the node");
+    expect(m.journal()).toEqual([{ tx_hash: sent, state: "landed" }]);
+  });
+
+  it("discards the prepared bytes and sends nothing when anything but the token is typed", async ({ expect }) => {
+    const m = offlineMainnet();
+    const r = await m.run(() => "yes");
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("deploy-mainnet: not confirmed; the prepared bytes were discarded and nothing was sent");
+    expect(m.chain()).toMatchObject({ sent: [], discarded: [expect.stringMatching(new RegExp(`^${r.token!.slice(7)}`))] });
+    expect(m.journal()).toEqual([]);
+  });
+
+  it("after a run that failed between the broadcast and its readback, shows the journalled deploy again, asks for its token, and finishes it without sending again", async ({ expect }) => {
+    const m = offlineMainnet();
+    const failed = await m.run((token) => token, "lose-read");
+    expect(failed.status, failed.output).toBe(1);
+    expect(failed.output).toMatch(/deploy-mainnet: offline indexer: HTTP 502: Bad Gateway/);
+    const [sent] = m.chain().sent;
+
+    const rerun = await m.run((token) => token);
+    expect(rerun.status, rerun.output).toBe(0);
+    expect(rerun.output).toContain("journal          resumed: these bytes landed; confirming sends nothing and reads the deploy back");
+    expect(rerun.output).toContain(`deploy tx hash   ${sent}`);
+    expect(rerun.token).toBe(failed.token);
+    expect(rerun.output).toContain("deployed and read back from the node");
+    expect(m.chain()).toMatchObject({ sent: [sent], discarded: [] });
+    expect(m.journal()).toEqual([{ tx_hash: sent, state: "landed" }]);
+  });
+
+  it("sends a journalled deploy whose broadcast a proxy refused again only once its token is typed again, and leaves it journalled when it is not", async ({ expect }) => {
+    const m = offlineMainnet();
+    expect(await m.run((token) => token, "refuse-broadcast")).toMatchObject({ status: 1, output: expect.stringMatching(/deploy-mainnet: offline node: HTTP 403: Forbidden/) });
+    const [refused] = m.chain().sent;
+    m.advance(10 * MINUTE);
+
+    const declined = await m.run(() => "no");
+    expect(declined.status, declined.output).toBe(1);
+    expect(declined.output).toContain("journal          resumed: no send of these bytes ever returned; confirming sends them again");
+    expect(declined.output).toContain(`deploy tx hash   ${refused}`);
+    expect(declined.output).toContain("deploy-mainnet: not confirmed; nothing was sent, and the journalled deploy stays in the journal");
+    expect(m.chain()).toMatchObject({ sent: [refused], discarded: [] });
+    expect(m.journal()).toEqual([{ tx_hash: refused, state: "pending" }]);
+
+    const confirmed = await m.run((token) => token);
+    expect(confirmed.status, confirmed.output).toBe(0);
+    expect(confirmed.token).toBe(`DEPLOY ${refused!.slice(0, 16)}`);
+    expect(m.chain()).toMatchObject({ sent: [refused, refused], discarded: [] });
+    expect(m.journal()).toEqual([{ tx_hash: refused, state: "landed" }]);
   });
 });
