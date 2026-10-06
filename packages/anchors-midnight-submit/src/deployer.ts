@@ -57,7 +57,7 @@ const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest(
 export function registryDeployer(options: DeployerOptions) {
   const { network, wallet, source, prover } = options;
   const journal = openJournal(options.journalPath);
-  const chain = chainView(source);
+  const chain = chainView(source, network);
   const ttlMillis = (options.ttlMinutes ?? 15) * 60_000;
   const key: AnchorKey = { network, registry: "registry-deploy", author: "", kind: 0, commitment: sha256(registryInitialState().serialize()), attribute: "" };
 

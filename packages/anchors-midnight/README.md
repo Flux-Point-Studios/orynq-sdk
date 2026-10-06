@@ -159,10 +159,14 @@ contract, at that very block, at an address the bytes deploy. If it does, the ro
 no block until the indexer lists the transaction; only if it holds none is the row retired. The
 rule lives in the journal, so every reconcile of a journal keeps it, whichever caller runs it, and
 a lookup answered from an older indexer snapshot than the head, or an indexer that reports a
-landed deploy failed, never frees the key for a second deploy. Calls are serialized per journal,
-and across processes the attempt that writes its row second never broadcasts. `live(key)` returns
-a key's live attempt with its exact bytes, so a caller that lost its own record of an attempt can
-resume it. `chainView(source)` reads transactions from a source's indexer, contracts from its
+landed deploy failed, never frees the key for a second deploy. A chain view names its network,
+and a row is settled only from a view of its own: `reconcile(chain)` settles the pending rows of
+the view's network alone, and `submitOnce` refuses a key of another network before preparing
+anything, so in a file that holds several networks' rows, another network's indexer, clock and
+node never retire a deploy or land one. Calls are serialized per journal, and across processes
+the attempt that writes its row second never broadcasts. `live(key)` returns a key's live attempt
+with its exact bytes, so a caller that lost its own record of an attempt can resume it.
+`chainView(source, network)` reads `network` through its source: transactions from its
 node (`midnight_contractState` at the block, which answers an empty string where no contract is),
 and chain time from the indexer's newest block only once the source's node holds that block at
 that height, as the smaller of the indexer's time for it and the node's own `Timestamp.Now` in

@@ -21,6 +21,8 @@ export interface Submission {
 }
 
 export interface ChainView {
+  // The network this view reads: the journal settles only that network's rows from it.
+  network: string;
   lookup(txHash: string): Promise<{ status: "SUCCESS" | "PARTIAL_SUCCESS" | "FAILURE"; height: number; blockHash: string } | null>;
   // The newest block the indexer has read, once the node holds it: its hash, and its time as the
   // node records it. A transaction the indexer has not seen by a time past its TTL can no longer
@@ -56,6 +58,7 @@ create unique index if not exists one_live_attempt on attempts(key) where state 
 `;
 
 interface Row {
+  key: string;
   tx_hash: string;
   bytes: Uint8Array;
   ttl_ms: number;
@@ -98,6 +101,8 @@ const deployedBy = (bytes: Uint8Array) =>
 // reconciles the journal: only once chain time is past its TTL plus the margin and the node, at
 // that block, holds no contract at an address they deploy. While it holds one, the row is landed,
 // with no block until the indexer lists its transaction, since a second deploy is a second contract.
+// A row is settled only from a chain view of its own network, so one file may hold the rows of
+// several networks: another network's indexer, clock and node never settle it.
 export function openJournal(path: string, { ttlMarginMillis = 5 * 60_000 }: { ttlMarginMillis?: number } = {}) {
   // Final bytes are a bearer instrument until they land or expire, so only the owner may read
   // the journal; SQLite gives its -wal and -shm files the same mode.
@@ -148,6 +153,7 @@ export function openJournal(path: string, { ttlMarginMillis = 5 * 60_000 }: { tt
     key: AnchorKey,
     { prepare, broadcast, chain }: { prepare: () => Promise<Submission>; broadcast: (bytes: Uint8Array) => Promise<void>; chain: ChainView },
   ): Promise<JournalRow> => {
+    if (key.network !== chain.network) throw new Error(`a ${chain.network} chain view settles no ${key.network} attempt; nothing was prepared or sent`);
     const k = keyOf(key);
     const existing = live.get(k) as unknown as Row | undefined;
     if (existing) {
@@ -180,11 +186,12 @@ export function openJournal(path: string, { ttlMarginMillis = 5 * 60_000 }: { tt
 
   return {
     submitOnce: (key: AnchorKey, how: Parameters<typeof once>[1]): Promise<JournalRow> => serialized(() => once(key, how)),
-    // Settles every pending row from the chain by its txHash, after a restart or while waiting
-    // for inclusion; nothing is prepared or broadcast. Returns those rows as they now stand.
+    // Settles every pending row of the chain view's network by its txHash, after a restart or
+    // while waiting for inclusion; nothing is prepared or broadcast. Returns those rows as they
+    // now stand.
     reconcile: (chain: ChainView): Promise<JournalRow[]> =>
       serialized(async () => {
-        const rows = pending.all() as unknown as Row[];
+        const rows = (pending.all() as unknown as Row[]).filter((row) => row.key.startsWith(`${chain.network}/`));
         for (const row of rows) await reconcile(row, chain);
         return rows.map((row) => view(byHash.get(row.tx_hash) as unknown as Row));
       }),
@@ -205,12 +212,13 @@ export type Journal = ReturnType<typeof openJournal>;
 // pallet_timestamp's Now: twox128("Timestamp") ++ twox128("Now").
 const TIMESTAMP_NOW = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
 
-// The chain as a journal reads it through a source: transactions from its indexer, chain time
-// from the indexer's newest block only once the node holds that block on its own chain, and
-// contracts from the node. Until the node holds that block there is no chain time, so an indexer
-// that is forked, foreign or ahead of the node never retires a row.
-export function chainView(source: MidnightSource): ChainView {
+// The chain of `network` as a journal reads it through that network's source: transactions from
+// its indexer, chain time from the indexer's newest block only once the node holds that block on
+// its own chain, and contracts from the node. Until the node holds that block there is no chain
+// time, so an indexer that is forked, foreign or ahead of the node never retires a row.
+export function chainView(source: MidnightSource, network: string): ChainView {
   return {
+    network,
     async lookup(txHash) {
       const [tx] = (await source.indexer.transactions(txHash)).filter((t) => t.hash === txHash);
       if (!tx) return null;

@@ -80,7 +80,7 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
   const author = hex(authorKey(authorSecret));
   if (network !== "mainnet" && MAINNET_AUTHOR_KEYS.includes(author)) throw new Error(`${options.authorKeyFile} holds the FPS mainnet author key ${author}; a ${network} operator never loads it`);
   const journal = openJournal(options.journalPath);
-  const chain = chainView(source);
+  const chain = chainView(source, network);
   const ttlMillis = (options.ttlMinutes ?? 15) * 60_000;
   const pollMillis = options.pollMillis ?? 3_000;
 

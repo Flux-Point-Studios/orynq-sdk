@@ -21,18 +21,19 @@ type Recorded = "registry" | "anchor" | "hiding" | "stranger";
 const deployKey: AnchorKey = { network: "preprod", registry: "registry-deploy", author: "", kind: 0, commitment: "ef".repeat(32), attribute: "" };
 const bytesOf = (name: Recorded) => new Uint8Array(Buffer.from(fixture[name].tx, "hex"));
 
-// A network that records what reaches it and an indexer that lags it: `index()` makes what
-// arrived visible, and `indexedAt` is the time of the newest block the indexer has read,
-// INDEXED_HEAD, which the node holds. The node holds a contract at each address in `contracts`,
-// and every question put to it about one is recorded in `asked`.
+// A network named `name` that records what reaches it and an indexer that lags it: `index()`
+// makes what arrived visible, and `indexedAt` is the time of the newest block the indexer has
+// read, INDEXED_HEAD, which the node holds. The node holds a contract at each address in
+// `contracts`, and every question put to it about one is recorded in `asked`.
 const INDEXED_HEAD = "cd".repeat(32);
-function network() {
+function network(name = "preprod") {
   const arrived: string[] = [];
   const indexed = new Map<string, "SUCCESS" | "FAILURE">();
   const contracts = new Set<string>();
   const asked: Array<[string, string]> = [];
   let indexedAt = new Date("2029-12-31T23:00:00Z");
   const chain: ChainView = {
+    network: name,
     lookup: async (txHash) => (indexed.has(txHash) ? { status: indexed.get(txHash)!, height: 7, blockHash: "ab".repeat(32) } : null),
     indexedThrough: async () => ({ hash: INDEXED_HEAD, time: indexedAt }),
     holdsContract: async (address, at) => {
@@ -206,6 +207,37 @@ describe("the write-ahead journal", () => {
     journal.close();
   });
 
+  it("settles a row only from a chain view of its own network: a preprod view past a mainnet deploy's TTL plus the margin leaves it pending and asks preprod's node nothing", async () => {
+    const journal = openJournal(file(), { ttlMarginMillis: 5 * MINUTE });
+    const mainnet = network("mainnet");
+    const preprod = network("preprod");
+    const mainnetDeploy: AnchorKey = { ...deployKey, network: "mainnet" };
+    await journal.submitOnce(mainnetDeploy, { prepare: prepared("registry", { n: 0 }), broadcast: mainnet.send("registry"), chain: mainnet.chain });
+    await journal.submitOnce(key, { prepare: prepared("anchor", { n: 0 }), broadcast: preprod.send("anchor"), chain: preprod.chain });
+    mainnet.contracts.add(fixture.registry.address);
+    preprod.index();
+    preprod.advance(new Date(TTL.getTime() + 6 * MINUTE));
+    expect(await journal.reconcile(preprod.chain)).toEqual([expect.objectContaining({ txHash: fixture.anchor.txHash, state: "landed" })]);
+    expect(preprod.asked).toEqual([]);
+    expect(journal.live(mainnetDeploy)).toMatchObject({ txHash: fixture.registry.txHash, state: "pending" });
+    mainnet.advance(new Date(TTL.getTime() + 6 * MINUTE));
+    expect(await journal.reconcile(mainnet.chain)).toEqual([expect.objectContaining({ txHash: fixture.registry.txHash, state: "landed" })]);
+    expect(mainnet.asked).toEqual([[fixture.registry.address, INDEXED_HEAD]]);
+    journal.close();
+  });
+
+  it("refuses a key of another network than its chain view's before preparing or sending anything", async () => {
+    const journal = openJournal(file());
+    const preprod = network("preprod");
+    const count = { n: 0 };
+    const mainnetKey: AnchorKey = { ...key, network: "mainnet" };
+    await expect(journal.submitOnce(mainnetKey, { prepare: prepared("anchor", count), broadcast: preprod.send("anchor"), chain: preprod.chain })).rejects.toThrow(
+      "a preprod chain view settles no mainnet attempt; nothing was prepared or sent",
+    );
+    expect([count.n, preprod.arrived, journal.history(mainnetKey)]).toEqual([0, [], []]);
+    journal.close();
+  });
+
   it("a transaction the chain reports failed frees the key for a new attempt", async () => {
     const journal = openJournal(file());
     const net = network();
@@ -357,36 +389,36 @@ describe("chainView over a Midnight source", () => {
   };
 
   it("reads a transaction's status and block from the indexer", async () => {
-    const view = chainView(source().s);
+    const view = chainView(source().s, "preprod");
     expect(await view.lookup(fixture.anchor.txHash)).toEqual({ status: "SUCCESS", height: 9, blockHash: "cd".repeat(32) });
     expect(await view.lookup(fixture.hiding.txHash)).toBeNull();
   });
 
   it("reads chain time from the indexer's newest block only as the node records that block: on its chain, at its own Timestamp.Now", async () => {
     const agreed = source();
-    expect(await chainView(agreed.s).indexedThrough()).toEqual({ hash: HEAD.hash, time: new Date(HEAD.timestamp) });
+    expect(await chainView(agreed.s, "preprod").indexedThrough()).toEqual({ hash: HEAD.hash, time: new Date(HEAD.timestamp) });
     expect(agreed.calls).toEqual([
       ["chain_getBlockHash", [HEAD.height]],
       ["state_getStorage", [TIMESTAMP_NOW, `0x${HEAD.hash}`]],
     ]);
-    expect(await chainView(source({ nodeTime: HEAD.timestamp - 60_000 }).s).indexedThrough()).toEqual({ hash: HEAD.hash, time: new Date(HEAD.timestamp - 60_000) });
+    expect(await chainView(source({ nodeTime: HEAD.timestamp - 60_000 }).s, "preprod").indexedThrough()).toEqual({ hash: HEAD.hash, time: new Date(HEAD.timestamp - 60_000) });
   });
 
   it("reads the indexer's time for its newest block when the node records a later one there", async () => {
-    expect(await chainView(source({ nodeTime: HEAD.timestamp + 60_000 }).s).indexedThrough()).toEqual({ hash: HEAD.hash, time: new Date(HEAD.timestamp) });
+    expect(await chainView(source({ nodeTime: HEAD.timestamp + 60_000 }).s, "preprod").indexedThrough()).toEqual({ hash: HEAD.hash, time: new Date(HEAD.timestamp) });
   });
 
   it("refuses a node that records no Timestamp.Now in a block it holds", async () => {
-    await expect(chainView(source({ nodeTime: null }).s).indexedThrough()).rejects.toThrow(`the node holds no Timestamp.Now in block ${HEAD.height}`);
+    await expect(chainView(source({ nodeTime: null }).s, "preprod").indexedThrough()).rejects.toThrow(`the node holds no Timestamp.Now in block ${HEAD.height}`);
   });
 
   it("refuses a Timestamp.Now that is not exactly a u64", async () => {
-    await expect(chainView(source({ nodeNow: `${timestamp(HEAD.timestamp)}00` }).s).indexedThrough()).rejects.toThrow("Timestamp.Now has 1 trailing byte");
+    await expect(chainView(source({ nodeNow: `${timestamp(HEAD.timestamp)}00` }).s, "preprod").indexedThrough()).rejects.toThrow("Timestamp.Now has 1 trailing byte");
   });
 
   it("asks the node whether it holds a contract at an address in a given block", async () => {
     const { s, calls } = source();
-    const view = chainView(s);
+    const view = chainView(s, "preprod");
     expect(await view.holdsContract(fixture.registry.address, HEAD.hash)).toBe(true);
     expect(await view.holdsContract("12".repeat(32), HEAD.hash)).toBe(false);
     expect(calls).toEqual([
@@ -396,8 +428,22 @@ describe("chainView over a Midnight source", () => {
   });
 
   it("proves no chain time while the node holds another block at the indexer's newest height, or none yet", async () => {
-    expect(await chainView(source({ nodeHash: `0x${"12".repeat(32)}` }).s).indexedThrough()).toBeNull();
-    expect(await chainView(source({ nodeHash: null }).s).indexedThrough()).toBeNull();
+    expect(await chainView(source({ nodeHash: `0x${"12".repeat(32)}` }).s, "preprod").indexedThrough()).toBeNull();
+    expect(await chainView(source({ nodeHash: null }).s, "preprod").indexedThrough()).toBeNull();
+  });
+
+  it("names the network it reads, and settles none of another network's rows: a preprod node holding a contract at a mainnet deploy's address leaves that deploy pending", async () => {
+    const journal = openJournal(file());
+    const mainnet = network("mainnet");
+    const mainnetDeploy: AnchorKey = { ...deployKey, network: "mainnet" };
+    await journal.submitOnce(mainnetDeploy, { prepare: prepared("registry", { n: 0 }), broadcast: mainnet.send("registry"), chain: mainnet.chain });
+    const { s, calls } = source();
+    const preprod = chainView(s, "preprod");
+    expect(await journal.reconcile(preprod)).toEqual([]);
+    expect(calls).toEqual([]);
+    expect(journal.live(mainnetDeploy)).toMatchObject({ txHash: fixture.registry.txHash, state: "pending" });
+    expect(preprod.network).toBe("preprod");
+    journal.close();
   });
 
   it("keeps a row pending past its TTL by the indexer's clock while the node does not hold the indexer's newest block", async () => {
@@ -407,7 +453,7 @@ describe("chainView over a Midnight source", () => {
     await journal.submitOnce(key, { prepare: prepared("hiding", count), broadcast: net.send("hiding"), chain: net.chain });
     const forked = source({ nodeHash: `0x${"12".repeat(32)}`, nodeTime: TTL.getTime() + 60 * MINUTE });
     const pastTtl = { ...forked.s, indexer: { ...forked.s.indexer, head: async () => ({ ...HEAD, timestamp: TTL.getTime() + 60 * MINUTE }) } } as MidnightSource;
-    expect(await journal.reconcile(chainView(pastTtl))).toEqual([expect.objectContaining({ txHash: fixture.hiding.txHash, state: "pending" })]);
+    expect(await journal.reconcile(chainView(pastTtl, "preprod"))).toEqual([expect.objectContaining({ txHash: fixture.hiding.txHash, state: "pending" })]);
     journal.close();
   });
 });

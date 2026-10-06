@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { REGISTRY_VERIFIER_KEY_SHA256, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { chainView, openJournal } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { NETWORK_IDENTITY, assertChainIdentity, confirmOnTerminal, confirmationToken, deploySummary } from "../src/preflight.js";
 import type { PreparedDeploy } from "../src/deployer.js";
 import { fresh } from "./fakes.js";
@@ -206,6 +207,7 @@ function offlineMainnet() {
       return { status: status as number | null, output: output.replaceAll("\r\n", "\n"), token };
     },
     chain,
+    journalPath,
     advance: (millis: number) => writeFileSync(chainFile, JSON.stringify({ ...chain(), aheadMs: chain().aheadMs + millis })),
     journal() {
       const db = new DatabaseSync(journalPath, { readOnly: true });
@@ -215,6 +217,24 @@ function offlineMainnet() {
     },
   };
 }
+
+// Preprod as a view of it reads a journal: an indexer that has never seen a mainnet transaction,
+// whose newest block, which the node holds, is `aheadMs` past the host's clock, and a node that
+// holds no contract.
+const preprodView = (aheadMs: number) => {
+  const head = { height: 1000, hash: "cd".repeat(32), timestamp: Date.now() + aheadMs };
+  const now = Buffer.alloc(8);
+  now.writeBigUInt64LE(BigInt(head.timestamp));
+  const node = {
+    async call(method: string) {
+      if (method === "chain_getBlockHash") return `0x${head.hash}`;
+      if (method === "state_getStorage") return `0x${now.toString("hex")}`;
+      if (method === "midnight_contractState") return "";
+      throw new Error(`preprod node: unexpected ${method}`);
+    },
+  };
+  return chainView({ operator: "preprod", node, indexer: { transactions: async () => [], head: async () => head } } as unknown as MidnightSource, "preprod");
+};
 
 // Each test runs its own script in its own directory, so they run side by side.
 describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
@@ -252,6 +272,24 @@ describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
     expect(rerun.output).toContain(`deploy tx hash   ${sent}`);
     expect(rerun.token).toBe(failed.token);
     expect(rerun.output).toContain("deployed and read back from the node");
+    expect(m.chain()).toMatchObject({ sent: [sent], discarded: [] });
+    expect(m.journal()).toEqual([{ tx_hash: sent, state: "landed" }]);
+  });
+
+  it("after a run that failed between the broadcast and its readback, resumes that deploy though a preprod reconcile of the same journal file ran past its TTL plus the margin", async ({ expect }) => {
+    const m = offlineMainnet();
+    const failed = await m.run((token) => token, "lose-read");
+    expect(failed.status, failed.output).toBe(1);
+    const [sent] = m.chain().sent;
+    m.advance(20 * MINUTE + 1_000);
+    const shared = openJournal(m.journalPath);
+    expect(await shared.reconcile(preprodView(m.chain().aheadMs))).toEqual([]);
+    shared.close();
+
+    const rerun = await m.run((token) => token);
+    expect(rerun.status, rerun.output).toBe(0);
+    expect(rerun.output).toContain("journal          resumed: these bytes landed; confirming sends nothing and reads the deploy back");
+    expect(rerun.token).toBe(failed.token);
     expect(m.chain()).toMatchObject({ sent: [sent], discarded: [] });
     expect(m.journal()).toEqual([{ tx_hash: sent, state: "landed" }]);
   });
