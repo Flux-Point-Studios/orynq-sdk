@@ -260,8 +260,8 @@ describe("chainView over a Midnight source", () => {
   const HEAD = { height: 10, hash: "ef".repeat(32), timestamp: Date.UTC(2030, 0, 2) };
   const timestamp = (ms: number) => `0x${Buffer.from(u64le(BigInt(ms))).toString("hex")}`;
   // An indexer whose newest block is HEAD, and a node that holds `nodeHash` at HEAD's height and
-  // records `nodeTime` in that block's Timestamp.Now.
-  const source = ({ nodeHash = `0x${HEAD.hash}` as string | null, nodeTime = HEAD.timestamp as number | null } = {}) => {
+  // records `nodeNow` (by default `nodeTime`, encoded) as that block's Timestamp.Now.
+  const source = ({ nodeHash = `0x${HEAD.hash}` as string | null, nodeTime = HEAD.timestamp as number | null, nodeNow = nodeTime === null ? null : timestamp(nodeTime) } = {}) => {
     const calls: Array<[string, unknown[]]> = [];
     const s = {
       indexer: {
@@ -275,7 +275,7 @@ describe("chainView over a Midnight source", () => {
         call: async (method: string, params: unknown[] = []) => {
           calls.push([method, params]);
           if (method === "chain_getBlockHash" && params[0] === HEAD.height) return nodeHash;
-          if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && params[1] === `0x${HEAD.hash}`) return nodeTime === null ? null : timestamp(nodeTime);
+          if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && params[1] === `0x${HEAD.hash}`) return nodeNow;
           throw new Error(`unexpected ${method} ${JSON.stringify(params)}`);
         },
       },
@@ -299,8 +299,16 @@ describe("chainView over a Midnight source", () => {
     expect(await chainView(source({ nodeTime: HEAD.timestamp - 60_000 }).s).indexedThrough()).toEqual(new Date(HEAD.timestamp - 60_000));
   });
 
+  it("reads the indexer's time for its newest block when the node records a later one there", async () => {
+    expect(await chainView(source({ nodeTime: HEAD.timestamp + 60_000 }).s).indexedThrough()).toEqual(new Date(HEAD.timestamp));
+  });
+
   it("refuses a node that records no Timestamp.Now in a block it holds", async () => {
     await expect(chainView(source({ nodeTime: null }).s).indexedThrough()).rejects.toThrow(`the node holds no Timestamp.Now in block ${HEAD.height}`);
+  });
+
+  it("refuses a Timestamp.Now that is not exactly a u64", async () => {
+    await expect(chainView(source({ nodeNow: `${timestamp(HEAD.timestamp)}00` }).s).indexedThrough()).rejects.toThrow("Timestamp.Now has 1 trailing byte");
   });
 
   it("proves no chain time while the node holds another block at the indexer's newest height, or none yet", async () => {
