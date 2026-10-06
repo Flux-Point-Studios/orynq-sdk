@@ -121,17 +121,32 @@ describe.concurrent("run.ts deploy", () => {
     expect(r.chain().sent).toEqual([sent]);
   });
 
-  it("sends the bytes a proxy refused again, unchanged, while the chain has not carried them past their TTL", async ({ expect }) => {
+  it("sends the bytes a proxy refused again, unchanged, while the chain has not reached their TTL", async ({ expect }) => {
     const r = rehearsal();
     expect(await r.run("refuse-broadcast")).toMatchObject({ status: 1, output: expect.stringMatching(/HTTP 403/) });
     const [refused] = r.chain().sent;
-    r.advance(15 * MINUTE + 4 * MINUTE);
+    r.advance(10 * MINUTE);
 
     const rerun = await r.run();
     expect(rerun.status, rerun.output).toBe(0);
     expect(r.raw().deploy).toMatchObject(recorded(r.chain(), refused!));
     expect(r.chain().sent).toEqual([refused, refused]);
     expect(r.journal()).toEqual([{ tx_hash: refused, state: "landed" }]);
+  });
+
+  it("between the refused bytes' TTL and that TTL plus the margin, sends them again, which the node refuses, and prepares nothing new", async ({ expect }) => {
+    const r = rehearsal();
+    expect(await r.run("refuse-broadcast")).toMatchObject({ status: 1 });
+    const [refused] = r.chain().sent;
+    const prepared = r.raw().deploy.prepared;
+    r.advance(15 * MINUTE + 4 * MINUTE);
+
+    const rerun = await r.run();
+    expect(rerun.status, rerun.output).toBe(1);
+    expect(rerun.output).toContain(`offline node: author_submitExtrinsic failed: {"code":1010,"message":"Invalid Transaction","data":"the TTL is behind the chain's time"}`);
+    expect(r.chain().sent).toEqual([refused, refused]);
+    expect(r.raw().deploy).toEqual({ prepared, dustBefore: String(10n ** 16n) });
+    expect(r.journal()).toEqual([{ tx_hash: refused, state: "pending" }]);
   });
 
   it("deploys new bytes, and records those, once the chain has carried the refused ones past their TTL", async ({ expect }) => {

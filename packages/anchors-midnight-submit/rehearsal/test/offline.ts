@@ -1,9 +1,9 @@
 // What run.ts imports as ./endpoints.js and ../src/index.js when deploy.test.ts runs it offline:
 // the submit package itself, with its wallet and prover replaced, over a chain that lives in the
-// JSON file OFFLINE_CHAIN so it outlasts each run.ts process. OFFLINE_FAULT breaks one step of a
-// run: "refuse-broadcast" (a proxy answers the broadcast with HTTP 403), "lose-read" (the first
-// read of a landed transaction fails) or "lose-sync" (the wallet stops syncing once a deploy
-// landed).
+// JSON file OFFLINE_CHAIN so it outlasts each run.ts process, and whose node refuses bytes whose
+// TTL the chain has passed. OFFLINE_FAULT breaks one step of a run: "refuse-broadcast" (a proxy
+// answers the broadcast with HTTP 403), "lose-read" (the first read of a landed transaction
+// fails) or "lose-sync" (the wallet stops syncing once a deploy landed).
 import { readFileSync, writeFileSync } from "node:fs";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import type { IndexedTransaction, MidnightSource, SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
@@ -13,7 +13,7 @@ import { prover } from "../../test/prover.js";
 export * from "../../src/index.js";
 
 export interface OfflineChain {
-  // How far the newest block's time runs ahead of the local clock.
+  // How far time has moved past the host's clock, for the chain and for the process alike.
   aheadMs: number;
   // Every transaction handed to the node, in order, whether or not it landed.
   sent: string[];
@@ -29,6 +29,12 @@ const write = (chain: OfflineChain) => writeFileSync(FILE, JSON.stringify(chain)
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 let readsToLose = FAULT === "lose-read" ? 1 : 0;
 
+// The process reads the chain's clock as its own, as a host whose clock is right does: a deployer
+// stamps its TTLs from Date.now, so a clock left behind the chain's would stamp bytes the chain
+// already refuses.
+const hostNow = Date.now;
+Date.now = () => hostNow() + read().aheadMs;
+
 export const source = {
   operator: "offline",
   node: {
@@ -37,7 +43,7 @@ export const source = {
       if (method === "chain_getBlockHash") return `0x${HEAD}`;
       if (method === "state_getStorage" && params[1] === `0x${HEAD}`) {
         const now = Buffer.alloc(8);
-        now.writeBigUInt64LE(BigInt(Date.now() + read().aheadMs));
+        now.writeBigUInt64LE(BigInt(Date.now()));
         return `0x${now.toString("hex")}`;
       }
       if (method === "midnight_contractState") return Object.values(read().landed).find((t) => t.address === params[0])?.state ?? "";
@@ -58,7 +64,7 @@ export const source = {
       return [{ hash, raw: t.raw, block: { height: t.height, hash: BLOCK, timestamp: Date.now() }, status: "SUCCESS", contractActions: [{ kind: "ContractDeploy", address: t.address, state: t.state }] }];
     },
     async head() {
-      return { height: 1000, hash: HEAD, timestamp: Date.now() + read().aheadMs };
+      return { height: 1000, hash: HEAD, timestamp: Date.now() };
     },
     async latestAction() {
       return null;
@@ -98,6 +104,9 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       chain.sent.push(tx.transactionHash());
       write(chain);
       if (FAULT === "refuse-broadcast") throw new Error("offline node: HTTP 403: Forbidden");
+      if ([...tx.intents!.values()].some((intent) => intent.ttl.getTime() < Date.now())) {
+        throw new Error('offline node: author_submitExtrinsic failed: {"code":1010,"message":"Invalid Transaction","data":"the TTL is behind the chain\'s time"}');
+      }
       const deploy = [...tx.intents!.values()].flatMap((intent) => intent.actions).find((a): a is L.ContractDeploy => a instanceof L.ContractDeploy)!;
       chain.landed[tx.transactionHash()] = { raw: hex(tx.serialize()), height: 500 + Object.keys(chain.landed).length, address: String(deploy.address), state: hex(deploy.initialState.serialize()) };
       write(chain);

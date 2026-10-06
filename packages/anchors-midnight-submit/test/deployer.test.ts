@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { REGISTRY_VERIFIER_KEY_SHA256, registryInitialState } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
@@ -17,8 +17,31 @@ function setup({ tamper, spec }: { tamper?: (tx: L.FinalizedTransaction) => L.Fi
     db.close();
     return out;
   };
-  return { deployer, wallet: w, rows, net, journalPath };
+  // A deploy journalled through a proxy that answered its broadcast with HTTP 403, so its bytes
+  // never reached the node.
+  const refusedByProxy = async () => {
+    const proxy = registryDeployer({
+      network: "preprod",
+      wallet: {
+        ...w,
+        submit: async () => {
+          throw new Error("test node: HTTP 403: Forbidden");
+        },
+      },
+      source: net.source,
+      prover,
+      journalPath,
+      pollMillis: 1,
+    });
+    const refused = await proxy.prepare();
+    await expect(proxy.submit(refused)).rejects.toThrow(/HTTP 403/);
+    proxy.close();
+    return refused;
+  };
+  return { deployer, wallet: w, rows, net, journalPath, refusedByProxy };
 }
+
+const OUTDATED = `test node: author_submitExtrinsic failed: {"code":1010,"message":"Invalid Transaction","data":"the TTL is behind the chain's time"}`;
 
 const MINUTE = 60_000;
 
@@ -89,30 +112,14 @@ describe("registryDeployer", () => {
   });
 
   it("frees the registry for new bytes once the chain is past the TTL of a journalled deploy that never landed, and never sends the old bytes again", async () => {
-    const { deployer, wallet: w, rows, net, journalPath } = setup();
-    const refusingProxy = registryDeployer({
-      network: "preprod",
-      wallet: {
-        ...w,
-        submit: async () => {
-          throw new Error("test node: HTTP 403: Forbidden");
-        },
-      },
-      source: net.source,
-      prover,
-      journalPath,
-      pollMillis: 1,
-    });
-    const stale = await refusingProxy.prepare();
-    await expect(refusingProxy.submit(stale)).rejects.toThrow(/HTTP 403/);
-    refusingProxy.close();
+    const { deployer, wallet: w, rows, net, refusedByProxy } = setup();
+    const stale = await refusedByProxy();
 
     const early = await deployer.prepare();
     await expect(deployer.submit(early)).rejects.toThrow(`a registry deploy is already journalled on preprod: ${stale.txHash} (pending); the prepared bytes were discarded`);
     expect(w.discarded).toEqual([early.txHash]);
 
     net.advance(15 * MINUTE + 5 * MINUTE + 1_000);
-    expect(await deployer.journalled()).toBeNull();
     const next = await deployer.prepare();
     expect(await deployer.submit(next)).toMatchObject({ txHash: next.txHash, address: next.address });
     expect(w.submitted.map((t) => t.transactionHash())).toEqual([next.txHash]);
@@ -120,6 +127,15 @@ describe("registryDeployer", () => {
       { tx_hash: stale.txHash, state: "failed" },
       { tx_hash: next.txHash, state: "landed" },
     ]);
+    deployer.close();
+  });
+
+  it("hands back no deploy once the chain is past the TTL plus the margin of a journalled deploy that never landed", async () => {
+    const { deployer, rows, net, refusedByProxy } = setup();
+    const refused = await refusedByProxy();
+    net.advance(15 * MINUTE + 5 * MINUTE + 1_000);
+    expect(await deployer.journalled()).toBeNull();
+    expect(rows()).toEqual([{ tx_hash: refused.txHash, state: "failed" }]);
     deployer.close();
   });
 
@@ -191,31 +207,29 @@ describe("registryDeployer", () => {
     deployer.close();
   });
 
-  it("hands back a deploy whose bytes a proxy refused while the chain has not carried them past their TTL, and submit sends exactly those bytes again", async () => {
-    const { deployer, wallet: w, rows, net, journalPath } = setup();
-    const refusingProxy = registryDeployer({
-      network: "preprod",
-      wallet: {
-        ...w,
-        submit: async () => {
-          throw new Error("test node: HTTP 403: Forbidden");
-        },
-      },
-      source: net.source,
-      prover,
-      journalPath,
-      pollMillis: 1,
-    });
-    const refused = await refusingProxy.prepare();
-    await expect(refusingProxy.submit(refused)).rejects.toThrow(/HTTP 403/);
-    refusingProxy.close();
-
-    net.advance(15 * MINUTE + 4 * MINUTE);
+  it("hands back a deploy whose bytes a proxy refused while the chain has not reached their TTL, and submit sends exactly those bytes again", async () => {
+    const { deployer, wallet: w, rows, net, refusedByProxy } = setup();
+    const refused = await refusedByProxy();
+    net.advance(10 * MINUTE);
     const resumed = await deployer.journalled();
     expect(resumed).toEqual(refused);
     expect(await deployer.submit(resumed!)).toMatchObject({ txHash: refused.txHash, address: refused.address });
     expect(w.submitted.map((t) => hex(t.serialize()))).toEqual([hex(refused.bytes)]);
     expect(rows()).toEqual([{ tx_hash: refused.txHash, state: "landed" }]);
+    deployer.close();
+  });
+
+  it("between a refused deploy's TTL and its TTL plus the margin, hands back that deploy, whose resend the node refuses, and prepares nothing new", async () => {
+    const { deployer, wallet: w, rows, net, refusedByProxy } = setup();
+    const refused = await refusedByProxy();
+    net.advance(15 * MINUTE + 4 * MINUTE);
+    const payFee = vi.spyOn(w, "payFee");
+    const resumed = await deployer.journalled();
+    expect(resumed).toEqual(refused);
+    await expect(deployer.submit(resumed!)).rejects.toThrow(OUTDATED);
+    expect(w.submitted.map((t) => hex(t.serialize()))).toEqual([hex(refused.bytes)]);
+    expect(payFee).not.toHaveBeenCalled();
+    expect(rows()).toEqual([{ tx_hash: refused.txHash, state: "pending" }]);
     deployer.close();
   });
 
