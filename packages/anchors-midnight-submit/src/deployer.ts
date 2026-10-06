@@ -94,6 +94,9 @@ export function registryDeployer(options: DeployerOptions) {
       if (txHash !== prepared.txHash) throw new Error(`the bytes hash to ${txHash}, not the confirmed ${prepared.txHash}; nothing was sent`);
       if (deploys !== prepared.address) throw new Error(`the bytes deploy ${deploys}, not the confirmed ${prepared.address}; nothing was sent`);
       await assertKnownRuntime(source, network);
+      // A deploy journalled earlier is settled from the chain first: one that the chain has
+      // carried past its TTL unseen no longer holds the registry's key.
+      await journal.reconcile(chain);
       const live = journal.history(key).find((row) => row.state !== "failed");
       if (live && live.txHash !== prepared.txHash) {
         await wallet.discard(finalTransaction(prepared.bytes));

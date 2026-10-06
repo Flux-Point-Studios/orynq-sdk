@@ -13,6 +13,7 @@ let n = 0;
 export const fresh = (name: string) => join(dir, `${n++}-${name}`);
 export const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 export const bytes32 = () => crypto.getRandomValues(new Uint8Array(32));
+const TIMESTAMP_NOW = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
 
 // Final-form bytes without proving: zkir checks each circuit as a prover would, and every proof
 // is the one real registry proof recorded in the verifier's fixtures. The ledger WASM never
@@ -38,15 +39,24 @@ export const deployed = (() => {
 })();
 
 // The chain as the operator sees it: a node that runs `spec` and holds `state` at the registry,
-// and an indexer that lists every transaction once it has reached the node.
+// and an indexer that lists every transaction once it has reached the node. Its newest block,
+// which the node holds too, is `advance`d milliseconds past the local clock.
 export function chain({ spec = 1000300, state = deployed.state }: { spec?: number; state?: L.ContractState } = {}) {
   const landed = new Map<string, IndexedTransaction>();
+  const HEAD = "00".repeat(32);
+  let ahead = 0;
   const source = {
     operator: "test",
     node: {
       async call(method: string, params: unknown[] = []) {
         if (method === "state_getRuntimeVersion") return { specVersion: spec };
         if (method === "midnight_contractState") return params[0] === deployed.address ? hex(state.serialize()) : null;
+        if (method === "chain_getBlockHash" && params[0] === 1000) return `0x${HEAD}`;
+        if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && params[1] === `0x${HEAD}`) {
+          const now = Buffer.alloc(8);
+          now.writeBigUInt64LE(BigInt(Date.now() + ahead));
+          return `0x${now.toString("hex")}`;
+        }
         throw new Error(`unexpected ${method}`);
       },
       async batch() {
@@ -58,7 +68,7 @@ export function chain({ spec = 1000300, state = deployed.state }: { spec?: numbe
         return landed.has(hash) ? [landed.get(hash)!] : [];
       },
       async head() {
-        return { height: 1000, hash: "00".repeat(32), timestamp: Date.now() };
+        return { height: 1000, hash: HEAD, timestamp: Date.now() + ahead };
       },
       async latestAction() {
         return null;
@@ -72,7 +82,7 @@ export function chain({ spec = 1000300, state = deployed.state }: { spec?: numbe
     const txHash = tx.transactionHash();
     landed.set(txHash, { hash: txHash, raw: hex(tx.serialize()), block: { height: 500 + landed.size, hash: "ab".repeat(32), timestamp: Date.now() }, status: "SUCCESS", contractActions: [] });
   };
-  return { source, land };
+  return { source, land, advance: (millis: number) => void (ahead += millis) };
 }
 
 // A wallet that binds without adding a fee, records what it is asked to submit (and what the

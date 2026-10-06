@@ -12,12 +12,14 @@ function setup({ tamper, spec }: { tamper?: (tx: L.FinalizedTransaction) => L.Fi
   const deployer = registryDeployer({ network: "preprod", wallet: w, source: net.source, prover, journalPath, pollMillis: 1 });
   const rows = () => {
     const db = new DatabaseSync(journalPath);
-    const out = db.prepare("select tx_hash, state from attempts").all();
+    const out = db.prepare("select tx_hash, state from attempts order by id").all();
     db.close();
     return out;
   };
-  return { deployer, wallet: w, rows };
+  return { deployer, wallet: w, rows, net, journalPath };
 }
+
+const MINUTE = 60_000;
 
 const mutableDeploy = async () => {
   const mutable = registryInitialState();
@@ -82,6 +84,40 @@ describe("registryDeployer", () => {
     await expect(deployer.submit(second)).rejects.toThrow(new RegExp(`a registry deploy is already journalled on preprod: ${first.txHash}`));
     expect(w.submitted).toHaveLength(1);
     expect(w.discarded).toEqual([second.txHash]);
+    deployer.close();
+  });
+
+  it("frees the registry for new bytes once the chain is past the TTL of a journalled deploy that never landed, and never sends the old bytes again", async () => {
+    const { deployer, wallet: w, rows, net, journalPath } = setup();
+    const refusingProxy = registryDeployer({
+      network: "preprod",
+      wallet: {
+        ...w,
+        submit: async () => {
+          throw new Error("test node: HTTP 403: Forbidden");
+        },
+      },
+      source: net.source,
+      prover,
+      journalPath,
+      pollMillis: 1,
+    });
+    const stale = await refusingProxy.prepare();
+    await expect(refusingProxy.submit(stale)).rejects.toThrow(/HTTP 403/);
+    refusingProxy.close();
+
+    const early = await deployer.prepare();
+    await expect(deployer.submit(early)).rejects.toThrow(`a registry deploy is already journalled on preprod: ${stale.txHash} (pending); the prepared bytes were discarded`);
+    expect(w.discarded).toEqual([early.txHash]);
+
+    net.advance(15 * MINUTE + 5 * MINUTE + 1_000);
+    const next = await deployer.prepare();
+    expect(await deployer.submit(next)).toMatchObject({ txHash: next.txHash, address: next.address });
+    expect(w.submitted.map((t) => t.transactionHash())).toEqual([next.txHash]);
+    expect(rows()).toEqual([
+      { tx_hash: stale.txHash, state: "failed" },
+      { tx_hash: next.txHash, state: "landed" },
+    ]);
     deployer.close();
   });
 
