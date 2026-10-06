@@ -18,12 +18,12 @@
 import { homedir } from "node:os";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { assertRegistryState, midnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import { midnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { agentDriven } from "../src/custody.js";
 import { registryDeployer } from "../src/deployer.js";
 import { networkEndpoints } from "../src/endpoints.js";
 import { assertChainIdentity, confirmOnTerminal, confirmationToken, deploySummary, formatDust } from "../src/preflight.js";
+import { registryStateOnNode } from "../src/submission.js";
 import { openWallet } from "../src/wallet.js";
 import { provingService } from "../src/zk.js";
 
@@ -72,9 +72,7 @@ try {
         fail("not confirmed; the prepared bytes were discarded and nothing was sent");
       }
       const deployment = await deployer.submit(prepared);
-      const state = await source.node.call<string | null>("midnight_contractState", [deployment.address]);
-      if (state === null) fail(`the node holds no contract at ${deployment.address}`);
-      assertRegistryState(L.ContractState.deserialize(Buffer.from(state!.replace(/^0x/, ""), "hex")));
+      if (!(await registryStateOnNode(source, deployment.address))) fail(`the node holds no contract at ${deployment.address}`);
       process.stdout.write(`\ndeployed and read back from the node: ${JSON.stringify(deployment, null, 1)}\n`);
     } finally {
       deployer.close();

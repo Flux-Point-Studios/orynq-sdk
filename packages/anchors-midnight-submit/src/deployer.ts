@@ -9,8 +9,8 @@ import {
   type MidnightSource,
   type RegistryCircuit,
 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { chainView, openJournal, type AnchorKey } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
-import { assertKnownRuntime, declaredFee, finalTransaction, finalizeChecked, submitJournalled, type FeeWallet, type Prover } from "./submission.js";
+import { chainView, openJournal, type AnchorKey, type ChainView } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
+import { assertKnownRuntime, declaredFee, finalTransaction, finalizeChecked, registryStateOnNode, submitJournalled, type FeeWallet, type Prover } from "./submission.js";
 
 // A registry deploy as it will be sent: the exact final bytes and what they do, for a human to
 // read before anything leaves.
@@ -55,7 +55,12 @@ const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest(
 export function registryDeployer(options: DeployerOptions) {
   const { network, wallet, source, prover } = options;
   const journal = openJournal(options.journalPath);
-  const chain = chainView(source);
+  // A deploy took effect once the node holds the registry at the address its bytes deploy: an
+  // indexer lookup older than the head that carried the deploy past its TTL never retires it.
+  const chain: ChainView = {
+    ...chainView(source),
+    tookEffect: async (bytes, at) => (await registryStateOnNode(source, assertRegistryDeployBytes(bytes, "final"), at)) !== null,
+  };
   const ttlMillis = (options.ttlMinutes ?? 15) * 60_000;
   const key: AnchorKey = { network, registry: "registry-deploy", author: "", kind: 0, commitment: sha256(registryInitialState().serialize()), attribute: "" };
 

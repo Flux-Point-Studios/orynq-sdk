@@ -19,14 +19,16 @@ const MINUTE = 60_000;
 const bytesOf = (name: "anchor" | "hiding" | "stranger") => new Uint8Array(Buffer.from(fixture[name].tx, "hex"));
 
 // A network that records what reaches it and an indexer that lags it: `index()` makes what
-// arrived visible, and `indexedAt` is the time of the newest block the indexer has read.
+// arrived visible, and `indexedAt` is the time of the newest block the indexer has read,
+// INDEXED_HEAD, which the node holds.
+const INDEXED_HEAD = "cd".repeat(32);
 function network() {
   const arrived: string[] = [];
   const indexed = new Map<string, "SUCCESS" | "FAILURE">();
   let indexedAt = new Date("2029-12-31T23:00:00Z");
   const chain: ChainView = {
     lookup: async (txHash) => (indexed.has(txHash) ? { status: indexed.get(txHash)!, height: 7, blockHash: "ab".repeat(32) } : null),
-    indexedThrough: async () => indexedAt,
+    indexedThrough: async () => ({ hash: INDEXED_HEAD, time: indexedAt }),
   };
   return {
     chain,
@@ -138,6 +140,46 @@ describe("the write-ahead journal", () => {
       [fixture.anchor.txHash, "failed"],
       [fixture.hiding.txHash, "pending"],
     ]);
+    journal.close();
+  });
+
+  it("before retiring a row the indexer has not seen, asks the node's state at the block whose time is past TTL plus the margin, and keeps the row as landed when its bytes took effect there", async () => {
+    const journal = openJournal(file(), { ttlMarginMillis: 5 * MINUTE });
+    const net = network();
+    const count = { n: 0 };
+    const asked: Array<[string, string]> = [];
+    const chain: ChainView = {
+      ...net.chain,
+      tookEffect: async (bytes, at) => {
+        asked.push([Buffer.from(bytes).toString("hex"), at]);
+        return true;
+      },
+    };
+    await journal.submitOnce(key, { prepare: prepared("anchor", count), broadcast: net.send("anchor"), chain });
+    net.advance(new Date(TTL.getTime() + 4 * MINUTE));
+    await journal.reconcile(chain);
+    expect(asked).toEqual([]);
+    net.advance(new Date(TTL.getTime() + 6 * MINUTE));
+    expect(await journal.submitOnce(key, { prepare: prepared("hiding", count), broadcast: net.send("hiding"), chain })).toEqual({
+      txHash: fixture.anchor.txHash,
+      state: "landed",
+      ttl: TTL,
+      broadcasts: 1,
+    });
+    expect(asked).toEqual([[fixture.anchor.tx, INDEXED_HEAD]]);
+    expect([count.n, net.arrived]).toEqual([1, [fixture.anchor.txHash]]);
+    journal.close();
+  });
+
+  it("retires that row only once the node's state at that block shows its bytes took no effect", async () => {
+    const journal = openJournal(file(), { ttlMarginMillis: 5 * MINUTE });
+    const net = network();
+    const count = { n: 0 };
+    const chain: ChainView = { ...net.chain, tookEffect: async () => false };
+    await journal.submitOnce(key, { prepare: prepared("anchor", count), broadcast: net.send("anchor"), chain });
+    net.advance(new Date(TTL.getTime() + 6 * MINUTE));
+    expect(await journal.reconcile(chain)).toEqual([expect.objectContaining({ txHash: fixture.anchor.txHash, state: "failed" })]);
+    expect(journal.live(key)).toBeUndefined();
     journal.close();
   });
 
@@ -291,16 +333,16 @@ describe("chainView over a Midnight source", () => {
 
   it("reads chain time from the indexer's newest block only as the node records that block: on its chain, at its own Timestamp.Now", async () => {
     const agreed = source();
-    expect(await chainView(agreed.s).indexedThrough()).toEqual(new Date(HEAD.timestamp));
+    expect(await chainView(agreed.s).indexedThrough()).toEqual({ hash: HEAD.hash, time: new Date(HEAD.timestamp) });
     expect(agreed.calls).toEqual([
       ["chain_getBlockHash", [HEAD.height]],
       ["state_getStorage", [TIMESTAMP_NOW, `0x${HEAD.hash}`]],
     ]);
-    expect(await chainView(source({ nodeTime: HEAD.timestamp - 60_000 }).s).indexedThrough()).toEqual(new Date(HEAD.timestamp - 60_000));
+    expect(await chainView(source({ nodeTime: HEAD.timestamp - 60_000 }).s).indexedThrough()).toEqual({ hash: HEAD.hash, time: new Date(HEAD.timestamp - 60_000) });
   });
 
   it("reads the indexer's time for its newest block when the node records a later one there", async () => {
-    expect(await chainView(source({ nodeTime: HEAD.timestamp + 60_000 }).s).indexedThrough()).toEqual(new Date(HEAD.timestamp));
+    expect(await chainView(source({ nodeTime: HEAD.timestamp + 60_000 }).s).indexedThrough()).toEqual({ hash: HEAD.hash, time: new Date(HEAD.timestamp) });
   });
 
   it("refuses a node that records no Timestamp.Now in a block it holds", async () => {
@@ -312,8 +354,8 @@ describe("chainView over a Midnight source", () => {
   });
 
   it("proves no chain time while the node holds another block at the indexer's newest height, or none yet", async () => {
-    expect(await chainView(source({ nodeHash: `0x${"12".repeat(32)}` }).s).indexedThrough()).toEqual(new Date(0));
-    expect(await chainView(source({ nodeHash: null }).s).indexedThrough()).toEqual(new Date(0));
+    expect(await chainView(source({ nodeHash: `0x${"12".repeat(32)}` }).s).indexedThrough()).toBeNull();
+    expect(await chainView(source({ nodeHash: null }).s).indexedThrough()).toBeNull();
   });
 
   it("keeps a row pending past its TTL by the indexer's clock while the node does not hold the indexer's newest block", async () => {

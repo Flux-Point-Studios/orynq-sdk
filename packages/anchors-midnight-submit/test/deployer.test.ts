@@ -158,6 +158,39 @@ describe("registryDeployer", () => {
     deployer.close();
   });
 
+  it("never retires a deploy that landed while the indexer's lookup lags the head it reads chain time from: the node holds the registry at that head", async () => {
+    const { deployer, wallet: w, rows, net, journalPath } = setup();
+    const options = { network: "preprod" as const, prover, journalPath, pollMillis: 1 };
+    const timedOut = registryDeployer({
+      ...options,
+      wallet: {
+        ...w,
+        async submit(tx) {
+          await w.submit(tx);
+          throw new Error("test node: ETIMEDOUT after the node accepted the transaction");
+        },
+      },
+      source: net.source,
+    });
+    const prepared = await timedOut.prepare();
+    await expect(timedOut.submit(prepared)).rejects.toThrow(/ETIMEDOUT/);
+    timedOut.close();
+    net.advance(15 * MINUTE + 5 * MINUTE + 1_000);
+
+    const lagging = registryDeployer({ ...options, wallet: w, source: { ...net.source, indexer: { ...net.source.indexer, transactions: async () => [] } } });
+    expect(await lagging.journalled()).toEqual(prepared);
+    expect(rows()).toEqual([{ tx_hash: prepared.txHash, state: "landed" }]);
+    const second = await lagging.prepare();
+    await expect(lagging.submit(second)).rejects.toThrow(`a registry deploy is already journalled on preprod: ${prepared.txHash} (landed); the prepared bytes were discarded`);
+    expect(w.discarded).toEqual([second.txHash]);
+    await expect(lagging.submit(prepared)).rejects.toThrow(`transaction ${prepared.txHash} took effect on preprod, as the node's state shows, but the indexer does not list it yet`);
+    lagging.close();
+
+    expect(await deployer.submit(prepared)).toEqual({ network: "preprod", address: prepared.address, txHash: prepared.txHash, blockHeight: 500, blockHash: "ab".repeat(32) });
+    expect(w.submitted.map((t) => t.transactionHash())).toEqual([prepared.txHash]);
+    deployer.close();
+  });
+
   it("hands back a deploy whose bytes a proxy refused while the chain has not carried them past their TTL, and submit sends exactly those bytes again", async () => {
     const { deployer, wallet: w, rows, net, journalPath } = setup();
     const refusingProxy = registryDeployer({

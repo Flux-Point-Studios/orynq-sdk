@@ -40,7 +40,7 @@ export const source = {
         now.writeBigUInt64LE(BigInt(Date.now() + read().aheadMs));
         return `0x${now.toString("hex")}`;
       }
-      if (method === "midnight_contractState") return Object.values(read().landed).find((t) => t.address === params[0])?.state ?? null;
+      if (method === "midnight_contractState") return Object.values(read().landed).find((t) => t.address === params[0])?.state ?? "";
       throw new Error(`offline node: unexpected ${method}`);
     },
     async batch() {

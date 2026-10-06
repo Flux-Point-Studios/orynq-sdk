@@ -19,11 +19,14 @@ export const deployed = (() => {
   return { address, state: ([...tx.intents!.values()][0]!.actions[0] as L.ContractDeploy).initialState };
 })();
 
-// The chain as the operator sees it: a node that runs `spec` and holds `state` at the registry,
-// and an indexer that lists every transaction once it has reached the node. Its newest block,
-// which the node holds too, is `advance`d milliseconds past the local clock.
+// The chain as the operator sees it: a node that runs `spec`, holds `state` at the registry and
+// every contract a landed deploy created, and answers an address holding none with an empty
+// string, as Midnight's node does; and an indexer that lists every transaction once it has
+// reached the node. Its newest block, which the node holds too, is `advance`d milliseconds past
+// the local clock.
 export function chain({ spec = 1000300, state = deployed.state }: { spec?: number; state?: L.ContractState } = {}) {
   const landed = new Map<string, IndexedTransaction>();
+  const contracts = new Map([[deployed.address, state]]);
   const HEAD = "00".repeat(32);
   let ahead = 0;
   const source = {
@@ -31,7 +34,10 @@ export function chain({ spec = 1000300, state = deployed.state }: { spec?: numbe
     node: {
       async call(method: string, params: unknown[] = []) {
         if (method === "state_getRuntimeVersion") return { specVersion: spec };
-        if (method === "midnight_contractState") return params[0] === deployed.address ? hex(state.serialize()) : null;
+        if (method === "midnight_contractState") {
+          if (params.length > 1 && params[1] !== `0x${HEAD}`) throw new Error('test node: midnight_contractState failed: {"code":-32602,"message":"Unable to get requested contract state"}');
+          return contracts.has(params[0] as string) ? hex(contracts.get(params[0] as string)!.serialize()) : "";
+        }
         if (method === "chain_getBlockHash" && params[0] === 1000) return `0x${HEAD}`;
         if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && params[1] === `0x${HEAD}`) {
           const now = Buffer.alloc(8);
@@ -62,6 +68,7 @@ export function chain({ spec = 1000300, state = deployed.state }: { spec?: numbe
   const land = (tx: L.FinalizedTransaction) => {
     const txHash = tx.transactionHash();
     landed.set(txHash, { hash: txHash, raw: hex(tx.serialize()), block: { height: 500 + landed.size, hash: "ab".repeat(32), timestamp: Date.now() }, status: "SUCCESS", contractActions: [] });
+    for (const intent of tx.intents?.values() ?? []) for (const action of intent.actions) if (action instanceof L.ContractDeploy) contracts.set(String(action.address), action.initialState);
   };
   return { source, land, advance: (millis: number) => void (ahead += millis) };
 }

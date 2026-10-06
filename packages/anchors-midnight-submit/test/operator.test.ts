@@ -109,6 +109,13 @@ describe("registryOperator.anchor", () => {
     operator.close();
   });
 
+  it("refuses to write to an address that holds no contract, which the node answers with an empty string", async () => {
+    const { operator, wallet: w } = setup({ registry: "cd".repeat(32) });
+    await expect(operator.anchor(entry())).rejects.toThrow(`the preprod node holds no contract at ${"cd".repeat(32)}`);
+    expect(w.submitted).toHaveLength(0);
+    operator.close();
+  });
+
   it("refuses to write to an address whose on-chain state is not the immutable registry", async () => {
     const mutable = registryInitialState();
     mutable.maintenanceAuthority = new L.ContractMaintenanceAuthority([], 0, 0n);

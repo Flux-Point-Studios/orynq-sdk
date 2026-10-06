@@ -151,13 +151,17 @@ after the node accepted it, or a process that dies before or during it, is answe
 that hash and never sent as a second transaction. A row whose broadcast never returned is resent
 with the same bytes. A pending row is retired only when the indexer reports its transaction
 (landed or failed), or when the indexer's newest block is past the transaction's TTL plus a
-margin, in chain time rather than the local clock. Calls are serialized per journal, and across
+margin, in chain time rather than the local clock. Before retiring such a row the journal asks a
+chain view that offers `tookEffect(bytes, block)` whether the node's own state at that very block
+shows the bytes took effect; if it does, the row is landed, with no block until the indexer lists
+the transaction, so a lookup answered from an older indexer snapshot than the head never retires a
+transaction that landed. Calls are serialized per journal, and across
 processes the attempt that writes its row second never broadcasts. `live(key)` returns a key's
 live attempt with its exact bytes, so a caller that lost its own record of an attempt can resume
 it. `chainView(source)` reads transactions from a source's indexer, and chain time from the
 indexer's newest block only once the source's node holds that block at that height, as the
 smaller of the indexer's time for it and the node's own `Timestamp.Now` in it; until the node
-holds it, chain time is the epoch, so an indexer that is forked, foreign or ahead of the node
+holds it there is no chain time, so an indexer that is forked, foreign or ahead of the node
 retires nothing.
 
 ## Known authors
