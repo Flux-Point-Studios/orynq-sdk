@@ -20,11 +20,11 @@ export async function assertKnownRuntime(source: MidnightSource, network: Midnig
   return specVersion;
 }
 
-// The registry's state as the node holds it at `address`, at block `at` or else at its best
-// block, or null when no contract is there, which the node answers with an empty string. A
-// contract there that is not the immutable registry is refused.
-export async function registryStateOnNode(source: MidnightSource, address: string, at?: string): Promise<L.ContractState | null> {
-  const raw = await source.node.call<string | null>("midnight_contractState", at === undefined ? [address] : [address, `0x${at}`]);
+// The registry's state as the node holds it at `address`, or null when no contract is there,
+// which the node answers with an empty string. A contract there that is not the immutable
+// registry is refused.
+export async function registryStateOnNode(source: MidnightSource, address: string): Promise<L.ContractState | null> {
+  const raw = await source.node.call<string | null>("midnight_contractState", [address]);
   if (!raw) return null;
   const state = L.ContractState.deserialize(Buffer.from(raw.replace(/^0x/, ""), "hex"));
   assertRegistryState(state);

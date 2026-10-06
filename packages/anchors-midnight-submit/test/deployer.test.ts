@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
-import { REGISTRY_VERIFIER_KEY_SHA256, registryInitialState } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { REGISTRY_VERIFIER_KEY_SHA256, createAuthorKeyFile, registryInitialState, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { registryDeployer } from "../src/deployer.js";
+import { registryOperator } from "../src/operator.js";
 import { chain, fresh, hex, wallet } from "./fakes.js";
 import { prover } from "./prover.js";
 
@@ -38,7 +39,30 @@ function setup({ tamper, spec }: { tamper?: (tx: L.FinalizedTransaction) => L.Fi
     proxy.close();
     return refused;
   };
-  return { deployer, wallet: w, rows, net, journalPath, refusedByProxy };
+  // A deploy the node accepted and landed while its broadcast timed out, so no broadcast of it returned.
+  const timedOutAfterAccept = async () => {
+    const timedOut = registryDeployer({
+      network: "preprod",
+      wallet: {
+        ...w,
+        async submit(tx) {
+          await w.submit(tx);
+          throw new Error("test node: ETIMEDOUT after the node accepted the transaction");
+        },
+      },
+      source: net.source,
+      prover,
+      journalPath,
+      pollMillis: 1,
+    });
+    const landed = await timedOut.prepare();
+    await expect(timedOut.submit(landed)).rejects.toThrow(/ETIMEDOUT/);
+    timedOut.close();
+    return landed;
+  };
+  // The same chain, read through an indexer whose transaction lookup lags its head and lists nothing.
+  const laggingLookup = { ...net.source, indexer: { ...net.source.indexer, transactions: async () => [] } } as MidnightSource;
+  return { deployer, wallet: w, rows, net, journalPath, refusedByProxy, timedOutAfterAccept, laggingLookup };
 }
 
 const OUTDATED = `test node: author_submitExtrinsic failed: {"code":1010,"message":"Invalid Transaction","data":"the TTL is behind the chain's time"}`;
@@ -175,25 +199,11 @@ describe("registryDeployer", () => {
   });
 
   it("never retires a deploy that landed while the indexer's lookup lags the head it reads chain time from: the node holds the registry at that head", async () => {
-    const { deployer, wallet: w, rows, net, journalPath } = setup();
-    const options = { network: "preprod" as const, prover, journalPath, pollMillis: 1 };
-    const timedOut = registryDeployer({
-      ...options,
-      wallet: {
-        ...w,
-        async submit(tx) {
-          await w.submit(tx);
-          throw new Error("test node: ETIMEDOUT after the node accepted the transaction");
-        },
-      },
-      source: net.source,
-    });
-    const prepared = await timedOut.prepare();
-    await expect(timedOut.submit(prepared)).rejects.toThrow(/ETIMEDOUT/);
-    timedOut.close();
+    const { deployer, wallet: w, rows, net, journalPath, timedOutAfterAccept, laggingLookup } = setup();
+    const prepared = await timedOutAfterAccept();
     net.advance(15 * MINUTE + 5 * MINUTE + 1_000);
 
-    const lagging = registryDeployer({ ...options, wallet: w, source: { ...net.source, indexer: { ...net.source.indexer, transactions: async () => [] } } });
+    const lagging = registryDeployer({ network: "preprod", wallet: w, source: laggingLookup, prover, journalPath, pollMillis: 1 });
     expect(await lagging.journalled()).toEqual({ ...prepared, journal: { state: "landed", broadcasts: 0 } });
     expect(rows()).toEqual([{ tx_hash: prepared.txHash, state: "landed" }]);
     const second = await lagging.prepare();
@@ -204,6 +214,25 @@ describe("registryDeployer", () => {
 
     expect(await deployer.submit(prepared)).toEqual({ network: "preprod", address: prepared.address, txHash: prepared.txHash, blockHeight: 500, blockHash: "ab".repeat(32) });
     expect(w.submitted.map((t) => t.transactionHash())).toEqual([prepared.txHash]);
+    deployer.close();
+  });
+
+  it("never retires a landed deploy from any reconcile of its journal: an operator sharing the journal, reading the lagging lookup, leaves it landed, and no second deploy follows", async () => {
+    const { deployer, wallet: w, rows, net, journalPath, timedOutAfterAccept, laggingLookup } = setup();
+    const prepared = await timedOutAfterAccept();
+    net.advance(15 * MINUTE + 5 * MINUTE + 1_000);
+
+    const authorKeyFile = fresh("author.key");
+    createAuthorKeyFile(authorKeyFile);
+    const operator = registryOperator({ network: "preprod", wallet: w, source: laggingLookup, prover, journalPath, authorKeyFile, registry: prepared.address, pollMillis: 1 });
+    expect(await operator.reconcile()).toEqual([expect.objectContaining({ txHash: prepared.txHash, state: "landed" })]);
+    operator.close();
+
+    expect(await deployer.journalled()).toEqual({ ...prepared, journal: { state: "landed", broadcasts: 0 } });
+    const second = await deployer.prepare();
+    await expect(deployer.submit(second)).rejects.toThrow(`a registry deploy is already journalled on preprod: ${prepared.txHash} (landed); the prepared bytes were discarded`);
+    expect(w.submitted.map((t) => t.transactionHash())).toEqual([prepared.txHash]);
+    expect(rows()).toEqual([{ tx_hash: prepared.txHash, state: "landed" }]);
     deployer.close();
   });
 

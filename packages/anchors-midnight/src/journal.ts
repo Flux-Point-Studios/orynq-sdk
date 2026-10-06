@@ -26,11 +26,9 @@ export interface ChainView {
   // node records it. A transaction the indexer has not seen by a time past its TTL can no longer
   // be included. Null while the node holds no such block.
   indexedThrough(): Promise<{ hash: string; time: Date } | null>;
-  // Whether the node's own state at block `at` shows that `bytes` took effect. Asked at the block
-  // whose time would retire a row the indexer has not seen, so a lookup answered from an older
-  // indexer snapshot than that block never retires a transaction that landed. Without it, the
-  // indexer's word alone retires the row.
-  tookEffect?(bytes: Uint8Array, at: string): Promise<boolean>;
+  // Whether the node holds a contract at `address` in block `at`: what retires a row whose bytes
+  // deploy a contract, asked at the block whose time is past its TTL plus the margin.
+  holdsContract(address: string, at: string): Promise<boolean>;
 }
 
 export interface JournalRow {
@@ -77,21 +75,29 @@ const view = (r: Row): JournalRow => ({
   ...(r.block_hash === null ? {} : { blockHash: r.block_hash }),
 });
 
-const hashOf = (bytes: Uint8Array) => {
+const finalTransaction = (bytes: Uint8Array) => {
   try {
-    return L.Transaction.deserialize("signature", "proof", "binding", bytes).transactionHash();
+    return L.Transaction.deserialize("signature", "proof", "binding", bytes);
   } catch (error) {
     throw new Error(`the prepared bytes are not a final Midnight transaction: ${(error as Error).message}`);
   }
 };
 
+const deployedBy = (bytes: Uint8Array) =>
+  [...(finalTransaction(bytes).intents?.values() ?? [])]
+    .flatMap((intent) => intent.actions)
+    .filter((action): action is L.ContractDeploy => action instanceof L.ContractDeploy)
+    .map((deploy) => String(deploy.address));
+
 // A write-ahead journal of anchor submissions in SQLite. A row is written, with the hash of
 // the exact bytes, before those bytes are broadcast, so a broadcast that fails, times out after
 // the node accepted it, or dies with the process is answered later by its hash and never sent
 // as a second transaction. A pending row is retired only when the indexer reports its
-// transaction, or has read past its TTL plus `ttlMarginMillis` in chain time without seeing it
-// and the chain view, where it can tell, finds that its bytes took no effect by then. A row whose
-// bytes did take effect is landed, with no block until the indexer lists its transaction.
+// transaction, or has read past its TTL plus `ttlMarginMillis` in chain time without seeing it.
+// A row whose bytes deploy a contract is never retired on the indexer's word, whichever caller
+// reconciles the journal: only once chain time is past its TTL plus the margin and the node, at
+// that block, holds no contract at an address they deploy. While it holds one, the row is landed,
+// with no block until the indexer lists its transaction, since a second deploy is a second contract.
 export function openJournal(path: string, { ttlMarginMillis = 5 * 60_000 }: { ttlMarginMillis?: number } = {}) {
   // Final bytes are a bearer instrument until they land or expire, so only the owner may read
   // the journal; SQLite gives its -wal and -shm files the same mode.
@@ -124,13 +130,14 @@ export function openJournal(path: string, { ttlMarginMillis = 5 * 60_000 }: { tt
   // Settles a pending row from the chain; returns it when it stays live, null once it failed.
   const reconcile = async (row: Row, chain: ChainView): Promise<Row | null> => {
     const seen = await chain.lookup(row.tx_hash);
+    const deploys = deployedBy(row.bytes);
     if (seen?.status === "SUCCESS") settle.run("landed", seen.height, seen.blockHash, row.tx_hash);
-    else if (seen) settle.run("failed", seen.height, seen.blockHash, row.tx_hash);
+    else if (seen && deploys.length === 0) settle.run("failed", seen.height, seen.blockHash, row.tx_hash);
     else {
       const head = await chain.indexedThrough();
       if (head && head.time.getTime() > row.ttl_ms + ttlMarginMillis) {
-        const tookEffect = (await chain.tookEffect?.(new Uint8Array(row.bytes), head.hash)) ?? false;
-        settle.run(tookEffect ? "landed" : "failed", null, null, row.tx_hash);
+        const held = await Promise.all(deploys.map((address) => chain.holdsContract(address, head.hash)));
+        settle.run(held.includes(true) ? "landed" : "failed", null, null, row.tx_hash);
       }
     }
     const after = byHash.get(row.tx_hash) as unknown as Row;
@@ -149,7 +156,7 @@ export function openJournal(path: string, { ttlMarginMillis = 5 * 60_000 }: { tt
       if (row) return broadcastRow(row, broadcast);
     }
     const { bytes, ttl } = await prepare();
-    const txHash = hashOf(bytes);
+    const txHash = finalTransaction(bytes).transactionHash();
     try {
       insert.run(k, txHash, bytes, ttl.getTime());
     } catch (error) {
@@ -198,10 +205,10 @@ export type Journal = ReturnType<typeof openJournal>;
 // pallet_timestamp's Now: twox128("Timestamp") ++ twox128("Now").
 const TIMESTAMP_NOW = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
 
-// The chain as a journal reads it through a source: transactions from its indexer, and chain
-// time from the indexer's newest block only once the node holds that block on its own chain.
-// Until then there is no chain time, so an indexer that is forked, foreign or ahead of the node
-// never retires a row.
+// The chain as a journal reads it through a source: transactions from its indexer, chain time
+// from the indexer's newest block only once the node holds that block on its own chain, and
+// contracts from the node. Until the node holds that block there is no chain time, so an indexer
+// that is forked, foreign or ahead of the node never retires a row.
 export function chainView(source: MidnightSource): ChainView {
   return {
     async lookup(txHash) {
@@ -219,6 +226,10 @@ export function chainView(source: MidnightSource): ChainView {
       const recorded = reader.u64();
       reader.end();
       return { hash: head.hash, time: new Date(Math.min(head.timestamp, Number(recorded))) };
+    },
+    // The node answers an address holding no contract with an empty string.
+    async holdsContract(address, at) {
+      return Boolean(await source.node.call<string | null>("midnight_contractState", [address, `0x${at}`]));
     },
   };
 }

@@ -151,18 +151,23 @@ after the node accepted it, or a process that dies before or during it, is answe
 that hash and never sent as a second transaction. A row whose broadcast never returned is resent
 with the same bytes. A pending row is retired only when the indexer reports its transaction
 (landed or failed), or when the indexer's newest block is past the transaction's TTL plus a
-margin, in chain time rather than the local clock. Before retiring such a row the journal asks a
-chain view that offers `tookEffect(bytes, block)` whether the node's own state at that very block
-shows the bytes took effect; if it does, the row is landed, with no block until the indexer lists
-the transaction, so a lookup answered from an older indexer snapshot than the head never retires a
-transaction that landed. Calls are serialized per journal, and across
-processes the attempt that writes its row second never broadcasts. `live(key)` returns a key's
-live attempt with its exact bytes, so a caller that lost its own record of an attempt can resume
-it. `chainView(source)` reads transactions from a source's indexer, and chain time from the
-indexer's newest block only once the source's node holds that block at that height, as the
-smaller of the indexer's time for it and the node's own `Timestamp.Now` in it; until the node
-holds it there is no chain time, so an indexer that is forked, foreign or ahead of the node
-retires nothing.
+margin, in chain time rather than the local clock. A row whose bytes deploy a contract is never
+retired on the indexer's word, since a second deploy is a second contract: whatever the indexer
+reports, other than landed, it stays live until chain time is past its TTL plus the margin, and
+then the journal asks the chain view's `holdsContract(address, block)` whether the node holds a
+contract, at that very block, at an address the bytes deploy. If it does, the row is landed, with
+no block until the indexer lists the transaction; only if it holds none is the row retired. The
+rule lives in the journal, so every reconcile of a journal keeps it, whichever caller runs it, and
+a lookup answered from an older indexer snapshot than the head, or an indexer that reports a
+landed deploy failed, never frees the key for a second deploy. Calls are serialized per journal,
+and across processes the attempt that writes its row second never broadcasts. `live(key)` returns
+a key's live attempt with its exact bytes, so a caller that lost its own record of an attempt can
+resume it. `chainView(source)` reads transactions from a source's indexer, contracts from its
+node (`midnight_contractState` at the block, which answers an empty string where no contract is),
+and chain time from the indexer's newest block only once the source's node holds that block at
+that height, as the smaller of the indexer's time for it and the node's own `Timestamp.Now` in
+it; until the node holds it there is no chain time, so an indexer that is forked, foreign or ahead
+of the node retires nothing.
 
 ## Known authors
 
