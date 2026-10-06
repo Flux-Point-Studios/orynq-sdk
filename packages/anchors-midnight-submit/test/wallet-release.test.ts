@@ -42,9 +42,11 @@ async function walletWithNode(...answers: Array<Error | string>) {
   const reverted = vi.spyOn(WalletFacade.prototype, "revert");
   const wallet = await openWallet({ network: "preprod", mnemonicFile, endpoints: OFFLINE, source, zkDir: "/nonexistent" });
   opened.push(wallet);
-  const paid = (ttlMs = 15 * 60_000) => {
+  const paid = (ttlMs = 15 * 60_000, dustActionsAt?: Date) => {
     const ttl = new Date(Date.now() + ttlMs);
-    return wallet.payFee(L.Transaction.fromParts("preprod", undefined, undefined, L.Intent.new(ttl)).mockProve() as never, ttl);
+    const intent = L.Intent.new(ttl);
+    if (dustActionsAt) intent.dustActions = new L.DustActions("signature", "pre-proof", dustActionsAt, [], []);
+    return wallet.payFee(L.Transaction.fromParts("preprod", undefined, undefined, intent).mockProve() as never, ttl);
   };
   const revertedHashes = () => reverted.mock.calls.map(([tx]) => (tx as L.FinalizedTransaction).transactionHash());
   return { wallet, paid, submitted, revertedHashes };
@@ -79,6 +81,20 @@ describe("the DUST of final bytes the node refused", () => {
     const elsewhere = L.Transaction.fromParts("preprod", undefined, undefined, L.Intent.new(new Date(Date.now() + 60_000))).mockProve().bind() as L.FinalizedTransaction;
     await expect(wallet.submit(elsewhere)).rejects.toThrow(REFUSED);
     expect(revertedHashes()).toEqual([]);
+  });
+});
+
+// exactRevert reads the ledger as it stands when each reverted spend's hold ends, its DUST
+// actions' ctime plus the grace period; wallet-sdk-dust-wallet 4.2.0's own revert reads nothing
+// for spends its list of this process's spends no longer holds, as here.
+describe("the wallet's DUST", () => {
+  it("is freed by exactRevert", async () => {
+    const { wallet, paid } = await walletWithNode();
+    const ctime = new Date(Math.floor(Date.now() / 1000) * 1000);
+    const tx = await paid(15 * 60_000, ctime);
+    const held = vi.spyOn(L.DustLocalState.prototype, "processTtls");
+    await wallet.discard(tx);
+    expect(held.mock.calls).toEqual([[new Date(ctime.getTime() + 3 * 3600_000)]]);
   });
 });
 
