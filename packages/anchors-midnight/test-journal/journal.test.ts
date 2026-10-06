@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { chainView, openJournal, type AnchorKey, type ChainView, type Submission } from "../src/journal.js";
 import { fixture } from "../src/__tests__/anchor-chain.js";
+import { u64le } from "../src/scale.js";
 import type { MidnightSource } from "../src/source.js";
 
 const dir = mkdtempSync(join(tmpdir(), "orynq-journal-"));
@@ -230,19 +231,62 @@ describe("the write-ahead journal", () => {
 });
 
 describe("chainView over a Midnight source", () => {
-  it("reads a transaction's status and block from the indexer, and chain time from its head block", async () => {
-    const source = {
+  const TIMESTAMP_NOW = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
+  const HEAD = { height: 10, hash: "ef".repeat(32), timestamp: Date.UTC(2030, 0, 2) };
+  const timestamp = (ms: number) => `0x${Buffer.from(u64le(BigInt(ms))).toString("hex")}`;
+  // An indexer whose newest block is HEAD, and a node that holds `nodeHash` at HEAD's height and
+  // records `nodeTime` in that block's Timestamp.Now.
+  const source = ({ nodeHash = `0x${HEAD.hash}` as string | null, nodeTime = HEAD.timestamp } = {}) => {
+    const calls: Array<[string, unknown[]]> = [];
+    const s = {
       indexer: {
         transactions: async (hash: string) =>
           hash === fixture.anchor.txHash
             ? [{ hash, raw: "", block: { height: 9, hash: "cd".repeat(32), timestamp: 0 }, status: "SUCCESS", contractActions: [] }]
             : [],
-        head: async () => ({ height: 10, hash: "ef".repeat(32), timestamp: Date.UTC(2030, 0, 2) }),
+        head: async () => HEAD,
+      },
+      node: {
+        call: async (method: string, params: unknown[] = []) => {
+          calls.push([method, params]);
+          if (method === "chain_getBlockHash" && params[0] === HEAD.height) return nodeHash;
+          if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && params[1] === `0x${HEAD.hash}`) return timestamp(nodeTime);
+          throw new Error(`unexpected ${method} ${JSON.stringify(params)}`);
+        },
       },
     } as unknown as MidnightSource;
-    const view = chainView(source);
+    return { s, calls };
+  };
+
+  it("reads a transaction's status and block from the indexer", async () => {
+    const view = chainView(source().s);
     expect(await view.lookup(fixture.anchor.txHash)).toEqual({ status: "SUCCESS", height: 9, blockHash: "cd".repeat(32) });
     expect(await view.lookup(fixture.hiding.txHash)).toBeNull();
-    expect(await view.indexedThrough()).toEqual(new Date(Date.UTC(2030, 0, 2)));
+  });
+
+  it("reads chain time from the indexer's newest block only as the node records that block: on its chain, at its own Timestamp.Now", async () => {
+    const agreed = source();
+    expect(await chainView(agreed.s).indexedThrough()).toEqual(new Date(HEAD.timestamp));
+    expect(agreed.calls).toEqual([
+      ["chain_getBlockHash", [HEAD.height]],
+      ["state_getStorage", [TIMESTAMP_NOW, `0x${HEAD.hash}`]],
+    ]);
+    expect(await chainView(source({ nodeTime: HEAD.timestamp - 60_000 }).s).indexedThrough()).toEqual(new Date(HEAD.timestamp - 60_000));
+  });
+
+  it("proves no chain time while the node holds another block at the indexer's newest height, or none yet", async () => {
+    expect(await chainView(source({ nodeHash: `0x${"12".repeat(32)}` }).s).indexedThrough()).toEqual(new Date(0));
+    expect(await chainView(source({ nodeHash: null }).s).indexedThrough()).toEqual(new Date(0));
+  });
+
+  it("keeps a row pending past its TTL by the indexer's clock while the node does not hold the indexer's newest block", async () => {
+    const journal = openJournal(file());
+    const net = network();
+    const count = { n: 0 };
+    await journal.submitOnce(key, { prepare: prepared("hiding", count), broadcast: net.send("hiding"), chain: net.chain });
+    const forked = source({ nodeHash: `0x${"12".repeat(32)}`, nodeTime: TTL.getTime() + 60 * MINUTE });
+    const pastTtl = { ...forked.s, indexer: { ...forked.s.indexer, head: async () => ({ ...HEAD, timestamp: TTL.getTime() + 60 * MINUTE }) } } as MidnightSource;
+    expect(await journal.reconcile(chainView(pastTtl))).toEqual([expect.objectContaining({ txHash: fixture.hiding.txHash, state: "pending" })]);
+    journal.close();
   });
 });

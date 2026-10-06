@@ -152,8 +152,11 @@ hash and never sent as a second transaction. A row whose broadcast never returne
 the same bytes. A pending row is retired only when the indexer reports its transaction (landed
 or failed), or when the indexer's newest block is past the transaction's TTL plus a margin, in
 chain time rather than the local clock. Calls are serialized per journal, and across processes
-the attempt that writes its row second never broadcasts. `chainView(source)` reads both answers
-from a source's indexer.
+the attempt that writes its row second never broadcasts. `chainView(source)` reads transactions
+from a source's indexer, and chain time from the indexer's newest block only once the source's
+node holds that block at that height, as the smaller of the indexer's time for it and the
+node's own `Timestamp.Now` in it; until the node holds it, chain time is the epoch, so an
+indexer that is forked, foreign or ahead of the node retires nothing.
 
 ## Known authors
 

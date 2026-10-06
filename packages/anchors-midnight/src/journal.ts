@@ -1,6 +1,7 @@
 import { closeSync, constants, openSync, statSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
+import { fromHex, ScaleReader } from "./scale.js";
 import type { MidnightSource } from "./source.js";
 
 // One anchor request: at most one live (pending or landed) attempt exists per key.
@@ -21,8 +22,8 @@ export interface Submission {
 
 export interface ChainView {
   lookup(txHash: string): Promise<{ status: "SUCCESS" | "PARTIAL_SUCCESS" | "FAILURE"; height: number; blockHash: string } | null>;
-  // The time of the newest block the indexer has read: a transaction it has not seen by a time
-  // past its TTL can no longer be included.
+  // The time of the newest block the indexer has read, as the node records that block: a
+  // transaction the indexer has not seen by a time past its TTL can no longer be included.
   indexedThrough(): Promise<Date>;
 }
 
@@ -174,7 +175,13 @@ export function openJournal(path: string, { ttlMarginMillis = 5 * 60_000 }: { tt
 
 export type Journal = ReturnType<typeof openJournal>;
 
-// The chain as a journal reads it through a source's indexer.
+// pallet_timestamp's Now: twox128("Timestamp") ++ twox128("Now").
+const TIMESTAMP_NOW = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
+
+// The chain as a journal reads it through a source: transactions from its indexer, and chain
+// time from the indexer's newest block only once the node holds that block on its own chain.
+// Until then the time is the epoch, so an indexer that is forked, foreign or ahead of the node
+// never retires a row.
 export function chainView(source: MidnightSource): ChainView {
   return {
     async lookup(txHash) {
@@ -183,7 +190,15 @@ export function chainView(source: MidnightSource): ChainView {
       return { status: tx.status ?? "FAILURE", height: tx.block.height, blockHash: tx.block.hash };
     },
     async indexedThrough() {
-      return new Date((await source.indexer.head()).timestamp);
+      const head = await source.indexer.head();
+      const onNode = await source.node.call<string | null>("chain_getBlockHash", [head.height]);
+      if (onNode?.replace(/^0x/, "") !== head.hash) return new Date(0);
+      const now = await source.node.call<string | null>("state_getStorage", [TIMESTAMP_NOW, `0x${head.hash}`]);
+      if (now === null) throw new Error(`the node holds no Timestamp.Now in block ${head.height}`);
+      const reader = new ScaleReader(fromHex(now, "Timestamp.Now"), "Timestamp.Now");
+      const recorded = reader.u64();
+      reader.end();
+      return new Date(Math.min(head.timestamp, Number(recorded)));
     },
   };
 }
