@@ -6,9 +6,10 @@ import { registryDeployer } from "../src/deployer.js";
 import { registryOperator } from "../src/operator.js";
 import { chain, fresh, hex, wallet } from "./fakes.js";
 import { prover } from "./prover.js";
+import type { NodeVersion } from "../../anchors-midnight/src/__tests__/ledger-node.js";
 
-function setup({ tamper, spec }: { tamper?: (tx: L.FinalizedTransaction) => L.FinalizedTransaction; spec?: number } = {}) {
-  const net = chain(spec === undefined ? {} : { spec });
+function setup({ tamper, spec, node }: { tamper?: (tx: L.FinalizedTransaction) => L.FinalizedTransaction; spec?: number; node?: NodeVersion } = {}) {
+  const net = chain({ ...(spec === undefined ? {} : { spec }), ...(node === undefined ? {} : { node }) });
   const journalPath = fresh("journal.sqlite");
   const w = wallet(net, () => journalPath, tamper);
   const deployer = registryDeployer({ network: "preprod", wallet: w, source: net.source, prover, journalPath, pollMillis: 1 });
@@ -154,8 +155,8 @@ describe("registryDeployer", () => {
     deployer.close();
   });
 
-  it("hands back no deploy once the chain is past the TTL plus the margin of a journalled deploy that never landed", async () => {
-    const { deployer, rows, net, refusedByProxy } = setup();
+  it.each(["2.1.0", "1.0.400"] as const)("hands back no deploy once the chain is past the TTL plus the margin of a journalled deploy that never landed, on node %s", async (node) => {
+    const { deployer, rows, net, refusedByProxy } = setup({ node });
     const refused = await refusedByProxy();
     net.advance(15 * MINUTE + 5 * MINUTE + 1_000);
     expect(await deployer.journalled()).toBeNull();

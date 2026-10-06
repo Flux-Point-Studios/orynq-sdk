@@ -1,6 +1,6 @@
 import * as L from "@midnight-ntwrk/ledger-v8";
 import type { ProvingService, UnboundTransaction } from "@midnight-ntwrk/wallet-sdk-capabilities/proving";
-import { KNOWN_RUNTIME_SPEC_VERSIONS, assertRegistryState, type MidnightNetwork, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { KNOWN_RUNTIME_SPEC_VERSIONS, assertRegistryState, contractStateOnNode, type MidnightNetwork, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import type { AnchorKey, ChainView, Journal, JournalRow, Submission } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import type { OperatorWallet } from "./wallet.js";
 
@@ -20,12 +20,11 @@ export async function assertKnownRuntime(source: MidnightSource, network: Midnig
   return specVersion;
 }
 
-// The registry's state as the node holds it at `address`, or null when no contract is there,
-// which the node answers with an empty string. A contract there that is not the immutable
-// registry is refused.
+// The registry's state as the node holds it at `address` in its best block, or null when no
+// contract is there. A contract there that is not the immutable registry is refused.
 export async function registryStateOnNode(source: MidnightSource, address: string): Promise<L.ContractState | null> {
-  const raw = await source.node.call<string | null>("midnight_contractState", [address]);
-  if (!raw) return null;
+  const raw = await contractStateOnNode(source, address);
+  if (raw === null) return null;
   const state = L.ContractState.deserialize(Buffer.from(raw.replace(/^0x/, ""), "hex"));
   assertRegistryState(state);
   return state;

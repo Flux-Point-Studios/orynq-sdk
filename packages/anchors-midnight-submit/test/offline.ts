@@ -1,13 +1,14 @@
 // What a script imports as the submit package (../src/index.js) when a test runs it offline: the
 // submit package itself, with its wallet, prover and endpoints replaced, over a chain that lives
-// in the JSON file OFFLINE_CHAIN so it outlasts each process, and whose node refuses bytes whose
-// TTL the chain has passed. The rehearsal's run.ts also imports it as ./endpoints.js. OFFLINE_FAULT
-// breaks one step of a run: "refuse-broadcast" (a proxy answers the broadcast with HTTP 403),
-// "lose-read" (the first read of a landed transaction fails) or "lose-sync" (the wallet stops
-// syncing once a deploy landed).
+// in the JSON file OFFLINE_CHAIN so it outlasts each process, and whose node, midnight-node 2.1.0
+// as Blockfrost serves it, refuses bytes whose TTL the chain has passed. The rehearsal's run.ts
+// also imports it as ./endpoints.js. OFFLINE_FAULT breaks one step of a run: "refuse-broadcast"
+// (a proxy answers the broadcast with HTTP 403), "lose-read" (the first read of a landed
+// transaction fails) or "lose-sync" (the wallet stops syncing once a deploy landed).
 import { readFileSync, writeFileSync } from "node:fs";
 import * as L from "@midnight-ntwrk/ledger-v8";
-import type { IndexedTransaction, MidnightNetwork, MidnightSource, SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { midnightSource, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { ledgerNode } from "../../anchors-midnight/src/__tests__/ledger-node.js";
 import { NETWORK_IDENTITY, type OperatorWallet, type WalletOptions } from "../src/index.js";
 import { prover } from "./prover.js";
 
@@ -40,56 +41,48 @@ let readsToLose = FAULT === "lose-read" ? 1 : 0;
 const hostNow = Date.now;
 Date.now = () => hostNow() + read().aheadMs;
 
-export const source = {
-  operator: "offline",
-  node: {
-    async call(method: string, params: unknown[] = []) {
-      const identity = NETWORK_IDENTITY[read().network];
-      if (method === "system_chain") return identity.chain;
-      if (method === "midnight_ledgerVersion") return "8.1.3";
-      if (method === "state_getRuntimeVersion") return { specVersion: 1000300 };
-      if (method === "chain_getBlockHash") return `0x${params[0] === 0 ? identity.genesis : HEAD}`;
-      if (method === "state_getStorage" && params[1] === `0x${HEAD}`) {
-        const now = Buffer.alloc(8);
-        now.writeBigUInt64LE(BigInt(Date.now()));
-        return `0x${now.toString("hex")}`;
-      }
-      if (method === "midnight_contractState") return Object.values(read().landed).find((t) => t.address === params[0])?.state ?? "";
-      throw new Error(`offline node: unexpected ${method}`);
-    },
-    async batch() {
-      throw new Error("offline node: unexpected batch");
-    },
+// The node reads its ledger in the newest block and in the block every transaction lands in.
+const ledger = ledgerNode({ blocks: [HEAD, BLOCK], contracts: (address) => Object.values(read().landed).find((t) => t.address === address)?.state });
+
+// The node's answer to one JSON-RPC request.
+function nodeAnswer(method: string, params: unknown[] = []) {
+  const identity = NETWORK_IDENTITY[read().network];
+  if (method === "system_chain") return { result: identity.chain };
+  if (method === "midnight_ledgerVersion") return { result: "8.1.3" };
+  if (method === "state_getRuntimeVersion") return { result: { specVersion: 1000300 } };
+  if (method === "chain_getBlockHash") return { result: `0x${params[0] === 0 ? identity.genesis : HEAD}` };
+  if (method === "state_getStorage" && params[1] === `0x${HEAD}`) {
+    const now = Buffer.alloc(8);
+    now.writeBigUInt64LE(BigInt(Date.now()));
+    return { result: `0x${now.toString("hex")}` };
+  }
+  if (method === "midnight_zswapStateRoot" || method === "midnight_contractState") return ledger.answer(method, params);
+  return { error: { code: -32000, message: `offline node: unexpected ${method}` } };
+}
+
+const indexer = {
+  async transactions(hash: string): Promise<IndexedTransaction[]> {
+    const t = read().landed[hash];
+    if (!t) return [];
+    if (readsToLose > 0) {
+      readsToLose--;
+      throw new Error("offline indexer: HTTP 502: Bad Gateway");
+    }
+    return [{ hash, raw: t.raw, block: { height: t.height, hash: BLOCK, timestamp: Date.now() }, status: "SUCCESS", contractActions: [{ kind: "ContractDeploy", address: t.address, state: t.state }] }];
   },
-  indexer: {
-    async transactions(hash: string): Promise<IndexedTransaction[]> {
-      const t = read().landed[hash];
-      if (!t) return [];
-      if (readsToLose > 0) {
-        readsToLose--;
-        throw new Error("offline indexer: HTTP 502: Bad Gateway");
-      }
-      return [{ hash, raw: t.raw, block: { height: t.height, hash: BLOCK, timestamp: Date.now() }, status: "SUCCESS", contractActions: [{ kind: "ContractDeploy", address: t.address, state: t.state }] }];
-    },
-    async head() {
-      return { height: 1000, hash: HEAD, timestamp: Date.now() };
-    },
-    async latestAction() {
-      return null;
-    },
-    contractActions() {
-      throw new Error("offline indexer: unexpected subscription");
-    },
+  async head() {
+    return { height: 1000, hash: HEAD, timestamp: Date.now() };
   },
-} as unknown as MidnightSource;
+};
 
 export const WALLET_SYNC: SourceEndpoints = { operator: "offline", indexer: "http://127.0.0.1:9/never", indexerWs: "ws://127.0.0.1:9/never", node: "http://127.0.0.1:9/never", headers: {} };
 
-// A script that builds its own source with midnightSource(networkEndpoints(...)) reads this chain
-// too: fetch answers these two URLs from `source`, as the indexer's GraphQL and the node's
-// JSON-RPC would, and refuses every other, so nothing leaves the process.
+// Every source reads this chain through midnightSource: fetch answers these two URLs, as the
+// indexer's GraphQL and the node's JSON-RPC would, and refuses every other, so nothing leaves the
+// process.
 const ENDPOINTS: SourceEndpoints = { operator: "offline", indexer: "http://offline.invalid/indexer", indexerWs: "ws://offline.invalid/indexer/ws", node: "http://offline.invalid/node", headers: {} };
 export const networkEndpoints = () => ENDPOINTS;
+export const source = midnightSource(ENDPOINTS);
 
 const graphqlTransaction = (t: IndexedTransaction) => ({
   __typename: "RegularTransaction",
@@ -100,19 +93,19 @@ const graphqlTransaction = (t: IndexedTransaction) => ({
   contractActions: t.contractActions.map((a) => ({ __typename: a.kind, address: a.address, state: a.state })),
 });
 
+type RpcRequest = { id?: number; method: string; params?: unknown[] };
+
 globalThis.fetch = async (url, init) => {
-  const request = JSON.parse(String(init?.body)) as { id?: number; method?: string; params?: unknown[]; query?: string; variables?: { hash: string } };
+  const body = JSON.parse(String(init?.body));
   if (String(url) === ENDPOINTS.node) {
-    try {
-      return Response.json({ jsonrpc: "2.0", id: request.id, result: await source.node.call(request.method!, request.params) });
-    } catch (error) {
-      return Response.json({ jsonrpc: "2.0", id: request.id, error: { code: -32000, message: (error as Error).message } });
-    }
+    const answer = (r: RpcRequest) => ({ jsonrpc: "2.0", id: r.id, ...nodeAnswer(r.method, r.params) });
+    return Response.json(Array.isArray(body) ? body.map(answer) : answer(body));
   }
   if (String(url) !== ENDPOINTS.indexer) throw new Error(`offline: nothing answers ${String(url)}`);
+  const request = body as { query: string; variables?: { hash: string } };
   try {
-    if (request.query!.startsWith("query Head")) return Response.json({ data: { block: await source.indexer.head() } });
-    if (request.query!.startsWith("query Transactions")) return Response.json({ data: { transactions: (await source.indexer.transactions(request.variables!.hash)).map(graphqlTransaction) } });
+    if (request.query.startsWith("query Head")) return Response.json({ data: { block: await indexer.head() } });
+    if (request.query.startsWith("query Transactions")) return Response.json({ data: { transactions: (await indexer.transactions(request.variables!.hash)).map(graphqlTransaction) } });
   } catch (error) {
     // An HTTP failure of the offline indexer reaches midnightSource as that HTTP answer.
     const [, status, text] = /HTTP (\d+): (.*)$/.exec((error as Error).message) ?? [];

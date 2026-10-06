@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { buildRegistryDeploy, type IndexedTransaction, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { batchOver, ledgerNode, type NodeVersion } from "../../anchors-midnight/src/__tests__/ledger-node.js";
 
 export const dir = mkdtempSync(join(tmpdir(), "orynq-submit-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -21,36 +22,37 @@ export const deployed = (() => {
 })();
 
 // The chain as the operator sees it: a node that runs `spec`, holds `state` at the registry and
-// every contract a landed deploy created, and answers an address holding none with an empty
-// string, as Midnight's node does; and an indexer that lists every transaction once it has
-// reached the node. Its newest block, which the node holds too, is as new as the local clock,
-// and `advance` moves both: a deployer stamps its TTLs from that clock. The node refuses bytes
-// whose TTL the chain has passed, and lands the rest.
-export function chain({ spec = 1000300, state = deployed.state }: { spec?: number; state?: L.ContractState } = {}) {
+// every contract a landed deploy created, and answers for an address holding none as
+// midnight-node `node` does; and an indexer that lists every transaction once it has reached the
+// node. Its newest block, the one block whose ledger the node reads besides its best, is as new
+// as the local clock, and `advance` moves both: a deployer stamps its TTLs from that clock. The
+// node refuses bytes whose TTL the chain has passed, and lands the rest.
+export function chain({ spec = 1000300, state = deployed.state, node = "2.1.0" }: { spec?: number; state?: L.ContractState; node?: NodeVersion } = {}) {
   const landed = new Map<string, IndexedTransaction>();
   const contracts = new Map([[deployed.address, state]]);
   const HEAD = "00".repeat(32);
+  const ledger = ledgerNode({
+    blocks: [HEAD],
+    contracts: (address) => {
+      const held = contracts.get(address);
+      return held && hex(held.serialize());
+    },
+    version: node,
+  });
+  const call = async (method: string, params: unknown[] = []) => {
+    if (method === "state_getRuntimeVersion") return { specVersion: spec };
+    if (method === "midnight_zswapStateRoot" || method === "midnight_contractState") return ledger.call("test", method, params);
+    if (method === "chain_getBlockHash" && params[0] === 1000) return `0x${HEAD}`;
+    if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && params[1] === `0x${HEAD}`) {
+      const now = Buffer.alloc(8);
+      now.writeBigUInt64LE(BigInt(Date.now()));
+      return `0x${now.toString("hex")}`;
+    }
+    throw new Error(`unexpected ${method}`);
+  };
   const source = {
     operator: "test",
-    node: {
-      async call(method: string, params: unknown[] = []) {
-        if (method === "state_getRuntimeVersion") return { specVersion: spec };
-        if (method === "midnight_contractState") {
-          if (params.length > 1 && params[1] !== `0x${HEAD}`) throw new Error('test node: midnight_contractState failed: {"code":-32602,"message":"Unable to get requested contract state"}');
-          return contracts.has(params[0] as string) ? hex(contracts.get(params[0] as string)!.serialize()) : "";
-        }
-        if (method === "chain_getBlockHash" && params[0] === 1000) return `0x${HEAD}`;
-        if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && params[1] === `0x${HEAD}`) {
-          const now = Buffer.alloc(8);
-          now.writeBigUInt64LE(BigInt(Date.now()));
-          return `0x${now.toString("hex")}`;
-        }
-        throw new Error(`unexpected ${method}`);
-      },
-      async batch() {
-        throw new Error("unexpected batch");
-      },
-    },
+    node: { call, batch: batchOver(call) },
     indexer: {
       async transactions(hash: string) {
         return landed.has(hash) ? [landed.get(hash)!] : [];

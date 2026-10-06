@@ -7,6 +7,7 @@ import { chainView, openJournal, type AnchorKey, type ChainView, type Submission
 import { fixture } from "../src/__tests__/anchor-chain.js";
 import { u64le } from "../src/scale.js";
 import type { MidnightSource } from "../src/source.js";
+import { batchOver, ledgerNode, type NodeVersion } from "../src/__tests__/ledger-node.js";
 
 const dir = mkdtempSync(join(tmpdir(), "orynq-journal-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -358,15 +359,26 @@ describe("chainView over a Midnight source", () => {
   const HEAD = { height: 10, hash: "ef".repeat(32), timestamp: Date.UTC(2030, 0, 2) };
   const timestamp = (ms: number) => `0x${Buffer.from(u64le(BigInt(ms))).toString("hex")}`;
   // An indexer whose newest block is HEAD, and a node that holds `nodeHash` at HEAD's height,
-  // records `nodeNow` (by default `nodeTime`, encoded) as that block's Timestamp.Now, and holds
-  // the registry fixture's contract in that block, answering any other address with an empty
-  // string, as Midnight's node does.
+  // records `nodeNow` (by default `nodeTime`, encoded) as that block's Timestamp.Now, and reads
+  // its ledger in the blocks `ledgerIn`, by default HEAD, holding a contract at each address in
+  // `contracts` and answering for any other as midnight-node `version` does.
   const source = ({
     nodeHash = `0x${HEAD.hash}`,
     nodeTime = HEAD.timestamp,
     nodeNow = nodeTime === null ? null : timestamp(nodeTime),
-  }: { nodeHash?: string | null; nodeTime?: number | null; nodeNow?: string | null } = {}) => {
+    ledgerIn = [HEAD.hash],
+    contracts = [fixture.registry.address],
+    version = "2.1.0",
+  }: { nodeHash?: string | null; nodeTime?: number | null; nodeNow?: string | null; ledgerIn?: string[]; contracts?: string[]; version?: NodeVersion } = {}) => {
     const calls: Array<[string, unknown[]]> = [];
+    const ledger = ledgerNode({ blocks: ledgerIn, contracts: (address) => (contracts.includes(address) ? "0102" : undefined), version });
+    const call = async (method: string, params: unknown[] = []) => {
+      calls.push([method, params]);
+      if (method === "chain_getBlockHash" && params[0] === HEAD.height) return nodeHash;
+      if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && params[1] === `0x${HEAD.hash}`) return nodeNow;
+      if (method === "midnight_zswapStateRoot" || method === "midnight_contractState") return ledger.call("test", method, params);
+      throw new Error(`unexpected ${method} ${JSON.stringify(params)}`);
+    };
     const s = {
       indexer: {
         transactions: async (hash: string) =>
@@ -375,15 +387,7 @@ describe("chainView over a Midnight source", () => {
             : [],
         head: async () => HEAD,
       },
-      node: {
-        call: async (method: string, params: unknown[] = []) => {
-          calls.push([method, params]);
-          if (method === "chain_getBlockHash" && params[0] === HEAD.height) return nodeHash;
-          if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && params[1] === `0x${HEAD.hash}`) return nodeNow;
-          if (method === "midnight_contractState" && params[1] === `0x${HEAD.hash}`) return params[0] === fixture.registry.address ? "0x0102" : "";
-          throw new Error(`unexpected ${method} ${JSON.stringify(params)}`);
-        },
-      },
+      node: { call, batch: batchOver(call) },
     } as unknown as MidnightSource;
     return { s, calls };
   };
@@ -416,15 +420,34 @@ describe("chainView over a Midnight source", () => {
     await expect(chainView(source({ nodeNow: `${timestamp(HEAD.timestamp)}00` }).s, "preprod").indexedThrough()).rejects.toThrow("Timestamp.Now has 1 trailing byte");
   });
 
-  it("asks the node whether it holds a contract at an address in a given block", async () => {
-    const { s, calls } = source();
+  it.each(["2.1.0", "1.0.400"] as const)("asks node %s whether it holds a contract at an address in a given block, behind the ledger's zswap root there", async (version) => {
+    const { s, calls } = source({ version });
     const view = chainView(s, "preprod");
     expect(await view.holdsContract(fixture.registry.address, HEAD.hash)).toBe(true);
     expect(await view.holdsContract("12".repeat(32), HEAD.hash)).toBe(false);
     expect(calls).toEqual([
+      ["midnight_zswapStateRoot", [`0x${HEAD.hash}`]],
       ["midnight_contractState", [fixture.registry.address, `0x${HEAD.hash}`]],
+      ["midnight_zswapStateRoot", [`0x${HEAD.hash}`]],
       ["midnight_contractState", ["12".repeat(32), `0x${HEAD.hash}`]],
     ]);
+  });
+
+  it("settles a deploy row past its TTL plus the margin from the node's ledger at the indexer's newest block: pending while the node cannot read it there, landed while node 2.1.0 holds the contract, retired once it answers that none is there", async () => {
+    const journal = openJournal(file(), { ttlMarginMillis: 5 * MINUTE });
+    const net = network();
+    await journal.submitOnce(deployKey, { prepare: prepared("registry", { n: 0 }), broadcast: net.send("registry"), chain: net.chain });
+    const behind = source({ ledgerIn: [], contracts: [] });
+    await expect(journal.reconcile(chainView(behind.s, "preprod"))).rejects.toThrow('test node: midnight_zswapStateRoot failed: {"code":-32602,"message":"Unable to get requested zswap state root"}');
+    expect(journal.live(deployKey)).toMatchObject({ txHash: fixture.registry.txHash, state: "pending" });
+    expect(await journal.reconcile(chainView(source({ contracts: [] }).s, "preprod"))).toEqual([expect.objectContaining({ txHash: fixture.registry.txHash, state: "failed" })]);
+    expect(journal.live(deployKey)).toBeUndefined();
+
+    const landed = openJournal(file(), { ttlMarginMillis: 5 * MINUTE });
+    await landed.submitOnce(deployKey, { prepare: prepared("registry", { n: 0 }), broadcast: net.send("registry"), chain: net.chain });
+    expect(await landed.reconcile(chainView(source().s, "preprod"))).toEqual([expect.objectContaining({ txHash: fixture.registry.txHash, state: "landed" })]);
+    journal.close();
+    landed.close();
   });
 
   it("proves no chain time while the node holds another block at the indexer's newest height, or none yet", async () => {

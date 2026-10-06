@@ -31,7 +31,7 @@ export {
   verifyFinality,
 } from "./grandpa.js";
 export type { AuthoritySet, BlockRef, FinalityCheckpoint, FinalityProof, FinalityResult, FinalityRpc, GrandpaJustification } from "./grandpa.js";
-export { blockfrostEndpoints, finalityRpc, midnightSource, sourceEndpoints } from "./source.js";
+export { blockfrostEndpoints, contractStateOnNode, finalityRpc, midnightSource, sourceEndpoints } from "./source.js";
 export type { IndexedAction, IndexedTransaction, MidnightSource, SourceEndpoints } from "./source.js";
 export {
   headerFromRpc,

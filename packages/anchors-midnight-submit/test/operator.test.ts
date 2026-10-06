@@ -109,8 +109,8 @@ describe("registryOperator.anchor", () => {
     operator.close();
   });
 
-  it("refuses to write to an address that holds no contract, which the node answers with an empty string", async () => {
-    const { operator, wallet: w } = setup({ registry: "cd".repeat(32) });
+  it.each(["2.1.0", "1.0.400"] as const)("refuses to write to an address that holds no contract, however node %s answers for one", async (node) => {
+    const { operator, wallet: w } = setup({ registry: "cd".repeat(32), net: chain({ node }) });
     await expect(operator.anchor(entry())).rejects.toThrow(`the preprod node holds no contract at ${"cd".repeat(32)}`);
     expect(w.submitted).toHaveLength(0);
     operator.close();

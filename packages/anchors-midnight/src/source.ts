@@ -43,8 +43,21 @@ export interface MidnightSource {
   };
   node: {
     call<T = unknown>(method: string, params?: unknown[]): Promise<T>;
+    // Every request in one JSON-RPC request; refused at its first failed request in request
+    // order, so the requests before it were answered.
     batch<T = unknown>(calls: Array<[method: string, params: unknown[]]>): Promise<T[]>;
   };
+}
+
+// A node's JSON-RPC error answer to `method`, with the answer's error code.
+export class NodeError extends Error {
+  constructor(
+    message: string,
+    readonly method: string,
+    readonly code: number | undefined,
+  ) {
+    super(message);
+  }
 }
 
 // A Blockfrost project id: a lowercase prefix, then 32 letters and digits. Nothing else is sent
@@ -132,7 +145,10 @@ export function midnightSource(endpoints: SourceEndpoints): MidnightSource {
   };
   const answer = (method: string, a: RpcAnswer | undefined) => {
     if (!a) throw new Error(`${endpoints.operator} node: no answer to ${method}`);
-    if (a.error !== undefined) throw new Error(redact(`${endpoints.operator} node: ${method} failed: ${JSON.stringify(a.error)}`));
+    if (a.error !== undefined) {
+      const code = (a.error as { code?: unknown } | null)?.code;
+      throw new NodeError(redact(`${endpoints.operator} node: ${method} failed: ${JSON.stringify(a.error)}`), method, typeof code === "number" ? code : undefined);
+    }
     return a.result;
   };
   const graphql = async <T>(query: string, variables: Record<string, unknown>): Promise<T> => {
@@ -266,6 +282,29 @@ function subscribe(endpoints: SourceEndpoints, redact: (s: string) => string, ad
       return { value: undefined, done: true };
     },
   };
+}
+
+// The state the node holds at `address` in block `at` (its best block when none is named), or
+// null when it holds no contract there. midnight-node 1.0 answers for an address holding no
+// contract with an empty string, 2.x with JSON-RPC error -32602, its answer too in a block whose
+// ledger it cannot read, such as one it does not hold. So the contract is read in one request
+// behind the ledger's zswap root in the same block: a batch is refused at its first failed
+// request, so -32602 on the contract read means the node read that ledger and found no contract.
+// Any MidnightSource's node may raise that error, so it is recognized by its method and code.
+export async function contractStateOnNode(source: MidnightSource, address: string, at?: string): Promise<string | null> {
+  const block = at === undefined ? [] : [`0x${at}`];
+  try {
+    const [, state] = await source.node.batch<unknown>([
+      ["midnight_zswapStateRoot", block],
+      ["midnight_contractState", [address, ...block]],
+    ]);
+    if (typeof state !== "string") throw new Error(`${source.operator} node: midnight_contractState answered something other than a string`);
+    return state === "" ? null : state;
+  } catch (error) {
+    const refused = error as Partial<NodeError> | undefined;
+    if (refused?.method === "midnight_contractState" && refused.code === -32602) return null;
+    throw error;
+  }
 }
 
 // GRANDPA finality proofs and headers through a source's node, one batched request per call.

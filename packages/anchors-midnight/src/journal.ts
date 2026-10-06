@@ -2,7 +2,7 @@ import { closeSync, constants, openSync, statSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { fromHex, ScaleReader } from "./scale.js";
-import type { MidnightSource } from "./source.js";
+import { contractStateOnNode, type MidnightSource } from "./source.js";
 
 // One anchor request: at most one live (pending or landed) attempt exists per key.
 export interface AnchorKey {
@@ -235,9 +235,8 @@ export function chainView(source: MidnightSource, network: string): ChainView {
       reader.end();
       return { hash: head.hash, time: new Date(Math.min(head.timestamp, Number(recorded))) };
     },
-    // The node answers an address holding no contract with an empty string.
     async holdsContract(address, at) {
-      return Boolean(await source.node.call<string | null>("midnight_contractState", [address, `0x${at}`]));
+      return (await contractStateOnNode(source, address, at)) !== null;
     },
   };
 }

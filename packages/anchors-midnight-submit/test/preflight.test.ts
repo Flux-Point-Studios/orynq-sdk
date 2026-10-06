@@ -9,6 +9,7 @@ import { REGISTRY_VERIFIER_KEY_SHA256, type MidnightSource } from "@fluxpointstu
 import { chainView, openJournal } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { NETWORK_IDENTITY, assertChainIdentity, confirmOnTerminal, confirmationToken, deploySummary } from "../src/preflight.js";
 import type { PreparedDeploy } from "../src/deployer.js";
+import { batchOver, ledgerNode } from "../../anchors-midnight/src/__tests__/ledger-node.js";
 import { fresh } from "./fakes.js";
 import type { OfflineChain } from "./offline.js";
 
@@ -225,14 +226,14 @@ const preprodView = (aheadMs: number) => {
   const head = { height: 1000, hash: "cd".repeat(32), timestamp: Date.now() + aheadMs };
   const now = Buffer.alloc(8);
   now.writeBigUInt64LE(BigInt(head.timestamp));
-  const node = {
-    async call(method: string) {
-      if (method === "chain_getBlockHash") return `0x${head.hash}`;
-      if (method === "state_getStorage") return `0x${now.toString("hex")}`;
-      if (method === "midnight_contractState") return "";
-      throw new Error(`preprod node: unexpected ${method}`);
-    },
+  const ledger = ledgerNode({ blocks: [head.hash], contracts: () => undefined });
+  const call = async (method: string, params: unknown[] = []) => {
+    if (method === "chain_getBlockHash") return `0x${head.hash}`;
+    if (method === "state_getStorage") return `0x${now.toString("hex")}`;
+    if (method === "midnight_zswapStateRoot" || method === "midnight_contractState") return ledger.call("preprod", method, params);
+    throw new Error(`preprod node: unexpected ${method}`);
   };
+  const node = { call, batch: batchOver(call) };
   return chainView({ operator: "preprod", node, indexer: { transactions: async () => [], head: async () => head } } as unknown as MidnightSource, "preprod");
 };
 
@@ -292,6 +293,25 @@ describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
     expect(rerun.token).toBe(failed.token);
     expect(m.chain()).toMatchObject({ sent: [sent], discarded: [] });
     expect(m.journal()).toEqual([{ tx_hash: sent, state: "landed" }]);
+  });
+
+  it("once the chain is past the TTL plus the margin of a deploy whose broadcast a proxy refused, retires it, then shows new bytes, asks for their token and deploys them", async ({ expect }) => {
+    const m = offlineMainnet();
+    expect(await m.run((token) => token, "refuse-broadcast")).toMatchObject({ status: 1 });
+    const [refused] = m.chain().sent;
+    m.advance(15 * MINUTE + 5 * MINUTE + 1_000);
+
+    const rerun = await m.run((token) => token);
+    expect(rerun.status, rerun.output).toBe(0);
+    const [, deployed] = m.chain().sent;
+    expect(deployed).not.toBe(refused);
+    expect(rerun.token).toBe(`DEPLOY ${deployed!.slice(0, 16)}`);
+    expect(rerun.output).not.toContain("resumed");
+    expect(rerun.output).toContain("deployed and read back from the node");
+    expect(m.journal()).toEqual([
+      { tx_hash: refused, state: "failed" },
+      { tx_hash: deployed, state: "landed" },
+    ]);
   });
 
   it("sends a journalled deploy whose broadcast a proxy refused again only once its token is typed again, and leaves it journalled when it is not", async ({ expect }) => {
