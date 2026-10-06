@@ -4,7 +4,8 @@ import type { AddressInfo } from "node:net";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { blockfrostEndpoints, finalityRpc, midnightSource, sourceEndpoints } from "../source.js";
+import { blockfrostEndpoints, contractStateOnNode, finalityRpc, midnightSource, sourceEndpoints } from "../source.js";
+import { ledgerNode, type NodeVersion } from "./ledger-node.js";
 
 // The shape of a Blockfrost project id: a lowercase prefix, then 32 letters and digits.
 const TOKEN = "mainnetSECRETtoken0123456789abcdefABCDE";
@@ -57,6 +58,15 @@ describe("midnightSource", () => {
     expect(await failure(source().node.batch([["a", []], ["b", []]]))).toMatch(/test node: no answer to a/);
     handler = (b) => ({ json: b.map((c: any) => ({ jsonrpc: "2.0", id: c.id, error: { code: -32000, message: "boom" } })) });
     expect(await failure(source().node.batch([["a", []]]))).toMatch(/test node: a failed: .*boom/);
+  });
+
+  it("refuses a batch at its first failed request in request order, with that request's method and JSON-RPC error code", async () => {
+    const errors: Record<string, unknown> = { b: { code: -32602, message: "Unable to get requested contract state" }, c: { code: -32000, message: "boom" } };
+    handler = (b) => ({ json: [...b].reverse().map((c: any) => ({ jsonrpc: "2.0", id: c.id, ...(c.method in errors ? { error: errors[c.method] } : { result: 1 }) })) });
+    const refused = await source().node.batch([["a", []], ["b", []], ["c", []]]).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ method: "b", code: -32602, message: 'test node: b failed: {"code":-32602,"message":"Unable to get requested contract state"}' });
+    handler = (b) => ({ json: { jsonrpc: "2.0", id: b.id, error: "no code" } });
+    expect(await source().node.call("a").catch((e: unknown) => e)).toMatchObject({ method: "a", code: undefined });
   });
 
   it("never lets the credential into an error, from a status, a JSON-RPC error or a body that echoes it", async () => {
@@ -112,6 +122,56 @@ describe("midnightSource", () => {
     expect(await rpc.proveFinality([1, 2])).toEqual([new Uint8Array([10, 11]), null]);
     expect(await rpc.headers(["0x" + "aa".repeat(32)])).toEqual([{ number: "0x1" }]);
     expect(seen.at(-1)!.body).toMatchObject([{ method: "chain_getHeader", params: ["0x" + "aa".repeat(32)] }]);
+  });
+});
+
+describe("contractStateOnNode", () => {
+  const AT = "ef".repeat(32);
+  const REGISTRY = "a3".repeat(32);
+  const ABSENT = "cd".repeat(32);
+  const STATE = "6d69646e696768743a636f6e7472616374";
+  // A node whose ledger holds the registry in its best block and in AT, or only in its best block.
+  const serve = (version: NodeVersion, blocks = [AT]) => {
+    const node = ledgerNode({ blocks, contracts: (address) => (address === REGISTRY ? STATE : undefined), version });
+    handler = (b) => ({ json: (Array.isArray(b) ? b : [b]).map((c: any) => ({ jsonrpc: "2.0", id: c.id, ...node.answer(c.method, c.params) })) });
+  };
+  const asked = (since: number) => seen.slice(since).map((r) => (r.body as Array<{ method: string; params: unknown[] }>).map((c) => [c.method, c.params]));
+
+  it.each(["2.1.0", "1.0.400"] as const)("reads a contract's state, or null where none is, in one request behind the ledger's zswap root at the same block (node %s)", async (version) => {
+    serve(version);
+    const since = seen.length;
+    expect(await contractStateOnNode(source(), REGISTRY, AT)).toBe(STATE);
+    expect(await contractStateOnNode(source(), ABSENT, AT)).toBeNull();
+    expect(await contractStateOnNode(source(), ABSENT)).toBeNull();
+    expect(asked(since)).toEqual([
+      [
+        ["midnight_zswapStateRoot", [`0x${AT}`]],
+        ["midnight_contractState", [REGISTRY, `0x${AT}`]],
+      ],
+      [
+        ["midnight_zswapStateRoot", [`0x${AT}`]],
+        ["midnight_contractState", [ABSENT, `0x${AT}`]],
+      ],
+      [
+        ["midnight_zswapStateRoot", []],
+        ["midnight_contractState", [ABSENT]],
+      ],
+    ]);
+  });
+
+  it("refuses to read a block whose ledger the node cannot read there, which node 2.1.0 answers as it answers an absent contract", async () => {
+    serve("2.1.0", []);
+    await expect(contractStateOnNode(source(), ABSENT, AT)).rejects.toThrow('test node: midnight_zswapStateRoot failed: {"code":-32602,"message":"Unable to get requested zswap state root"}');
+    await expect(contractStateOnNode(source(), REGISTRY, AT)).rejects.toThrow("Unable to get requested zswap state root");
+  });
+
+  it("refuses any other answer to the contract read: another error, or a result that is not a string", async () => {
+    handler = (b) => ({ json: [{ jsonrpc: "2.0", id: b[0].id, result: [1] }, { jsonrpc: "2.0", id: b[1].id, error: { code: -32603, message: "Internal error" } }] });
+    await expect(contractStateOnNode(source(), REGISTRY, AT)).rejects.toThrow('test node: midnight_contractState failed: {"code":-32603,"message":"Internal error"}');
+    for (const answer of [{ result: null }, {}, { result: 7 }]) {
+      handler = (b) => ({ json: [{ jsonrpc: "2.0", id: b[0].id, result: [1] }, { jsonrpc: "2.0", id: b[1].id, ...answer }] });
+      await expect(contractStateOnNode(source(), ABSENT, AT)).rejects.toThrow("test node: midnight_contractState answered something other than a string");
+    }
   });
 });
 

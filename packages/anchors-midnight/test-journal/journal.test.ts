@@ -7,6 +7,7 @@ import { chainView, openJournal, type AnchorKey, type ChainView, type Submission
 import { fixture } from "../src/__tests__/anchor-chain.js";
 import { u64le } from "../src/scale.js";
 import type { MidnightSource } from "../src/source.js";
+import { batchOver, ledgerNode, type NodeVersion } from "../src/__tests__/ledger-node.js";
 
 const dir = mkdtempSync(join(tmpdir(), "orynq-journal-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -16,30 +17,45 @@ const file = () => join(dir, `journal-${n++}.sqlite`);
 const key: AnchorKey = { network: "preprod", registry: fixture.registry.address, author: fixture.author.key, kind: 1, commitment: fixture.anchor.commitment, attribute: "00".repeat(32) };
 const TTL = new Date("2030-01-01T00:00:00Z");
 const MINUTE = 60_000;
-const bytesOf = (name: "anchor" | "hiding" | "stranger") => new Uint8Array(Buffer.from(fixture[name].tx, "hex"));
+// The registry fixture deploys the registry; the others call it.
+type Recorded = "registry" | "anchor" | "hiding" | "stranger";
+const deployKey: AnchorKey = { network: "preprod", registry: "registry-deploy", author: "", kind: 0, commitment: "ef".repeat(32), attribute: "" };
+const bytesOf = (name: Recorded) => new Uint8Array(Buffer.from(fixture[name].tx, "hex"));
 
-// A network that records what reaches it and an indexer that lags it: `index()` makes what
-// arrived visible, and `indexedAt` is the time of the newest block the indexer has read.
-function network() {
+// A network named `name` that records what reaches it and an indexer that lags it: `index()`
+// makes what arrived visible, and `indexedAt` is the time of the newest block the indexer has
+// read, INDEXED_HEAD, which the node holds. The node holds a contract at each address in
+// `contracts`, and every question put to it about one is recorded in `asked`.
+const INDEXED_HEAD = "cd".repeat(32);
+function network(name = "preprod") {
   const arrived: string[] = [];
   const indexed = new Map<string, "SUCCESS" | "FAILURE">();
+  const contracts = new Set<string>();
+  const asked: Array<[string, string]> = [];
   let indexedAt = new Date("2029-12-31T23:00:00Z");
   const chain: ChainView = {
+    network: name,
     lookup: async (txHash) => (indexed.has(txHash) ? { status: indexed.get(txHash)!, height: 7, blockHash: "ab".repeat(32) } : null),
-    indexedThrough: async () => indexedAt,
+    indexedThrough: async () => ({ hash: INDEXED_HEAD, time: indexedAt }),
+    holdsContract: async (address, at) => {
+      asked.push([address, at]);
+      return contracts.has(address);
+    },
   };
   return {
     chain,
     arrived,
+    contracts,
+    asked,
     index: (status: "SUCCESS" | "FAILURE" = "SUCCESS") => arrived.forEach((h) => indexed.set(h, status)),
     advance: (to: Date) => (indexedAt = to),
-    send: (name: "anchor" | "hiding" | "stranger") => async (bytes: Uint8Array) => {
+    send: (name: Recorded) => async (bytes: Uint8Array) => {
       expect(Buffer.from(bytes).toString("hex")).toBe(fixture[name].tx);
       arrived.push(fixture[name].txHash);
     },
   };
 }
-const prepared = (name: "anchor" | "hiding" | "stranger", count: { n: number }) => async (): Promise<Submission> => {
+const prepared = (name: Recorded, count: { n: number }) => async (): Promise<Submission> => {
   count.n++;
   return { bytes: bytesOf(name), ttl: TTL };
 };
@@ -138,6 +154,88 @@ describe("the write-ahead journal", () => {
       [fixture.anchor.txHash, "failed"],
       [fixture.hiding.txHash, "pending"],
     ]);
+    expect(net.asked).toEqual([]);
+    journal.close();
+  });
+
+  it("never retires a row whose bytes deploy a contract on the indexer's word: unseen past its TTL plus the margin, it asks the node at that block and stays landed while the node holds the contract there", async () => {
+    const journal = openJournal(file(), { ttlMarginMillis: 5 * MINUTE });
+    const net = network();
+    const count = { n: 0 };
+    await journal.submitOnce(deployKey, { prepare: prepared("registry", count), broadcast: net.send("registry"), chain: net.chain });
+    net.contracts.add(fixture.registry.address);
+    net.advance(new Date(TTL.getTime() + 4 * MINUTE));
+    await journal.reconcile(net.chain);
+    expect(net.asked).toEqual([]);
+    net.advance(new Date(TTL.getTime() + 6 * MINUTE));
+    expect(await journal.submitOnce(deployKey, { prepare: prepared("stranger", count), broadcast: net.send("stranger"), chain: net.chain })).toEqual({
+      txHash: fixture.registry.txHash,
+      state: "landed",
+      ttl: TTL,
+      broadcasts: 1,
+    });
+    expect(net.asked).toEqual([[fixture.registry.address, INDEXED_HEAD]]);
+    expect([count.n, net.arrived]).toEqual([1, [fixture.registry.txHash]]);
+    journal.close();
+  });
+
+  it("retires a deploy row unseen past its TTL plus the margin only once the node, at that block, holds no contract at the address its bytes deploy", async () => {
+    const journal = openJournal(file(), { ttlMarginMillis: 5 * MINUTE });
+    const net = network();
+    await journal.submitOnce(deployKey, { prepare: prepared("registry", { n: 0 }), broadcast: net.send("registry"), chain: net.chain });
+    net.advance(new Date(TTL.getTime() + 6 * MINUTE));
+    expect(await journal.reconcile(net.chain)).toEqual([expect.objectContaining({ txHash: fixture.registry.txHash, state: "failed" })]);
+    expect(net.asked).toEqual([[fixture.registry.address, INDEXED_HEAD]]);
+    expect(journal.live(deployKey)).toBeUndefined();
+    journal.close();
+  });
+
+  it.each([
+    [true, "landed"],
+    [false, "failed"],
+  ] as const)("keeps a deploy row the indexer reports failed live until chain time is past its TTL plus the margin, then settles it from the node at that block (holds the contract: %s, so %s)", async (holds, state) => {
+    const journal = openJournal(file(), { ttlMarginMillis: 5 * MINUTE });
+    const net = network();
+    await journal.submitOnce(deployKey, { prepare: prepared("registry", { n: 0 }), broadcast: net.send("registry"), chain: net.chain });
+    net.index("FAILURE");
+    if (holds) net.contracts.add(fixture.registry.address);
+    net.advance(new Date(TTL.getTime() + 4 * MINUTE));
+    expect(await journal.reconcile(net.chain)).toEqual([expect.objectContaining({ txHash: fixture.registry.txHash, state: "pending" })]);
+    expect(net.asked).toEqual([]);
+    net.advance(new Date(TTL.getTime() + 6 * MINUTE));
+    expect(await journal.reconcile(net.chain)).toEqual([expect.objectContaining({ txHash: fixture.registry.txHash, state })]);
+    expect(net.asked).toEqual([[fixture.registry.address, INDEXED_HEAD]]);
+    journal.close();
+  });
+
+  it("settles a row only from a chain view of its own network: a preprod view past a mainnet deploy's TTL plus the margin leaves it pending and asks preprod's node nothing", async () => {
+    const journal = openJournal(file(), { ttlMarginMillis: 5 * MINUTE });
+    const mainnet = network("mainnet");
+    const preprod = network("preprod");
+    const mainnetDeploy: AnchorKey = { ...deployKey, network: "mainnet" };
+    await journal.submitOnce(mainnetDeploy, { prepare: prepared("registry", { n: 0 }), broadcast: mainnet.send("registry"), chain: mainnet.chain });
+    await journal.submitOnce(key, { prepare: prepared("anchor", { n: 0 }), broadcast: preprod.send("anchor"), chain: preprod.chain });
+    mainnet.contracts.add(fixture.registry.address);
+    preprod.index();
+    preprod.advance(new Date(TTL.getTime() + 6 * MINUTE));
+    expect(await journal.reconcile(preprod.chain)).toEqual([expect.objectContaining({ txHash: fixture.anchor.txHash, state: "landed" })]);
+    expect(preprod.asked).toEqual([]);
+    expect(journal.live(mainnetDeploy)).toMatchObject({ txHash: fixture.registry.txHash, state: "pending" });
+    mainnet.advance(new Date(TTL.getTime() + 6 * MINUTE));
+    expect(await journal.reconcile(mainnet.chain)).toEqual([expect.objectContaining({ txHash: fixture.registry.txHash, state: "landed" })]);
+    expect(mainnet.asked).toEqual([[fixture.registry.address, INDEXED_HEAD]]);
+    journal.close();
+  });
+
+  it("refuses a key of another network than its chain view's before preparing or sending anything", async () => {
+    const journal = openJournal(file());
+    const preprod = network("preprod");
+    const count = { n: 0 };
+    const mainnetKey: AnchorKey = { ...key, network: "mainnet" };
+    await expect(journal.submitOnce(mainnetKey, { prepare: prepared("anchor", count), broadcast: preprod.send("anchor"), chain: preprod.chain })).rejects.toThrow(
+      "a preprod chain view settles no mainnet attempt; nothing was prepared or sent",
+    );
+    expect([count.n, preprod.arrived, journal.history(mainnetKey)]).toEqual([0, [], []]);
     journal.close();
   });
 
@@ -149,6 +247,7 @@ describe("the write-ahead journal", () => {
     net.index("FAILURE");
     expect(await journal.submitOnce(key, { prepare: prepared("hiding", count), broadcast: net.send("hiding"), chain: net.chain })).toMatchObject({ txHash: fixture.hiding.txHash });
     expect(count.n).toBe(2);
+    expect(net.asked).toEqual([]);
     journal.close();
   });
 
@@ -259,10 +358,27 @@ describe("chainView over a Midnight source", () => {
   const TIMESTAMP_NOW = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
   const HEAD = { height: 10, hash: "ef".repeat(32), timestamp: Date.UTC(2030, 0, 2) };
   const timestamp = (ms: number) => `0x${Buffer.from(u64le(BigInt(ms))).toString("hex")}`;
-  // An indexer whose newest block is HEAD, and a node that holds `nodeHash` at HEAD's height and
-  // records `nodeTime` in that block's Timestamp.Now.
-  const source = ({ nodeHash = `0x${HEAD.hash}` as string | null, nodeTime = HEAD.timestamp as number | null } = {}) => {
+  // An indexer whose newest block is HEAD, and a node that holds `nodeHash` at HEAD's height,
+  // records `nodeNow` (by default `nodeTime`, encoded) as that block's Timestamp.Now, and reads
+  // its ledger in the blocks `ledgerIn`, by default HEAD, holding a contract at each address in
+  // `contracts` and answering for any other as midnight-node `version` does.
+  const source = ({
+    nodeHash = `0x${HEAD.hash}`,
+    nodeTime = HEAD.timestamp,
+    nodeNow = nodeTime === null ? null : timestamp(nodeTime),
+    ledgerIn = [HEAD.hash],
+    contracts = [fixture.registry.address],
+    version = "2.1.0",
+  }: { nodeHash?: string | null; nodeTime?: number | null; nodeNow?: string | null; ledgerIn?: string[]; contracts?: string[]; version?: NodeVersion } = {}) => {
     const calls: Array<[string, unknown[]]> = [];
+    const ledger = ledgerNode({ blocks: ledgerIn, contracts: (address) => (contracts.includes(address) ? "0102" : undefined), version });
+    const call = async (method: string, params: unknown[] = []) => {
+      calls.push([method, params]);
+      if (method === "chain_getBlockHash" && params[0] === HEAD.height) return nodeHash;
+      if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && params[1] === `0x${HEAD.hash}`) return nodeNow;
+      if (method === "midnight_zswapStateRoot" || method === "midnight_contractState") return ledger.call("test", method, params);
+      throw new Error(`unexpected ${method} ${JSON.stringify(params)}`);
+    };
     const s = {
       indexer: {
         transactions: async (hash: string) =>
@@ -271,41 +387,86 @@ describe("chainView over a Midnight source", () => {
             : [],
         head: async () => HEAD,
       },
-      node: {
-        call: async (method: string, params: unknown[] = []) => {
-          calls.push([method, params]);
-          if (method === "chain_getBlockHash" && params[0] === HEAD.height) return nodeHash;
-          if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && params[1] === `0x${HEAD.hash}`) return nodeTime === null ? null : timestamp(nodeTime);
-          throw new Error(`unexpected ${method} ${JSON.stringify(params)}`);
-        },
-      },
+      node: { call, batch: batchOver(call) },
     } as unknown as MidnightSource;
     return { s, calls };
   };
 
   it("reads a transaction's status and block from the indexer", async () => {
-    const view = chainView(source().s);
+    const view = chainView(source().s, "preprod");
     expect(await view.lookup(fixture.anchor.txHash)).toEqual({ status: "SUCCESS", height: 9, blockHash: "cd".repeat(32) });
     expect(await view.lookup(fixture.hiding.txHash)).toBeNull();
   });
 
   it("reads chain time from the indexer's newest block only as the node records that block: on its chain, at its own Timestamp.Now", async () => {
     const agreed = source();
-    expect(await chainView(agreed.s).indexedThrough()).toEqual(new Date(HEAD.timestamp));
+    expect(await chainView(agreed.s, "preprod").indexedThrough()).toEqual({ hash: HEAD.hash, time: new Date(HEAD.timestamp) });
     expect(agreed.calls).toEqual([
       ["chain_getBlockHash", [HEAD.height]],
       ["state_getStorage", [TIMESTAMP_NOW, `0x${HEAD.hash}`]],
     ]);
-    expect(await chainView(source({ nodeTime: HEAD.timestamp - 60_000 }).s).indexedThrough()).toEqual(new Date(HEAD.timestamp - 60_000));
+    expect(await chainView(source({ nodeTime: HEAD.timestamp - 60_000 }).s, "preprod").indexedThrough()).toEqual({ hash: HEAD.hash, time: new Date(HEAD.timestamp - 60_000) });
+  });
+
+  it("reads the indexer's time for its newest block when the node records a later one there", async () => {
+    expect(await chainView(source({ nodeTime: HEAD.timestamp + 60_000 }).s, "preprod").indexedThrough()).toEqual({ hash: HEAD.hash, time: new Date(HEAD.timestamp) });
   });
 
   it("refuses a node that records no Timestamp.Now in a block it holds", async () => {
-    await expect(chainView(source({ nodeTime: null }).s).indexedThrough()).rejects.toThrow(`the node holds no Timestamp.Now in block ${HEAD.height}`);
+    await expect(chainView(source({ nodeTime: null }).s, "preprod").indexedThrough()).rejects.toThrow(`the node holds no Timestamp.Now in block ${HEAD.height}`);
+  });
+
+  it("refuses a Timestamp.Now that is not exactly a u64", async () => {
+    await expect(chainView(source({ nodeNow: `${timestamp(HEAD.timestamp)}00` }).s, "preprod").indexedThrough()).rejects.toThrow("Timestamp.Now has 1 trailing byte");
+  });
+
+  it.each(["2.1.0", "1.0.400"] as const)("asks node %s whether it holds a contract at an address in a given block, behind the ledger's zswap root there", async (version) => {
+    const { s, calls } = source({ version });
+    const view = chainView(s, "preprod");
+    expect(await view.holdsContract(fixture.registry.address, HEAD.hash)).toBe(true);
+    expect(await view.holdsContract("12".repeat(32), HEAD.hash)).toBe(false);
+    expect(calls).toEqual([
+      ["midnight_zswapStateRoot", [`0x${HEAD.hash}`]],
+      ["midnight_contractState", [fixture.registry.address, `0x${HEAD.hash}`]],
+      ["midnight_zswapStateRoot", [`0x${HEAD.hash}`]],
+      ["midnight_contractState", ["12".repeat(32), `0x${HEAD.hash}`]],
+    ]);
+  });
+
+  it("settles a deploy row past its TTL plus the margin from the node's ledger at the indexer's newest block: pending while the node cannot read it there, landed while node 2.1.0 holds the contract, retired once it answers that none is there", async () => {
+    const journal = openJournal(file(), { ttlMarginMillis: 5 * MINUTE });
+    const net = network();
+    await journal.submitOnce(deployKey, { prepare: prepared("registry", { n: 0 }), broadcast: net.send("registry"), chain: net.chain });
+    const behind = source({ ledgerIn: [], contracts: [] });
+    await expect(journal.reconcile(chainView(behind.s, "preprod"))).rejects.toThrow('test node: midnight_zswapStateRoot failed: {"code":-32602,"message":"Unable to get requested zswap state root"}');
+    expect(journal.live(deployKey)).toMatchObject({ txHash: fixture.registry.txHash, state: "pending" });
+    expect(await journal.reconcile(chainView(source({ contracts: [] }).s, "preprod"))).toEqual([expect.objectContaining({ txHash: fixture.registry.txHash, state: "failed" })]);
+    expect(journal.live(deployKey)).toBeUndefined();
+
+    const landed = openJournal(file(), { ttlMarginMillis: 5 * MINUTE });
+    await landed.submitOnce(deployKey, { prepare: prepared("registry", { n: 0 }), broadcast: net.send("registry"), chain: net.chain });
+    expect(await landed.reconcile(chainView(source().s, "preprod"))).toEqual([expect.objectContaining({ txHash: fixture.registry.txHash, state: "landed" })]);
+    journal.close();
+    landed.close();
   });
 
   it("proves no chain time while the node holds another block at the indexer's newest height, or none yet", async () => {
-    expect(await chainView(source({ nodeHash: `0x${"12".repeat(32)}` }).s).indexedThrough()).toEqual(new Date(0));
-    expect(await chainView(source({ nodeHash: null }).s).indexedThrough()).toEqual(new Date(0));
+    expect(await chainView(source({ nodeHash: `0x${"12".repeat(32)}` }).s, "preprod").indexedThrough()).toBeNull();
+    expect(await chainView(source({ nodeHash: null }).s, "preprod").indexedThrough()).toBeNull();
+  });
+
+  it("names the network it reads, and settles none of another network's rows: a preprod node holding a contract at a mainnet deploy's address leaves that deploy pending", async () => {
+    const journal = openJournal(file());
+    const mainnet = network("mainnet");
+    const mainnetDeploy: AnchorKey = { ...deployKey, network: "mainnet" };
+    await journal.submitOnce(mainnetDeploy, { prepare: prepared("registry", { n: 0 }), broadcast: mainnet.send("registry"), chain: mainnet.chain });
+    const { s, calls } = source();
+    const preprod = chainView(s, "preprod");
+    expect(await journal.reconcile(preprod)).toEqual([]);
+    expect(calls).toEqual([]);
+    expect(journal.live(mainnetDeploy)).toMatchObject({ txHash: fixture.registry.txHash, state: "pending" });
+    expect(preprod.network).toBe("preprod");
+    journal.close();
   });
 
   it("keeps a row pending past its TTL by the indexer's clock while the node does not hold the indexer's newest block", async () => {
@@ -315,7 +476,7 @@ describe("chainView over a Midnight source", () => {
     await journal.submitOnce(key, { prepare: prepared("hiding", count), broadcast: net.send("hiding"), chain: net.chain });
     const forked = source({ nodeHash: `0x${"12".repeat(32)}`, nodeTime: TTL.getTime() + 60 * MINUTE });
     const pastTtl = { ...forked.s, indexer: { ...forked.s.indexer, head: async () => ({ ...HEAD, timestamp: TTL.getTime() + 60 * MINUTE }) } } as MidnightSource;
-    expect(await journal.reconcile(chainView(pastTtl))).toEqual([expect.objectContaining({ txHash: fixture.hiding.txHash, state: "pending" })]);
+    expect(await journal.reconcile(chainView(pastTtl, "preprod"))).toEqual([expect.objectContaining({ txHash: fixture.hiding.txHash, state: "pending" })]);
     journal.close();
   });
 });

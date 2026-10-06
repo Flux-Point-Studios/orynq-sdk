@@ -152,13 +152,26 @@ after the node accepted it, or a process that dies before or during it, is answe
 that hash and never sent as a second transaction. A row whose broadcast never returned is resent
 with the same bytes. A pending row is retired only when the indexer reports its transaction
 (landed or failed), or when the indexer's newest block is past the transaction's TTL plus a
-margin, in chain time rather than the local clock. Calls are serialized per journal, and across
-processes the attempt that writes its row second never broadcasts. `live(key)` returns a key's
-live attempt with its exact bytes, so a caller that lost its own record of an attempt can resume
-it. `chainView(source)` reads transactions from a source's indexer, and chain time from the
+margin, in chain time rather than the local clock. A row whose bytes deploy a contract is never
+retired on the indexer's word, since a second deploy is a second contract: whatever the indexer
+reports, other than landed, it stays live until chain time is past its TTL plus the margin, and
+then the journal asks the chain view's `holdsContract(address, block)` whether the node holds a
+contract, at that very block, at an address the bytes deploy. If it does, the row is landed, with
+no block until the indexer lists the transaction; only if it holds none is the row retired. The
+rule lives in the journal, so every reconcile of a journal keeps it, whichever caller runs it, and
+a lookup answered from an older indexer snapshot than the head, or an indexer that reports a
+landed deploy failed, never frees the key for a second deploy. A chain view names its network,
+and a row is settled only from a view of its own: `reconcile(chain)` settles the pending rows of
+the view's network alone, and `submitOnce` refuses a key of another network before preparing
+anything, so in a file that holds several networks' rows, another network's indexer, clock and
+node never retire a deploy or land one. Calls are serialized per journal, and across processes
+the attempt that writes its row second never broadcasts. `live(key)` returns a key's live attempt
+with its exact bytes, so a caller that lost its own record of an attempt can resume it.
+`chainView(source, network)` reads `network` through its source: transactions from its
+indexer, contracts from its node (`contractStateOnNode` at the block), and chain time from the
 indexer's newest block only once the source's node holds that block at that height, as the
 smaller of the indexer's time for it and the node's own `Timestamp.Now` in it; until the node
-holds it, chain time is the epoch, so an indexer that is forked, foreign or ahead of the node
+holds it there is no chain time, so an indexer that is forked, foreign or ahead of the node
 retires nothing.
 
 ## Known authors
@@ -236,7 +249,18 @@ a mnemonic or an author key, never sends that secret to Blockfrost. `sourceEndpo
 { blockfrostProjectIdFile } | { indexer, node })` is what a user configures: Blockfrost through a
 project id file, or an http or https indexer GraphQL URL and node JSON-RPC URL that need no
 credential, such as a self-hosted node. It returns null when neither is given and refuses both,
-or half a pair.
+or half a pair. A node's JSON-RPC error answer is raised as a `NodeError` naming the method and
+the error's code, and a batch is refused at its first failed request in request order.
+
+`contractStateOnNode(source, address, at?)` returns the state the node holds at `address` in
+block `at` (its best block when none is named), or null when no contract is there. Nodes answer
+for an address holding no contract in two ways: midnight-node 1.0 with an empty string, and 2.x
+(what Blockfrost serves on mainnet and preprod) with JSON-RPC error -32602, which is also its
+answer in a block whose ledger it cannot read, such as one it does not hold. So the contract is
+read in one batched request behind `midnight_zswapStateRoot` in the same block, which needs that
+ledger: -32602 on the contract read counts as no contract only once the root read before it was
+answered, and every other answer is an error, so a node that lags the block never reports a
+contract absent.
 
 ## Reproducing the build
 

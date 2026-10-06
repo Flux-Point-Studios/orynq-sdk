@@ -9,7 +9,7 @@ import {
   type MidnightSource,
   type RegistryCircuit,
 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { chainView, openJournal, type AnchorKey } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
+import { chainView, openJournal, type AnchorKey, type JournalRow } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { assertKnownRuntime, declaredFee, finalTransaction, finalizeChecked, submitJournalled, type FeeWallet, type Prover } from "./submission.js";
 
 // A registry deploy as it will be sent: the exact final bytes and what they do, for a human to
@@ -26,6 +26,8 @@ export interface PreparedDeploy {
   verifierKeys: Record<RegistryCircuit, string>;
   // DUST (SPECK) the bytes declare as their fee, all of it burned
   declaredFee: bigint;
+  // The deploy as the journal holds it, when these bytes come from the journal
+  journal?: Pick<JournalRow, "state" | "broadcasts">;
 }
 
 export interface Deployment {
@@ -55,11 +57,11 @@ const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest(
 export function registryDeployer(options: DeployerOptions) {
   const { network, wallet, source, prover } = options;
   const journal = openJournal(options.journalPath);
-  const chain = chainView(source);
+  const chain = chainView(source, network);
   const ttlMillis = (options.ttlMinutes ?? 15) * 60_000;
   const key: AnchorKey = { network, registry: "registry-deploy", author: "", kind: 0, commitment: sha256(registryInitialState().serialize()), attribute: "" };
 
-  const describe = (bytes: Uint8Array, ttl: Date, runtime: number): PreparedDeploy => {
+  const describe = (bytes: Uint8Array, ttl: Date, runtime: number, journal?: PreparedDeploy["journal"]): PreparedDeploy => {
     const address = assertRegistryDeployBytes(bytes, "final");
     const final = finalTransaction(bytes);
     const deploy = [...final.intents!.values()].flatMap((intent) => intent.actions).find((a): a is L.ContractDeploy => a instanceof L.ContractDeploy)!;
@@ -80,6 +82,7 @@ export function registryDeployer(options: DeployerOptions) {
       authority: { committee: committee.length, threshold, counter: String(counter) },
       verifierKeys,
       declaredFee: declaredFee(final),
+      ...(journal ? { journal } : {}),
     };
   };
 
@@ -93,12 +96,12 @@ export function registryDeployer(options: DeployerOptions) {
     },
 
     // The deploy the journal still holds live once settled from the chain, rebuilt from its
-    // journalled bytes, or null when none is. Submitting it resumes that deploy; submit refuses
-    // any other bytes until the chain has ruled it out.
+    // journalled bytes and marked with how the journal holds it, or null when none is. Submitting
+    // it resumes that deploy; submit refuses any other bytes until the chain has ruled it out.
     async journalled(): Promise<PreparedDeploy | null> {
       await journal.reconcile(chain);
       const row = journal.live(key);
-      return row ? describe(row.bytes, row.ttl, await assertKnownRuntime(source, network)) : null;
+      return row ? describe(row.bytes, row.ttl, await assertKnownRuntime(source, network), { state: row.state, broadcasts: row.broadcasts }) : null;
     },
 
     async submit(prepared: PreparedDeploy): Promise<Deployment> {

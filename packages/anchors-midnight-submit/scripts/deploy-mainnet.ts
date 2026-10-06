@@ -7,25 +7,33 @@
 //   threshold 1, counter 0, the pinned verifier keys).
 // It then prints the exact summary and sends those bytes only after the token it shows, which
 // names the bytes' transaction hash, is typed at that terminal; no flag, pipe, file or
-// environment variable confirms. These gates stop accidents: an agent session running the
-// script as it is, input from a pipe or a file, bytes other than the summarized ones. They do
-// not stop code running as deci, which can drop Claude Code's variables, drive a
-// pseudo-terminal and type back the token it reads. Under the "ship now, harden after"
-// decision the protection is procedural, deci running this himself; the custody boundary is the
-// planned separate-uid or FIDO2 signer.
+// environment variable confirms. A deploy the journal still holds, as after a run that failed
+// between its broadcast and its readback, is resumed instead of prepared anew: its bytes pass the
+// same checks, the summary shows it as the journal holds it, and nothing is sent again before its
+// token is typed. These gates stop accidents: an agent session running the script as it is,
+// input from a pipe or a file, bytes other than the summarized ones. They do not stop code
+// running as deci, which can drop Claude Code's variables, drive a pseudo-terminal and type back
+// the token it reads. Under the "ship now, harden after" decision the protection is procedural,
+// deci running this himself; the custody boundary is the planned separate-uid or FIDO2 signer.
 //   node --import tsx scripts/deploy-mainnet.ts [--mnemonic F] [--wallet-record F] [--blockfrost F]
 //        [--zk DIR] [--journal F] [--dust-floor DUST]
 import { homedir } from "node:os";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { assertRegistryState, midnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import * as L from "@midnight-ntwrk/ledger-v8";
-import { agentDriven } from "../src/custody.js";
-import { registryDeployer } from "../src/deployer.js";
-import { networkEndpoints } from "../src/endpoints.js";
-import { assertChainIdentity, confirmOnTerminal, confirmationToken, deploySummary, formatDust } from "../src/preflight.js";
-import { openWallet } from "../src/wallet.js";
-import { provingService } from "../src/zk.js";
+import { midnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import {
+  agentDriven,
+  assertChainIdentity,
+  confirmOnTerminal,
+  confirmationToken,
+  deploySummary,
+  formatDust,
+  networkEndpoints,
+  openWallet,
+  provingService,
+  registryDeployer,
+  registryStateOnNode,
+} from "../src/index.js";
 
 const fail = (message: string): never => {
   process.stderr.write(`deploy-mainnet: ${message}\n`);
@@ -64,17 +72,18 @@ try {
     mkdirSync(dirname(journalPath), { recursive: true, mode: 0o700 });
     const deployer = registryDeployer({ network: "mainnet", wallet, source, prover: provingService(zkDir), journalPath });
     try {
-      const prepared = await deployer.prepare();
+      const resumed = await deployer.journalled();
+      const prepared = resumed ?? (await deployer.prepare());
       process.stdout.write(`\n${deploySummary({ chain, wallet: wallet.addresses, dust, prepared })}\n`);
       const token = confirmationToken(prepared);
       if (!(await confirmOnTerminal({ input: process.stdin, output: process.stdout, token }))) {
+        // Journalled bytes may already be with the node, so their DUST is not released.
+        if (resumed) fail("not confirmed; nothing was sent, and the journalled deploy stays in the journal");
         await deployer.discard(prepared);
         fail("not confirmed; the prepared bytes were discarded and nothing was sent");
       }
       const deployment = await deployer.submit(prepared);
-      const state = await source.node.call<string | null>("midnight_contractState", [deployment.address]);
-      if (state === null) fail(`the node holds no contract at ${deployment.address}`);
-      assertRegistryState(L.ContractState.deserialize(Buffer.from(state!.replace(/^0x/, ""), "hex")));
+      if (!(await registryStateOnNode(source, deployment.address))) fail(`the node holds no contract at ${deployment.address}`);
       process.stdout.write(`\ndeployed and read back from the node: ${JSON.stringify(deployment, null, 1)}\n`);
     } finally {
       deployer.close();

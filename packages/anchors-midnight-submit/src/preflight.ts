@@ -37,9 +37,19 @@ export function formatDust(speck: bigint): string {
   return fraction ? `${whole}.${fraction}` : String(whole);
 }
 
+// What the human confirms: a deploy resumed from the journal says so first, with what confirming
+// then does with its bytes.
 export function deploySummary({ chain, wallet, dust, prepared }: { chain: ChainFacts; wallet: { unshielded: string; dust: string }; dust: bigint; prepared: PreparedDeploy }): string {
-  const { authority } = prepared;
+  const { authority, journal } = prepared;
+  const resumed =
+    journal &&
+    (journal.state === "landed"
+      ? "these bytes landed; confirming sends nothing and reads the deploy back"
+      : journal.broadcasts > 0
+        ? `these bytes were sent ${journal.broadcasts} time${journal.broadcasts === 1 ? "" : "s"} and have not landed; confirming waits for them and sends nothing new`
+        : "no send of these bytes ever returned; confirming sends them again");
   const rows = [
+    ...(resumed ? [`journal          resumed: ${resumed}`] : []),
     `network          ${prepared.network} (${chain.chain}, genesis ${chain.genesis})`,
     `runtime          ${chain.specVersion}, ledger ${chain.ledgerVersion}`,
     `contract address ${prepared.address}`,
@@ -76,7 +86,7 @@ export async function confirmOnTerminal({
   if (agentDriven(env)) throw new Error("this process carries Claude Code's environment; deci confirms a mainnet deploy himself, at his own terminal");
   if (!input.isTTY || !output.isTTY) throw new Error("needs deci at an interactive terminal; a pipe or a file cannot confirm a mainnet deploy");
   const lines = createInterface({ input, output, terminal: false });
-  output.write(`\nType exactly "${token}" to send these bytes to mainnet, anything else to discard them: `);
+  output.write(`\nType exactly "${token}" to confirm these bytes for mainnet, anything else to send nothing: `);
   try {
     for await (const line of lines) return line.trim() === token;
     return false;

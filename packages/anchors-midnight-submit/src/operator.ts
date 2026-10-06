@@ -1,6 +1,4 @@
-import * as L from "@midnight-ntwrk/ledger-v8";
 import {
-  assertRegistryState,
   authorKey,
   decodeAnchorTransaction,
   deriveSalt,
@@ -21,7 +19,7 @@ import {
 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { chainView, openJournal, type AnchorKey, type JournalRow } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS, agentDriven, refuseMainnetSecretsPath } from "./custody.js";
-import { assertKnownRuntime, finalizeChecked, submitJournalled, type FeeWallet, type Prover } from "./submission.js";
+import { assertKnownRuntime, finalizeChecked, registryStateOnNode, submitJournalled, type FeeWallet, type Prover } from "./submission.js";
 
 export interface AnchorReceipt {
   network: MidnightNetwork;
@@ -82,7 +80,7 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
   const author = hex(authorKey(authorSecret));
   if (network !== "mainnet" && MAINNET_AUTHOR_KEYS.includes(author)) throw new Error(`${options.authorKeyFile} holds the FPS mainnet author key ${author}; a ${network} operator never loads it`);
   const journal = openJournal(options.journalPath);
-  const chain = chainView(source);
+  const chain = chainView(source, network);
   const ttlMillis = (options.ttlMinutes ?? 15) * 60_000;
   const pollMillis = options.pollMillis ?? 3_000;
 
@@ -91,10 +89,8 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
     const { registry } = options;
     const key: AnchorKey = { network, registry, author, kind, commitment, attribute };
     const row = await submitJournalled({ journal, chain, wallet, network, pollMillis }, key, async () => {
-      const raw = await source.node.call<string | null>("midnight_contractState", [registry]);
-      if (raw === null) throw new Error(`the ${network} node holds no contract at ${registry}`);
-      const state = L.ContractState.deserialize(Buffer.from(raw.replace(/^0x/, ""), "hex"));
-      assertRegistryState(state);
+      const state = await registryStateOnNode(source, registry);
+      if (!state) throw new Error(`the ${network} node holds no contract at ${registry}`);
       const ttl = new Date(Date.now() + ttlMillis);
       const built = unprovenRegistryCall({ networkId: network, address: registry, state, call, witnesses, ttl });
       if (kind === 2 && hex(built.after.last_commitment) !== commitment) throw new Error("the circuit computed a different kind-2 commitment than the opening");

@@ -12,7 +12,7 @@ export { NETWORK_IDENTITY, assertChainIdentity, confirmOnTerminal, confirmationT
 export type { ChainFacts } from "./preflight.js";
 export { credentialRelay } from "./relay.js";
 export type { WalletTransport } from "./relay.js";
-export { assertKnownRuntime, declaredFee, finalizeChecked, submitJournalled } from "./submission.js";
+export { assertKnownRuntime, declaredFee, finalizeChecked, registryStateOnNode, submitJournalled } from "./submission.js";
 export type { FeeWallet, Prover } from "./submission.js";
 export { DEFAULT_COST_PARAMETERS, openWallet } from "./wallet.js";
 export type { CostParameters, OperatorWallet, StateSave, StateSaveFailure, SyncProgress, WalletBalances, WalletOptions } from "./wallet.js";
