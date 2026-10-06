@@ -6,7 +6,8 @@ import { createAuthorKeyFile, createSaltKeyFile } from "@fluxpointstudios/orynq-
 import { registryOperator, type OperatorOptions } from "../src/operator.js";
 import { createWalletMnemonicFile } from "../src/keys.js";
 import { openWallet } from "../src/wallet.js";
-import { chain, deployed, fresh, prover, wallet } from "./fakes.js";
+import { chain, deployed, fresh, wallet } from "./fakes.js";
+import { prover } from "./prover.js";
 
 // The real FPS mainnet keys never leave their 0600 files, so the identities an operator off
 // mainnet refuses are replaced, for this suite, by stand-ins made here.

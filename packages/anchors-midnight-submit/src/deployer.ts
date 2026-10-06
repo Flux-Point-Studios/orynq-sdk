@@ -59,31 +59,46 @@ export function registryDeployer(options: DeployerOptions) {
   const ttlMillis = (options.ttlMinutes ?? 15) * 60_000;
   const key: AnchorKey = { network, registry: "registry-deploy", author: "", kind: 0, commitment: sha256(registryInitialState().serialize()), attribute: "" };
 
+  const describe = (bytes: Uint8Array, ttl: Date, runtime: number): PreparedDeploy => {
+    const address = assertRegistryDeployBytes(bytes, "final");
+    const final = finalTransaction(bytes);
+    const deploy = [...final.intents!.values()].flatMap((intent) => intent.actions).find((a): a is L.ContractDeploy => a instanceof L.ContractDeploy)!;
+    const { committee, threshold, counter } = deploy.initialState.maintenanceAuthority;
+    const verifierKeys = Object.fromEntries(
+      REGISTRY_CIRCUITS.map((name) => {
+        const op = deploy.initialState.operation(name)!;
+        return [name, sha256(op.verifierKey)];
+      }),
+    ) as Record<RegistryCircuit, string>;
+    return {
+      network,
+      address,
+      txHash: final.transactionHash(),
+      bytes,
+      ttl,
+      runtime,
+      authority: { committee: committee.length, threshold, counter: String(counter) },
+      verifierKeys,
+      declaredFee: declaredFee(final),
+    };
+  };
+
   return {
     async prepare(): Promise<PreparedDeploy> {
       const runtime = await assertKnownRuntime(source, network);
       const ttl = new Date(Date.now() + ttlMillis);
       const { tx } = buildRegistryDeploy({ networkId: network, ttl });
-      const { final, bytes } = await finalizeChecked(wallet, prover, tx, ttl, (b) => void assertRegistryDeployBytes(b, "final"));
-      const deploy = [...final.intents!.values()].flatMap((intent) => intent.actions).find((a): a is L.ContractDeploy => a instanceof L.ContractDeploy)!;
-      const { committee, threshold, counter } = deploy.initialState.maintenanceAuthority;
-      const verifierKeys = Object.fromEntries(
-        REGISTRY_CIRCUITS.map((name) => {
-          const op = deploy.initialState.operation(name)!;
-          return [name, sha256(op.verifierKey)];
-        }),
-      ) as Record<RegistryCircuit, string>;
-      return {
-        network,
-        address: assertRegistryDeployBytes(bytes, "final"),
-        txHash: final.transactionHash(),
-        bytes,
-        ttl,
-        runtime,
-        authority: { committee: committee.length, threshold, counter: String(counter) },
-        verifierKeys,
-        declaredFee: declaredFee(final),
-      };
+      const { bytes } = await finalizeChecked(wallet, prover, tx, ttl, (b) => void assertRegistryDeployBytes(b, "final"));
+      return describe(bytes, ttl, runtime);
+    },
+
+    // The deploy the journal still holds live once settled from the chain, rebuilt from its
+    // journalled bytes, or null when none is. Submitting it resumes that deploy; submit refuses
+    // any other bytes until the chain has ruled it out.
+    async journalled(): Promise<PreparedDeploy | null> {
+      await journal.reconcile(chain);
+      const row = journal.live(key);
+      return row ? describe(row.bytes, row.ttl, await assertKnownRuntime(source, network)) : null;
     },
 
     async submit(prepared: PreparedDeploy): Promise<Deployment> {
@@ -97,7 +112,7 @@ export function registryDeployer(options: DeployerOptions) {
       // A deploy journalled earlier is settled from the chain first: one that the chain has
       // carried past its TTL unseen no longer holds the registry's key.
       await journal.reconcile(chain);
-      const live = journal.history(key).find((row) => row.state !== "failed");
+      const live = journal.live(key);
       if (live && live.txHash !== prepared.txHash) {
         await wallet.discard(finalTransaction(prepared.bytes));
         throw new Error(`a registry deploy is already journalled on ${network}: ${live.txHash} (${live.state}); the prepared bytes were discarded`);

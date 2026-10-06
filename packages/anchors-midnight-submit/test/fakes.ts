@@ -1,11 +1,10 @@
 import { afterAll } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
-import { provingProvider } from "@midnight-ntwrk/zkir-v2";
-import { buildRegistryDeploy, compiledContractFile, type IndexedTransaction, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { buildRegistryDeploy, type IndexedTransaction, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 
 export const dir = mkdtempSync(join(tmpdir(), "orynq-submit-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -14,24 +13,6 @@ export const fresh = (name: string) => join(dir, `${n++}-${name}`);
 export const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 export const bytes32 = () => crypto.getRandomValues(new Uint8Array(32));
 const TIMESTAMP_NOW = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
-
-// Final-form bytes without proving: zkir checks each circuit as a prover would, and every proof
-// is the one real registry proof recorded in the verifier's fixtures. The ledger WASM never
-// verifies a proof, so these decode and hash exactly as submitted bytes do.
-const recordedProof = new Uint8Array(
-  Buffer.from((JSON.parse(readFileSync(new URL("../../anchors-midnight/src/__tests__/fixtures/registry-transactions.json", import.meta.url), "utf8")) as { proof: string }).proof, "hex"),
-);
-const zkir = provingProvider({
-  async lookupKey(location: string) {
-    return { proverKey: compiledContractFile(`keys/${location}.prover`), verifierKey: compiledContractFile(`keys/${location}.verifier`), ir: compiledContractFile(`zkir/${location}.bzkir`) };
-  },
-  async getParams() {
-    throw new Error("never proves");
-  },
-});
-export const prover = {
-  prove: (tx: L.UnprovenTransaction) => tx.prove({ check: (p, l) => zkir.check(p, l), prove: async () => recordedProof }, L.CostModel.initialCostModel()),
-};
 
 export const deployed = (() => {
   const { tx, address } = buildRegistryDeploy({ networkId: "preprod", ttl: new Date(Date.now() + 3600e3) });

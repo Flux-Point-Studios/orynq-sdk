@@ -168,6 +168,12 @@ export function openJournal(path: string, { ttlMarginMillis = 5 * 60_000 }: { tt
         return rows.map((row) => view(byHash.get(row.tx_hash) as unknown as Row));
       }),
     history: (key: AnchorKey) => (history.all(keyOf(key)) as unknown as Row[]).map(view),
+    // The key's live attempt with the exact bytes it holds, so a caller that lost its own record
+    // can resume that attempt instead of preparing one the journal would refuse.
+    live: (key: AnchorKey): (JournalRow & { bytes: Uint8Array }) | undefined => {
+      const row = live.get(keyOf(key)) as unknown as Row | undefined;
+      return row && { ...view(row), bytes: new Uint8Array(row.bytes) };
+    },
     pending: () => (pending.all() as unknown as Row[]).map(view),
     close: () => db.close(),
   };

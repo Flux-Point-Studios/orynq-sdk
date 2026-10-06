@@ -17,7 +17,8 @@ import {
 import { encodedWindows, windowHits } from "../../anchors-midnight/src/__tests__/privacy-scan.js";
 import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS } from "../src/custody.js";
 import { registryOperator, type OperatorOptions } from "../src/operator.js";
-import { bytes32, chain, deployed, fresh, hex, prover, wallet } from "./fakes.js";
+import { bytes32, chain, deployed, fresh, hex, wallet } from "./fakes.js";
+import { prover } from "./prover.js";
 
 let authorKeyFile: string;
 let saltKeyFile: string;

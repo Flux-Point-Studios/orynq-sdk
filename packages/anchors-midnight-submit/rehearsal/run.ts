@@ -17,6 +17,7 @@ import {
   registryDeployer,
   registryOperator,
   type OperatorWallet,
+  type PreparedDeploy,
 } from "../src/index.js";
 import { source, WALLET_SYNC } from "./endpoints.js";
 import { NODE_NEGATIVES } from "./gate.mjs";
@@ -99,6 +100,9 @@ const balances = async (which: "walletA" | "walletB") => {
   return { night: b.night, dust: b.dust, dustDisplay: formatDust(b.dust), nightUtxos: b.nightUtxos, registered: b.registeredNightUtxos };
 };
 
+// A prepared deploy as raw.json records it: its bytes stay in the journal.
+const preparedRecord = ({ address, txHash, runtime, authority, verifierKeys, declaredFee, ttl, bytes }: PreparedDeploy) => ({ address, txHash, runtime, authority, verifierKeys, declaredFee, ttl, bytes: bytes.length });
+
 // One operator per wallet and author key; `wrap` gives a fresh one whose fee wallet it wraps,
 // which the caller closes.
 const operators = new Map<string, ReturnType<typeof registryOperator>>();
@@ -171,20 +175,31 @@ const phases: Record<string, () => Promise<void>> = {
     }
   },
 
+  // A deploy the journal still holds is resumed, never replaced: submit refuses other bytes until
+  // the chain has ruled it out. Its landing is saved before the wallet syncs for dustAfter.
   async deploy() {
     if (raw.deploy?.readback) return log("deploy already recorded", raw.deploy.address);
     if (!raw.deploy?.txHash) {
-      const w = await wallet("walletA");
-      const dustBefore = (await balances("walletA")).dust;
-      const deployer = registryDeployer({ network: "preprod", wallet: instrument(w, "walletA"), source, prover, journalPath: `${SECRETS}/journal-deploy.sqlite` });
-      const t = performance.now();
-      const prepared = await deployer.prepare();
-      const prepareMs = performance.now() - t;
-      raw.deploy = { prepared: { address: prepared.address, txHash: prepared.txHash, runtime: prepared.runtime, authority: prepared.authority, verifierKeys: prepared.verifierKeys, declaredFee: prepared.declaredFee, ttl: prepared.ttl, bytes: prepared.bytes.length, prepareMs: Math.round(prepareMs) } };
-      save();
-      const deployment = await deployer.submit(prepared);
-      deployer.close();
-      raw.deploy = { ...raw.deploy, ...deployment, landedAfterMs: Date.now() - (metrics.get(prepared.txHash)!.submittedAt as number), dustBefore, dustAfter: (await balances("walletA")).dust };
+      const deployer = registryDeployer({ network: "preprod", wallet: instrument(await wallet("walletA"), "walletA"), source, prover, journalPath: `${SECRETS}/journal-deploy.sqlite` });
+      try {
+        let prepared = await deployer.journalled();
+        if (prepared === null) {
+          const dustBefore = (await balances("walletA")).dust;
+          const t = performance.now();
+          prepared = await deployer.prepare();
+          raw.deploy = { prepared: { ...preparedRecord(prepared), prepareMs: Math.round(performance.now() - t) }, dustBefore };
+        } else if (raw.deploy?.prepared?.txHash !== prepared.txHash) {
+          raw.deploy = { prepared: preparedRecord(prepared) };
+        }
+        save();
+        const deployment = await deployer.submit(prepared);
+        const submittedAt = metrics.get(prepared.txHash)?.submittedAt as number | undefined;
+        raw.deploy = { ...raw.deploy, ...deployment, landedAfterMs: submittedAt === undefined ? null : Date.now() - submittedAt };
+        save();
+      } finally {
+        deployer.close();
+      }
+      raw.deploy.dustAfter = (await balances("walletA")).dust;
       save();
     }
     // Readback from two paths, the indexer's state for the deploy action and the node's state; a

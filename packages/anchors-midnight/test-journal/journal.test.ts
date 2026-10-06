@@ -209,6 +209,31 @@ describe("the write-ahead journal", () => {
     restarted.close();
   });
 
+  it("hands back a key's live attempt with the exact bytes it journalled, after a restart, and none once that attempt failed", async () => {
+    const path = file();
+    const net = network();
+    const first = openJournal(path);
+    expect(first.live(key)).toBeUndefined();
+    await first.submitOnce(key, { prepare: prepared("anchor", { n: 0 }), broadcast: net.send("anchor"), chain: net.chain });
+    first.close();
+
+    const restarted = openJournal(path);
+    const asHex = (row: ReturnType<typeof restarted.live>) => row && { ...row, bytes: Buffer.from(row.bytes).toString("hex") };
+    expect(asHex(restarted.live(key))).toEqual({ txHash: fixture.anchor.txHash, state: "pending", ttl: TTL, broadcasts: 1, bytes: fixture.anchor.tx });
+    net.index();
+    await restarted.reconcile(net.chain);
+    expect(asHex(restarted.live(key))).toEqual({ txHash: fixture.anchor.txHash, state: "landed", ttl: TTL, broadcasts: 1, height: 7, blockHash: "ab".repeat(32), bytes: fixture.anchor.tx });
+    restarted.close();
+
+    const other = openJournal(file());
+    const refused = network();
+    await other.submitOnce(key, { prepare: prepared("anchor", { n: 0 }), broadcast: refused.send("anchor"), chain: refused.chain });
+    refused.index("FAILURE");
+    await other.reconcile(refused.chain);
+    expect(other.live(key)).toBeUndefined();
+    other.close();
+  });
+
   it("keeps its file, which holds final transaction bytes until they land, readable only by its owner", () => {
     const path = file();
     openJournal(path).close();

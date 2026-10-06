@@ -3,7 +3,8 @@ import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { REGISTRY_VERIFIER_KEY_SHA256, registryInitialState } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { registryDeployer } from "../src/deployer.js";
-import { chain, fresh, hex, prover, wallet } from "./fakes.js";
+import { chain, fresh, hex, wallet } from "./fakes.js";
+import { prover } from "./prover.js";
 
 function setup({ tamper, spec }: { tamper?: (tx: L.FinalizedTransaction) => L.FinalizedTransaction; spec?: number } = {}) {
   const net = chain(spec === undefined ? {} : { spec });
@@ -111,6 +112,7 @@ describe("registryDeployer", () => {
     expect(w.discarded).toEqual([early.txHash]);
 
     net.advance(15 * MINUTE + 5 * MINUTE + 1_000);
+    expect(await deployer.journalled()).toBeNull();
     const next = await deployer.prepare();
     expect(await deployer.submit(next)).toMatchObject({ txHash: next.txHash, address: next.address });
     expect(w.submitted.map((t) => t.transactionHash())).toEqual([next.txHash]);
@@ -118,6 +120,69 @@ describe("registryDeployer", () => {
       { tx_hash: stale.txHash, state: "failed" },
       { tx_hash: next.txHash, state: "landed" },
     ]);
+    deployer.close();
+  });
+
+  it("hands back a deploy that landed while its submit failed, rebuilt from the journal's bytes, whose submit returns the deployment and sends nothing", async () => {
+    const { deployer, wallet: w, rows, net, journalPath } = setup();
+    expect(await deployer.journalled()).toBeNull();
+    let lost = 1;
+    const lossyIndexer = registryDeployer({
+      network: "preprod",
+      wallet: w,
+      source: {
+        ...net.source,
+        indexer: {
+          ...net.source.indexer,
+          async transactions(hash: string) {
+            const found = await net.source.indexer.transactions(hash);
+            if (found.length > 0 && lost-- > 0) throw new Error("test indexer: HTTP 502: Bad Gateway");
+            return found;
+          },
+        },
+      },
+      prover,
+      journalPath,
+      pollMillis: 1,
+    });
+    const prepared = await lossyIndexer.prepare();
+    await expect(lossyIndexer.submit(prepared)).rejects.toThrow(/HTTP 502/);
+    lossyIndexer.close();
+
+    const resumed = await deployer.journalled();
+    expect(resumed).toEqual(prepared);
+    expect(await deployer.submit(resumed!)).toEqual({ network: "preprod", address: prepared.address, txHash: prepared.txHash, blockHeight: 500, blockHash: "ab".repeat(32) });
+    expect(w.submitted.map((t) => t.transactionHash())).toEqual([prepared.txHash]);
+    expect(w.discarded).toEqual([]);
+    expect(rows()).toEqual([{ tx_hash: prepared.txHash, state: "landed" }]);
+    deployer.close();
+  });
+
+  it("hands back a deploy whose bytes a proxy refused while the chain has not carried them past their TTL, and submit sends exactly those bytes again", async () => {
+    const { deployer, wallet: w, rows, net, journalPath } = setup();
+    const refusingProxy = registryDeployer({
+      network: "preprod",
+      wallet: {
+        ...w,
+        submit: async () => {
+          throw new Error("test node: HTTP 403: Forbidden");
+        },
+      },
+      source: net.source,
+      prover,
+      journalPath,
+      pollMillis: 1,
+    });
+    const refused = await refusingProxy.prepare();
+    await expect(refusingProxy.submit(refused)).rejects.toThrow(/HTTP 403/);
+    refusingProxy.close();
+
+    net.advance(15 * MINUTE + 4 * MINUTE);
+    const resumed = await deployer.journalled();
+    expect(resumed).toEqual(refused);
+    expect(await deployer.submit(resumed!)).toMatchObject({ txHash: refused.txHash, address: refused.address });
+    expect(w.submitted.map((t) => hex(t.serialize()))).toEqual([hex(refused.bytes)]);
+    expect(rows()).toEqual([{ tx_hash: refused.txHash, state: "landed" }]);
     deployer.close();
   });
 

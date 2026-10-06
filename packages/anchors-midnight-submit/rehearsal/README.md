@@ -20,7 +20,7 @@ package publishes only `dist`, so nothing here ships.
 |---|---|
 | `bundles.ts` | Traces the real, read-only processes whose bundles the anchors commit to (`bundles/`, git-ignored), each same-block round's pair included. |
 | `endpoints.ts` | Where `run.ts` and `crash.ts` read and write: every broadcast and every read through Blockfrost preprod, the path a mainnet submitter takes, and the wallets' sync alone through Midnight's hosted indexer, whose event ids their saved state names. |
-| `run.ts` | The phases `chain funding deploy kind1 kind2 sameblock negatives rotation`. Records everything public in `evidence/raw.json` (git-ignored). `funding` records each wallet's first funding once and waits, every run, until each wallet can spend DUST. A node negative counts as refused only on the node's own JSON-RPC answer (`nodeRefusal`), and a recorded case is never sent again. |
+| `run.ts` | The phases `chain funding deploy kind1 kind2 sameblock negatives rotation`. Records everything public in `evidence/raw.json` (git-ignored). `funding` records each wallet's first funding once and waits, every run, until each wallet can spend DUST. `deploy` resumes the deploy its journal still holds (`registryDeployer.journalled`) instead of preparing another, and saves the landing before it reads the wallet's balance. A node negative counts as refused only on the node's own JSON-RPC answer (`nodeRefusal`), and a recorded case is never sent again. |
 | `crash.ts` | One crash-window step per process: `kill-before`, `kill-after` (SIGKILL) and `recover`. |
 | `docs.ts` | Signs the drill's KNOWN_AUTHORS documents with a preprod-only trust root through `anchors-midnight/scripts/known-authors.ts`. |
 | `rehearse.sh` | All of the above in order, at nice 19; the crash drill runs once. |
@@ -111,10 +111,12 @@ worktree's HEAD).
 
 ## Tests
 
-`pnpm test` in the package runs `test/` (the gate, `verify-all.mjs`, `compose.ts` and
-`finish.sh` end to end over a synthetic rehearsal, a stand-in verify package and a fake `HOME`
-with 0600 secrets and SQLite journals). The synthetic KNOWN_AUTHORS documents carry real Ed25519
-signatures, and the stand-in verify package runs the real KNOWN_AUTHORS code from
+`pnpm test` in the package runs `test/` (the gate, `verify-all.mjs`, `compose.ts` and `finish.sh`
+end to end over a synthetic rehearsal, a stand-in verify package and a fake `HOME` with 0600
+secrets and SQLite journals, and `run.ts deploy` in its own processes over `test/offline.ts`, the
+submit package with its wallet, prover and chain replaced, failing one run at a chosen step and
+checking the next run finishes the same deploy). The synthetic KNOWN_AUTHORS documents carry real
+Ed25519 signatures, and the stand-in verify package runs the real KNOWN_AUTHORS code from
 `../../anchors-midnight/dist`, so the anchors-midnight build must be current (CI builds it
 first). `pnpm typecheck` covers the scripts too. CI never runs a network step. A step that did
 not run, or failed, leaves a hole the gate refuses (a missing anchor record, crash log, node
@@ -166,9 +168,12 @@ interruption finishes what is missing. A rerun keeps the first funding record, t
 the verifier reads among it. A DUST coin spent by bytes that never landed comes back to its
 wallet only after the ledger's grace period (about three hours on preprod), so a rerun soon after
 such a failure waits in `funding` until then. A registry deploy journalled earlier that the chain
-has carried past its TTL unseen is settled as failed before the new deploy is sent; one the chain
-has not yet ruled out makes `deploy` refuse the new bytes. The crash drill runs once: a second
-pass would add to its log, and the gate would refuse the pack.
+has carried past its TTL unseen is settled as failed, and `deploy` prepares new bytes. One the
+chain has not ruled out, landed or still pending, is resumed from the journal's bytes: `deploy`
+sends those same bytes again only if no broadcast of them ever returned, waits for them, and
+records them as the prepared deploy, so a run that failed between the broadcast and the readback
+leaves the next run that deploy to finish, never a second one. The crash drill runs once: a
+second pass would add to its log, and the gate would refuse the pack.
 
 ### 3. The consumer
 
