@@ -172,22 +172,28 @@ const phases: Record<string, () => Promise<void>> = {
   },
 
   async deploy() {
-    if (raw.deploy?.txHash) return log("deploy already recorded", raw.deploy.address);
-    const w = await wallet("walletA");
-    const dustBefore = (await balances("walletA")).dust;
-    const deployer = registryDeployer({ network: "preprod", wallet: instrument(w, "walletA"), source, prover, journalPath: `${SECRETS}/journal-deploy.sqlite` });
-    const t = performance.now();
-    const prepared = await deployer.prepare();
-    const prepareMs = performance.now() - t;
-    raw.deploy = { prepared: { address: prepared.address, txHash: prepared.txHash, runtime: prepared.runtime, authority: prepared.authority, verifierKeys: prepared.verifierKeys, declaredFee: prepared.declaredFee, ttl: prepared.ttl, bytes: prepared.bytes.length, prepareMs: Math.round(prepareMs) } };
-    save();
-    const deployment = await deployer.submit(prepared);
-    deployer.close();
-    raw.deploy = { ...raw.deploy, ...deployment, landedAfterMs: Date.now() - (metrics.get(prepared.txHash)!.submittedAt as number), dustBefore, dustAfter: (await balances("walletA")).dust };
-    // Readback from two paths: the indexer's state for the deploy action and the node's state.
-    const [indexed] = await source.indexer.transactions(deployment.txHash);
-    const indexerState = indexed!.contractActions.find((a) => a.address === deployment.address)!.state;
-    const nodeState = (await source.node.call<string>("midnight_contractState", [deployment.address, `0x${deployment.blockHash}`])).replace(/^0x/, "");
+    if (raw.deploy?.readback) return log("deploy already recorded", raw.deploy.address);
+    if (!raw.deploy?.txHash) {
+      const w = await wallet("walletA");
+      const dustBefore = (await balances("walletA")).dust;
+      const deployer = registryDeployer({ network: "preprod", wallet: instrument(w, "walletA"), source, prover, journalPath: `${SECRETS}/journal-deploy.sqlite` });
+      const t = performance.now();
+      const prepared = await deployer.prepare();
+      const prepareMs = performance.now() - t;
+      raw.deploy = { prepared: { address: prepared.address, txHash: prepared.txHash, runtime: prepared.runtime, authority: prepared.authority, verifierKeys: prepared.verifierKeys, declaredFee: prepared.declaredFee, ttl: prepared.ttl, bytes: prepared.bytes.length, prepareMs: Math.round(prepareMs) } };
+      save();
+      const deployment = await deployer.submit(prepared);
+      deployer.close();
+      raw.deploy = { ...raw.deploy, ...deployment, landedAfterMs: Date.now() - (metrics.get(prepared.txHash)!.submittedAt as number), dustBefore, dustAfter: (await balances("walletA")).dust };
+      save();
+    }
+    // Readback from two paths, the indexer's state for the deploy action and the node's state; a
+    // rerun after a landed deploy whose readback failed does only this, since the journal would
+    // refuse a second deploy.
+    const { txHash, address, blockHash } = raw.deploy;
+    const [indexed] = await source.indexer.transactions(txHash);
+    const indexerState = indexed!.contractActions.find((a) => a.address === address)!.state;
+    const nodeState = (await source.node.call<string>("midnight_contractState", [address, `0x${blockHash}`])).replace(/^0x/, "");
     for (const state of [indexerState, nodeState]) assertRegistryState(L.ContractState.deserialize(Buffer.from(state, "hex")));
     raw.deploy.readback = { indexerStateBytes: indexerState.length / 2, nodeStateBytes: nodeState.length / 2, byteEqual: indexerState === nodeState, immutable: true };
     save();
