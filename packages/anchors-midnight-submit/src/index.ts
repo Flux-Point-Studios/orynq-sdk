@@ -15,5 +15,5 @@ export type { WalletTransport } from "./relay.js";
 export { assertKnownRuntime, declaredFee, finalizeChecked, submitJournalled } from "./submission.js";
 export type { FeeWallet, Prover } from "./submission.js";
 export { DEFAULT_COST_PARAMETERS, openWallet } from "./wallet.js";
-export type { CostParameters, OperatorWallet, SyncProgress, WalletBalances, WalletOptions } from "./wallet.js";
+export type { CostParameters, OperatorWallet, StateSave, StateSaveFailure, SyncProgress, WalletBalances, WalletOptions } from "./wallet.js";
 export { ZK_PINS, keyMaterial, provingService } from "./zk.js";

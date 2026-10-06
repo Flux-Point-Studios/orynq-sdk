@@ -46,8 +46,9 @@ export interface OperatorWallet {
   readonly addresses: WalletAddresses;
   waitForSync(timeoutMs?: number): Promise<void>;
   progress(): Promise<SyncProgress>;
-  // Saves the sync state to the wallet's state file, so the next open resumes from here.
-  saveState(): Promise<void>;
+  // Saves the sync state to the wallet's state file, so the next open resumes from here. A save
+  // that fails is returned and logged, never thrown, and leaves the file as it was.
+  saveState(): Promise<StateSave>;
   balances(): Promise<WalletBalances>;
   // Registers every unregistered NIGHT UTXO to generate DUST for this wallet; null when none is.
   registerNightForDust(): Promise<string | null>;
@@ -58,7 +59,8 @@ export interface OperatorWallet {
   submit(tx: L.FinalizedTransaction): Promise<void>;
   // Releases the DUST of final bytes that will never be submitted.
   discard(tx: L.FinalizedTransaction): Promise<void>;
-  close(): Promise<void>;
+  // Stops syncing; a synced wallet with a state file saves first, and returns what that save did.
+  close(): Promise<StateSave | null>;
 }
 
 // The three sub-wallets' serialized sync state: their coins and how far they have read, which a
@@ -67,6 +69,29 @@ export interface WalletSnapshot {
   shielded: string;
   unshielded: string;
   dust: string;
+}
+
+// What a save did. One that failed wrote nothing: the state file keeps its last good save, which
+// the next open resumes from, replaying the events since. Each failure names the sub-wallet whose
+// state did not serialize, or "file" when the write did not complete.
+export interface StateSaveFailure {
+  part: keyof WalletSnapshot | "file";
+  error: string;
+}
+export type StateSave = { saved: true } | { saved: false; failures: StateSaveFailure[] };
+
+// A failed part's error by its name and, for a schema error from the wallet SDK, what each step
+// that threw said and threw, never the state it was given.
+function describeFailure(error: unknown): string {
+  const thrown = (issue: unknown): string[] => {
+    if (typeof issue !== "object" || issue === null) return [];
+    const i = issue as { _tag?: string; message?: string; actual?: unknown; issue?: unknown; issues?: unknown };
+    if (i._tag === "Unexpected") return [i.actual instanceof Error ? `${i.message}: ${i.actual.name}: ${i.actual.message}` : String(i.message)];
+    return [i.issue, ...[i.issues].flat()].flatMap(thrown);
+  };
+  const e = error as { name?: string; message?: string; issue?: unknown };
+  if (e?.issue === undefined) return `${e?.name ?? "Error"}: ${e?.message ?? String(error)}`;
+  return [e.name, ...thrown(e.issue)].join(": ");
 }
 
 // The wallet's saved state, or null before it first saves one. A state saved by another wallet,
@@ -168,10 +193,25 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     }
   };
 
-  const saveState = async () => {
-    if (!options.stateFile) throw new Error("the wallet was opened without a state file");
-    const [shielded, unshielded, dust] = await Promise.all([facade.shielded.serializeState(), facade.unshielded.serializeState(), facade.dust.serializeState()]);
-    writeWalletState(options.stateFile, network, addresses, endpoints.indexer, { shielded, unshielded, dust });
+  const saveState = async (): Promise<StateSave> => {
+    const file = options.stateFile;
+    if (!file) throw new Error("the wallet was opened without a state file");
+    const parts = ["shielded", "unshielded", "dust"] as const;
+    const serialized = await Promise.allSettled(parts.map((part) => facade[part].serializeState()));
+    const failures: StateSaveFailure[] = serialized.flatMap((s, i) => (s.status === "rejected" ? [{ part: parts[i]!, error: describeFailure(s.reason) }] : []));
+    if (failures.length === 0) {
+      const [shielded, unshielded, dust] = serialized.map((s) => (s as PromiseFulfilledResult<string>).value) as [string, string, string];
+      try {
+        writeWalletState(file, network, addresses, endpoints.indexer, { shielded, unshielded, dust });
+        return { saved: true };
+      } catch (error) {
+        failures.push({ part: "file", error: describeFailure(error) });
+      }
+    }
+    console.error(
+      `${file}: the ${network} wallet's sync state was not saved (${failures.map((f) => `${f.part}: ${f.error}`).join("; ")}); the file keeps its last good save, and the next open resumes from it and replays the events since`,
+    );
+    return { saved: false, failures };
   };
 
   return {
@@ -225,8 +265,9 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     saveState,
     async close() {
       try {
-        if (options.stateFile && (await firstValueFrom(facade.state())).isSynced) await saveState();
+        const saved = options.stateFile && (await firstValueFrom(facade.state())).isSynced ? await saveState() : null;
         await facade.stop();
+        return saved;
       } finally {
         await transport.close();
       }

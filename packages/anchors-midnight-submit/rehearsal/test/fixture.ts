@@ -187,10 +187,12 @@ export function honestRehearsal(): Rehearsal {
     ev("recover", "crash-before-broadcast", "reconciled", { rows: [row(T1, "pending", 0)] }),
     ev("recover", "crash-before-broadcast", "broadcast", { txHash: T1.txHash }),
     ev("recover", "crash-before-broadcast", "landed", { receipt: receipt(T1), rows: [row(T1, "landed", 1)] }),
+    ev("recover", "crash-before-broadcast", "closed", { stateSave: { saved: true } }),
     ev("kill-after", "crash-after-broadcast", "dying after the node accepted the bytes", { txHash: T2.txHash, rows: [row(T1, "landed", 1), row(T2, "pending", 0)] }),
     ev("recover", "crash-after-broadcast", "restarted", { rows: [row(T1, "landed", 1), row(T2, "pending", 0)] }),
     ev("recover", "crash-after-broadcast", "reconciled", { rows: [row(T1, "landed", 1), row(T2, "landed", 0)] }),
     ev("recover", "crash-after-broadcast", "landed", { receipt: receipt(T2), rows: [row(T1, "landed", 1), row(T2, "landed", 0)] }),
+    ev("recover", "crash-after-broadcast", "closed", { stateSave: { saved: false, failures: [{ part: "shielded", error: "ParseError: Could not serialize local state: RuntimeError: unreachable" }] } }),
   ];
   const crashStatus = [
     "crash.ts kill-before crash-before-broadcast exit=137",

@@ -1,13 +1,14 @@
 // What run.ts imports as ./endpoints.js and ../src/index.js when deploy.test.ts runs it offline:
 // the submit package itself, with its wallet and prover replaced, over a chain that lives in the
-// JSON file OFFLINE_CHAIN so it outlasts each run.ts process. OFFLINE_FAULT breaks one step of a
-// run: "refuse-broadcast" (a proxy answers the broadcast with HTTP 403), "lose-read" (the first
-// read of a landed transaction fails) or "lose-sync" (the wallet stops syncing once a deploy
-// landed).
+// JSON file OFFLINE_CHAIN so it outlasts each run.ts process. OFFLINE_FAULT, a comma-separated
+// list, breaks steps of a run: "refuse-broadcast" (a proxy answers the broadcast with HTTP 403),
+// "lose-read" (the first read of a landed transaction fails), "lose-sync" (the wallet stops
+// syncing once a deploy landed) or "fail-save" (the shielded state does not serialize, as ledger-v8
+// 8.1.3 once trapped on preprod).
 import { readFileSync, writeFileSync } from "node:fs";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import type { IndexedTransaction, MidnightSource, SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import type { OperatorWallet, WalletOptions } from "../../src/index.js";
+import type { OperatorWallet, StateSave, WalletOptions } from "../../src/index.js";
 import { prover } from "../../test/prover.js";
 
 export * from "../../src/index.js";
@@ -21,13 +22,13 @@ export interface OfflineChain {
 }
 
 const FILE = process.env.OFFLINE_CHAIN!;
-const FAULT = process.env.OFFLINE_FAULT;
+const FAULTS = new Set(process.env.OFFLINE_FAULT?.split(","));
 const HEAD = "00".repeat(32);
 const BLOCK = "ab".repeat(32);
 const read = (): OfflineChain => JSON.parse(readFileSync(FILE, "utf8"));
 const write = (chain: OfflineChain) => writeFileSync(FILE, JSON.stringify(chain));
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
-let readsToLose = FAULT === "lose-read" ? 1 : 0;
+let readsToLose = FAULTS.has("lose-read") ? 1 : 0;
 
 export const source = {
   operator: "offline",
@@ -75,6 +76,8 @@ export const provingService = () => prover;
 
 // A synced wallet with DUST to spare that binds without adding a fee and lands what it submits.
 export async function openWallet(options: WalletOptions): Promise<OperatorWallet> {
+  const saveState = async (): Promise<StateSave> =>
+    FAULTS.has("fail-save") ? { saved: false, failures: [{ part: "shielded", error: "ParseError: Could not serialize local state: RuntimeError: unreachable" }] } : { saved: true };
   return {
     network: options.network,
     addresses: options.expectedAddresses!,
@@ -82,9 +85,9 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     async progress() {
       throw new Error("offline wallet: unexpected progress");
     },
-    async saveState() {},
+    saveState,
     async balances() {
-      if (FAULT === "lose-sync" && Object.keys(read().landed).length > 0) throw new Error(`the ${options.network} wallet did not sync within 600 s`);
+      if (FAULTS.has("lose-sync") && Object.keys(read().landed).length > 0) throw new Error(`the ${options.network} wallet did not sync within 600 s`);
       return { night: 10n ** 9n, dust: 10n ** 16n, nightUtxos: 1, registeredNightUtxos: 1 };
     },
     async registerNightForDust() {
@@ -97,12 +100,12 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       const chain = read();
       chain.sent.push(tx.transactionHash());
       write(chain);
-      if (FAULT === "refuse-broadcast") throw new Error("offline node: HTTP 403: Forbidden");
+      if (FAULTS.has("refuse-broadcast")) throw new Error("offline node: HTTP 403: Forbidden");
       const deploy = [...tx.intents!.values()].flatMap((intent) => intent.actions).find((a): a is L.ContractDeploy => a instanceof L.ContractDeploy)!;
       chain.landed[tx.transactionHash()] = { raw: hex(tx.serialize()), height: 500 + Object.keys(chain.landed).length, address: String(deploy.address), state: hex(deploy.initialState.serialize()) };
       write(chain);
     },
     async discard() {},
-    async close() {},
+    close: saveState,
   };
 }

@@ -18,6 +18,7 @@ import {
   registryOperator,
   type OperatorWallet,
   type PreparedDeploy,
+  type StateSave,
 } from "../src/index.js";
 import { source, WALLET_SYNC } from "./endpoints.js";
 import { NODE_NEGATIVES } from "./gate.mjs";
@@ -75,6 +76,14 @@ function instrument(wallet: OperatorWallet, label: string) {
   };
 }
 
+// Every wallet state save, as raw.json's stateSaves. A save that failed left the state file at its
+// last good save, which the next run resyncs from; nothing the rehearsal proves rests on it.
+const recordStateSave = (which: string, when: "after sync" | "at close", outcome: StateSave | null) => {
+  if (outcome === null) return;
+  raw.stateSaves = [...(raw.stateSaves ?? []), { wallet: which, when, at: new Date().toISOString(), ...outcome }];
+  save();
+};
+
 const wallets = new Map<string, OperatorWallet>();
 async function wallet(which: "walletA" | "walletB") {
   if (!wallets.has(which)) {
@@ -92,6 +101,7 @@ async function wallet(which: "walletA" | "walletB") {
     await w.waitForSync(7_200_000);
     log(`${which} synced in ${(Date.now() - t) / 1000} s`);
     wallets.set(which, w);
+    recordStateSave(which, "after sync", await w.saveState());
   }
   return wallets.get(which)!;
 }
@@ -347,7 +357,7 @@ try {
   }
 } finally {
   for (const op of operators.values()) op.close();
-  for (const w of wallets.values()) await w.close();
+  for (const [which, w] of wallets) recordStateSave(which, "at close", await w.close());
   save();
 }
 process.exit(0);

@@ -2,7 +2,8 @@
 //   kill-before LABEL   the process dies (SIGKILL) after the journal row is written, before any byte is broadcast
 //   kill-after LABEL    the process dies after the node accepted the bytes, before the journal counted the broadcast
 //   recover LABEL       a new process reconciles by txHash and finishes the same anchor
-// Each step prints one JSON line with the journal's rows for the anchor's key.
+// Each step prints one JSON line with the journal's rows for the anchor's key, and a recovery a
+// last one with what saving the wallet's state at close did.
 import { readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { openWallet, provingService, registryOperator } from "../src/index.js";
@@ -79,5 +80,5 @@ now.anchors = { ...now.anchors, [label]: { ...receipt, wallet: "walletA", bundle
 writeFileSync(RAW, JSON.stringify(now, null, 1));
 say("landed", { receipt, rows: rows() });
 operator.close();
-await wallet.close();
+say("closed", { stateSave: await wallet.close() });
 process.exit(0);

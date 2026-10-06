@@ -75,6 +75,10 @@ describe.concurrent("run.ts deploy", () => {
     expect(r.raw().deploy).toMatchObject(recorded(r.chain(), sent!));
     expect(r.raw().deploy).toMatchObject({ dustBefore: String(10n ** 16n), dustAfter: String(10n ** 16n), landedAfterMs: expect.any(Number), prepared: { prepareMs: expect.any(Number) } });
     expect(r.journal()).toEqual([{ tx_hash: sent, state: "landed" }]);
+    expect(r.raw().stateSaves).toEqual([
+      { wallet: "walletA", when: "after sync", at: expect.any(String), saved: true },
+      { wallet: "walletA", when: "at close", at: expect.any(String), saved: true },
+    ]);
   });
 
   it("after a run that failed once the node held the deploy, before it recorded the landing, the next run finishes that deploy and sends nothing", async ({ expect }) => {
@@ -148,6 +152,30 @@ describe.concurrent("run.ts deploy", () => {
     expect(r.journal()).toEqual([
       { tx_hash: refused, state: "failed" },
       { tx_hash: deployed, state: "landed" },
+    ]);
+  });
+
+  it("records each wallet state save, and one that fails neither fails the run nor touches the landing", async ({ expect }) => {
+    const r = rehearsal();
+    const run = await r.run("fail-save");
+    expect(run.status, run.output).toBe(0);
+    const [sent] = r.chain().sent;
+    expect(r.raw().deploy).toMatchObject(recorded(r.chain(), sent!));
+    const failed = { saved: false, failures: [{ part: "shielded", error: "ParseError: Could not serialize local state: RuntimeError: unreachable" }] };
+    expect(r.raw().stateSaves).toEqual([
+      { wallet: "walletA", when: "after sync", at: expect.any(String), ...failed },
+      { wallet: "walletA", when: "at close", at: expect.any(String), ...failed },
+    ]);
+  });
+
+  it("reports the phase's own error when it fails, and still records the save at close", async ({ expect }) => {
+    const r = rehearsal();
+    const failed = await r.run("lose-sync,fail-save");
+    expect(failed.status, failed.output).toBe(1);
+    expect(failed.output).toMatch(/did not sync within 600 s/);
+    expect(r.raw().stateSaves.map((s: { when: string; saved: boolean }) => [s.when, s.saved])).toEqual([
+      ["after sync", false],
+      ["at close", false],
     ]);
   });
 });

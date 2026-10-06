@@ -20,8 +20,8 @@ package publishes only `dist`, so nothing here ships.
 |---|---|
 | `bundles.ts` | Traces the real, read-only processes whose bundles the anchors commit to (`bundles/`, git-ignored), each same-block round's pair included. |
 | `endpoints.ts` | Where `run.ts` and `crash.ts` read and write: every broadcast and every read through Blockfrost preprod, the path a mainnet submitter takes, and the wallets' sync alone through Midnight's hosted indexer, whose event ids their saved state names. |
-| `run.ts` | The phases `chain funding deploy kind1 kind2 sameblock negatives rotation`. Records everything public in `evidence/raw.json` (git-ignored). `funding` records each wallet's first funding once and waits, every run, until each wallet can spend DUST. `deploy` resumes the deploy its journal still holds (`registryDeployer.journalled`) instead of preparing another, and saves the landing before it reads the wallet's balance. A node negative counts as refused only on the node's own JSON-RPC answer (`nodeRefusal`), and a recorded case is never sent again. |
-| `crash.ts` | One crash-window step per process: `kill-before`, `kill-after` (SIGKILL) and `recover`. |
+| `run.ts` | The phases `chain funding deploy kind1 kind2 sameblock negatives rotation`. Records everything public in `evidence/raw.json` (git-ignored). `funding` records each wallet's first funding once and waits, every run, until each wallet can spend DUST. `deploy` resumes the deploy its journal still holds (`registryDeployer.journalled`) instead of preparing another, and saves the landing before it reads the wallet's balance. A node negative counts as refused only on the node's own JSON-RPC answer (`nodeRefusal`), and a recorded case is never sent again. Each wallet saves its sync state once it has synced and again at close, and `stateSaves` records every outcome: a save that fails fails no phase, and the next run resyncs from the last good save. |
+| `crash.ts` | One crash-window step per process: `kill-before`, `kill-after` (SIGKILL) and `recover`. A recovery ends with a `closed` line recording what saving the wallet's state did. |
 | `docs.ts` | Signs the drill's KNOWN_AUTHORS documents with a preprod-only trust root through `anchors-midnight/scripts/known-authors.ts`. |
 | `rehearse.sh` | All of the above in order, at nice 19; the crash drill runs once. |
 | `verify-all.mjs` | Verifies every recorded anchor, the rotation matrix, twelve verifier negatives and the absence of every refused maintenance transaction through Blockfrost, and opens the forged KNOWN_AUTHORS documents, from a consumer directory into which npm installed the packed verify package. It exits 1 on any gate failure. |
@@ -141,6 +141,8 @@ installed and built (`pnpm install && pnpm build` at the root).
   Midnight's hosted indexer, the one their saved state was synced from: restoring it takes about
   four minutes per wallet. Blockfrost's indexer numbers its events differently, so against
   Blockfrost, or without saved state, each wallet resyncs from genesis, about two hours of CPU.
+  A save that fails leaves the file at its last good save (`raw.json`'s `stateSaves` records it),
+  and the next run restores that save and replays the events since.
 
 ### 1. Faucet
 
