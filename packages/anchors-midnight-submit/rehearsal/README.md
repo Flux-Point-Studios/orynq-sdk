@@ -26,7 +26,7 @@ package publishes only `dist`, so nothing here ships.
 | `rehearse.sh` | All of the above in order, at nice 19; the crash drill runs once. |
 | `verify-all.mjs` | Verifies every recorded anchor, the rotation matrix, twelve verifier negatives and the absence of every refused maintenance transaction through Blockfrost, and opens the forged KNOWN_AUTHORS documents, from a consumer directory into which npm installed the packed verify package. It exits 1 on any gate failure. |
 | `gate.mjs` | The claims the pack may make, from what was recorded and what the verifier returned. Each maintenance update counts as refused only on the node's answer 1010 Invalid Transaction with the maintenance authority's own custom code, and each forged document only on the verify package's answer from the check it targets (below). The deploy the pack describes must be the one that landed: a prepared record whose transaction hash or address differs, such as a prepare a later run abandoned, fails the gate. |
-| `compose.ts` | Writes the pack only when the gate passes, every journal's landed transactions match the recorded anchors, every kind-2 opening recomputes the commitment the verifier read, and the privacy scan finds no window of any secret. |
+| `compose.ts` | Writes the pack only when the gate passes, every journal's landed transactions match the recorded anchors, every kind-2 opening recomputes the commitment the verifier read, and the privacy scan finds no window of any secret. It discloses every crash-drill attempt archived as aborted (runbook, step 2), and writes no pack when `gate.mjs` (`abortedDrills`) refuses one. |
 | `finish.sh` | `verify-all.mjs` from `$CONSUMER`, then `compose.ts`. |
 | `record-golden.ts` | Records the verifier's reads of three real anchors as a fixture the anchors-midnight suite can replay. |
 | `wallets.json` | The public addresses of preprod wallets A and B. `openWallet` refuses a mnemonic that derives anything else. |
@@ -98,6 +98,7 @@ recorded (`raw.json`, the crash log, the journals) is the writer's own record; a
 | 6 | The verify package answered each forged document as the gate requires; Ed25519 verification refused both forgeries under the trust root's key; the same document opened under the stranger as trust root | `verified.forgedDocuments[name].outcome` | `judge`: each answer exactly as the table above, none missing, none unknown | forgeries.test; gate.test `forged KNOWN_AUTHORS documents ...`; verify-all.test `forges serial 3 three ways ...`; anchors-midnight known-authors.test |
 | 7 | Blockfrost's preprod node answered each maintenance transaction with 1010 "Invalid Transaction" and the authority's own code; Blockfrost's indexer, asked by the rehearsal and by the verifier, lists none of them; the registry state Blockfrost's node reported afterwards passes the immutability check | `raw.negatives[name]`: the refusal `nodeRefusal` took from the node's JSON-RPC error, which Blockfrost relays as the node gave it (no one but the submitter sees a refusal), and `onChain` from Blockfrost's indexer; `verified.refusedTransactions[name]`; `raw.negativesAfter`, which `run.ts` writes only after `assertRegistryState` passes | `judge`: code 1010, message `Invalid Transaction`, data the case's own code (`NODE_NEGATIVES`), `onChain` 0, Blockfrost's answer for that txHash `invalid` with `indexer: the indexer knows no transaction ...`, `registryStillImmutable` | gate.test `the node-enforced negatives ...`; compose.test `refuses review2's pack ...`; verify-all.test `asks Blockfrost for every transaction the node refused ...` |
 | 8 | The crash drill killed the submitter with SIGKILL (exit 137) before the bytes went to the node and after the node accepted them; each restart landed exactly the journalled transaction | `crash.log` (`crash.ts`), `crash.log.status` (`rehearse.sh`) | `judge`: per `CRASH_WINDOWS`, one kill step in the window's mode logging the window's words (`crash.ts` takes them from the same table and refuses any other label and mode), exits 137 and 0, a pending row at death, one landing of that txHash with one landed row, a resend only for `kill-before`, the anchor among the recorded | gate.test `the journal crash drill` |
+| 8a | Only when an attempt was archived as aborted: N earlier attempts aborted before any kill point, disclosed with each archived file's sha256, which the archive's manifest records; for each, its steps' exit codes, none at a kill point, and no journal row in any event it logged | `evidence/crash-drill-aborted-N/`: `crash.log`, `crash.log.status`, `crash.err`, `MANIFEST.sha256`, `README.md` | `abortedDrills`, run by `compose.ts`: archives named `crash-drill-aborted-N` and numbered 1 to N; a manifest in `sha256sum`'s format listing exactly the three files; each file with the sha256 the manifest records and no other file archived; no `kill-*` event; every logged event a recovery whose journal rows are `[]`; every step one of the drill's, exiting neither 0 nor 137; a README.md that opens with a paragraph. The fresh drill still passes statement 8's checks | gate.test `aborted crash-drill attempts`; compose.test `a crash drill that aborted before any kill point`; finish.test `carries a crash drill that aborted ...` |
 | 9 | Each verifier negative returned its expected status from its expected check | `verified.negatives` | `judge`: `VERIFIER_NEGATIVES` status and failing check | gate.test `the verifier negatives` |
 | 10 | The private receipts hold an opening for each kind-2 anchor, each recomputing the commitment the verifier read; none is in the pack | `receipts.json` (0600); `verified.anchors[name].commitment` | `compose.ts`: an opening per kind-2 txHash whose `hidingCommitment(hiddenDigest(opening, attribute), salt)` equals the verifier's commitment; the scan finds no 8-byte window of any secret or opening field, and finds salts and root hashes in the receipts and attributes in the pack | compose.test `refuses a kind-2 opening ...`, `writes nothing when the privacy scan finds a secret ...` |
 | 11 | The documents are signed by trust root R, not among the trust roots the verify package ships, and each names only preprod | `verified.trustRoot`, `verified.shippedTrustRoots` (the package's `KNOWN_AUTHORS_TRUST_ROOTS`), `verified.knownAuthorsDocuments` | `judge`: R not shipped; three documents, each naming `preprod` alone | gate.test `the drill's trust root` |
@@ -106,8 +107,9 @@ The pack claims nothing else, since no check establishes it: not where each writ
 pack's `chain.blockfrost` records the chain identity of the Blockfrost endpoints `run.ts` and
 `crash.ts` write and read through, and `chain.hosted` that of the hosted endpoints whose indexer
 the wallets sync from), not which wallet paid beyond the rehearsal's record, not how or when the
-drill's trust-root key was made, and not that the tooling that ran was committed (`commit` is the
-worktree's HEAD).
+drill's trust-root key was made, not that the tooling that ran was committed (`commit` is the
+worktree's HEAD), and not what an aborted attempt's README.md says: the pack carries its first
+paragraph as the operator's statement, and statement 8a claims only what the gate checked.
 
 ## Tests
 
@@ -179,6 +181,29 @@ records them as the prepared deploy, so a run that failed between the broadcast 
 leaves the next run that deploy to finish, never a second one. The crash drill runs once: a
 second pass would add to its log, and the gate would refuse the pack.
 
+A drill can abort before any kill point, as when wallet A cannot pay a fee: every step exits
+non-zero, no kill step logs, and every restart finds the crash journal empty. `rehearse.sh` runs
+no drill while `evidence/crash.log.status` exists, so archive the attempt's three files
+unmodified, with their sha256 and a `README.md` whose first paragraph says what happened, under
+the next unused number, and rerun:
+
+```
+a=evidence/crash-drill-aborted-1   # the next unused number
+mkdir "$a"
+mv evidence/crash.log evidence/crash.log.status evidence/crash.err "$a/"
+(cd "$a" && sha256sum crash.log crash.log.status crash.err > MANIFEST.sha256)
+"$EDITOR" "$a/README.md"
+./rehearse.sh
+```
+
+The pack discloses every archive in `journalCrashDrill.abortedAttempts`: each file's sha256, the
+steps, the log, Node's error headlines from `crash.err` (at most five distinct lines, every path
+replaced) and the README's first paragraph, with statement 8a. No pack is written when an archived
+file no longer has the sha256 its manifest records, the archive holds a file its manifest does not
+list, the numbers skip one, or the attempt reached a kill point (a kill step logged, a restart
+found a journal row, or a step exited 0 or 137): an attempt that reached a kill point is a pass of
+the drill, not an abort, and the drill runs once. The fresh drill must pass every check of its own.
+
 ### 3. The consumer
 
 The verifier runs from a directory outside the repository into which only the packed verify
@@ -213,8 +238,9 @@ journals and scans the pack before writing it.
 `orynq-midnight-evidence/v1`: the commit, the chain, the pins, the wallets' public addresses, the
 registry deploy and its readback, every anchor with its verifier verdict, timing and fee, the
 same-block pair, the node's refusals with Blockfrost's answer for each, the KNOWN_AUTHORS drill
-with its verdict matrix and the forged documents, the crash drill's log, the verifier negatives,
-the verify package's install record, the measurements, the statements mapped above, and the
-privacy scan. Kind-2 openings and every key stay on the operator host.
+with its verdict matrix and the forged documents, the crash drill's log and every attempt
+archived as aborted, the verifier negatives, the verify package's install record, the
+measurements, the statements mapped above, and the privacy scan. Kind-2 openings and every key
+stay on the operator host.
 
 After the pack, `node --import tsx record-golden.ts OUT.json` records the golden fixture.

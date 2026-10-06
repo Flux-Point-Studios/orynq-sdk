@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { judge, parseCrashStatus, unrecordedAnchors } from "../gate.mjs";
-import { honestRehearsal, type Rehearsal } from "./fixture.js";
+import { abortedDrills, judge, parseCrashLog, parseCrashStatus, unrecordedAnchors } from "../gate.mjs";
+import { ABORTED_STATEMENT, REPOSITORY, abortedDrill, honestRehearsal, partialDrill, sha256, type Rehearsal } from "./fixture.js";
 
 const run = (r: Rehearsal) => judge({ raw: r.raw, verified: r.verified, crash: r.crash, crashStatus: parseCrashStatus(r.crashStatus.join("\n")) });
 const failuresOf = (edit: (r: Rehearsal) => void) => {
@@ -276,6 +276,133 @@ describe("the evidence gate", () => {
     it("refuses a kill step that was not a SIGKILL, and a death before the journal row existed", () => {
       expect(failuresOf((r) => (r.crashStatus[0] = "crash.ts kill-before crash-before-broadcast exit=0"))[0]).toMatch(/^crash drill crash-before-broadcast: steps exited \{"kill-before":0,"recover":0\}/);
       expect(failuresOf((r) => (at(r, "crash-after-broadcast", "dying").rows = []))).toEqual([expect.stringMatching(/^crash drill crash-after-broadcast: the journal held no pending row/)]);
+    });
+  });
+
+  describe("aborted crash-drill attempts", () => {
+    // Each archive as compose.ts reads it: every entry in its directory, with each file's sha256
+    // and text.
+    const archive = (n: number | string, files: Record<string, string | null>) => ({
+      name: typeof n === "number" ? `crash-drill-aborted-${n}` : n,
+      files: Object.fromEntries(Object.entries(files).map(([name, text]) => [name, text === null ? null : { sha256: sha256(text), text }])),
+    });
+    const refusals = (files: Record<string, string | null>) => abortedDrills([archive(1, files)]).failures;
+    const A = "aborted crash drill crash-drill-aborted-1";
+    const KILLED = "a step of an aborted drill exits non-zero, and never 137, the SIGKILL of a kill point";
+
+    it("accepts an attempt that never reached a kill point, with each file's sha256, its steps, its log, its errors and its README's statement", () => {
+      const files = abortedDrill();
+      expect(abortedDrills([archive(1, files)])).toEqual({
+        failures: [],
+        attempts: [
+          {
+            archive: "crash-drill-aborted-1",
+            statement: ABORTED_STATEMENT,
+            sha256: { "crash.log": sha256(files["crash.log"]!), "crash.log.status": sha256(files["crash.log.status"]!), "crash.err": sha256(files["crash.err"]!) },
+            steps: parseCrashStatus(files["crash.log.status"]!),
+            log: parseCrashLog(files["crash.log"]!),
+            errors: { shown: [{ line: "Wallet.InsufficientFunds: Insufficient Funds: could not balance dust", times: 4 }], notShown: 0 },
+          },
+        ],
+      });
+    });
+
+    it("refuses a file whose sha256 is not the one its MANIFEST.sha256 records, a file the manifest does not list, and a listed file that is missing", () => {
+      const tampered = abortedDrill();
+      const recorded = sha256(tampered["crash.log.status"]!);
+      tampered["crash.log.status"] = tampered["crash.log.status"]!.replaceAll("exit=1", "exit=2");
+      expect(refusals(tampered)).toEqual([`${A}: crash.log.status has sha256 ${sha256(tampered["crash.log.status"])}, not the ${recorded} its MANIFEST.sha256 records`]);
+      expect(refusals({ ...abortedDrill(), "notes.txt": "added after the manifest\n" })).toEqual([`${A}: notes.txt is not in its MANIFEST.sha256`]);
+      const { "crash.err": _, ...missing } = abortedDrill();
+      expect(refusals(missing)).toEqual([`${A}: crash.err, which its MANIFEST.sha256 lists, is missing`]);
+      expect(refusals({ ...abortedDrill(), "crash.err": null })).toEqual([`${A}: crash.err is not a regular file`]);
+    });
+
+    it("refuses a manifest that lists other than the drill's three files, lists one twice, or is not in sha256sum's format", () => {
+      expect(refusals(abortedDrill((f) => delete f["crash.err"]))).toEqual([`${A}: its MANIFEST.sha256 lists crash.log, crash.log.status, not crash.err, crash.log, crash.log.status`]);
+      const twice = abortedDrill();
+      twice["MANIFEST.sha256"] += twice["MANIFEST.sha256"]!.split("\n")[0] + "\n";
+      expect(refusals(twice)).toEqual([`${A}: its MANIFEST.sha256 lists crash.log twice`]);
+      const loose = abortedDrill();
+      const line = `${sha256(loose["crash.log"]!)} crash.log`;
+      loose["MANIFEST.sha256"] = loose["MANIFEST.sha256"]!.replace(`${sha256(loose["crash.log"]!)}  crash.log\n`, `${line}\n`);
+      expect(refusals(loose)).toEqual([`${A}: its MANIFEST.sha256 holds "${line}", which is not a sha256sum line`]);
+    });
+
+    it("refuses a partial drill archived as aborted: an attempt that reached a kill point is a pass of the drill, not an abort", () => {
+      expect(refusals(partialDrill())).toEqual([
+        `${A}: it reached a kill point (kill-before crash-before-broadcast: "dying before broadcast"), so it is a pass of the drill, not an abort`,
+        `${A}: recover crash-before-broadcast logged "restarted" with journal rows ${JSON.stringify([{ tx_hash: "5a".repeat(32), state: "pending", broadcasts: 0, height: null }])}, not a recovery that found the journal empty`,
+        `${A}: kill-before crash-before-broadcast exited 137; ${KILLED}`,
+      ]);
+    });
+
+    it("refuses each sign of a kill point alone: a kill step's log line, a journal row at a restart, a broadcast, a SIGKILL exit, and a step that finished", () => {
+      const status = (edit: (lines: string) => string) => abortedDrill((f) => (f["crash.log.status"] = edit(f["crash.log.status"]!)));
+      const log = (event: Record<string, unknown>) => abortedDrill((f) => (f["crash.log"] += `${JSON.stringify({ at: "2026-10-05T01:11:00.000Z", label: "crash-after-broadcast", ...event })}\n`));
+      expect(refusals(log({ mode: "kill-after", event: "dying after the node accepted the bytes", txHash: "6b".repeat(32), rows: [] }))).toEqual([
+        `${A}: it reached a kill point (kill-after crash-after-broadcast: "dying after the node accepted the bytes"), so it is a pass of the drill, not an abort`,
+      ]);
+      expect(refusals(log({ mode: "recover", event: "reconciled", rows: [{ tx_hash: "6b".repeat(32), state: "landed" }] }))).toEqual([
+        `${A}: recover crash-after-broadcast logged "reconciled" with journal rows [{"tx_hash":"${"6b".repeat(32)}","state":"landed"}], not a recovery that found the journal empty`,
+      ]);
+      expect(refusals(log({ mode: "recover", event: "broadcast", txHash: "6b".repeat(32) }))).toEqual([`${A}: recover crash-after-broadcast logged "broadcast" with journal rows null, not a recovery that found the journal empty`]);
+      expect(refusals(status((s) => s.replace("kill-after crash-after-broadcast exit=1", "kill-after crash-after-broadcast exit=137")))).toEqual([`${A}: kill-after crash-after-broadcast exited 137; ${KILLED}`]);
+      expect(refusals(status((s) => s.replace("recover crash-after-broadcast exit=1", "recover crash-after-broadcast exit=0")))).toEqual([`${A}: recover crash-after-broadcast exited 0; ${KILLED}`]);
+    });
+
+    it("refuses a status file with no step, or with a line that is no step of the drill", () => {
+      expect(refusals(abortedDrill((f) => (f["crash.log.status"] = "")))).toEqual([`${A}: its crash.log.status records no step`]);
+      expect(refusals(abortedDrill((f) => (f["crash.log.status"] += "crash.ts recover rotation-old-before exit=1\nkilled\n")))).toEqual([
+        `${A}: its crash.log.status holds "crash.ts recover rotation-old-before exit=1", which is no step of the drill`,
+        `${A}: its crash.log.status holds "killed", which is no step of the drill`,
+      ]);
+    });
+
+    it("refuses an archive with no MANIFEST.sha256 or no README.md, and a README.md that opens with no paragraph", () => {
+      const { "MANIFEST.sha256": _, ...unlisted } = abortedDrill();
+      expect(refusals(unlisted)).toEqual([`${A}: holds no MANIFEST.sha256`]);
+      const { "README.md": __, ...unexplained } = abortedDrill();
+      expect(refusals(unexplained)).toEqual([`${A}: holds no README.md`]);
+      expect(refusals({ ...abortedDrill(), "README.md": "\n  \n" })).toEqual([`${A}: its README.md opens with no paragraph`]);
+    });
+
+    it("discloses every archive in number order, and refuses a gap in the numbers, any other name, and an entry that is not a directory", () => {
+      const two = abortedDrills([archive(2, abortedDrill()), archive(1, abortedDrill())]);
+      expect(two.failures).toEqual([]);
+      expect(two.attempts.map((a) => a.archive)).toEqual(["crash-drill-aborted-1", "crash-drill-aborted-2"]);
+      expect(abortedDrills([archive(1, abortedDrill()), archive(3, abortedDrill())]).failures).toEqual(["the aborted crash-drill archives are numbered 1, 3, not 1 to 2"]);
+      expect(abortedDrills([archive("crash-drill-aborted-01", abortedDrill())]).failures).toEqual(["aborted crash drill crash-drill-aborted-01: its name is not crash-drill-aborted-N"]);
+      expect(abortedDrills([{ name: "crash-drill-aborted-1", files: null }]).failures).toEqual([`${A}: not a directory`]);
+    });
+
+    it("carries only Node's headline of each error, every path replaced, at most five distinct lines of at most 240 characters", () => {
+      const files = abortedDrill((f) => {
+        f["crash.err"] = [
+          "node:internal/modules/run_main:107",
+          `Error: ENOENT: no such file or directory, open '${REPOSITORY}.secrets/state/walletA.json'`,
+          "    at Object.openSync (node:fs:573:18)",
+          'TypeError [ERR_INVALID_ARG_TYPE]: The "path" argument must be of type string. Received undefined',
+          `Error: fetch failed for file://${REPOSITORY}x.js, ~/.cache/orynq-midnight/zk and ../../outside`,
+          `RangeError: ${"x".repeat(300)}`,
+          "Error: one",
+          "    error: Wallet.InsufficientFunds: Insufficient Funds: could not balance dust",
+          "Error: two",
+          "Error: one",
+          "Error: three",
+          "",
+        ].join("\n");
+      });
+      expect(abortedDrills([archive(1, files)]).attempts[0]!.errors).toEqual({
+        shown: [
+          { line: "Error: ENOENT: no such file or directory, open '<path>'", times: 1 },
+          { line: 'TypeError [ERR_INVALID_ARG_TYPE]: The "path" argument must be of type string. Received undefined', times: 1 },
+          { line: "Error: fetch failed for <path>, <path> and <path>", times: 1 },
+          { line: `RangeError: ${"x".repeat(240 - "RangeError: ".length)}`, times: 1 },
+          { line: "Error: one", times: 2 },
+        ],
+        notShown: 2,
+      });
     });
   });
 

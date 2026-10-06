@@ -292,6 +292,107 @@ export function judge({ raw, verified, crash, crashStatus }) {
   return { failures, facts };
 }
 
+// A crash drill that aborted before any kill point, archived unmodified in
+// evidence/crash-drill-aborted-N/ (README.md runbook): its crash.log, crash.log.status and
+// crash.err, their sha256sum in MANIFEST.sha256, and README.md, whose first paragraph the pack
+// carries as the attempt's statement. Each archive arrives as every entry of its directory, a
+// regular file as its sha256 and text and anything else as null. An attempt counts as aborted
+// only if no step reached a kill point: no kill step logged, every logged recovery event found
+// the crash journal empty, and every step exited non-zero but not 137, the SIGKILL a kill point
+// dies by. One that reached a kill point is a pass of the drill, and the drill runs once.
+const ABORTED_DRILL = /^crash-drill-aborted-([1-9]\d*)$/;
+const ARCHIVED = ["crash.err", "crash.log", "crash.log.status"];
+const SHA256SUM_LINE = /^([0-9a-f]{64}) [ *](.+)$/;
+// The pack carries Node's "Name: message" headline of each uncaught error in crash.err, never a
+// stack frame or an inspected object, with every token that holds a path separator replaced.
+const ERROR_HEADLINE = /^[A-Za-z_$][\w$.]*(?: \[[A-Z0-9_]+\])?: \S/;
+const PATH_TOKEN = /[^\s'"`(),]*[/\\][^\s'"`(),]*/g;
+const ERROR_LINES = 5;
+const ERROR_CHARS = 240;
+
+function abortedDrill(name, files) {
+  const failures = [];
+  const refuse = (why) => failures.push(`aborted crash drill ${name}: ${why}`);
+  if (!ABORTED_DRILL.test(name)) refuse("its name is not crash-drill-aborted-N");
+  else if (!files) refuse("not a directory");
+  if (failures.length) return { failures };
+  const { "MANIFEST.sha256": manifest, "README.md": readme, ...archived } = files;
+  for (const [file, f] of Object.entries(files)) if (f === null) refuse(`${file} is not a regular file`);
+  for (const file of ["MANIFEST.sha256", "README.md"]) if (!Object.hasOwn(files, file)) refuse(`holds no ${file}`);
+  if (failures.length) return { failures };
+
+  const recorded = {};
+  for (const line of manifest.text.split("\n").filter((l) => l.trim())) {
+    const [, sha256, file] = SHA256SUM_LINE.exec(line) ?? [];
+    if (!file) refuse(`its MANIFEST.sha256 holds "${line}", which is not a sha256sum line`);
+    else if (Object.hasOwn(recorded, file)) refuse(`its MANIFEST.sha256 lists ${file} twice`);
+    else recorded[file] = sha256;
+  }
+  if (failures.length) return { failures };
+  const listed = Object.keys(recorded).sort();
+  if (JSON.stringify(listed) !== JSON.stringify(ARCHIVED)) refuse(`its MANIFEST.sha256 lists ${listed.join(", ")}, not ${ARCHIVED.join(", ")}`);
+  for (const [file, { sha256 }] of Object.entries(archived)) {
+    if (!Object.hasOwn(recorded, file)) refuse(`${file} is not in its MANIFEST.sha256`);
+    else if (sha256 !== recorded[file]) refuse(`${file} has sha256 ${sha256}, not the ${recorded[file]} its MANIFEST.sha256 records`);
+  }
+  for (const file of listed) if (!Object.hasOwn(archived, file)) refuse(`${file}, which its MANIFEST.sha256 lists, is missing`);
+  const statement = readme.text
+    .split(/\n[ \t]*\n/)
+    .map((p) => p.replace(/\s+/g, " ").trim())
+    .find(Boolean);
+  if (!statement) refuse("its README.md opens with no paragraph");
+  if (failures.length) return { failures };
+
+  const log = parseCrashLog(archived["crash.log"].text);
+  const kills = log.filter((e) => /^kill-/.test(e.mode));
+  if (kills.length) refuse(`it reached a kill point (${kills.map((e) => `${e.mode} ${e.label}: "${e.event}"`).join("; ")}), so it is a pass of the drill, not an abort`);
+  for (const e of log) {
+    if (kills.includes(e) || (e.mode === "recover" && Array.isArray(e.rows) && e.rows.length === 0)) continue;
+    refuse(`${e.mode} ${e.label} logged "${e.event}" with journal rows ${JSON.stringify(e.rows ?? null)}, not a recovery that found the journal empty`);
+  }
+  const lines = archived["crash.log.status"].text.split("\n").filter((l) => l.trim());
+  if (!lines.length) refuse("its crash.log.status records no step");
+  const steps = lines.map((line) => {
+    const [step] = parseCrashStatus(line);
+    if (!Object.hasOwn(CRASH_WINDOWS, step?.label ?? "") || (step.mode !== "recover" && step.mode !== CRASH_WINDOWS[step.label].mode)) refuse(`its crash.log.status holds "${line.trim()}", which is no step of the drill`);
+    else if (step.exit === 0 || step.exit === 137) refuse(`${step.mode} ${step.label} exited ${step.exit}; a step of an aborted drill exits non-zero, and never 137, the SIGKILL of a kill point`);
+    return step;
+  });
+
+  const errors = new Map();
+  for (const line of archived["crash.err"].text.split("\n").filter((l) => ERROR_HEADLINE.test(l))) {
+    const shown = line.replace(PATH_TOKEN, "<path>").trimEnd().slice(0, ERROR_CHARS);
+    errors.set(shown, (errors.get(shown) ?? 0) + 1);
+  }
+  const distinct = [...errors].map(([line, times]) => ({ line, times }));
+  return {
+    failures,
+    attempt: { archive: name, statement, sha256: recorded, steps, log, errors: { shown: distinct.slice(0, ERROR_LINES), notShown: Math.max(0, distinct.length - ERROR_LINES) } },
+  };
+}
+
+/**
+ * What the pack discloses of one aborted attempt.
+ * @typedef {object} AbortedAttempt
+ * @property {string} archive
+ * @property {string} statement
+ * @property {Record<string, string>} sha256
+ * @property {Array<{ mode: string, label: string, exit: number }>} steps
+ * @property {Array<Record<string, any>>} log
+ * @property {{ shown: Array<{ line: string, times: number }>, notShown: number }} errors
+ */
+
+// Every aborted attempt archived beside the drill, in number order, numbered 1 to N with none
+// missing; the pack discloses each one, and none unless every one passes.
+/** @returns {{ failures: string[], attempts: AbortedAttempt[] }} */
+export function abortedDrills(archives) {
+  const judged = [...archives].sort((a, b) => a.name.localeCompare(b.name, "en", { numeric: true })).map(({ name, files }) => abortedDrill(name, files));
+  const failures = judged.flatMap((j) => j.failures);
+  const numbers = archives.map(({ name }) => ABORTED_DRILL.exec(name)?.[1]).filter(Boolean).map(Number).sort((a, b) => a - b);
+  if (numbers.some((n, i) => n !== i + 1)) failures.push(`the aborted crash-drill archives are numbered ${numbers.join(", ")}, not 1 to ${numbers.length}`);
+  return { failures, attempts: failures.length ? [] : judged.map((j) => j.attempt) };
+}
+
 // Every transaction a rehearsal journal saw land, other than the registry deploy, is a recorded
 // anchor, and every recorded anchor went through a journal: the universe "every anchor" means.
 export function unrecordedAnchors(raw, journalLanded) {

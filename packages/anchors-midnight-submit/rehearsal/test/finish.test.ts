@@ -3,14 +3,15 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
-import { VERIFY_DIST, fakeChain, fakeConsumer, honestRehearsal, removeScratch, scratch, writeRehearsal } from "./fixture.js";
+import { VERIFY_DIST, archiveAbortedDrill, fakeChain, fakeConsumer, honestRehearsal, removeScratch, scratch, writeRehearsal } from "./fixture.js";
 
 const HERE = new URL("..", import.meta.url).pathname;
 
-function finish(verdicts: Record<string, { status: string; assurance: string }> = {}, consumer: Record<string, string> = {}) {
+function finish(verdicts: Record<string, { status: string; assurance: string }> = {}, consumer: Record<string, string> = {}, afterWrite: (dir: string) => void = () => {}) {
   const root = scratch("finish");
   const r = honestRehearsal();
   writeRehearsal(`${root}/rehearsal`, `${root}/home`, r);
+  afterWrite(`${root}/rehearsal`);
   for (const script of ["finish.sh", "gate.mjs", "verify-all.mjs", "compose.ts", "wallets.json"]) symlinkSync(`${HERE}${script}`, `${root}/rehearsal/${script}`);
   fakeConsumer(`${root}/consumer`);
   writeFileSync(`${root}/chain.json`, JSON.stringify(fakeChain(r, verdicts)));
@@ -36,6 +37,13 @@ describe("finish.sh", () => {
     expect(pack.statements[0]).toMatch(/^All 19 anchors this rehearsal wrote outside the rotation drill, 19 distinct transactions/);
     expect(pack.verifier.package).toEqual(verified.package);
     expect(pack.knownAuthorsDrill.forgedDocuments).toEqual(verified.forgedDocuments);
+  });
+
+  it("carries a crash drill that aborted before any kill point, archived beside the drill that ran, into the pack", () => {
+    const { run, pack } = finish({}, {}, (dir) => archiveAbortedDrill(dir, 1));
+    expect(run.status, run.stderr).toBe(0);
+    expect(pack.journalCrashDrill.abortedAttempts.map((a: { archive: string }) => a.archive)).toEqual(["crash-drill-aborted-1"]);
+    expect(pack.statements[8]).toMatch(/^Before that drill, 1 earlier attempt aborted before any kill point/);
   });
 
   it("refuses to run without CONSUMER, the directory that installed only the packed verify package", () => {

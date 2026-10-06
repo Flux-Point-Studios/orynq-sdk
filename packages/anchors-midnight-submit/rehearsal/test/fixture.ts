@@ -27,6 +27,8 @@ export const removeScratch = () => {
   for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true });
 };
 const DEPLOY = 1000;
+// The crash drill's steps, in the order rehearse.sh runs them.
+const DRILL_STEPS = ["kill-before crash-before-broadcast", "recover crash-before-broadcast", "kill-after crash-after-broadcast", "recover crash-after-broadcast"];
 
 type Anchor = Record<string, any>;
 export interface Rehearsal {
@@ -194,12 +196,7 @@ export function honestRehearsal(): Rehearsal {
     ev("recover", "crash-after-broadcast", "landed", { receipt: receipt(T2), rows: [row(T1, "landed", 1), row(T2, "landed", 0)] }),
     ev("recover", "crash-after-broadcast", "closed", { stateSave: { saved: false, failures: [{ part: "shielded", error: "ParseError: Could not serialize local state: RuntimeError: unreachable" }] } }),
   ];
-  const crashStatus = [
-    "crash.ts kill-before crash-before-broadcast exit=137",
-    "crash.ts recover crash-before-broadcast exit=0",
-    "crash.ts kill-after crash-after-broadcast exit=137",
-    "crash.ts recover crash-after-broadcast exit=0",
-  ];
+  const crashStatus = DRILL_STEPS.map((step) => `crash.ts ${step} exit=${step.startsWith("recover") ? 0 : 137}`);
 
   const landedIn = (pick: (name: string, a: Anchor) => boolean) => Object.entries(anchors).filter(([n, a]) => pick(n, a)).map(([, a]) => ({ tx_hash: a.txHash, state: "landed" }));
   const journals = {
@@ -240,6 +237,61 @@ export function writeRehearsal(dir: string, home: string, r: Rehearsal) {
     db.close();
     chmodSync(`${secrets}/${name}`, 0o600);
   }
+}
+
+export const REPOSITORY = new URL("../../../../", import.meta.url).pathname;
+export const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+// README.md's first paragraph spans two lines; the pack carries it as one.
+const README_OPENING = ["First crash-drill attempt, 2026-10-05 01:00-01:10Z,", "ABORTED before any kill point."];
+export const ABORTED_STATEMENT = README_OPENING.join(" ");
+
+// A crash drill that aborted before any kill point, as rehearse.sh leaves it and the runbook
+// archives it: every step exited 1 because the wallet could not balance its fee, each recovery's
+// restart found the crash journal empty, and crash.err holds Node's report of each uncaught error
+// with this repository's paths in its stack. `edit` changes the drill's three files before
+// MANIFEST.sha256 records them, as sha256sum writes it.
+export function abortedDrill(edit: (files: Record<string, string>) => void = () => {}): Record<string, string> {
+  const report = [
+    "node:internal/modules/run_main:107",
+    "    triggerUncaughtException(",
+    "    ^",
+    "",
+    "Wallet.InsufficientFunds: Insufficient Funds: could not balance dust",
+    `    at catch (file://${REPOSITORY}node_modules/.pnpm/@midnight-ntwrk+wallet-sdk-dust-wallet@4.2.0/node_modules/@midnight-ntwrk/wallet-sdk-dust-wallet/dist/v1/Transacting.js:279:32)`,
+    `    at FiberRuntime.runLoop (${REPOSITORY}node_modules/.pnpm/effect@3.21.4/node_modules/effect/src/internal/fiberRuntime.ts:1384:34) {`,
+    "  tokenType: 'dust',",
+    "  _tag: 'Wallet.InsufficientFunds'",
+    "}",
+    "",
+    "Node.js v24.15.0",
+    "",
+  ].join("\n");
+  const restart = (label: string, at: string) => ["restarted", "reconciled"].map((event) => `${JSON.stringify({ at, mode: "recover", label, event, rows: [] })}\n`).join("");
+  const files: Record<string, string> = {
+    "crash.log": restart("crash-before-broadcast", "2026-10-05T01:00:00.000Z") + restart("crash-after-broadcast", "2026-10-05T01:10:00.000Z"),
+    "crash.log.status": DRILL_STEPS.map((step) => `crash.ts ${step} exit=1\n`).join(""),
+    "crash.err": report.repeat(DRILL_STEPS.length),
+  };
+  edit(files);
+  return {
+    ...files,
+    "MANIFEST.sha256": Object.entries(files).map(([name, text]) => `${sha256(text)}  ${name}\n`).join(""),
+    "README.md": `${README_OPENING.join("\n")}\n\nEvery step exited 1: the wallet could not balance its fee.\nThe drill then ran once, fresh.\n`,
+  };
+}
+// A drill that reached its first kill point and failed every later step, archived as though it
+// had aborted, with a manifest that matches its files.
+export const partialDrill = () =>
+  abortedDrill((files) => {
+    const rows = [{ tx_hash: "5a".repeat(32), state: "pending", broadcasts: 0, height: null }];
+    const line = (event: Record<string, unknown>) => `${JSON.stringify({ at: "2026-10-05T01:00:00.000Z", label: "crash-before-broadcast", ...event })}\n`;
+    files["crash.log"] = line({ mode: "kill-before", event: "dying before broadcast", txHash: rows[0]!.tx_hash, rows }) + line({ mode: "recover", event: "restarted", rows });
+    files["crash.log.status"] = files["crash.log.status"]!.replace("kill-before crash-before-broadcast exit=1", "kill-before crash-before-broadcast exit=137");
+  });
+export function archiveAbortedDrill(dir: string, n: number, files = abortedDrill()) {
+  const at = `${dir}/evidence/crash-drill-aborted-${n}`;
+  mkdirSync(at, { recursive: true });
+  for (const [name, text] of Object.entries(files)) writeFileSync(`${at}/${name}`, text);
 }
 
 // The chain the stand-in verify package (test/fake-verifier) answers from: every recorded anchor,

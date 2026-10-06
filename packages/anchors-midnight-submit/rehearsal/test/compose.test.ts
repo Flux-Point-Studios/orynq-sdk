@@ -4,16 +4,15 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, describe, expect, it } from "vitest";
-import { honestRehearsal, removeScratch, scratch, writeRehearsal, type Rehearsal } from "./fixture.js";
+import { ABORTED_STATEMENT, REPOSITORY, abortedDrill, archiveAbortedDrill, honestRehearsal, partialDrill, removeScratch, scratch, sha256, writeRehearsal, type Rehearsal } from "./fixture.js";
 
 const HERE = new URL("..", import.meta.url).pathname;
 
-function compose(edit: (r: Rehearsal) => void = () => {}, afterWrite: (home: string) => void = () => {}) {
+function compose(edit: (r: Rehearsal) => void = () => {}, afterWrite: (home: string, dir: string) => void = () => {}, r = honestRehearsal()) {
   const root = scratch("compose");
-  const r = honestRehearsal();
   edit(r);
   writeRehearsal(`${root}/rehearsal`, `${root}/home`, r);
-  afterWrite(`${root}/home`);
+  afterWrite(`${root}/home`, `${root}/rehearsal`);
   const out = `${root}/pack.json`;
   const run = spawnSync(process.execPath, ["--import", "tsx", "compose.ts", `${root}/rehearsal`, out], { cwd: HERE, encoding: "utf8", env: { ...process.env, HOME: `${root}/home` }, timeout: 60_000 });
   return { r, run, out, pack: existsSync(out) ? JSON.parse(readFileSync(out, "utf8")) : null };
@@ -47,6 +46,7 @@ describe("compose.ts", () => {
     expect(pack.knownAuthorsDrill.forgedDocuments).toEqual(r.verified.forgedDocuments);
     expect(pack.verifier.package).toEqual(r.verified.package);
     expect(pack.privacyScan.windowsOfSecretsInPack).toBe(0);
+    expect(Object.keys(pack.journalCrashDrill)).toEqual(["windows", "steps", "log"]);
   });
 
   it("describes the deploy that landed, not a prepare an earlier run journalled and the chain later ruled out", () => {
@@ -104,6 +104,73 @@ describe("compose.ts", () => {
     expect(run.status).toBe(1);
     expect(run.stderr).toContain("no pack written: the privacy scan failed");
     expect(existsSync(out)).toBe(false);
+  });
+
+  describe("a crash drill that aborted before any kill point", () => {
+    it("is disclosed in the pack beside the drill that ran, and nothing else in the pack changes", () => {
+      const r = honestRehearsal();
+      const files = abortedDrill();
+      const plain = compose(undefined, undefined, r);
+      const disclosed = compose(undefined, (_, dir) => archiveAbortedDrill(dir, 1, files), r);
+      expect(plain.run.status, plain.run.stderr).toBe(0);
+      expect(disclosed.run.status, disclosed.run.stderr).toBe(0);
+      const { abortedAttempts, ...drill } = disclosed.pack.journalCrashDrill;
+      expect(abortedAttempts).toEqual([
+        {
+          archive: "crash-drill-aborted-1",
+          statement: ABORTED_STATEMENT,
+          sha256: { "crash.log": sha256(files["crash.log"]!), "crash.log.status": sha256(files["crash.log.status"]!), "crash.err": sha256(files["crash.err"]!) },
+          steps: ["kill-before crash-before-broadcast", "recover crash-before-broadcast", "kill-after crash-after-broadcast", "recover crash-after-broadcast"].map((step) => {
+            const [mode, label] = step.split(" ");
+            return { mode, label, exit: 1 };
+          }),
+          log: files["crash.log"]!.trim().split("\n").map((l) => JSON.parse(l)),
+          errors: { shown: [{ line: "Wallet.InsufficientFunds: Insufficient Funds: could not balance dust", times: 4 }], notShown: 0 },
+        },
+      ]);
+      const statement =
+        "Before that drill, 1 earlier attempt aborted before any kill point, and journalCrashDrill.abortedAttempts discloses it with each archived file's sha256, which its MANIFEST.sha256 records: crash-drill-aborted-1, whose 4 steps exited 1, 1, 1 and 1, none of them at a kill point, and whose crash journal held no row in any of its 4 logged events.";
+      expect(disclosed.pack.statements).toEqual([...plain.pack.statements.slice(0, 8), statement, ...plain.pack.statements.slice(8)]);
+      expect({ ...disclosed.pack, date: null, statements: null, journalCrashDrill: drill }).toEqual({ ...plain.pack, date: null, statements: null });
+      expect(JSON.stringify(disclosed.pack)).not.toContain(REPOSITORY);
+    });
+
+    it("writes no pack when an archived file no longer has the sha256 its MANIFEST.sha256 records", () => {
+      const files = abortedDrill();
+      const recorded = sha256(files["crash.log"]!);
+      files["crash.log"] = files["crash.log"]!.split("\n").slice(1).join("\n");
+      const { run, out } = compose(undefined, (_, dir) => archiveAbortedDrill(dir, 1, files));
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain(`GATE: aborted crash drill crash-drill-aborted-1: crash.log has sha256 ${sha256(files["crash.log"])}, not the ${recorded} its MANIFEST.sha256 records`);
+      expect(existsSync(out)).toBe(false);
+    });
+
+    it("writes no pack when the archive holds a partial drill: an attempt that reached a kill point is a pass of the drill, not an abort", () => {
+      const { run, out } = compose(undefined, (_, dir) => archiveAbortedDrill(dir, 1, partialDrill()));
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain('GATE: aborted crash drill crash-drill-aborted-1: it reached a kill point (kill-before crash-before-broadcast: "dying before broadcast"), so it is a pass of the drill, not an abort');
+      expect(existsSync(out)).toBe(false);
+    });
+
+    it("never stands in for the drill that must still pass every check", () => {
+      const { run, out } = compose(
+        (r) => r.crash.splice(r.crash.findIndex((e) => e.mode === "kill-after"), 1),
+        (_, dir) => archiveAbortedDrill(dir, 1),
+      );
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain('GATE: crash drill crash-after-broadcast: its kill step logged [], not one kill-after step that said "dying after the node accepted the bytes"');
+      expect(existsSync(out)).toBe(false);
+    });
+
+    it("writes no pack when the attempt's error output carries a secret", () => {
+      const { run, out } = compose(undefined, (home, dir) => {
+        const salt = readFileSync(`${home}/.secrets/orynq-midnight-preprod/salt.key`, "utf8").trim();
+        archiveAbortedDrill(dir, 1, abortedDrill((f) => (f["crash.err"] += `Error: no fee for salt ${salt}\n`)));
+      });
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain("no pack written: the privacy scan failed");
+      expect(existsSync(out)).toBe(false);
+    });
   });
 
   it("refuses when a journal saw an anchor land that the rehearsal never recorded", () => {

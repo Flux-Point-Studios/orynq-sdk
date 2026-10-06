@@ -1,17 +1,19 @@
 // Composes the preprod evidence pack from what the rehearsal recorded (evidence/raw.json, the
-// crash drill's log), the separate verifier's output (evidence/verified.json), the KNOWN_AUTHORS
-// drill documents, the rehearsal's journals and the private kind-2 openings. It writes nothing
-// unless gate.mjs passes every claim, every kind-2 opening recomputes the commitment the verifier
-// read, and the scan finds no window of any secret the rehearsal held, in five encodings, with
-// positive controls. Each statement is built only from what those checks established; README.md
-// maps every statement to its check. Prints counts only.
+// crash drill's log and every aborted attempt archived beside it), the separate verifier's output
+// (evidence/verified.json), the KNOWN_AUTHORS drill documents, the rehearsal's journals and the
+// private kind-2 openings. It writes nothing unless gate.mjs passes every claim and every aborted
+// attempt, every kind-2 opening recomputes the commitment the verifier read, and the scan finds
+// no window of any secret the rehearsal held, in five encodings, with positive controls. Each
+// statement is built only from what those checks established; README.md maps every statement to
+// its check. Prints counts only.
 //   node --import tsx compose.ts REHEARSAL_DIR OUT.json
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { hiddenDigest, hidingCommitment, readAuthorSecret, readPrivateFile, REGISTRY_VERIFIER_KEY_SHA256 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { windowHits } from "../../anchors-midnight/src/__tests__/privacy-scan.js";
-import { INVALID_TRANSACTION, judge, parseCrashLog, parseCrashStatus, ROTATION_EXPECTED, ROTATION_LABELS, unrecordedAnchors } from "./gate.mjs";
+import { abortedDrills, INVALID_TRANSACTION, judge, parseCrashLog, parseCrashStatus, ROTATION_EXPECTED, ROTATION_LABELS, unrecordedAnchors } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
 
 const [dir, out] = process.argv.slice(2) as [string, string];
@@ -22,6 +24,21 @@ const verified = json("evidence/verified.json");
 const bundles: Array<{ label: string; kind: number; rootHash: string; manifestHash: string; merkleRoot: string }> = json("bundles/index.json");
 const crash = parseCrashLog(text("evidence/crash.log"));
 const crashStatus = parseCrashStatus(text("evidence/crash.log.status"));
+// Each crash-drill attempt archived as aborted, every entry of its directory as the gate judges it.
+const listing = (at: string) => readdirSync(at, { withFileTypes: true });
+const archived = (at: string) =>
+  Object.fromEntries(
+    listing(at).map((f) => {
+      if (!f.isFile()) return [f.name, null];
+      const bytes = readFileSync(`${at}/${f.name}`);
+      return [f.name, { sha256: createHash("sha256").update(bytes).digest("hex"), text: bytes.toString("utf8") }];
+    }),
+  );
+const aborted = abortedDrills(
+  listing(`${dir}/evidence`)
+    .filter((e) => e.name.startsWith("crash-drill-aborted-"))
+    .map((e) => ({ name: e.name, files: e.isDirectory() ? archived(`${dir}/evidence/${e.name}`) : null })),
+);
 const SECRETS = `${process.env.HOME}/.secrets/orynq-midnight-preprod`;
 const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: new URL(".", import.meta.url), encoding: "utf8" }).trim();
 
@@ -49,7 +66,7 @@ const unopened = kind2.flatMap(([name, a]) => {
   return opened === read ? [] : [`kind-2 anchor ${name}: its opening recomputes ${opened}, not the commitment ${read} the verifier read`];
 });
 const { failures, facts } = judge({ raw, verified, crash, crashStatus });
-failures.push(...unrecordedAnchors(raw, journalLanded), ...unopened);
+failures.push(...unrecordedAnchors(raw, journalLanded), ...unopened, ...aborted.failures);
 if (failures.length) {
   for (const failure of failures) process.stderr.write(`GATE: ${failure}\n`);
   process.stderr.write(`no pack written: ${failures.length} claims are not established\n`);
@@ -97,6 +114,14 @@ const windows = crashDrill.map((d) =>
     ? `once after the journal row was written and before the bytes went to the node (crash.ts logged "${d.said}", and the restart broadcast those bytes once)`
     : `once after the node accepted the bytes (crash.ts logged "${d.said}", and the restart broadcast nothing)`,
 );
+const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+const inWords = (xs: unknown[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}` : String(xs[0]));
+const attempts = aborted.attempts.map(
+  (a) => `${a.archive}, whose ${count(a.steps.length, "step")} exited ${inWords(a.steps.map((s) => s.exit))}, none of them at a kill point, and whose crash journal held no row in any of its ${count(a.log.length, "logged event")}`,
+);
+const abortedStatement = attempts.length
+  ? [`Before that drill, ${count(attempts.length, "earlier attempt")} aborted before any kill point, and journalCrashDrill.abortedAttempts discloses ${attempts.length === 1 ? "it" : "each"} with each archived file's sha256, which its MANIFEST.sha256 records: ${attempts.join("; ")}.`]
+  : [];
 const statements = [
   `All ${counted.total} anchors this rehearsal wrote outside the rotation drill, ${counted.total} distinct transactions (${counted.byKind[1]} kind 1, ${counted.byKind[2]} kind 2) with the ${counted.crash} crash-drill anchors and the same-block pair among them, verified valid at consensus-verified assurance, each with the commitment the rehearsal recorded.`,
   `The verifier ran in verify-all.mjs, a separate process that imports nothing but Node built-ins, gate.mjs and the verify package, and reads through Blockfrost preprod. It loaded the verify package only from its own node_modules, where npm installed it from ${facts.package!.resolved} (sha256 ${facts.package!.sha256}), a tarball that still had the integrity npm recorded.`,
@@ -106,6 +131,7 @@ const statements = [
   `The verify package answered each forged KNOWN_AUTHORS document as the gate requires (${forgedDocuments.map((f) => `${f.name}: ${f.outcome}`).join("; ")}). Ed25519 verification refused both forgeries under the trust root's key, and the same document opened under the stranger's signature with the stranger as trust root.`,
   `Blockfrost's preprod node answered each of the ${nodeNegatives.length} maintenance transactions at submission with JSON-RPC error ${INVALID_TRANSACTION} "Invalid Transaction" and the maintenance authority's own custom code (${refusals}). Blockfrost's indexer lists none of them, asked by the rehearsal after each refusal and by the verifier, and the registry state Blockfrost's node reported afterwards still passes the immutability check.`,
   `The journal crash drill killed the submitter with SIGKILL (exit 137) ${windows.join(", and ")}; each restart landed exactly the transaction its journal held.`,
+  ...abortedStatement,
   `Each of the ${verifierNegatives} verifier negatives returned its expected status from its expected check.`,
   `The operator's private receipts hold an opening (root, manifest, merkle, salt) for each of the ${kind2.length} kind-2 anchors, and each recomputes the commitment the verifier read for its anchor. None of them is in this pack: the scan below finds no 8-byte window of any of them in five encodings, and finds windows of the salts and root hashes in the receipts.`,
   `The KNOWN_AUTHORS documents here are signed by trust root ${facts.trustRoot}, which is not among the trust roots the verify package ships, and each names only the preprod network.`,
@@ -144,7 +170,7 @@ const pack = {
     forgedDocuments: verified.forgedDocuments,
     shippedTrustRoots: verified.shippedTrustRoots,
   },
-  journalCrashDrill: { windows: crashDrill, steps: crashStatus, log: crash },
+  journalCrashDrill: { windows: crashDrill, steps: crashStatus, log: crash, ...(aborted.attempts.length ? { abortedAttempts: aborted.attempts } : {}) },
   verifierNegatives: verified.negatives,
   verifier: { process: verified.verifier, source: verified.source, package: verified.package },
   measurements: {
