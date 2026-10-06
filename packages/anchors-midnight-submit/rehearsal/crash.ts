@@ -5,8 +5,8 @@
 // Each step prints one JSON line with the journal's rows for the anchor's key.
 import { readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { midnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { MIDNIGHT_HOSTED_PREPROD, openWallet, provingService, registryOperator } from "../src/index.js";
+import { openWallet, provingService, registryOperator } from "../src/index.js";
+import { source, WALLET_SYNC } from "./endpoints.js";
 import { CRASH_WINDOWS } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
 
@@ -17,7 +17,6 @@ if (!crashWindow || (mode !== "recover" && mode !== crashWindow.mode)) throw new
 const HOME = process.env.HOME!;
 const SECRETS = `${HOME}/.secrets/orynq-midnight-preprod`;
 const JOURNAL = `${SECRETS}/journal-crash.sqlite`;
-const source = midnightSource(MIDNIGHT_HOSTED_PREPROD);
 const RAW = new URL("./evidence/raw.json", import.meta.url);
 const raw = JSON.parse(readFileSync(RAW, "utf8"));
 const bundles: Array<{ label: string; rootHash: string; manifestHash: string; merkleRoot: string }> = JSON.parse(readFileSync(new URL("./bundles/index.json", import.meta.url), "utf8"));
@@ -36,7 +35,7 @@ const say = (event: string, extra: Record<string, unknown> = {}) => console.log(
 const wallet = await openWallet({
   network: "preprod",
   mnemonicFile: `${SECRETS}/wallet-a.mnemonic`,
-  endpoints: MIDNIGHT_HOSTED_PREPROD,
+  endpoints: WALLET_SYNC,
   source,
   zkDir: `${HOME}/.cache/orynq-midnight/zk`,
   expectedAddresses: recorded.walletA.addresses,

@@ -19,6 +19,7 @@ package publishes only `dist`, so nothing here ships.
 | File | Role |
 |---|---|
 | `bundles.ts` | Traces the real, read-only processes whose bundles the anchors commit to (`bundles/`, git-ignored), each same-block round's pair included. |
+| `endpoints.ts` | Where `run.ts` and `crash.ts` read and write: every broadcast and every read through Blockfrost preprod, the path a mainnet submitter takes, and the wallets' sync alone through Midnight's hosted indexer, whose event ids their saved state names. |
 | `run.ts` | The phases `chain funding deploy kind1 kind2 sameblock negatives rotation`. Records everything public in `evidence/raw.json` (git-ignored). A node negative counts as refused only on the node's own JSON-RPC answer (`nodeRefusal`), and a recorded case is never sent again. |
 | `crash.ts` | One crash-window step per process: `kill-before`, `kill-after` (SIGKILL) and `recover`. |
 | `docs.ts` | Signs the drill's KNOWN_AUTHORS documents with a preprod-only trust root through `anchors-midnight/scripts/known-authors.ts`. |
@@ -95,16 +96,18 @@ recorded (`raw.json`, the crash log, the journals) is the writer's own record; a
 | 4 | The rehearsal submitted the pair from wallets A and B in round R, and the verifier places both in block H (hash) | `raw.sameBlock.coLanded` and each anchor's `wallet` (the rehearsal's record: DUST spends are shielded, so no chain read shows the payer); `verified.anchors[name].block` | `judge`: two wallets, both recorded at H, both valid, and the verifier's block for each is H with one hash | gate.test `refuses a same-block pair ...` (both) |
 | 5 | The four rotation anchors gave the expected verdict under each document set | `verified.rotation[set][label]`; `raw.rotation.keys`; each anchor's author and height | `judge`: `ROTATION_EXPECTED` per set, valid only at consensus-verified, relay-1 wrote the first two and relay-2 the last two, in increasing blocks | gate.test `the rotation drill` |
 | 6 | The verify package answered each forged document as the gate requires; Ed25519 verification refused both forgeries under the trust root's key; the same document opened under the stranger as trust root | `verified.forgedDocuments[name].outcome` | `judge`: each answer exactly as the table above, none missing, none unknown | forgeries.test; gate.test `forged KNOWN_AUTHORS documents ...`; verify-all.test `forges serial 3 three ways ...`; anchors-midnight known-authors.test |
-| 7 | Midnight's hosted node answered each maintenance transaction with 1010 "Invalid Transaction" and the authority's own code; neither the hosted indexer nor Blockfrost lists any of them; the registry state the hosted node reported afterwards passes the immutability check | `raw.negatives[name]`: the refusal `nodeRefusal` took from the node's JSON-RPC error (no one but the submitter sees a refusal), and `onChain` from the hosted indexer; `verified.refusedTransactions[name]`; `raw.negativesAfter`, which `run.ts` writes only after `assertRegistryState` passes | `judge`: code 1010, message `Invalid Transaction`, data the case's own code (`NODE_NEGATIVES`), `onChain` 0, Blockfrost's answer for that txHash `invalid` with `indexer: the indexer knows no transaction ...`, `registryStillImmutable` | gate.test `the node-enforced negatives ...`; compose.test `refuses review2's pack ...`; verify-all.test `asks Blockfrost for every transaction the node refused ...` |
+| 7 | Blockfrost's preprod node answered each maintenance transaction with 1010 "Invalid Transaction" and the authority's own code; Blockfrost's indexer, asked by the rehearsal and by the verifier, lists none of them; the registry state Blockfrost's node reported afterwards passes the immutability check | `raw.negatives[name]`: the refusal `nodeRefusal` took from the node's JSON-RPC error, which Blockfrost relays as the node gave it (no one but the submitter sees a refusal), and `onChain` from Blockfrost's indexer; `verified.refusedTransactions[name]`; `raw.negativesAfter`, which `run.ts` writes only after `assertRegistryState` passes | `judge`: code 1010, message `Invalid Transaction`, data the case's own code (`NODE_NEGATIVES`), `onChain` 0, Blockfrost's answer for that txHash `invalid` with `indexer: the indexer knows no transaction ...`, `registryStillImmutable` | gate.test `the node-enforced negatives ...`; compose.test `refuses review2's pack ...`; verify-all.test `asks Blockfrost for every transaction the node refused ...` |
 | 8 | The crash drill killed the submitter with SIGKILL (exit 137) before the bytes went to the node and after the node accepted them; each restart landed exactly the journalled transaction | `crash.log` (`crash.ts`), `crash.log.status` (`rehearse.sh`) | `judge`: per `CRASH_WINDOWS`, one kill step in the window's mode logging the window's words (`crash.ts` takes them from the same table and refuses any other label and mode), exits 137 and 0, a pending row at death, one landing of that txHash with one landed row, a resend only for `kill-before`, the anchor among the recorded | gate.test `the journal crash drill` |
 | 9 | Each verifier negative returned its expected status from its expected check | `verified.negatives` | `judge`: `VERIFIER_NEGATIVES` status and failing check | gate.test `the verifier negatives` |
 | 10 | The private receipts hold an opening for each kind-2 anchor, each recomputing the commitment the verifier read; none is in the pack | `receipts.json` (0600); `verified.anchors[name].commitment` | `compose.ts`: an opening per kind-2 txHash whose `hidingCommitment(hiddenDigest(opening, attribute), salt)` equals the verifier's commitment; the scan finds no 8-byte window of any secret or opening field, and finds salts and root hashes in the receipts and attributes in the pack | compose.test `refuses a kind-2 opening ...`, `writes nothing when the privacy scan finds a secret ...` |
 | 11 | The documents are signed by trust root R, not among the trust roots the verify package ships, and each names only preprod | `verified.trustRoot`, `verified.shippedTrustRoots` (the package's `KNOWN_AUTHORS_TRUST_ROOTS`), `verified.knownAuthorsDocuments` | `judge`: R not shipped; three documents, each naming `preprod` alone | gate.test `the drill's trust root` |
 
 The pack claims nothing else, since no check establishes it: not where each write went (the
-pack's `chain.hosted` records the chain identity of the hosted endpoints `run.ts` and `crash.ts`
-use), not which wallet paid beyond the rehearsal's record, not how or when the drill's trust-root
-key was made, and not that the tooling that ran was committed (`commit` is the worktree's HEAD).
+pack's `chain.blockfrost` records the chain identity of the Blockfrost endpoints `run.ts` and
+`crash.ts` write and read through, and `chain.hosted` that of the hosted endpoints whose indexer
+the wallets sync from), not which wallet paid beyond the rehearsal's record, not how or when the
+drill's trust-root key was made, and not that the tooling that ran was committed (`commit` is the
+worktree's HEAD).
 
 ## Tests
 
@@ -128,11 +131,14 @@ installed and built (`pnpm install && pnpm build` at the root).
   `author-relay.key` and `salt.key` (0600), made with `../scripts/keys.ts`. The rehearsal adds
   `author-relay-2.key`, `known-authors-root.seed`, `receipts.json`, the journals and the wallet
   state there. None of them is ever printed.
-- `~/.secrets/blockfrost-midnight-preprod.project_id` (0600), for the verifier's reads.
+- `~/.secrets/blockfrost-midnight-preprod.project_id` (0600): every broadcast and every read,
+  the verifier's included, goes through Blockfrost preprod.
 - `tools/compactc/install.sh ~/.cache/orynq-midnight/compactc ~/.cache/orynq-midnight/zk`: the
   compiler and the pinned ZK material the prover reads.
-- Saved wallet state in `~/.secrets/orynq-midnight-preprod/state/`. Without it, the first sync of
-  each wallet from Midnight's hosted indexer takes about two hours of CPU.
+- Saved wallet state in `~/.secrets/orynq-midnight-preprod/state/`. The wallets sync from
+  Midnight's hosted indexer, the one their saved state was synced from: restoring it takes about
+  four minutes per wallet. Blockfrost's indexer numbers its events differently, so against
+  Blockfrost, or without saved state, each wallet resyncs from genesis, about two hours of CPU.
 
 ### 1. Faucet
 

@@ -21,10 +21,11 @@ registry exists.
 ## Endpoints
 
 `networkEndpoints(network, { blockfrostProjectIdFile })` chooses where a submitter reads and
-writes. Mainnet goes through Blockfrost only (Midnight retired its hosted mainnet endpoints on
-2026-09-30), with the project id read from an owner-only file. Preprod uses Midnight's hosted
-endpoints (`indexer.preprod.midnight.network`, `rpc.preprod.midnight.network`) unless a Blockfrost
-project id file is given.
+writes: Blockfrost, on mainnet and preprod alike, with the project id read from an owner-only
+file, and without one it refuses to start. Midnight retired its hosted mainnet endpoints on
+2026-09-30, and its hosted preprod node's HTTPS JSON-RPC (`rpc.preprod.midnight.network`) answers
+any request body over about 7 KB with HTTP 403, so it cannot take a registry deploy (about 8 KB of
+final bytes, twice that as hex) or an anchor.
 
 ## Custody
 

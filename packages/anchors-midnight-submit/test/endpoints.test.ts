@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MIDNIGHT_HOSTED_PREPROD, networkEndpoints } from "../src/endpoints.js";
+import { networkEndpoints } from "../src/endpoints.js";
 
 const dir = mkdtempSync(join(tmpdir(), "orynq-endpoints-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -21,15 +21,16 @@ describe("networkEndpoints", () => {
     expect(() => networkEndpoints("mainnet")).toThrow(/mainnet needs a Blockfrost project id file: Midnight's hosted mainnet endpoints were retired on 2026-09-30/);
   });
 
-  it("reads preprod through Midnight's hosted endpoints, or through Blockfrost when given a project id file", () => {
-    expect(networkEndpoints("preprod")).toEqual(MIDNIGHT_HOSTED_PREPROD);
-    expect(MIDNIGHT_HOSTED_PREPROD).toEqual({
-      operator: "midnight",
-      indexer: "https://indexer.preprod.midnight.network/api/v3/graphql",
-      indexerWs: "wss://indexer.preprod.midnight.network/api/v3/graphql/ws",
-      node: "https://rpc.preprod.midnight.network",
-      headers: {},
+  it("reads preprod through Blockfrost only too, since Midnight's hosted preprod node refuses a request the size of any deploy or anchor", () => {
+    expect(networkEndpoints("preprod", { blockfrostProjectIdFile: projectIdFile })).toEqual({
+      operator: "blockfrost",
+      indexer: "https://midnight-preprod.blockfrost.io/api/v0",
+      indexerWs: "wss://midnight-preprod.blockfrost.io/api/v0/ws",
+      node: "https://rpc.midnight-preprod.blockfrost.io",
+      headers: { project_id: "preprodProjectId0123456789abcdefABCDEFG" },
     });
-    expect(networkEndpoints("preprod", { blockfrostProjectIdFile: projectIdFile }).indexer).toBe("https://midnight-preprod.blockfrost.io/api/v0");
+    expect(() => networkEndpoints("preprod")).toThrow(
+      "preprod needs a Blockfrost project id file: Midnight's hosted preprod node refuses JSON-RPC request bodies over about 7 KB, smaller than any deploy or anchor",
+    );
   });
 });

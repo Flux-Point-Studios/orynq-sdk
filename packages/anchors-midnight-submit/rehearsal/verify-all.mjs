@@ -1,7 +1,7 @@
 // Verifies every preprod rehearsal anchor with the W2 verifier, in a process of its own that
 // imports only the packed @fluxpointstudios/orynq-sdk-anchors-midnight tarball and gate.mjs. It
-// reads through Blockfrost preprod, a different operator from the hosted endpoints the writes
-// went through, and trusts only the preprod-only KNOWN_AUTHORS root.
+// reads through Blockfrost preprod, the operator the writes went through too, and trusts only
+// the preprod-only KNOWN_AUTHORS root.
 // It exits 0 only when gate.mjs, copied beside it, finds nothing the evidence pack could not claim.
 //   node verify-all.mjs EVIDENCE_DIR BLOCKFROST_PROJECT_ID_FILE > verified.json
 // EVIDENCE_DIR holds raw.json, bundles.json, known-authors/, crash.log and crash.log.status.

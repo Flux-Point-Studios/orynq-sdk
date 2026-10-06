@@ -5,18 +5,8 @@
 // Run under nice 19. Each phase resumes from evidence/raw.json and skips work already recorded.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import * as L from "@midnight-ntwrk/ledger-v8";
+import { assertRegistryState, compiledVerifierKeys, createAuthorKeyFile, midnightSource, readAuthorSecret, authorKey } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import {
-  assertRegistryState,
-  blockfrostEndpoints,
-  compiledVerifierKeys,
-  createAuthorKeyFile,
-  midnightSource,
-  readAuthorSecret,
-  authorKey,
-  type MidnightSource,
-} from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import {
-  MIDNIGHT_HOSTED_PREPROD,
   assertChainIdentity,
   declaredFee,
   ensurePrivateDir,
@@ -28,6 +18,7 @@ import {
   registryOperator,
   type OperatorWallet,
 } from "../src/index.js";
+import { source, WALLET_SYNC } from "./endpoints.js";
 import { NODE_NEGATIVES } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
 
@@ -38,8 +29,6 @@ const RAW = new URL("./evidence/raw.json", import.meta.url);
 mkdirSync(new URL("./evidence/", import.meta.url), { recursive: true });
 ensurePrivateDir(`${SECRETS}/state`);
 const OVERHEAD = BigInt(process.env.FEE_OVERHEAD_SPECK ?? "0");
-
-const source: MidnightSource = midnightSource(MIDNIGHT_HOSTED_PREPROD);
 
 type Raw = Record<string, any>;
 const raw: Raw = existsSync(RAW) ? JSON.parse(readFileSync(RAW, "utf8")) : {};
@@ -92,7 +81,7 @@ async function wallet(which: "walletA" | "walletB") {
     const w = await openWallet({
       network: "preprod",
       mnemonicFile: `${SECRETS}/${which === "walletA" ? "wallet-a" : "wallet-b"}.mnemonic`,
-      endpoints: MIDNIGHT_HOSTED_PREPROD,
+      endpoints: WALLET_SYNC,
       source,
       zkDir: ZK,
       expectedAddresses: recorded[which].addresses,
@@ -144,9 +133,7 @@ async function recordAnchor(name: string, which: "walletA" | "walletB", receipt:
 
 const phases: Record<string, () => Promise<void>> = {
   async chain() {
-    raw.chain = { hosted: await assertChainIdentity(source, "preprod") };
-    const bf = midnightSource(blockfrostEndpoints("preprod", `${HOME}/.secrets/blockfrost-midnight-preprod.project_id`));
-    raw.chain.blockfrost = await assertChainIdentity(bf, "preprod");
+    raw.chain = { blockfrost: await assertChainIdentity(source, "preprod"), hosted: await assertChainIdentity(midnightSource(WALLET_SYNC), "preprod") };
     save();
     log("chain", raw.chain);
   },

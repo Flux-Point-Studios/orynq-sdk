@@ -214,7 +214,7 @@ export function judge({ raw, verified, crash, crashStatus }) {
   }
 
   // The maintenance authority itself refused every maintenance update, and none of them landed:
-  // the hosted indexer run.ts asked lists none, and Blockfrost, asked by the verifier, knows none.
+  // Blockfrost's indexer lists none when run.ts asks, nor when the verifier asks.
   const negatives = raw.negatives ?? {};
   for (const name of Object.keys(negatives)) {
     if (!Object.hasOwn(NODE_NEGATIVES, name)) failures.push(`negative ${name} is not one of the maintenance updates the gate knows the refusal for`);

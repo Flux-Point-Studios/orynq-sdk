@@ -1,19 +1,13 @@
 import { blockfrostEndpoints, type MidnightNetwork, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 
-// Midnight's own preprod indexer and node, which need no credential.
-export const MIDNIGHT_HOSTED_PREPROD: SourceEndpoints = {
-  operator: "midnight",
-  indexer: "https://indexer.preprod.midnight.network/api/v3/graphql",
-  indexerWs: "wss://indexer.preprod.midnight.network/api/v3/graphql/ws",
-  node: "https://rpc.preprod.midnight.network",
-  headers: {},
+const WHY_BLOCKFROST: Record<MidnightNetwork, string> = {
+  mainnet: "Midnight's hosted mainnet endpoints were retired on 2026-09-30",
+  preprod: "Midnight's hosted preprod node refuses JSON-RPC request bodies over about 7 KB, smaller than any deploy or anchor",
 };
 
-// Where a submitter reads and writes on `network`: Blockfrost for mainnet, whose hosted
-// endpoints Midnight retired, and for preprod Midnight's own endpoints unless a Blockfrost
-// project id file is given.
+// Where a submitter reads and writes on `network`: Blockfrost, authenticated by the project id
+// in an owner-only file, on mainnet and preprod alike.
 export function networkEndpoints(network: MidnightNetwork, { blockfrostProjectIdFile }: { blockfrostProjectIdFile?: string } = {}): SourceEndpoints {
-  if (blockfrostProjectIdFile) return blockfrostEndpoints(network, blockfrostProjectIdFile);
-  if (network === "mainnet") throw new Error("mainnet needs a Blockfrost project id file: Midnight's hosted mainnet endpoints were retired on 2026-09-30");
-  return MIDNIGHT_HOSTED_PREPROD;
+  if (!blockfrostProjectIdFile) throw new Error(`${network} needs a Blockfrost project id file: ${WHY_BLOCKFROST[network]}`);
+  return blockfrostEndpoints(network, blockfrostProjectIdFile);
 }
