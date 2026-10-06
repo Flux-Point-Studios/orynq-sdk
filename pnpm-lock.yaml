@@ -200,6 +200,9 @@ importers:
       '@scure/bip39':
         specifier: 2.0.1
         version: 2.0.1
+      effect:
+        specifier: 3.21.4
+        version: 3.21.4
       rxjs:
         specifier: 7.8.2
         version: 7.8.2

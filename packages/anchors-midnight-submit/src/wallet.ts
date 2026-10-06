@@ -4,15 +4,18 @@ import { basename, dirname, join } from "node:path";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { InMemoryTransactionHistoryStorage } from "@midnight-ntwrk/wallet-sdk-abstractions";
 import { MidnightBech32m, DustAddress } from "@midnight-ntwrk/wallet-sdk-address-format";
+import { PendingTransactions } from "@midnight-ntwrk/wallet-sdk-capabilities";
 import type { UnboundTransaction } from "@midnight-ntwrk/wallet-sdk-capabilities/proving";
-import { DustWallet } from "@midnight-ntwrk/wallet-sdk-dust-wallet";
-import { WalletEntrySchema, WalletFacade, mergeWalletEntries, type FacadeState } from "@midnight-ntwrk/wallet-sdk-facade";
+import { CustomDustWallet } from "@midnight-ntwrk/wallet-sdk-dust-wallet";
+import { V1Builder } from "@midnight-ntwrk/wallet-sdk-dust-wallet/v1";
+import { WalletEntrySchema, WalletFacade, mergeWalletEntries, type BalancingRecipe, type FacadeState } from "@midnight-ntwrk/wallet-sdk-facade";
 import { ShieldedWallet } from "@midnight-ntwrk/wallet-sdk-shielded";
 import { PublicKey, UnshieldedWallet } from "@midnight-ntwrk/wallet-sdk-unshielded-wallet";
-import { filter, firstValueFrom, timeout } from "rxjs";
+import { filter, firstValueFrom, of, timeout } from "rxjs";
 import { readPrivateFile, writePrivateFile, type MidnightNetwork, type MidnightSource, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { broadcast, nodeRefusal } from "./broadcast.js";
 import { refuseMainnetSecretsPath } from "./custody.js";
+import { exactRevert } from "./dust.js";
 import { addressesOf, walletSecrets, type WalletAddresses } from "./keys.js";
 import { credentialRelay } from "./relay.js";
 import { provingService } from "./zk.js";
@@ -68,11 +71,14 @@ export interface OperatorWallet {
   // Registers every unregistered NIGHT UTXO to generate DUST for this wallet; null when none is.
   registerNightForDust(): Promise<string | null>;
   // Pays the transaction's fee from DUST (proving the DUST spend in-process) and binds it: the
-  // final bytes, recorded by the wallet as pending.
+  // final bytes, whose DUST the wallet holds as spent.
   payFee(tx: UnboundTransaction, ttl: Date): Promise<L.FinalizedTransaction>;
-  // Hands final bytes to the node. A refusal releases the DUST they spend.
+  // Hands final bytes to the node. The node's refusal of the first delivery of bytes this wallet
+  // balanced frees the DUST they spend, and those bytes are never sent again; any other failure,
+  // or a refusal of bytes some delivery may already have left with a node, keeps it held.
   submit(tx: L.FinalizedTransaction): Promise<void>;
-  // Releases the DUST of final bytes that will never be submitted.
+  // Frees the DUST of final bytes this wallet balanced and never handed to a node, which are then
+  // never sent; refuses any other bytes.
   discard(tx: L.FinalizedTransaction): Promise<void>;
   // Stops syncing; a synced wallet with a state file saves first, and returns what that save did.
   close(): Promise<StateSave | null>;
@@ -215,7 +221,20 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       }),
       shielded: (c) => (saved ? ShieldedWallet(c).restore(saved.shielded) : ShieldedWallet(c).startWithSecretKeys(secrets.zswap)),
       unshielded: (c) => (saved ? UnshieldedWallet(c).restore(saved.unshielded) : UnshieldedWallet(c).startWithPublicKey(PublicKey.fromKeyStore(secrets.night))),
-      dust: (c) => (saved ? DustWallet(c).restore(saved.dust) : DustWallet(c).startWithSecretKey(secrets.dust, L.LedgerParameters.initialParameters().dust)),
+      dust: (c) => {
+        const Dust = CustomDustWallet(c, new V1Builder().withDefaults().withTransacting(exactRevert(secrets.dust)));
+        return saved ? Dust.restore(saved.dust) : Dust.startWithSecretKey(secrets.dust, L.LedgerParameters.initialParameters().dust);
+      },
+      // The default service reverts bytes once their TTL has passed by this machine's clock while
+      // the indexer does not list them, which an indexer behind the chain makes true of bytes
+      // already in a block. DUST is freed here only for bytes no node holds.
+      pendingTransactionsService: () => ({
+        start: async () => undefined,
+        stop: async () => undefined,
+        state: () => of(PendingTransactions.empty<L.FinalizedTransaction>()),
+        addPendingTransaction: async () => undefined,
+        clear: async () => undefined,
+      }),
     });
     await facade.start(secrets.zswap, secrets.dust);
   } catch (error) {
@@ -232,12 +251,28 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     );
   const nightToken = L.unshieldedToken().raw;
   const keys = { shieldedSecretKeys: secrets.zswap, dustSecretKey: secrets.dust };
+  // Bytes this wallet balanced and has not handed to a node, and bytes whose DUST it freed.
+  const unsent = new Set<string>();
+  const freed = new Set<string>();
+  const finalize = async (recipe: BalancingRecipe) => {
+    const tx = await facade.finalizeRecipe(recipe);
+    unsent.add(tx.transactionHash());
+    return tx;
+  };
+  const free = async (tx: L.FinalizedTransaction) => {
+    freed.add(tx.transactionHash());
+    await facade.revert(tx);
+  };
   const submit = async (tx: L.FinalizedTransaction) => {
+    const txHash = tx.transactionHash();
+    if (freed.has(txHash)) throw new Error(`transaction ${txHash} was refused or discarded, and the DUST it spent freed; its bytes are never sent again`);
+    const first = unsent.delete(txHash);
     try {
       await submitTo(tx);
     } catch (error) {
-      // An answer from the node is a refusal; anything else may have been delivered.
-      if (nodeRefusal(error)) await facade.revert(tx);
+      // Only the node's answer to the first delivery shows that no node holds the bytes; anything
+      // else, and any later delivery, may follow one that reached a node.
+      if (first && nodeRefusal(error)) await free(tx);
       throw error;
     }
   };
@@ -301,16 +336,19 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
         (payload) => secrets.night.signData(payload),
         receiver,
       );
-      const tx = await facade.finalizeRecipe(recipe);
+      const tx = await finalize(recipe);
       await submit(tx);
       return tx.transactionHash();
     },
     async payFee(tx, ttl) {
-      const recipe = await facade.balanceUnboundTransaction(tx, keys, { ttl, tokenKindsToBalance: ["dust"] });
-      return facade.finalizeRecipe(recipe);
+      return finalize(await facade.balanceUnboundTransaction(tx, keys, { ttl, tokenKindsToBalance: ["dust"] }));
     },
     submit,
-    discard: (tx) => facade.revert(tx),
+    async discard(tx) {
+      const txHash = tx.transactionHash();
+      if (!unsent.delete(txHash)) throw new Error(`transaction ${txHash} was handed to a node, or not balanced by this wallet since it opened, so its DUST stays held until the chain settles it`);
+      await free(tx);
+    },
     saveState,
     async close() {
       try {

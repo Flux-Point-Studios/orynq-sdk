@@ -167,9 +167,11 @@ copied into `wallets.json`.
 The `funding` phase registers each wallet's NIGHT for DUST generation and waits until each holds
 more than 1 DUST it can spend. Every phase resumes from `evidence/raw.json`, so a rerun after an
 interruption finishes what is missing. A rerun keeps the first funding record, the registration
-the verifier reads among it. A DUST coin spent by bytes that never landed comes back to its
-wallet only after the ledger's grace period (about three hours on preprod), so a rerun soon after
-such a failure waits in `funding` until then. A registry deploy journalled earlier that the chain
+the verifier reads among it. The DUST of bytes the node refused at their first delivery, such as
+each maintenance update in `negatives`, comes back to its wallet at once. A DUST coin spent by
+bytes that may have reached a node and never landed comes back only after the ledger's grace
+period (about three hours on preprod), so a rerun soon after such a failure waits in `funding`
+until then. A registry deploy journalled earlier that the chain
 has carried past its TTL unseen is settled as failed, and `deploy` prepares new bytes. One the
 chain has not ruled out, landed or still pending, is resumed from the journal's bytes: `deploy`
 sends those same bytes again only if no broadcast of them ever returned, waits for them, and

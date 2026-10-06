@@ -155,7 +155,7 @@ const phases: Record<string, () => Promise<void>> = {
 
   // Records each wallet's first funding once, so a rerun keeps the registration the verifier
   // reads, and waits every run until each wallet can spend DUST again: a DUST coin spent by bytes
-  // that never landed returns to the wallet only after the ledger's grace period.
+  // that may have reached a node and never landed returns only after the ledger's grace period.
   async funding() {
     raw.funding ??= {};
     for (const which of ["walletA", "walletB"] as const) {
