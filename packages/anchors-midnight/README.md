@@ -61,8 +61,9 @@ forms process-trace bundles and anchors-cardano entries use. A kind-1 commitment
 merkle root.
 
 An author key is a fresh random 32-byte secret, never derived from a wallet seed.
-`createAuthorKeyFile(path)` writes one to a new file only its owner can read and returns the
-public author key; `readAuthorSecret(path)` refuses a symlink, a file the caller does not own and
+`createAuthorKeyFile(path)` writes one to a new file only its owner can read, flushed to disk,
+and returns the public author key (a write a full disk or a quota cuts short throws and leaves no
+file); `readAuthorSecret(path)` refuses a symlink, a file the caller does not own and
 a file group or others can read or write. A service's salt key, from which its kind-2 anchors
 derive their hiding salts, is a fresh random 32-byte secret too: `createSaltKeyFile(path)` writes
 one under the same rules and returns `saltKeyId(key)`, its public id, so a salt key disclosed later

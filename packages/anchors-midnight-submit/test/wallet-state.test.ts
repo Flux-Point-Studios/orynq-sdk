@@ -1,7 +1,9 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { execFile } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { createWalletMnemonicFile } from "../src/keys.js";
 import { openWallet, readWalletState, writeWalletState } from "../src/wallet.js";
@@ -108,5 +110,54 @@ describe("saving a wallet's sync state", () => {
       loud.mockRestore();
       await wallet.close();
     }
+  });
+
+  // Opens the wallet over no indexer and saves its state once, in a child process. `capped` keeps
+  // that process's files from growing past one block (512 bytes under dash, 1 KiB under bash):
+  // past the limit write(2) returns a short count instead of failing, as on a full disk or a
+  // spent quota.
+  const walletModule = fileURLToPath(new URL("../src/wallet.ts", import.meta.url));
+  const saveOnce = (mnemonicFile: string, stateFile: string, capped: boolean) =>
+    new Promise<{ status: number; stdout: string; stderr: string }>((resolve) =>
+      execFile(
+        "/bin/sh",
+        [
+          "-c",
+          `${capped ? "ulimit -f 1 && " : ""}exec "$@"`,
+          "sh",
+          process.execPath,
+          "--import",
+          "tsx",
+          "--input-type=module",
+          "-e",
+          `import { openWallet } from ${JSON.stringify(walletModule)};
+           const [mnemonicFile, stateFile] = process.argv.slice(1);
+           const wallet = await openWallet({ network: "preprod", mnemonicFile, endpoints: ${JSON.stringify(OFFLINE)}, zkDir: "/nonexistent", stateFile });
+           console.log(JSON.stringify(await wallet.saveState()));
+           await wallet.close();`,
+          mnemonicFile,
+          stateFile,
+        ],
+        { encoding: "utf8", env: { ...process.env, TSX_DISABLE_CACHE: "1" } },
+        (error, stdout, stderr) => resolve({ status: error ? Number(error.code) : 0, stdout, stderr }),
+      ),
+    );
+
+  it("returns a write the file system cuts short as a failure, leaving the last good save byte for byte", async () => {
+    const mnemonicFile = join(dir, "cut.mnemonic");
+    createWalletMnemonicFile(mnemonicFile);
+    const stateFile = join(dir, "cut.state.json");
+    expect(await saveOnce(mnemonicFile, stateFile, false)).toMatchObject({ status: 0, stdout: `${JSON.stringify({ saved: true })}\n` });
+    const good = readFileSync(stateFile);
+    expect(good.length).toBeGreaterThan(1024);
+
+    const cut = await saveOnce(mnemonicFile, stateFile, true);
+    expect(cut.status).toBe(0);
+    expect(JSON.parse(cut.stdout)).toEqual({ saved: false, failures: [{ part: "file", error: "Error: EFBIG: file too large, write" }] });
+    expect(cut.stderr).toContain(
+      `${stateFile}: the preprod wallet's sync state was not saved (file: Error: EFBIG: file too large, write); the file keeps its last good save, and the next open resumes from it and replays the events since\n`,
+    );
+    expect(readFileSync(stateFile).equals(good)).toBe(true);
+    expect(existsSync(`${stateFile}.next`)).toBe(false);
   });
 });

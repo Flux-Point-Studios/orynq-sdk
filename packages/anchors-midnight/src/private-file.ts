@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, openSync, readFileSync, writeSync } from "node:fs";
+import { closeSync, constants, fstatSync, fsyncSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 // Reads a secret file, refusing a symlink, anything but a regular file the caller owns, and a
 // file group or others can read or write. Errors name the path, never the content.
@@ -21,8 +21,9 @@ export function readPrivateFile(path: string): string {
   }
 }
 
-// Writes `text` and a newline to a new file only its owner can read. It never replaces an
-// existing file or follows a symlink, and its errors name the path, never the text.
+// Writes `text` and a newline to a new file only its owner can read, and flushes it to disk. It
+// never replaces an existing file or follows a symlink, a write that cannot finish leaves no file,
+// and no error it throws carries the text.
 export function writePrivateFile(path: string, text: string): void {
   let fd: number;
   try {
@@ -32,7 +33,14 @@ export function writePrivateFile(path: string, text: string): void {
     throw error;
   }
   try {
-    writeSync(fd, `${text}\n`);
+    // On a full disk, a spent quota or past RLIMIT_FSIZE, write(2) returns a short count, not an
+    // error: writeFileSync writes the rest, meets the error (ENOSPC, EDQUOT, EFBIG) and throws,
+    // where one writeSync would keep part of the text and return.
+    writeFileSync(fd, `${text}\n`);
+    fsyncSync(fd);
+  } catch (error) {
+    rmSync(path, { force: true });
+    throw error;
   } finally {
     closeSync(fd);
   }
