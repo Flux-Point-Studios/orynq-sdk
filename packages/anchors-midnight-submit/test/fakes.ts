@@ -37,9 +37,11 @@ export const deployed = (() => {
 // midnight-node `node` does; and an indexer that lists every transaction once it has reached the
 // node. Its newest block, the one block whose ledger the node reads besides its best, is as new
 // as the local clock, and `advance` moves both: a deployer stamps its TTLs from that clock. The
-// node refuses bytes whose TTL the chain has passed, and lands the rest.
+// node refuses bytes whose TTL the chain has passed, and lands the rest. `lag(true)` takes that
+// newest block from the node, as a node behind the indexer lacks it, until `lag(false)`.
 export function chain({ spec = 1000300, state = deployed.state, node = "2.1.0" }: { spec?: number; state?: L.ContractState; node?: NodeVersion } = {}) {
   const landed = new Map<string, IndexedTransaction>();
+  let lags = false;
   const contracts = new Map([[deployed.address, state]]);
   const HEAD = "00".repeat(32);
   const ledger = ledgerNode({
@@ -53,7 +55,7 @@ export function chain({ spec = 1000300, state = deployed.state, node = "2.1.0" }
   const call = async (method: string, params: unknown[] = []) => {
     if (method === "state_getRuntimeVersion") return { specVersion: spec };
     if (method === "midnight_zswapStateRoot" || method === "midnight_contractState") return ledger.call("test", method, params);
-    if (method === "chain_getBlockHash" && params[0] === 1000) return `0x${HEAD}`;
+    if (method === "chain_getBlockHash" && params[0] === 1000) return lags ? null : `0x${HEAD}`;
     if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && params[1] === `0x${HEAD}`) {
       const now = Buffer.alloc(8);
       now.writeBigUInt64LE(BigInt(Date.now()));
@@ -91,7 +93,8 @@ export function chain({ spec = 1000300, state = deployed.state, node = "2.1.0" }
     if (!vi.isFakeTimers()) vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(Date.now() + millis);
   };
-  return { source, land, advance };
+  const lag = (on: boolean) => void (lags = on);
+  return { source, land, advance, lag };
 }
 
 // A wallet named `name` that binds without adding a fee, records what it is asked to submit (and

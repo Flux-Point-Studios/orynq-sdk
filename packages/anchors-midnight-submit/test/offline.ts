@@ -29,6 +29,8 @@ export interface OfflineChain {
   landed: Record<string, { raw: string; height: number; address?: string; state?: string }>;
   // Every transaction whose DUST the wallet was asked to release.
   discarded: string[];
+  // Set while the node lacks the indexer's newest block, as a node behind the indexer does.
+  nodeLags?: boolean;
 }
 
 const FILE = process.env.OFFLINE_CHAIN!;
@@ -55,7 +57,7 @@ function nodeAnswer(method: string, params: unknown[] = []) {
   if (method === "system_chain") return { result: identity.chain };
   if (method === "midnight_ledgerVersion") return { result: "8.1.3" };
   if (method === "state_getRuntimeVersion") return { result: { specVersion: 1000300 } };
-  if (method === "chain_getBlockHash") return { result: `0x${params[0] === 0 ? identity.genesis : HEAD}` };
+  if (method === "chain_getBlockHash") return { result: params[0] === 0 ? `0x${identity.genesis}` : read().nodeLags ? null : `0x${HEAD}` };
   if (method === "state_getStorage" && params[1] === `0x${HEAD}`) {
     const now = Buffer.alloc(8);
     now.writeBigUInt64LE(BigInt(Date.now()));

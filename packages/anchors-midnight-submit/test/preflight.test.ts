@@ -228,6 +228,7 @@ function offlineMainnet() {
     journalPath,
     walletRecord,
     advance: (millis: number) => writeFileSync(chainFile, JSON.stringify({ ...chain(), aheadMs: chain().aheadMs + millis })),
+    lagNode: (nodeLags: boolean) => writeFileSync(chainFile, JSON.stringify({ ...chain(), nodeLags })),
     journal() {
       const db = new DatabaseSync(journalPath, { readOnly: true });
       const rows = db.prepare("select tx_hash, state from attempts order by id").all();
@@ -397,6 +398,42 @@ describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
     expect(r.output).toContain("deploy-mainnet: the journalled deploy expired without landing; rerun to prepare new bytes");
     expect(m.chain()).toMatchObject({ sent: [refused], discarded: [] });
     expect(m.journal()).toEqual([{ tx_hash: refused, state: "failed" }]);
+  });
+
+  it("shows a journalled deploy past its TTL as expired and, confirmed while the node lacks the indexer's newest block, sends nothing and waits until the chain retires it", async ({ expect }) => {
+    const m = offlineMainnet();
+    expect(await m.run((token) => token, "refuse-broadcast")).toMatchObject({ status: 1 });
+    const [refused] = m.chain().sent;
+    m.advance(16 * MINUTE);
+    const r = await m.run((token) => {
+      m.lagNode(true);
+      setTimeout(() => {
+        m.lagNode(false);
+        m.advance(5 * MINUTE);
+      }, 1_000);
+      return token;
+    });
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toMatch(/journal {10}resumed: these bytes expired at \S+ and the chain does not show them landed; confirming sends nothing and waits until the chain lands or retires them\n/);
+    expect(r.output).toContain("deploy-mainnet: the journalled deploy expired without landing; rerun to prepare new bytes");
+    expect(m.chain()).toMatchObject({ sent: [refused], discarded: [] });
+    expect(m.journal()).toEqual([{ tx_hash: refused, state: "failed" }]);
+  });
+
+  it("refuses a resumed deploy no send of which returned, confirmed while the node lacks the indexer's newest block, sending nothing, and leaves it journalled", async ({ expect }) => {
+    const m = offlineMainnet();
+    expect(await m.run((token) => token, "refuse-broadcast")).toMatchObject({ status: 1 });
+    const [refused] = m.chain().sent;
+    m.advance(10 * MINUTE);
+    const r = await m.run((token) => {
+      m.lagNode(true);
+      return token;
+    });
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("journal          resumed: no send of these bytes ever returned; confirming sends them again");
+    expect(r.output).toContain("deploy-mainnet: the mainnet node does not hold the indexer's newest block, so chain time is unknown and the journalled bytes may be past their TTL; nothing was sent");
+    expect(m.chain()).toMatchObject({ sent: [refused], discarded: [] });
+    expect(m.journal()).toEqual([{ tx_hash: refused, state: "pending" }]);
   });
 
   it("refuses journalled bytes that deploy a state other than the registry's before any summary or token", async ({ expect }) => {

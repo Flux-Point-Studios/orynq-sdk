@@ -91,8 +91,12 @@ export function registryDeployer(options: DeployerOptions) {
     };
   };
 
-  // Whether chain time, as the journal reads it, is past `ttl`.
-  const pastTtl = async (ttl: Date) => ((await chain.indexedThrough())?.time.getTime() ?? 0) > ttl.getTime();
+  // Whether chain time, as the journal reads it, is past `ttl`; null while the node lacks the
+  // indexer's newest block, so that chain time is unknown.
+  const pastTtl = async (ttl: Date) => {
+    const head = await chain.indexedThrough();
+    return head && head.time.getTime() > ttl.getTime();
+  };
   const journalling = { journal, chain, wallet, network, pollMillis: options.pollMillis ?? 3_000 };
   // A deploy row fails only when the chain has carried it past its TTL plus the margin unseen,
   // with no contract at its address.
@@ -116,7 +120,7 @@ export function registryDeployer(options: DeployerOptions) {
       await journal.reconcile(chain);
       const row = journal.live(key);
       if (!row) return null;
-      const expired = row.state === "pending" && (await pastTtl(row.ttl));
+      const expired = row.state === "pending" && (await pastTtl(row.ttl)) === true;
       return describe(row.bytes, row.ttl, await assertKnownRuntime(source, network), row.payer, { state: row.state, broadcasts: row.broadcasts, expired });
     },
 
@@ -139,9 +143,14 @@ export function registryDeployer(options: DeployerOptions) {
       if (retired(prepared.txHash)) throw new Error(EXPIRED);
       const live = journal.live(key);
       if (live && live.txHash !== prepared.txHash) await refuse(live);
-      // Bytes past their TTL are not sent again, since no node includes them: the chain lands or
-      // retires them.
-      const settled = live?.state === "pending" && (await pastTtl(live.ttl)) ? landedRow(journalling, key, live) : submitJournalled(journalling, key, async () => ({ bytes: prepared.bytes, ttl: prepared.ttl }));
+      // Journalled bytes the human confirmed as expired, or that chain time has carried past their
+      // TTL, are not sent again, since no node includes them: the chain lands or retires them.
+      // While chain time is unknown nothing is sent: bytes no send of which returned are refused.
+      const past = live?.state === "pending" ? prepared.journal?.expired || (await pastTtl(live.ttl)) : false;
+      if (past === null && live?.broadcasts === 0) {
+        throw new Error(`the ${network} node does not hold the indexer's newest block, so chain time is unknown and the journalled bytes may be past their TTL; nothing was sent`);
+      }
+      const settled = live && past !== false ? landedRow(journalling, key, live) : submitJournalled(journalling, key, async () => ({ bytes: prepared.bytes, ttl: prepared.ttl }));
       const row = await settled.catch((error: unknown) => {
         throw retired(prepared.txHash) ? new Error(EXPIRED) : error;
       });

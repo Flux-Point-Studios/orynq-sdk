@@ -67,6 +67,7 @@ function setup({ tamper, spec, node }: { tamper?: (tx: L.FinalizedTransaction) =
 }
 
 const EXPIRED = "the journalled deploy expired without landing; rerun to prepare new bytes";
+const UNKNOWN_TIME = "the preprod node does not hold the indexer's newest block, so chain time is unknown and the journalled bytes may be past their TTL; nothing was sent";
 
 const MINUTE = 60_000;
 
@@ -307,6 +308,43 @@ describe("registryDeployer", () => {
     expect(w.submitted).toEqual([]);
     expect(payFee).not.toHaveBeenCalled();
     expect(rows()).toEqual([{ tx_hash: refused.txHash, state: "failed" }]);
+    deployer.close();
+  });
+
+  it("sends nothing for a resumed deploy confirmed as expired though the node, at its submit, lacks the indexer's newest block, and waits until the chain retires it", async () => {
+    const { deployer, wallet: w, rows, net, refusedByProxy } = setup();
+    const refused = await refusedByProxy();
+    net.advance(16 * MINUTE);
+    const resumed = await deployer.journalled();
+    expect(resumed?.journal).toEqual({ state: "pending", broadcasts: 0, expired: true });
+    net.lag(true);
+    const outcome = deployer.submit(resumed!).then(
+      () => "resolved",
+      (error: Error) => error.message,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect([w.submitted, rows()]).toEqual([[], [{ tx_hash: refused.txHash, state: "pending" }]]);
+    net.lag(false);
+    net.advance(5 * MINUTE);
+    expect(await outcome).toBe(EXPIRED);
+    expect(w.submitted).toEqual([]);
+    expect(rows()).toEqual([{ tx_hash: refused.txHash, state: "failed" }]);
+    deployer.close();
+  });
+
+  it("refuses a resumed deploy no send of which returned while the node lacks the indexer's newest block, sending nothing, and sends it once the node holds that block", async () => {
+    const { deployer, wallet: w, rows, net, refusedByProxy } = setup();
+    const refused = await refusedByProxy();
+    net.advance(10 * MINUTE);
+    const resumed = await deployer.journalled();
+    expect(resumed?.journal).toEqual({ state: "pending", broadcasts: 0, expired: false });
+    net.lag(true);
+    await expect(deployer.submit(resumed!)).rejects.toThrow(UNKNOWN_TIME);
+    expect([w.submitted, w.discarded]).toEqual([[], []]);
+    expect(rows()).toEqual([{ tx_hash: refused.txHash, state: "pending" }]);
+    net.lag(false);
+    expect(await deployer.submit(resumed!)).toMatchObject({ txHash: refused.txHash, address: refused.address });
+    expect(w.submitted.map((t) => t.transactionHash())).toEqual([refused.txHash]);
     deployer.close();
   });
 
