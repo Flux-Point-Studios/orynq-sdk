@@ -10,7 +10,7 @@ import {
   type RegistryCircuit,
 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { chainView, openJournal, type AnchorKey, type JournalRow } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
-import { assertKnownRuntime, declaredFee, finalTransaction, finalizeChecked, landedRow, submitJournalled, type FeeWallet, type Prover } from "./submission.js";
+import { assertKnownRuntime, declaredFee, finalTransaction, finalizeChecked, journalOnce, landedRow, type FeeWallet, type Prover } from "./submission.js";
 
 // A registry deploy as it will be sent: the exact final bytes and what they do, for a human to
 // read before anything leaves.
@@ -150,12 +150,16 @@ export function registryDeployer(options: DeployerOptions) {
       if (past === null && live?.broadcasts === 0) {
         throw new Error(`the ${network} node does not hold the indexer's newest block, so chain time is unknown and the journalled bytes may be past their TTL; nothing was sent`);
       }
-      const settled = live && past !== false ? landedRow(journalling, key, live) : submitJournalled(journalling, key, async () => ({ bytes: prepared.bytes, ttl: prepared.ttl }));
-      const row = await settled.catch((error: unknown) => {
+      let row: JournalRow & { height: number; blockHash: string };
+      try {
+        const journalled = live && past !== false ? live : await journalOnce(journalling, key, async () => ({ bytes: prepared.bytes, ttl: prepared.ttl }), prepared.txHash);
+        // A deployer confirmed at the same moment wrote its row first, and the journal answered
+        // with it, unsent.
+        if (journalled.txHash !== prepared.txHash) await refuse(journalled);
+        row = await landedRow(journalling, key, journalled);
+      } catch (error) {
         throw retired(prepared.txHash) ? new Error(EXPIRED) : error;
-      });
-      // A deployer confirmed at the same moment wrote its row first, and the journal answered with it.
-      if (row.txHash !== prepared.txHash) await refuse(row);
+      }
       const [landed] = (await source.indexer.transactions(row.txHash)).filter((t) => t.hash === row.txHash);
       if (!landed) throw new Error(`the indexer lost deploy transaction ${row.txHash}`);
       const address = assertRegistryDeployBytes(new Uint8Array(Buffer.from(landed.raw, "hex")), "final");

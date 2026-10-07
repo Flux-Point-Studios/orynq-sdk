@@ -150,7 +150,9 @@ commitment, attribute). It writes the attempt's row, with the hash it computes f
 bytes `prepare` returns, before `broadcast` sees those bytes, so a broadcast that times out
 after the node accepted it, or a process that dies before or during it, is answered later by
 that hash and never sent as a second transaction. A row whose broadcast never returned is resent
-with the same bytes. A pending row is retired only when the indexer reports its transaction
+with the same bytes. A caller that holds its final bytes already names their hash
+(`submitOnce(key, { ..., txHash })`): a live row of other bytes then comes back unsent, so that
+caller never broadcasts an attempt it did not prepare. A pending row is retired only when the indexer reports its transaction
 (landed or failed), or when the indexer's newest block is past the transaction's TTL plus a
 margin, in chain time rather than the local clock. A row whose bytes deploy a contract is never
 retired on the indexer's word, since a second deploy is a second contract: whatever the indexer

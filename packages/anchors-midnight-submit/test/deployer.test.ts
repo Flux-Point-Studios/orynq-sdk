@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { REGISTRY_VERIFIER_KEY_SHA256, createAuthorKeyFile, registryInitialState, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
@@ -67,6 +68,8 @@ function setup({ tamper, spec, node }: { tamper?: (tx: L.FinalizedTransaction) =
 }
 
 const EXPIRED = "the journalled deploy expired without landing; rerun to prepare new bytes";
+// The journal's key of a preprod registry deploy.
+const DEPLOY_KEY = ["preprod", "registry-deploy", "", 0, createHash("sha256").update(registryInitialState().serialize()).digest("hex"), ""].join("/");
 const UNKNOWN_TIME = "the preprod node does not hold the indexer's newest block, so chain time is unknown and the journalled bytes may be past their TTL; nothing was sent";
 
 const MINUTE = 60_000;
@@ -387,6 +390,37 @@ describe("registryDeployer", () => {
     expect([...w.submitted, ...w2.submitted].map((t) => t.transactionHash())).toEqual([won.txHash]);
     expect(rows()).toEqual([{ tx_hash: won.txHash, state: "landed" }]);
     deployer.close();
+    second.close();
+  });
+
+  it("sends nothing when another deployer's row reaches the journal between its own check and the journal taking its bytes: it refuses and discards them, never broadcasting the other's", async () => {
+    const { deployer: first, wallet: w, rows, net, journalPath } = setup();
+    const w2 = wallet(net, () => journalPath, undefined, "b");
+    const p1 = await first.prepare();
+    // journalOnce asks the wallet for its address after submit found the registry's key free and
+    // before the journal looks at the key: the first deployer's row is written then, unsent.
+    let racing = false;
+    const racingWallet = {
+      ...w2,
+      get addresses() {
+        if (racing) {
+          racing = false;
+          const db = new DatabaseSync(journalPath);
+          db.prepare("insert into attempts (key, tx_hash, bytes, ttl_ms, state, payer) values (?, ?, ?, ?, 'pending', ?)").run(DEPLOY_KEY, p1.txHash, p1.bytes, p1.ttl.getTime(), w.addresses.unshielded);
+          db.close();
+        }
+        return w2.addresses;
+      },
+    };
+    const second = registryDeployer({ network: "preprod", wallet: racingWallet, source: net.source, prover, journalPath, pollMillis: 1 });
+    const p2 = await second.prepare();
+    racing = true;
+    await expect(second.submit(p2)).rejects.toThrow(`a registry deploy is already journalled on preprod: ${p1.txHash} (pending); the prepared bytes were discarded`);
+    expect([w2.submitted, w2.discarded]).toEqual([[], [p2.txHash]]);
+    expect(rows()).toEqual([{ tx_hash: p1.txHash, state: "pending" }]);
+    expect(await first.submit(p1)).toMatchObject({ txHash: p1.txHash, address: p1.address });
+    expect(w.submitted.map((t) => t.transactionHash())).toEqual([p1.txHash]);
+    first.close();
     second.close();
   });
 

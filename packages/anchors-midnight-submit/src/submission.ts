@@ -57,13 +57,25 @@ interface Journalling {
   pollMillis: number;
 }
 
-// Submits through the write-ahead journal, which records the wallet as the payer, and returns the
-// transaction once it landed (landedRow).
-export async function submitJournalled(journalling: Journalling, key: AnchorKey, prepare: () => Promise<Submission>): Promise<JournalRow & { height: number; blockHash: string }> {
+// Sends through the write-ahead journal, which records the wallet as the payer, and returns the
+// key's live row as the journal answered, unsettled. A caller whose `prepare` returns bytes it
+// holds already passes their `txHash`, so another attempt's row comes back unsent and the wallet
+// never broadcasts bytes that caller did not prepare.
+export function journalOnce(journalling: Journalling, key: AnchorKey, prepare: () => Promise<Submission>, txHash?: string): Promise<JournalRow> {
   const { journal, chain, wallet } = journalling;
   const payer = wallet.addresses.unshielded;
-  const row = await journal.submitOnce(key, { prepare: async () => ({ ...(await prepare()), payer }), broadcast: (bytes) => wallet.submit(finalTransaction(bytes)), chain });
-  return landedRow(journalling, key, row);
+  return journal.submitOnce(key, {
+    prepare: async () => ({ ...(await prepare()), payer }),
+    broadcast: (bytes) => wallet.submit(finalTransaction(bytes)),
+    chain,
+    ...(txHash === undefined ? {} : { txHash }),
+  });
+}
+
+// Sends through the write-ahead journal (journalOnce) and returns the transaction once it landed
+// (landedRow).
+export async function submitJournalled(journalling: Journalling, key: AnchorKey, prepare: () => Promise<Submission>): Promise<JournalRow & { height: number; blockHash: string }> {
+  return landedRow(journalling, key, await journalOnce(journalling, key, prepare));
 }
 
 // Waits, by txHash, until the journal settles `row`, sending nothing, and returns it landed with

@@ -284,6 +284,40 @@ describe("the write-ahead journal", () => {
     b.close();
   });
 
+  it("returns another attempt's live row unsent to a call naming the hash of the bytes it holds, and resends a row of exactly those bytes", async () => {
+    const path = file();
+    const net = network();
+    const first = openJournal(path);
+    await expect(
+      first.submitOnce(key, {
+        prepare: prepared("anchor", { n: 0 }),
+        broadcast: async () => {
+          throw new Error("process killed before the broadcast left");
+        },
+        chain: net.chain,
+      }),
+    ).rejects.toThrow(/process killed/);
+    first.close();
+
+    const restarted = openJournal(path);
+    const count = { n: 0 };
+    const sent: string[] = [];
+    const row = await restarted.submitOnce(key, {
+      prepare: prepared("hiding", count),
+      broadcast: async (bytes) => void sent.push(Buffer.from(bytes).toString("hex")),
+      chain: net.chain,
+      txHash: fixture.hiding.txHash,
+    });
+    expect(row).toMatchObject({ txHash: fixture.anchor.txHash, state: "pending", broadcasts: 0 });
+    expect([count.n, sent]).toEqual([0, []]);
+    expect(await restarted.submitOnce(key, { prepare: prepared("anchor", count), broadcast: net.send("anchor"), chain: net.chain, txHash: fixture.anchor.txHash })).toMatchObject({
+      txHash: fixture.anchor.txHash,
+      broadcasts: 1,
+    });
+    expect([count.n, net.arrived]).toEqual([0, [fixture.anchor.txHash]]);
+    restarted.close();
+  });
+
   it("reconcile settles every pending row by txHash alone, preparing and broadcasting nothing", async () => {
     const path = file();
     const first = openJournal(path);

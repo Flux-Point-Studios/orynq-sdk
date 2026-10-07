@@ -161,16 +161,18 @@ export function openJournal(path: string, { ttlMarginMillis = TTL_MARGIN_MILLIS 
     return after.state === "failed" ? null : after;
   };
 
+  // A caller that holds its final bytes already names their `txHash`: a live row of other bytes is
+  // then returned unsent, so it never broadcasts bytes it did not prepare.
   const once = async (
     key: AnchorKey,
-    { prepare, broadcast, chain }: { prepare: () => Promise<Submission>; broadcast: (bytes: Uint8Array) => Promise<void>; chain: ChainView },
+    { prepare, broadcast, chain, txHash: held }: { prepare: () => Promise<Submission>; broadcast: (bytes: Uint8Array) => Promise<void>; chain: ChainView; txHash?: string },
   ): Promise<JournalRow> => {
     if (key.network !== chain.network) throw new Error(`a ${chain.network} chain view settles no ${key.network} attempt; nothing was prepared or sent`);
     const k = keyOf(key);
     const existing = live.get(k) as unknown as Row | undefined;
     if (existing) {
       const row = existing.state === "pending" ? await reconcile(existing, chain) : existing;
-      if (row?.state === "landed" || (row && row.broadcasts > 0)) return view(row);
+      if (row && (row.state === "landed" || row.broadcasts > 0 || (held !== undefined && row.tx_hash !== held))) return view(row);
       if (row) return broadcastRow(row, broadcast);
     }
     const { bytes, ttl, payer } = await prepare();
