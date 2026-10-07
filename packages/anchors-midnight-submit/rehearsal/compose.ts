@@ -103,7 +103,7 @@ const timed = (kind: number, field: string) => anchors.filter((a) => a.kind === 
 const stats = (xs: number[]) => (xs.length ? { n: xs.length, p50: quantile(xs, 0.5), p95: quantile(xs, 0.95), max: Math.max(...xs) } : null);
 const fees = anchors.map((a) => BigInt(a.declaredFeeSpeck ?? 0));
 
-const { anchors: counted, crashDrill, nodeNegatives, forgedDocuments, verifierNegatives } = facts;
+const { anchors: counted, crashDrill, nodeNegatives, forgedDocuments, verifierNegatives, anchorRefusals } = facts;
 const sameBlock = facts.sameBlock!;
 const rotation = Object.entries(ROTATION_EXPECTED as Record<string, Record<string, string>>)
   .map(([set, want]) => `${set}: ${ROTATION_LABELS.map((l: string) => `${l} ${want[l]}`).join(", ")}`)
@@ -122,10 +122,16 @@ const attempts = aborted.attempts.map(
 const abortedStatement = attempts.length
   ? [`Before that drill, ${count(attempts.length, "earlier attempt")} aborted before any kill point, and journalCrashDrill.abortedAttempts discloses ${attempts.length === 1 ? "it" : "each"} with each archived file's sha256, which its MANIFEST.sha256 records: ${attempts.join("; ")}.`]
   : [];
+const refusalStatement = anchorRefusals.length
+  ? [
+      `The node refused ${count(anchorRefusals.length, "anchor transaction")} when it was submitted, which run.ts recorded as the node answered (${anchorRefusals.map((r) => `${r.label}: ${r.txHash}, ${r.code} ${typeof r.data === "string" ? r.data : JSON.stringify(r.data)}, at ${r.at}`).join("; ")}), and a later transaction for the same label landed: the anchor the pack records and the verifier checked for it (${anchorRefusals.map((r) => `${r.label}: ${r.landedAs}`).join("; ")}).`,
+    ]
+  : [];
 const statements = [
   `All ${counted.total} anchors this rehearsal wrote outside the rotation drill, ${counted.total} distinct transactions (${counted.byKind[1]} kind 1, ${counted.byKind[2]} kind 2) with the ${counted.crash} crash-drill anchors and the same-block pair among them, verified valid at consensus-verified assurance, each with the commitment the rehearsal recorded.`,
   `The verifier ran in verify-all.mjs, a separate process that imports nothing but Node built-ins, gate.mjs and the verify package, and reads through Blockfrost preprod. It loaded the verify package only from its own node_modules, where npm installed it from ${facts.package!.resolved} (sha256 ${facts.package!.sha256}), a tarball that still had the integrity npm recorded.`,
   "Every transaction the rehearsal's journals recorded as landed, other than the registry deploy, is one of these anchors or one of the rotation drill's four, and every recorded anchor is in a journal as landed.",
+  ...refusalStatement,
   `The rehearsal submitted ${sameBlock.anchors[0]} from ${sameBlock.wallets[0]} and ${sameBlock.anchors[1]} from ${sameBlock.wallets[1]} in round ${sameBlock.round}, and the verifier places both in block ${sameBlock.height} (${sameBlock.hash}).`,
   `The four rotation-drill anchors gave the expected verdict under each set of KNOWN_AUTHORS documents (${rotation}).`,
   `The verify package answered each forged KNOWN_AUTHORS document as the gate requires (${forgedDocuments.map((f) => `${f.name}: ${f.outcome}`).join("; ")}). Ed25519 verification refused both forgeries under the trust root's key, and the same document opened under the stranger's signature with the stranger as trust root.`,
@@ -158,6 +164,7 @@ const pack = {
     dustSpeck: { before: raw.deploy.dustBefore, after: raw.deploy.dustAfter },
   },
   anchors,
+  ...(anchorRefusals.length ? { anchorRefusals } : {}),
   sameBlock: { ...raw.sameBlock, anchors: sameBlock.anchors, verifiedBlock: { height: sameBlock.height, hash: sameBlock.hash } },
   nodeEnforcedNegatives: nodeNegatives.map((n) => ({ name: n.name, txHash: n.txHash, refusal: n.refusal, refusedBy: n.refusedBy, onChain: 0, blockfrost: verified.refusedTransactions[n.name] })),
   registryAfterNegatives: raw.negativesAfter,

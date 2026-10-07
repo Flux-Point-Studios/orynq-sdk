@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, describe, expect, it } from "vitest";
-import { ABORTED_STATEMENT, REPOSITORY, abortedDrill, archiveAbortedDrill, honestRehearsal, partialDrill, removeScratch, scratch, sha256, writeRehearsal, type Rehearsal } from "./fixture.js";
+import { ABORTED_STATEMENT, REPOSITORY, abortedDrill, archiveAbortedDrill, honestRehearsal, partialDrill, refuseEarlier, removeScratch, scratch, sha256, writeRehearsal, type Rehearsal } from "./fixture.js";
 
 const HERE = new URL("..", import.meta.url).pathname;
 
@@ -169,6 +169,30 @@ describe("compose.ts", () => {
       });
       expect(run.status).toBe(1);
       expect(run.stderr).toContain("no pack written: the privacy scan failed");
+      expect(existsSync(out)).toBe(false);
+    });
+  });
+
+  describe("an anchor transaction the node refused", () => {
+    it("is carried into the pack beside the later transaction for its label that landed, and nothing else in the pack changes", () => {
+      const r = honestRehearsal();
+      const plain = compose(undefined, undefined, r);
+      const refusal = refuseEarlier(r, "rotation-new-after");
+      const disclosed = compose(undefined, undefined, r);
+      expect(plain.run.status, plain.run.stderr).toBe(0);
+      expect(disclosed.run.status, disclosed.run.stderr).toBe(0);
+      const landedAs = r.raw.anchors["rotation-new-after"].txHash;
+      expect(disclosed.pack.anchorRefusals).toEqual([{ ...refusal, landedAs }]);
+      const statement = `The node refused 1 anchor transaction when it was submitted, which run.ts recorded as the node answered (rotation-new-after: ${refusal.txHash}, 1010 Custom error: 170, at 2026-10-05T23:30:24.000Z), and a later transaction for the same label landed: the anchor the pack records and the verifier checked for it (rotation-new-after: ${landedAs}).`;
+      expect(disclosed.pack.statements).toEqual([...plain.pack.statements.slice(0, 3), statement, ...plain.pack.statements.slice(3)]);
+      const { anchorRefusals: _, ...rest } = disclosed.pack;
+      expect({ ...rest, date: null, statements: null }).toEqual({ ...plain.pack, date: null, statements: null });
+    });
+
+    it("writes no pack when no later transaction for its label landed", () => {
+      const { run, out } = compose((r) => (r.raw.anchorRefusals = [{ label: "same-block-a-2", txHash: "e1".repeat(32), code: 1010, data: "Custom error: 170", at: "2026-10-05T23:30:24.000Z" }]));
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain(`GATE: the node refused same-block-a-2's transaction ${"e1".repeat(32)} (1010, Custom error: 170) at 2026-10-05T23:30:24.000Z, and no transaction for same-block-a-2 landed after it`);
       expect(existsSync(out)).toBe(false);
     });
   });

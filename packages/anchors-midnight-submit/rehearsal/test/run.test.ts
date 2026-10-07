@@ -1,40 +1,48 @@
-// run.ts's deploy phase, offline: each run is its own process over a copy of the real run.ts,
-// whose ./endpoints.js and ../src/index.js are the package's test/offline.ts (the submit package
-// with its wallet, prover and chain replaced). A failure in one run must leave a deploy the next run finishes and
-// records as the one that landed, which the evidence gate requires.
+// run.ts's phases, offline: each run is its own process over a copy of the real run.ts, whose
+// ./endpoints.js and ../src/index.js are the package's test/offline.ts (the submit package with
+// its wallet, prover and chain replaced). A failure in one run must leave a deploy the next run
+// finishes and records as the one that landed, and a node's refusal of an anchor's bytes in
+// raw.json, which the evidence gate requires.
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { chmodSync, copyFileSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, describe, it } from "vitest";
+import { createAuthorKeyFile } from "../../../anchors-midnight/src/commitment.js";
+import { anchorRefusals } from "../gate.mjs";
 import { removeScratch, scratch } from "./fixture.js";
 import type { OfflineChain } from "../../test/offline.js";
 
 const HERE = new URL("..", import.meta.url).pathname;
 const OFFLINE = new URL("../../test/offline.ts", import.meta.url).pathname;
 const MINUTE = 60_000;
+const KIND1 = ["git-head", "contract-hashes", "compactc-version", "zk-material", "preprod-chain", "preprod-runtime", "preprod-ledger", "git-log", "commitment-suite", "node-version", "pnpm-lock-midnight", "uname"];
+const h = () => randomBytes(32).toString("hex");
 
-function rehearsal() {
-  const root = scratch("deploy");
+function rehearsal(bundles: string[] = []) {
+  const root = scratch("run");
   const home = `${root}/home`;
+  const secrets = `${home}/.secrets/orynq-midnight-preprod`;
   mkdirSync(`${root}/rehearsal/bundles`, { recursive: true });
   mkdirSync(`${root}/src`);
-  mkdirSync(`${home}/.secrets/orynq-midnight-preprod`, { recursive: true });
+  mkdirSync(secrets, { recursive: true });
   chmodSync(`${home}/.secrets`, 0o700);
-  chmodSync(`${home}/.secrets/orynq-midnight-preprod`, 0o700);
+  chmodSync(secrets, 0o700);
+  for (const key of ["author-relay.key", "salt.key"]) createAuthorKeyFile(`${secrets}/${key}`);
   copyFileSync(`${HERE}run.ts`, `${root}/rehearsal/run.ts`);
   for (const file of ["gate.mjs", "wallets.json"]) symlinkSync(`${HERE}${file}`, `${root}/rehearsal/${file}`);
   symlinkSync(OFFLINE, `${root}/rehearsal/endpoints.ts`);
   symlinkSync(OFFLINE, `${root}/src/index.ts`);
-  writeFileSync(`${root}/rehearsal/bundles/index.json`, "[]");
+  writeFileSync(`${root}/rehearsal/bundles/index.json`, JSON.stringify(bundles.map((label) => ({ label, kind: 1, rootHash: h(), manifestHash: h(), merkleRoot: h(), modelManifestHash: h() }))));
   const chainFile = `${root}/chain.json`;
   writeFileSync(chainFile, JSON.stringify({ network: "preprod", aheadMs: 0, sent: [], landed: {}, discarded: [] } satisfies OfflineChain));
   const chain = (): OfflineChain => JSON.parse(readFileSync(chainFile, "utf8"));
   const rawFile = `${root}/rehearsal/evidence/raw.json`;
   const raw = () => JSON.parse(readFileSync(rawFile, "utf8"));
   return {
-    async run(fault = "") {
-      const child = spawn(process.execPath, ["--import", "tsx", "run.ts", "deploy"], {
+    async run(fault = "", phase = "deploy") {
+      const child = spawn(process.execPath, ["--import", "tsx", "run.ts", phase], {
         cwd: `${root}/rehearsal`,
         env: { ...process.env, HOME: home, OFFLINE_CHAIN: chainFile, OFFLINE_FAULT: fault },
         timeout: 120_000,
@@ -48,8 +56,8 @@ function rehearsal() {
     editRaw: (edit: (raw: Record<string, any>) => Record<string, any>) => writeFileSync(rawFile, JSON.stringify(edit(raw()))),
     chain,
     advance: (millis: number) => writeFileSync(chainFile, JSON.stringify({ ...chain(), aheadMs: chain().aheadMs + millis })),
-    journal() {
-      const db = new DatabaseSync(`${home}/.secrets/orynq-midnight-preprod/journal-deploy.sqlite`, { readOnly: true });
+    journal(name = "deploy") {
+      const db = new DatabaseSync(`${secrets}/journal-${name}.sqlite`, { readOnly: true });
       const rows = db.prepare("select tx_hash, state from attempts order by id").all();
       db.close();
       return rows;
@@ -192,5 +200,28 @@ describe.concurrent("run.ts deploy", () => {
       ["after sync", false],
       ["at close", false],
     ]);
+  });
+});
+
+describe("run.ts anchors", () => {
+  it("records the node's refusal of an anchor's bytes in raw.json before the run fails, which the gate accepts once a later transaction for the label landed", async ({ expect }) => {
+    const r = rehearsal(KIND1);
+    expect(await r.run()).toMatchObject({ status: 0 });
+    const refused = await r.run("refuse-anchor", "kind1");
+    expect(refused.status, refused.output).toBe(1);
+    expect(refused.output).toContain('offline node: author_submitExtrinsic failed: {"code":1010,"message":"Invalid Transaction","data":"Custom error: 170"}');
+    const anchor = r.chain().sent.at(-1)!;
+    const refusal = { label: "git-head", txHash: anchor, code: 1010, data: "Custom error: 170", at: expect.any(String) };
+    expect(r.raw().anchorRefusals).toEqual([refusal]);
+    expect(r.raw().anchors).toBeUndefined();
+    expect(anchorRefusals(r.raw()).failures).toEqual([`the node refused git-head's transaction ${anchor} (1010, Custom error: 170) at ${r.raw().anchorRefusals[0].at}, and no transaction for git-head landed after it`]);
+
+    r.advance(15 * MINUTE + 5 * MINUTE + 1_000);
+    const rerun = await r.run("", "kind1");
+    expect(rerun.status, rerun.output).toBe(0);
+    const landed = r.raw().anchors["git-head"].txHash;
+    expect(landed).not.toBe(anchor);
+    expect(r.journal("walletA")).toEqual([{ tx_hash: anchor, state: "failed" }, ...KIND1.map((label) => ({ tx_hash: r.raw().anchors[label].txHash, state: "landed" }))]);
+    expect(anchorRefusals(r.raw())).toEqual({ failures: [], refusals: [{ ...r.raw().anchorRefusals[0], landedAs: landed }] });
   });
 });

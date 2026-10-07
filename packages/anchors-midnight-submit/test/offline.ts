@@ -3,10 +3,11 @@
 // in the JSON file OFFLINE_CHAIN so it outlasts each process, and whose node, midnight-node 2.1.0
 // as Blockfrost serves it, refuses bytes whose TTL the chain has passed. The rehearsal's run.ts
 // also imports it as ./endpoints.js. OFFLINE_FAULT, a comma-separated list, breaks steps of a
-// run: "refuse-broadcast" (a proxy answers the broadcast with HTTP 403), "lose-read" (the first
-// read of a landed transaction fails), "lose-sync" (the wallet stops syncing once a deploy
-// landed) or "fail-save" (the shielded state does not serialize, as ledger-v8 8.1.3 once trapped
-// on preprod).
+// run: "refuse-broadcast" (a proxy answers the broadcast with HTTP 403), "refuse-anchor" (the node
+// refuses every transaction that deploys nothing with Custom error: 170, InvalidDustSpendProof),
+// "lose-read" (the first read of a landed transaction fails), "lose-sync" (the wallet stops
+// syncing once a deploy landed) or "fail-save" (the shielded state does not serialize, as
+// ledger-v8 8.1.3 once trapped on preprod).
 import { readFileSync, writeFileSync } from "node:fs";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { midnightSource, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
@@ -24,7 +25,8 @@ export interface OfflineChain {
   aheadMs: number;
   // Every transaction handed to the node, in order, whether or not it landed.
   sent: string[];
-  landed: Record<string, { raw: string; height: number; address: string; state: string }>;
+  // Each landed transaction, and for a deploy the contract's address and initial state.
+  landed: Record<string, { raw: string; height: number; address?: string; state?: string }>;
   // Every transaction whose DUST the wallet was asked to release.
   discarded: string[];
 }
@@ -71,7 +73,8 @@ const indexer = {
       readsToLose--;
       throw new Error("offline indexer: HTTP 502: Bad Gateway");
     }
-    return [{ hash, raw: t.raw, block: { height: t.height, hash: BLOCK, timestamp: Date.now() }, status: "SUCCESS", contractActions: [{ kind: "ContractDeploy", address: t.address, state: t.state }] }];
+    const actions = t.address === undefined ? [] : [{ kind: "ContractDeploy" as const, address: t.address, state: t.state! }];
+    return [{ hash, raw: t.raw, block: { height: t.height, hash: BLOCK, timestamp: Date.now() }, status: "SUCCESS", contractActions: actions }];
   },
   async head() {
     return { height: 1000, hash: HEAD, timestamp: Date.now() };
@@ -152,8 +155,15 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       if ([...tx.intents!.values()].some((intent) => intent.ttl.getTime() < Date.now())) {
         throw new Error('offline node: author_submitExtrinsic failed: {"code":1010,"message":"Invalid Transaction","data":"the TTL is behind the chain\'s time"}');
       }
-      const deploy = [...tx.intents!.values()].flatMap((intent) => intent.actions).find((a): a is L.ContractDeploy => a instanceof L.ContractDeploy)!;
-      chain.landed[tx.transactionHash()] = { raw: hex(tx.serialize()), height: 500 + Object.keys(chain.landed).length, address: String(deploy.address), state: hex(deploy.initialState.serialize()) };
+      const deploy = [...tx.intents!.values()].flatMap((intent) => intent.actions).find((a): a is L.ContractDeploy => a instanceof L.ContractDeploy);
+      if (!deploy && FAULTS.has("refuse-anchor")) {
+        throw new Error('offline node: author_submitExtrinsic failed: {"code":1010,"message":"Invalid Transaction","data":"Custom error: 170"}');
+      }
+      chain.landed[tx.transactionHash()] = {
+        raw: hex(tx.serialize()),
+        height: 500 + Object.keys(chain.landed).length,
+        ...(deploy ? { address: String(deploy.address), state: hex(deploy.initialState.serialize()) } : {}),
+      };
       write(chain);
     },
     async discard(tx) {

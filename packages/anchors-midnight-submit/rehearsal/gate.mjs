@@ -147,13 +147,14 @@ function crashDrill(label, crash, status, raw) {
  * @property {Array<{ name: string, outcome: string }>} forgedDocuments
  * @property {{ name: string, version: string, resolved: string, integrity: string, sha256: string } | null} package
  * @property {string | null} trustRoot
+ * @property {Array<{ label: string, txHash: string, code: number, data: unknown, at: string, landedAs: string }>} anchorRefusals
  */
 
 export function judge({ raw, verified, crash, crashStatus }) {
   const failures = [];
   const anchors = Object.entries(raw.anchors ?? {});
   /** @type {Facts} */
-  const facts = { anchors: { total: 0, byKind: { 1: 0, 2: 0 }, crash: 0 }, crashDrill: [], nodeNegatives: [], verifierNegatives: 0, sameBlock: null, forgedDocuments: [], package: null, trustRoot: null };
+  const facts = { anchors: { total: 0, byKind: { 1: 0, 2: 0 }, crash: 0 }, crashDrill: [], nodeNegatives: [], verifierNegatives: 0, sameBlock: null, forgedDocuments: [], package: null, trustRoot: null, anchorRefusals: [] };
 
   // The pack describes the deploy by its prepared record, so that record must be the deploy that
   // landed, never a prepare whose bytes a later run abandoned.
@@ -289,7 +290,32 @@ export function judge({ raw, verified, crash, crashStatus }) {
     else facts.verifierNegatives++;
   }
 
+  const refusals = anchorRefusals(raw);
+  failures.push(...refusals.failures);
+  facts.anchorRefusals = refusals.refusals;
+
   return { failures, facts };
+}
+
+// Every anchor transaction the node refused, as run.ts recorded it, was followed by another
+// transaction for the same label that landed: the anchor recorded under the label, whose verdict
+// judge requires, recorded after the refusal.
+export function anchorRefusals(raw) {
+  const failures = [];
+  const refusals = [];
+  for (const r of raw.anchorRefusals ?? []) {
+    if (typeof r.label !== "string" || !/^[0-9a-f]{64}$/.test(r.txHash ?? "") || !Number.isSafeInteger(r.code) || Number.isNaN(Date.parse(r.at))) {
+      failures.push(`an anchor refusal recorded as ${JSON.stringify(r)} does not name a label, a transaction, the node's code and a time`);
+      continue;
+    }
+    const refused = `the node refused ${r.label}'s transaction ${r.txHash} (${r.code}, ${typeof r.data === "string" ? r.data : JSON.stringify(r.data)}) at ${r.at}`;
+    const landed = raw.anchors?.[r.label];
+    if (!landed) failures.push(`${refused}, and no transaction for ${r.label} landed after it`);
+    else if (landed.txHash === r.txHash) failures.push(`${refused}, and the anchor recorded for ${r.label} is that transaction`);
+    else if (!(Date.parse(landed.recordedAt) > Date.parse(r.at))) failures.push(`${refused}, and the anchor recorded for ${r.label}, ${landed.txHash}, was recorded ${landed.recordedAt ? `at ${landed.recordedAt}` : "with no time"}, not after it`);
+    else refusals.push({ label: r.label, txHash: r.txHash, code: r.code, data: r.data, at: r.at, landedAs: landed.txHash });
+  }
+  return { failures, refusals };
 }
 
 // A crash drill that aborted before any kill point, archived unmodified in

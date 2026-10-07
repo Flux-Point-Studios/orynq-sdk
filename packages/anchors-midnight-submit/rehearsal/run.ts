@@ -60,6 +60,9 @@ const prover = (() => {
     },
   };
 })();
+// The bytes each node refusal answered, by the error that carries it, for the anchor whose
+// write it fails to record.
+const refusedBytes = new WeakMap<Error, string>();
 function instrument(wallet: OperatorWallet, label: string) {
   let payMs = 0;
   return {
@@ -71,7 +74,12 @@ function instrument(wallet: OperatorWallet, label: string) {
     },
     async submit(tx: L.FinalizedTransaction) {
       metrics.set(tx.transactionHash(), { wallet: label, proveMs: Math.round(pendingProve), payFeeMs: Math.round(payMs), declaredFee: declaredFee(tx), bytes: tx.serialize().length, submittedAt: Date.now() });
-      await wallet.submit(tx);
+      try {
+        await wallet.submit(tx);
+      } catch (error) {
+        if (nodeRefusal(error)) refusedBytes.set(error as Error, tx.transactionHash());
+        throw error;
+      }
     },
     discard: (tx: L.FinalizedTransaction) => wallet.discard(tx),
   };
@@ -137,13 +145,30 @@ async function operator(which: "walletA" | "walletB", authorFile: string, wrap?:
   return operators.get(key)!;
 }
 
-// Every anchor this rehearsal wrote, with what it cost and how long it took.
+// Every anchor this rehearsal wrote, with what it cost, how long it took and when it was recorded.
 async function recordAnchor(name: string, which: "walletA" | "walletB", receipt: { txHash: string; blockHeight: number; blockHash: string; kind: number; commitment: string; attribute: string; author: string }, extra: Record<string, unknown> = {}) {
   const m = metrics.get(receipt.txHash) ?? {};
   raw.anchors ??= {};
-  raw.anchors[name] = { ...receipt, wallet: which, ...m, landedAfterMs: m.submittedAt ? Date.now() - (m.submittedAt as number) : null, ...extra };
+  raw.anchors[name] = { ...receipt, wallet: which, ...m, landedAfterMs: m.submittedAt ? Date.now() - (m.submittedAt as number) : null, recordedAt: new Date().toISOString(), ...extra };
   save();
   log(`${name}: ${receipt.txHash} at ${receipt.blockHeight} (${which}, fee ${m.declaredFee} SPECK)`);
+}
+
+// Writes the anchor `label`. A node refusal of its bytes is saved to raw.json's anchorRefusals
+// before the error leaves the phase, and the evidence gate accepts it only beside a later
+// transaction for the same label that landed.
+async function anchored<T>(label: string, write: () => Promise<T>): Promise<T> {
+  try {
+    return await write();
+  } catch (error) {
+    const refusal = nodeRefusal(error);
+    const txHash = error instanceof Error ? refusedBytes.get(error) : undefined;
+    if (refusal && txHash) {
+      raw.anchorRefusals = [...(raw.anchorRefusals ?? []), { label, txHash, code: refusal.code, data: refusal.data, at: new Date().toISOString() }];
+      save();
+    }
+    throw error;
+  }
 }
 
 const phases: Record<string, () => Promise<void>> = {
@@ -231,7 +256,7 @@ const phases: Record<string, () => Promise<void>> = {
     for (const label of ["git-head", "contract-hashes", "compactc-version", "zk-material", "preprod-chain", "preprod-runtime", "preprod-ledger", "git-log", "commitment-suite", "node-version", "pnpm-lock-midnight", "uname"]) {
       if (raw.anchors?.[label]) continue;
       const before = (await balances("walletA")).dust;
-      const receipt = await op.anchor(entryOf(bundle(label)));
+      const receipt = await anchored(label, () => op.anchor(entryOf(bundle(label))));
       await recordAnchor(label, "walletA", receipt, { bundle: label, dustBefore: before, dustAfter: (await balances("walletA")).dust });
     }
   },
@@ -244,7 +269,7 @@ const phases: Record<string, () => Promise<void>> = {
       if (raw.anchors?.[label]) continue;
       const b = bundle(label);
       const before = (await balances("walletA")).dust;
-      const { opening, ...receipt } = await op.anchorHiding(entryOf(b), b.modelManifestHash);
+      const { opening, ...receipt } = await anchored(label, () => op.anchorHiding(entryOf(b), b.modelManifestHash));
       openings[label] = { txHash: receipt.txHash, ...opening };
       writeFileSync(`${receiptsFile}.next`, JSON.stringify(openings, null, 1), { mode: 0o600 });
       renameSync(`${receiptsFile}.next`, receiptsFile);
@@ -271,7 +296,7 @@ const phases: Record<string, () => Promise<void>> = {
       });
       const opA = await operator("walletA", `${SECRETS}/author-relay.key`, gate);
       const opB = await operator("walletB", `${SECRETS}/author-relay.key`, gate);
-      const [a, b] = await Promise.all([opA.anchor(entryOf(bundleA)), opB.anchor(entryOf(bundleB))]).finally(() => {
+      const [a, b] = await Promise.all([anchored(bundleA.label, () => opA.anchor(entryOf(bundleA))), anchored(bundleB.label, () => opB.anchor(entryOf(bundleB)))]).finally(() => {
         opA.close();
         opB.close();
       });
@@ -344,7 +369,7 @@ const phases: Record<string, () => Promise<void>> = {
     const steps: Array<[string, typeof one]> = [["rotation-old-before", one], ["rotation-old-after", one], ["rotation-new-after", two], ["revoked-new-after", two]];
     for (const [label, op] of steps) {
       if (raw.anchors?.[label]) continue;
-      const receipt = await op.anchor(entryOf(bundle(label)));
+      const receipt = await anchored(label, () => op.anchor(entryOf(bundle(label))));
       await recordAnchor(label, "walletA", receipt, { bundle: label, author: receipt.author });
     }
     save();

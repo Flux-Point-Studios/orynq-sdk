@@ -212,6 +212,15 @@ export function honestRehearsal(): Rehearsal {
 // Writes the rehearsal where the scripts read it: DIR/evidence/{raw.json, verified.json,
 // crash.log, crash.log.status, known-authors/}, DIR/bundles/index.json, and the secrets and
 // journals under HOME/.secrets/orynq-midnight-preprod (0700, files 0600).
+// The node's refusal of an earlier transaction for `label`, as run.ts records it, before the
+// transaction recorded under `label` landed.
+export function refuseEarlier(r: Rehearsal, label: string) {
+  const refusal = { label, txHash: h(), code: 1010, data: "Custom error: 170", at: "2026-10-05T23:30:24.000Z" };
+  r.raw.anchorRefusals = [...(r.raw.anchorRefusals ?? []), refusal];
+  r.raw.anchors[label].recordedAt = "2026-10-05T23:52:00.000Z";
+  return refusal;
+}
+
 export function writeRehearsal(dir: string, home: string, r: Rehearsal) {
   const secrets = `${home}/.secrets/orynq-midnight-preprod`;
   for (const d of [`${dir}/evidence/known-authors`, `${dir}/bundles`, secrets]) mkdirSync(d, { recursive: true });

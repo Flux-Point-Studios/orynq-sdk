@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { abortedDrills, judge, parseCrashLog, parseCrashStatus, unrecordedAnchors } from "../gate.mjs";
-import { ABORTED_STATEMENT, REPOSITORY, abortedDrill, honestRehearsal, partialDrill, sha256, type Rehearsal } from "./fixture.js";
+import { ABORTED_STATEMENT, REPOSITORY, abortedDrill, honestRehearsal, partialDrill, refuseEarlier, sha256, type Rehearsal } from "./fixture.js";
 
 const run = (r: Rehearsal) => judge({ raw: r.raw, verified: r.verified, crash: r.crash, crashStatus: parseCrashStatus(r.crashStatus.join("\n")) });
 const failuresOf = (edit: (r: Rehearsal) => void) => {
@@ -43,6 +43,7 @@ describe("the evidence gate", () => {
     expect(facts.forgedDocuments).toEqual(Object.entries(FORGED).map(([name, outcome]) => ({ name, outcome })));
     expect(facts.package).toEqual(r.verified.package);
     expect(facts.trustRoot).toBe(r.root);
+    expect(facts.anchorRefusals).toEqual([]);
     expect(unrecordedAnchors(r.raw, journalLanded(r))).toEqual([]);
   });
 
@@ -403,6 +404,46 @@ describe("the evidence gate", () => {
         ],
         notShown: 2,
       });
+    });
+  });
+
+  // run.ts records the node's refusal of an anchor's bytes as it happens; the pack may carry one
+  // only beside the later transaction for the same label that landed and was verified.
+  describe("anchor transactions the node refused", () => {
+    it("counts a refusal followed by a later transaction for its label that landed", () => {
+      const r = honestRehearsal();
+      const refusal = refuseEarlier(r, "rotation-new-after");
+      const { failures, facts } = run(r);
+      expect(failures).toEqual([]);
+      expect(facts.anchorRefusals).toEqual([{ ...refusal, landedAs: r.raw.anchors["rotation-new-after"].txHash }]);
+    });
+
+    it("refuses a refusal that no landing of its label followed", () => {
+      const r = honestRehearsal();
+      const refusal = { label: "same-block-a-2", txHash: "e1".repeat(32), code: 1010, data: "Custom error: 170", at: "2026-10-05T23:30:24.000Z" };
+      r.raw.anchorRefusals = [refusal];
+      expect(run(r).failures).toEqual([`the node refused same-block-a-2's transaction ${"e1".repeat(32)} (1010, Custom error: 170) at 2026-10-05T23:30:24.000Z, and no transaction for same-block-a-2 landed after it`]);
+    });
+
+    it("refuses a refusal whose label's recorded anchor is the refused transaction, or was recorded no later than the refusal", () => {
+      const same = honestRehearsal();
+      const refused = refuseEarlier(same, "git-head");
+      refused.txHash = same.raw.anchors["git-head"].txHash;
+      expect(run(same).failures).toEqual([`the node refused git-head's transaction ${refused.txHash} (1010, Custom error: 170) at 2026-10-05T23:30:24.000Z, and the anchor recorded for git-head is that transaction`]);
+      for (const recordedAt of ["2026-10-05T23:30:24.000Z", undefined]) {
+        const early = honestRehearsal();
+        const refusal = refuseEarlier(early, "git-head");
+        early.raw.anchors["git-head"].recordedAt = recordedAt;
+        expect(run(early).failures).toEqual([
+          `the node refused git-head's transaction ${refusal.txHash} (1010, Custom error: 170) at 2026-10-05T23:30:24.000Z, and the anchor recorded for git-head, ${early.raw.anchors["git-head"].txHash}, was recorded ${recordedAt ? `at ${recordedAt}` : "with no time"}, not after it`,
+        ]);
+      }
+    });
+
+    it("refuses a refusal record that does not name a label, a transaction, the node's code and a time", () => {
+      for (const broken of [{ txHash: "e1".repeat(32), code: 1010, at: "2026-10-05T23:30:24.000Z" }, { label: "git-head", txHash: "E1", code: 1010, at: "2026-10-05T23:30:24.000Z" }, { label: "git-head", txHash: "e1".repeat(32), code: "1010", at: "2026-10-05T23:30:24.000Z" }, { label: "git-head", txHash: "e1".repeat(32), code: 1010 }]) {
+        expect(failuresOf((r) => (r.raw.anchorRefusals = [broken]))).toEqual([`an anchor refusal recorded as ${JSON.stringify(broken)} does not name a label, a transaction, the node's code and a time`]);
+      }
     });
   });
 
