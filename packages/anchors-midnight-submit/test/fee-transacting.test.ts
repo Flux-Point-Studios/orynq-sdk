@@ -1,99 +1,11 @@
-import { randomBytes } from "node:crypto";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import * as L from "@midnight-ntwrk/ledger-v8";
-import { makeSimulatorProvingService } from "@midnight-ntwrk/wallet-sdk-capabilities/proving";
-import { Simulator } from "@midnight-ntwrk/wallet-sdk-capabilities/simulation";
-import { CustomDustWallet } from "@midnight-ntwrk/wallet-sdk-dust-wallet";
-import { SyncService, V1Builder } from "@midnight-ntwrk/wallet-sdk-dust-wallet/v1";
 import { TTL_MARGIN_MILLIS } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
-import { Effect, Exit, Scope } from "effect";
-import { filter, firstValueFrom } from "rxjs";
-import { feeTransacting } from "../src/fee-transacting.js";
+import { NIGHT, closeSimulators, dustOnSimulator, run } from "./simulator.js";
 
-const NETWORK = "undeployed";
-const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
-const prover = makeSimulatorProvingService();
-const scopes: Scope.CloseableScope[] = [];
-const running: Array<{ stop(): Promise<void> }> = [];
-afterEach(async () => {
-  for (const wallet of running.splice(0)) await wallet.stop();
-  for (const scope of scopes.splice(0)) await run(Scope.close(scope, Exit.void));
-});
-
-// The SDK's in-memory ledger simulator, which produces a block for each transaction submitted.
-async function simulatorOf() {
-  const scope = Effect.runSync(Scope.make());
-  scopes.push(scope);
-  return run(Scope.extend(Simulator.init({ networkId: NETWORK }), scope));
-}
-
-// wallet-sdk-dust-wallet 4.2.0 with feeTransacting's fee transactions, synced from the SDK's
-// in-memory ledger simulator instead of an indexer, holding one DUST coin per NIGHT UTXO it
-// registered. A registration backdates DUST generation only for the one UTXO that pays its fee,
-// so each UTXO has a key and a registration of its own, two hours after its NIGHT arrived: each
-// coin starts with two hours of DUST, and the last registration is the newest DUST event the
-// wallet applies, as new as the simulator's clock.
-async function dustOnSimulator(nightUtxos: number, simulator?: Simulator) {
-  simulator ??= await simulatorOf();
-  const secretKey = L.DustSecretKey.fromSeed(randomBytes(32));
-  const Wallet = CustomDustWallet(
-    { simulator, networkId: NETWORK, costParameters: { additionalFeeOverhead: 1n, feeBlocksMargin: 5 } },
-    new V1Builder()
-      .withDefaultTransactionType()
-      .withSync(SyncService.makeSimulatorSyncService, SyncService.makeSimulatorSyncCapability)
-      .withSerializationDefaults()
-      .withTransacting(feeTransacting(secretKey))
-      .withCoinsAndBalancesDefaults()
-      .withTransactionHistory(() => ({ put: () => Effect.void, getTransactionDetails: (hash) => Effect.succeed({ hash, timestamp: 0, status: "SUCCESS" as const }) }))
-      .withKeysDefaults()
-      .withCoinSelectionDefaults(),
-  );
-  type DustWallet = ReturnType<typeof Wallet.restore>;
-  const open = async (wallet: DustWallet) => {
-    running.push(wallet);
-    await wallet.start(secretKey);
-    return wallet;
-  };
-  const wallet = await open(Wallet.startWithSecretKey(secretKey, L.LedgerParameters.initialParameters().dust));
-
-  const nights = Array.from({ length: nightUtxos }, () => L.sampleSigningKey());
-  for (const night of nights) await run(simulator.rewardNight(L.signatureVerifyingKey(night), 150_000_000_000n));
-  await run(simulator.fastForward(7_200n));
-  for (const night of nights) {
-    const nightKey = L.signatureVerifyingKey(night);
-    const before = await run(simulator.getLatestState());
-    const utxos = [...before.ledger.utxo.filter(L.addressFromKey(nightKey))].map((utxo) => ({ ...utxo, ctime: before.ledger.utxo.lookupMeta(utxo)!.ctime, registeredForDustGeneration: false }));
-    const registration = await wallet.createDustGenerationTransaction(before.currentTime, new Date(before.currentTime.getTime() + 60_000), utxos, nightKey, (await firstValueFrom(wallet.state)).address);
-    const signed = await wallet.addDustGenerationSignature(registration, L.signData(night, registration.intents!.get(1)!.signatureData(1)));
-    await run(simulator.submitTransaction(await prover.prove(signed)));
-  }
-
-  await firstValueFrom(wallet.state.pipe(filter((s) => s.availableCoins.length === nightUtxos)));
-  // A block with nothing of the wallet's in it, which the wallet applies like any other.
-  const anotherBlock = async (w = wallet) => {
-    const block = await run(simulator.rewardNight(L.signatureVerifyingKey(L.sampleSigningKey()), 1n));
-    await firstValueFrom(w.state.pipe(filter((s) => s.progress.appliedIndex > block.number)));
-  };
-  const now = async () => (await run(simulator.getLatestState())).currentTime;
-  // Balances a transaction of its own the way payFee does: the wallet books the DUST it spends.
-  const balanced = async (w = wallet, ttl?: Date) => {
-    ttl ??= new Date((await now()).getTime() + 15 * 60_000);
-    const tx = L.Transaction.fromParts(NETWORK, undefined, undefined, L.Intent.new(ttl));
-    const fee = await w.balanceTransactions(secretKey, [tx], ttl);
-    return prover.prove(tx.merge(fee));
-  };
-  const coins = async (w = wallet) => (await firstValueFrom(w.state)).availableCoins.map((c) => c.token.nonce);
-  // The time of the newest DUST event the wallet has applied.
-  const syncTime = async (w = wallet) => (await firstValueFrom(w.state)).state.state.syncTime;
-  const reopen = async () => open(Wallet.restore(await wallet.serializeState()));
-  // A wallet restored from `serialized` that never syncs, so it stays where that state was.
-  const restored = (serialized: string) => {
-    const w = Wallet.restore(serialized);
-    running.push(w);
-    return w;
-  };
-  return { simulator, wallet, anotherBlock, now, balanced, coins, syncTime, reopen, restored };
-}
+afterEach(closeSimulators);
 
 const dustCtimes = (tx: L.ProofErasedTransaction) => [...(tx.intents?.values() ?? [])].flatMap((intent) => (intent.dustActions ? [intent.dustActions.ctime] : []));
 
@@ -102,7 +14,7 @@ describe("reverting a fee transaction that never landed", () => {
   // DUST events: wallet-sdk-dust-wallet 4.2.0 had already forgotten which coin it spent, and the
   // wallet's one coin stayed spent for the ledger's three-hour grace period.
   it("frees the coin it spent, even after the wallet applied a newer block", async () => {
-    const { wallet, anotherBlock, balanced, coins } = await dustOnSimulator(1);
+    const { wallet, anotherBlock, balanced, coins } = await dustOnSimulator([NIGHT]);
     const [coin] = await coins();
     const final = await balanced();
     expect(await coins()).toEqual([]);
@@ -116,7 +28,7 @@ describe("reverting a fee transaction that never landed", () => {
   // the end of its grace period, which frees every coin spent before it too; its own list of
   // spent coins hides those until a restart, which does not keep that list.
   it("never frees a coin that an earlier transaction, still in flight, spends, in the state it saves", async () => {
-    const { wallet, balanced, coins, reopen } = await dustOnSimulator(2);
+    const { wallet, balanced, coins, reopen } = await dustOnSimulator([NIGHT, NIGHT]);
     await balanced();
     const [later] = await coins();
     const refused = await balanced();
@@ -127,7 +39,7 @@ describe("reverting a fee transaction that never landed", () => {
   });
 
   it("leaves the freed coin free in the state saved and restored after it", async () => {
-    const { wallet, anotherBlock, balanced, coins, reopen } = await dustOnSimulator(1);
+    const { wallet, anotherBlock, balanced, coins, reopen } = await dustOnSimulator([NIGHT]);
     const [coin] = await coins();
     const final = await balanced();
     await anotherBlock();
@@ -145,8 +57,8 @@ describe("a fee's DUST spend", () => {
   // which held a stranger's DUST spend the wallet had not applied yet: the proof matched the
   // trees one event earlier, and the node refused it (Custom error: 170, InvalidDustSpendProof).
   it("is dated at the newest DUST event the wallet applied, not at the chain's newest block", async () => {
-    const a = await dustOnSimulator(1);
-    const stranger = await dustOnSimulator(1, a.simulator);
+    const a = await dustOnSimulator([NIGHT]);
+    const stranger = await dustOnSimulator([NIGHT], { simulator: a.simulator });
     await a.anotherBlock();
     const snapshot = await a.wallet.serializeState();
     await run(a.simulator.fastForward(60n));
@@ -164,7 +76,7 @@ describe("a fee's DUST spend", () => {
   // error: 171, OutOfDustValidityWindow, after that), and the wallet holds the coin it spends
   // until then: both must outlast the transaction's TTL plus the journal's margin.
   it("is refused, before anything is spent, when the wallet's newest DUST event is too old for the transaction's TTL", async () => {
-    const { simulator, wallet, now, balanced, coins, syncTime } = await dustOnSimulator(1);
+    const { simulator, wallet, now, balanced, coins, syncTime } = await dustOnSimulator([NIGHT]);
     const [coin] = await coins();
     const applied = await syncTime();
     const grace = Number(L.LedgerParameters.initialParameters().dust.dustGracePeriodSeconds) * 1000;
@@ -178,5 +90,83 @@ describe("a fee's DUST spend", () => {
     expect(await coins()).toEqual([coin]);
     const paid = await balanced(wallet, latest);
     await expect(run(simulator.submitTransaction(paid))).resolves.toMatchObject({ transactions: [{ tx: paid }] });
+  });
+});
+
+// How long a balancing may take once its process has set up the wallet: a few dry runs.
+const BALANCING_MS = 30_000;
+
+interface Balanced {
+  coinValues: string[];
+  feeAsItIs: string;
+  error?: string;
+  intents?: Array<string[] | null>;
+  coinsUntouched?: boolean;
+  landed?: true | string;
+}
+
+// Runs a scenario of balance-on-simulator.ts in a process of its own and kills it when its
+// balancing has not returned within BALANCING_MS: nothing inside that process can interrupt the
+// synchronous loop of an unterminated balancing.
+function balancing(scenario: string): Promise<Balanced> {
+  const child = spawn(process.execPath, ["--import", "tsx", fileURLToPath(new URL("./balance-on-simulator.ts", import.meta.url)), scenario], { stdio: ["ignore", "pipe", "pipe"] });
+  let out = "";
+  let err = "";
+  let timer: NodeJS.Timeout | undefined;
+  return new Promise((resolve, reject) => {
+    child.stderr.on("data", (chunk) => (err += chunk));
+    child.stdout.on("data", (chunk) => {
+      out += chunk;
+      if (timer === undefined && out.includes("balancing\n")) {
+        timer = setTimeout(() => {
+          child.kill("SIGKILL");
+          reject(new Error(`the ${scenario} balancing did not return within ${BALANCING_MS / 1000} s`));
+        }, BALANCING_MS);
+      }
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      const result = out.split("\n").find((line) => line.startsWith("{"));
+      if (code === 0 && result) resolve(JSON.parse(result));
+      else reject(new Error(`the ${scenario} balancing exited ${code}: ${err.slice(-2000)}`));
+    });
+  });
+}
+
+// wallet-sdk-dust-wallet 4.2.0 selects DUST until it covers the fee its dry run computes, seeding
+// every round after the first with that fee as a surplus: once the first round's coins cover the
+// fee of the transaction as it is but not the fee their own spends add, no round selects anything
+// again and the loop never ends (midnight-wallet#438, #700). The workspace runs it with
+// midnight-wallet#741, whose rounds each select against the outstanding deficit.
+describe("balancing a fee", () => {
+  it("terminates when the smallest coin covers the fee of the transaction as it is but not that fee plus its own spend, and the simulator takes the result", async () => {
+    const r = await balancing("under-covered");
+    const [small, large] = r.coinValues.map(BigInt) as [bigint, bigint];
+    expect(small).toBeGreaterThanOrEqual(BigInt(r.feeAsItIs));
+    expect(r.error).toBeUndefined();
+    // The smaller coin, chosen first, pays all it holds; the larger pays the rest of the fee.
+    const [base, fee] = r.intents!;
+    expect(base).toBeNull();
+    expect(fee).toHaveLength(2);
+    expect(BigInt(fee![0]!)).toBe(small);
+    expect(BigInt(fee![1]!)).toBeLessThan(large);
+    expect(r.landed).toBe(true);
+  });
+
+  // A transaction that already covers its fee needs no DUST spend, and an intent with empty
+  // DustActions is not well-formed: midnight-node refused one with Custom error: 117 (#700).
+  it("adds no intent and spends no DUST for a fee computed as 0, and the simulator takes the transaction as it is", async () => {
+    const r = await balancing("zero-fee");
+    expect(r.feeAsItIs).toBe("0");
+    expect(r).toMatchObject({ intents: [null], coinsUntouched: true, landed: true });
+  });
+
+  // The wallet's 1 SPECK of overhead keeps every fee above 0, so a fee is always paid with a DUST
+  // spend: on a quiet chain one spend of one coin pays that SPECK and the 1 SPECK its own spend
+  // costs at the floor prices.
+  it("with the wallet's 1 SPECK of overhead, pays it and its own spend from one coin, and the simulator takes it", async () => {
+    const r = await balancing("zero-fee-with-overhead");
+    expect(r.feeAsItIs).toBe("1");
+    expect(r).toMatchObject({ intents: [null, ["2"]], landed: true });
   });
 });

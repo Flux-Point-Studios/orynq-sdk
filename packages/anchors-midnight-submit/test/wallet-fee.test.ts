@@ -20,12 +20,12 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-// wallet-sdk-dust-wallet 4.2.0 pays a fee by selecting DUST until it covers the fee its dry run
-// computes. For a transaction whose computed fee is 0 it selects nothing, the dry run then costs
-// 1 SPECK, and every later round reads that fee as a surplus and selects nothing again: the
-// synchronous loop never ends, and its ledger allocations grow the wasm heap until the ledger
-// traps. On preprod the same balancing of a maintenance update, stuck that way, finished in one
-// round with 1 SPECK of overhead.
+// Unpatched, wallet-sdk-dust-wallet 4.2.0 pays a fee by selecting DUST until it covers the fee its
+// dry run computes. For a transaction whose computed fee is 0 it selects nothing, and every later
+// round reads the fee of its dry run as a surplus and selects nothing again: the synchronous loop
+// never ends, and its ledger allocations grow the wasm heap until the ledger traps. On preprod the
+// same balancing of a maintenance update, stuck that way, finished in one round with 1 SPECK of
+// overhead. With the workspace's patch, the overhead keeps a DUST spend on every fee.
 describe("the wallet's fee overhead", () => {
   it("is 1 SPECK unless the caller sets more", () => {
     expect(DEFAULT_COST_PARAMETERS.additionalFeeOverhead).toBe(1n);

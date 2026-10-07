@@ -49,15 +49,17 @@ export const DEFAULT_COST_PARAMETERS: CostParameters = { additionalFeeOverhead: 
 // How long a fee waits for the DUST sync to apply every event the indexer announced.
 const DUST_SYNC_WAIT_MS = 120_000;
 
-// The cost parameters a wallet runs with. wallet-sdk-dust-wallet 4.2.0 pays a fee by selecting
-// DUST until it covers the fee its dry run computes; for a transaction whose computed fee is 0
-// (an anchor on a quiet chain, a maintenance update) it selects nothing, round after round, in a
-// synchronous loop whose ledger allocations grow the wasm heap until the ledger traps
-// (midnight-wallet#438, #700). An overhead of at least 1 SPECK keeps every computed fee above 0.
+// The cost parameters a wallet runs with. An overhead of at least 1 SPECK keeps every computed fee
+// above 0, so every fee is paid with a DUST spend. Unpatched, wallet-sdk-dust-wallet 4.2.0 never
+// finishes paying a fee computed as 0 (an anchor on a quiet chain, a maintenance update): it
+// selects nothing, round after round, in a synchronous loop whose ledger allocations grow the wasm
+// heap until the ledger traps (midnight-wallet#438, #700). The workspace's patch
+// (midnight-wallet#741) balances such a fee with no DUST spend at all, which pays nothing once
+// the node prices the transaction above 0.
 export function costParametersOf(given: CostParameters | undefined): CostParameters {
   const parameters = given ?? DEFAULT_COST_PARAMETERS;
   if (parameters.additionalFeeOverhead < 1n) {
-    throw new Error(`additionalFeeOverhead must be at least 1 SPECK, not ${parameters.additionalFeeOverhead}: wallet-sdk-dust-wallet 4.2.0 never finishes paying a fee computed as 0`);
+    throw new Error(`additionalFeeOverhead must be at least 1 SPECK, not ${parameters.additionalFeeOverhead}: unpatched wallet-sdk-dust-wallet 4.2.0 never finishes paying a fee computed as 0`);
   }
   return parameters;
 }

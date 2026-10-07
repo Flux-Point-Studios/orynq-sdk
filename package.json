@@ -67,6 +67,9 @@
       "ignoreCves": [
         "CVE-2026-93687"
       ]
+    },
+    "patchedDependencies": {
+      "@midnight-ntwrk/wallet-sdk-dust-wallet@4.2.0": "patches/@midnight-ntwrk__wallet-sdk-dust-wallet@4.2.0.patch"
     }
   }
 }
