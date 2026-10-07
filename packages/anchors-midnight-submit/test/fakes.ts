@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
+import { SyncProgress } from "@midnight-ntwrk/wallet-sdk-abstractions";
 import { buildRegistryDeploy, type IndexedTransaction, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { batchOver, ledgerNode, type NodeVersion } from "../../anchors-midnight/src/__tests__/ledger-node.js";
 
@@ -109,3 +110,12 @@ export function wallet(net: ReturnType<typeof chain>, journalPath: () => string,
     },
   };
 }
+
+// The facade's state as openWallet reads it: the DUST sync has applied the indexer's events up to
+// `applied`, and the indexer's last message named `announced` as its newest.
+export const facadeSyncedTo = (applied: bigint, announced: bigint, connected = true) => ({
+  isSynced: false,
+  shielded: { progress: SyncProgress.createSyncProgress({ appliedIndex: 3n, highestRelevantWalletIndex: 4n, isConnected: true }) },
+  unshielded: { progress: { appliedId: 8n, highestTransactionId: 9n, isConnected: true } },
+  dust: { progress: SyncProgress.createSyncProgress({ appliedIndex: applied, highestRelevantWalletIndex: announced, isConnected: connected }) },
+});

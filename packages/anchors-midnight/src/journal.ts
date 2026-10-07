@@ -92,6 +92,10 @@ const deployedBy = (bytes: Uint8Array) =>
     .filter((action): action is L.ContractDeploy => action instanceof L.ContractDeploy)
     .map((deploy) => String(deploy.address));
 
+// How long past its TTL, in chain time, a transaction may still be unlisted by an indexer that
+// lags the chain: the journal's default wait before it rules a pending row out.
+export const TTL_MARGIN_MILLIS = 5 * 60_000;
+
 // A write-ahead journal of anchor submissions in SQLite. A row is written, with the hash of
 // the exact bytes, before those bytes are broadcast, so a broadcast that fails, times out after
 // the node accepted it, or dies with the process is answered later by its hash and never sent
@@ -103,7 +107,7 @@ const deployedBy = (bytes: Uint8Array) =>
 // with no block until the indexer lists its transaction, since a second deploy is a second contract.
 // A row is settled only from a chain view of its own network, so one file may hold the rows of
 // several networks: another network's indexer, clock and node never settle it.
-export function openJournal(path: string, { ttlMarginMillis = 5 * 60_000 }: { ttlMarginMillis?: number } = {}) {
+export function openJournal(path: string, { ttlMarginMillis = TTL_MARGIN_MILLIS }: { ttlMarginMillis?: number } = {}) {
   // Final bytes are a bearer instrument until they land or expire, so only the owner may read
   // the journal; SQLite gives its -wal and -shm files the same mode.
   try {

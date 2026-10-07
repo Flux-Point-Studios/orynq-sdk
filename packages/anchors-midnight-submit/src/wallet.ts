@@ -11,11 +11,11 @@ import { V1Builder } from "@midnight-ntwrk/wallet-sdk-dust-wallet/v1";
 import { WalletEntrySchema, WalletFacade, mergeWalletEntries, type BalancingRecipe, type FacadeState } from "@midnight-ntwrk/wallet-sdk-facade";
 import { ShieldedWallet } from "@midnight-ntwrk/wallet-sdk-shielded";
 import { PublicKey, UnshieldedWallet } from "@midnight-ntwrk/wallet-sdk-unshielded-wallet";
-import { filter, firstValueFrom, of, timeout } from "rxjs";
+import { filter, firstValueFrom, map, of, take, timeout } from "rxjs";
 import { readPrivateFile, writePrivateFile, type MidnightNetwork, type MidnightSource, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { broadcast, nodeRefusal } from "./broadcast.js";
 import { refuseMainnetSecretsPath } from "./custody.js";
-import { exactRevert } from "./dust.js";
+import { feeTransacting } from "./fee-transacting.js";
 import { addressesOf, walletSecrets, type WalletAddresses } from "./keys.js";
 import { credentialRelay } from "./relay.js";
 import { provingService } from "./zk.js";
@@ -45,6 +45,9 @@ export interface CostParameters {
 }
 
 export const DEFAULT_COST_PARAMETERS: CostParameters = { additionalFeeOverhead: 1n, feeBlocksMargin: 5 };
+
+// How long a fee waits for the DUST sync to apply every event the indexer announced.
+const DUST_SYNC_WAIT_MS = 120_000;
 
 // The cost parameters a wallet runs with. wallet-sdk-dust-wallet 4.2.0 pays a fee by selecting
 // DUST until it covers the fee its dry run computes; for a transaction whose computed fee is 0
@@ -222,7 +225,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       shielded: (c) => (saved ? ShieldedWallet(c).restore(saved.shielded) : ShieldedWallet(c).startWithSecretKeys(secrets.zswap)),
       unshielded: (c) => (saved ? UnshieldedWallet(c).restore(saved.unshielded) : UnshieldedWallet(c).startWithPublicKey(PublicKey.fromKeyStore(secrets.night))),
       dust: (c) => {
-        const Dust = CustomDustWallet(c, new V1Builder().withDefaults().withTransacting(exactRevert(secrets.dust)));
+        const Dust = CustomDustWallet(c, new V1Builder().withDefaults().withTransacting(feeTransacting(secrets.dust)));
         return saved ? Dust.restore(saved.dust) : Dust.startWithSecretKey(secrets.dust, L.LedgerParameters.initialParameters().dust);
       },
       // The default service reverts bytes once their TTL has passed by this machine's clock while
@@ -242,13 +245,25 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     throw error;
   }
 
-  const synced = (timeoutMs: number) =>
+  // The first wallet state `ready` accepts, or after `timeoutMs` the error `late` writes from the
+  // state then.
+  const until = (ready: (s: FacadeState) => boolean, timeoutMs: number, late: (s: FacadeState) => string) =>
     firstValueFrom(
       facade.state().pipe(
-        filter((s: FacadeState) => s.isSynced),
-        timeout({ first: timeoutMs, with: () => Promise.reject(new Error(`the ${network} wallet did not sync within ${timeoutMs / 1000} s`)) }),
+        filter(ready),
+        timeout({
+          first: timeoutMs,
+          with: () =>
+            facade.state().pipe(
+              take(1),
+              map((s) => {
+                throw new Error(late(s));
+              }),
+            ),
+        }),
       ),
     );
+  const synced = (timeoutMs: number) => until((s) => s.isSynced, timeoutMs, () => `the ${network} wallet did not sync within ${timeoutMs / 1000} s`);
   const nightToken = L.unshieldedToken().raw;
   const keys = { shieldedSecretKeys: secrets.zswap, dustSecretKey: secrets.dust };
   // Bytes this wallet balanced and has not handed to a node, and bytes whose DUST it freed.
@@ -306,7 +321,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     },
     async progress() {
       const s = await firstValueFrom(facade.state());
-      const indexed = (p: { appliedIndex: bigint; highestIndex: bigint; isConnected: boolean }) => ({ applied: p.appliedIndex, highest: p.highestIndex, connected: p.isConnected });
+      const indexed = (p: { appliedIndex: bigint; highestRelevantWalletIndex: bigint; isConnected: boolean }) => ({ applied: p.appliedIndex, highest: p.highestRelevantWalletIndex, connected: p.isConnected });
       const u = s.unshielded.progress;
       return {
         shielded: indexed(s.shielded.progress),
@@ -340,7 +355,16 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       await submit(tx);
       return tx.transactionHash();
     },
+    // The fee's DUST spend is dated at the newest DUST event the wallet applied and proves against
+    // the DUST trees as the chain held them then: with only part of a block's events applied, the
+    // wallet's trees match no state the chain ever held. So the fee waits until the wallet has
+    // applied every event the indexer's last message announced.
     async payFee(tx, ttl) {
+      await until(
+        (s) => s.dust.progress.isStrictlyComplete(),
+        DUST_SYNC_WAIT_MS,
+        ({ dust: { progress: p } }) => `the ${network} wallet's DUST sync had applied ${p.appliedIndex} of the ${p.highestRelevantWalletIndex} events the indexer announced after ${DUST_SYNC_WAIT_MS / 1000} s; no fee was paid`,
+      );
       return finalize(await facade.balanceUnboundTransaction(tx, keys, { ttl, tokenKindsToBalance: ["dust"] }));
     },
     submit,

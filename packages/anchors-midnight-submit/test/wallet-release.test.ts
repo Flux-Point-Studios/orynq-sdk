@@ -4,9 +4,11 @@ import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { WalletFacade } from "@midnight-ntwrk/wallet-sdk-facade";
+import { of } from "rxjs";
 import type { MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { createWalletMnemonicFile } from "../src/keys.js";
 import { openWallet, type OperatorWallet } from "../src/wallet.js";
+import { facadeSyncedTo } from "./fakes.js";
 
 const dir = mkdtempSync(join(tmpdir(), "orynq-wallet-release-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -19,9 +21,10 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-// A wallet over no indexer whose node answers each submission with the next of `answers` (an
-// Error is thrown, anything else returned), balancing every fee as nothing: the SDK's own
-// finalizeRecipe binds the bytes and hands them to the facade's pending-transactions service.
+// A wallet over no indexer, its DUST sync reported as caught up, whose node answers each
+// submission with the next of `answers` (an Error is thrown, anything else returned), balancing
+// every fee as nothing: the SDK's own finalizeRecipe binds the bytes and hands them to the
+// facade's pending-transactions service.
 async function walletWithNode(...answers: Array<Error | string>) {
   const mnemonicFile = join(dir, `${opened.length}-${Math.random().toString(16).slice(2)}.mnemonic`);
   createWalletMnemonicFile(mnemonicFile);
@@ -38,6 +41,7 @@ async function walletWithNode(...answers: Array<Error | string>) {
       },
     },
   } as unknown as MidnightSource;
+  vi.spyOn(WalletFacade.prototype, "state").mockReturnValue(of(facadeSyncedTo(1n, 1n)) as never);
   vi.spyOn(WalletFacade.prototype, "balanceUnboundTransaction").mockImplementation(async (tx) => ({ type: "UNBOUND_TRANSACTION", baseTransaction: tx, balancingTransaction: undefined }));
   const reverted = vi.spyOn(WalletFacade.prototype, "revert");
   const wallet = await openWallet({ network: "preprod", mnemonicFile, endpoints: OFFLINE, source, zkDir: "/nonexistent" });
@@ -84,11 +88,11 @@ describe("the DUST of final bytes the node refused", () => {
   });
 });
 
-// exactRevert reads the ledger as it stands when each reverted spend's hold ends, its DUST
-// actions' ctime plus the grace period; wallet-sdk-dust-wallet 4.2.0's own revert reads nothing
-// for spends its list of this process's spends no longer holds, as here.
+// feeTransacting's revert reads the ledger as it stands when each reverted spend's hold ends, its
+// DUST actions' ctime plus the grace period; wallet-sdk-dust-wallet 4.2.0's own revert reads
+// nothing for spends its list of this process's spends no longer holds, as here.
 describe("the wallet's DUST", () => {
-  it("is freed by exactRevert", async () => {
+  it("is freed by feeTransacting's revert", async () => {
     const { wallet, paid } = await walletWithNode();
     const ctime = new Date(Math.floor(Date.now() / 1000) * 1000);
     const tx = await paid(15 * 60_000, ctime);
