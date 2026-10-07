@@ -102,6 +102,7 @@ interface Balanced {
   error?: string;
   intents?: Array<string[] | null>;
   coinsUntouched?: boolean;
+  coinsLeft?: string[];
   landed?: true | string;
 }
 
@@ -139,18 +140,27 @@ function balancing(scenario: string): Promise<Balanced> {
 // again and the loop never ends (midnight-wallet#438, #700). The workspace runs it with
 // midnight-wallet#741, whose rounds each select against the outstanding deficit.
 describe("balancing a fee", () => {
-  it("terminates when the smallest coin covers the fee of the transaction as it is but not that fee plus its own spend, and the simulator takes the result", async () => {
-    const r = await balancing("under-covered");
+  // Every DUST spend a fee carries adds to it, so a fee that one coin can pay is paid by the largest
+  // coin alone. Taken smallest first, a coin too small to pay alone was spent first, and spent
+  // again on every later fee once it had regenerated a little.
+  it("pays from the largest coin alone when it covers the fee and its own spend, leaving a smaller coin untouched, and the simulator takes the result", async () => {
+    const r = await balancing("small-and-large");
     const [small, large] = r.coinValues.map(BigInt) as [bigint, bigint];
-    expect(small).toBeGreaterThanOrEqual(BigInt(r.feeAsItIs));
     expect(r.error).toBeUndefined();
-    // The smaller coin, chosen first, pays all it holds; the larger pays the rest of the fee.
     const [base, fee] = r.intents!;
     expect(base).toBeNull();
-    expect(fee).toHaveLength(2);
-    expect(BigInt(fee![0]!)).toBe(small);
-    expect(BigInt(fee![1]!)).toBeLessThan(large);
+    expect(fee).toHaveLength(1);
+    expect(BigInt(fee![0]!)).toBeGreaterThan(small);
+    expect(BigInt(fee![0]!)).toBeLessThan(large);
+    expect(r.coinsLeft).toEqual([String(small)]);
     expect(r.landed).toBe(true);
+  });
+
+  it("terminates, spending nothing, when the largest coin covers the fee of the transaction as it is but not that fee plus its own spend, and no coins cover it with theirs", async () => {
+    const r = await balancing("under-covered");
+    const [, larger] = r.coinValues.map(BigInt) as [bigint, bigint];
+    expect(larger).toBeGreaterThanOrEqual(BigInt(r.feeAsItIs));
+    expect(r.error).toMatch(/^Insufficient Funds/);
   });
 
   // A transaction that already covers its fee needs no DUST spend, and an intent with empty

@@ -1,5 +1,14 @@
 import * as L from "@midnight-ntwrk/ledger-v8";
-import { Transacting, WalletError, type AnyTransaction, type CoreWallet } from "@midnight-ntwrk/wallet-sdk-dust-wallet/v1";
+import {
+  Transacting,
+  WalletError,
+  type AnyTransaction,
+  type BaseV1Configuration,
+  type CoinsAndBalances,
+  type CoreWallet,
+  type RunningV1Variant,
+  type V1Builder,
+} from "@midnight-ntwrk/wallet-sdk-dust-wallet/v1";
 import { TTL_MARGIN_MILLIS } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { Either } from "effect";
 
@@ -42,7 +51,7 @@ function releaseSpends(wallet: CoreWallet, tx: AnyTransaction, secretKey: L.Dust
 // and it frees by processing TTLs at the end of that period, which also frees every coin an
 // earlier transaction still in flight spends and drops coins that run out by then
 // (midnight-wallet#789).
-export const feeTransacting =
+const feeTransacting =
   (secretKey: L.DustSecretKey) =>
   (
     configuration: Transacting.DefaultTransactingConfiguration,
@@ -69,3 +78,16 @@ export const feeTransacting =
       });
     return transacting;
   };
+
+// The coin a fee spends next: the largest one worth anything, so a fee one coin can pay is paid by
+// one coin. Every DUST spend adds to the fee, and wallet-sdk-dust-wallet's default order, smallest
+// first, spends every coin too small to pay alone before a larger one, again on each later fee.
+const largestFirst: CoinsAndBalances.CoinSelection = (coins) =>
+  coins.reduce<(typeof coins)[number] | undefined>((largest, coin) => (coin.value > 0n && (largest === undefined || coin.value > largest.value) ? coin : largest), undefined);
+
+// `builder` paying fees as the operator's wallet does: feeTransacting's fee transactions, spending
+// coins largest first.
+export const payingFees = <TConfig extends BaseV1Configuration, TContext extends Partial<RunningV1Variant.AnyContext>, TSerialized, TSyncUpdate, TStartAux extends object>(
+  builder: V1Builder<TConfig, TContext, TSerialized, TSyncUpdate, L.FinalizedTransaction, TStartAux>,
+  secretKey: L.DustSecretKey,
+) => builder.withTransacting(feeTransacting(secretKey)).withCoinSelection(() => largestFirst);

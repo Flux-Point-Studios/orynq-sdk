@@ -6,7 +6,7 @@ import { CustomDustWallet } from "@midnight-ntwrk/wallet-sdk-dust-wallet";
 import { SyncService, V1Builder } from "@midnight-ntwrk/wallet-sdk-dust-wallet/v1";
 import { Effect, Exit, Scope } from "effect";
 import { filter, firstValueFrom } from "rxjs";
-import { feeTransacting } from "../src/fee-transacting.js";
+import { payingFees } from "../src/fee-transacting.js";
 
 export const NETWORK = "undeployed";
 // A NIGHT UTXO, in STAR, whose two hours of DUST pay many fees.
@@ -31,7 +31,7 @@ export async function simulatorOf(fullness?: number) {
   return run(Scope.extend(Simulator.init({ networkId: NETWORK, ...(fullness === undefined ? {} : { blockProducer: immediateBlockProducer(fullness) }) }), scope));
 }
 
-// wallet-sdk-dust-wallet 4.2.0 with feeTransacting's fee transactions, synced from the SDK's
+// wallet-sdk-dust-wallet 4.2.0 paying fees as openWallet's does (payingFees), synced from the SDK's
 // in-memory ledger simulator instead of an indexer, holding one DUST coin per NIGHT UTXO it
 // registered, one UTXO of each value in `nights`. A registration backdates DUST generation only
 // for the one UTXO that pays its fee, so each UTXO has a key and a registration of its own, two
@@ -43,15 +43,16 @@ export async function dustOnSimulator(nights: readonly bigint[], { simulator, ad
   const secretKey = L.DustSecretKey.fromSeed(randomBytes(32));
   const Wallet = CustomDustWallet(
     { simulator, networkId: NETWORK, costParameters: { additionalFeeOverhead, feeBlocksMargin: 5 } },
-    new V1Builder()
-      .withDefaultTransactionType()
-      .withSync(SyncService.makeSimulatorSyncService, SyncService.makeSimulatorSyncCapability)
-      .withSerializationDefaults()
-      .withTransacting(feeTransacting(secretKey))
-      .withCoinsAndBalancesDefaults()
-      .withTransactionHistory(() => ({ put: () => Effect.void, getTransactionDetails: (hash) => Effect.succeed({ hash, timestamp: 0, status: "SUCCESS" as const }) }))
-      .withKeysDefaults()
-      .withCoinSelectionDefaults(),
+    payingFees(
+      new V1Builder()
+        .withDefaultTransactionType()
+        .withSync(SyncService.makeSimulatorSyncService, SyncService.makeSimulatorSyncCapability)
+        .withSerializationDefaults()
+        .withCoinsAndBalancesDefaults()
+        .withTransactionHistory(() => ({ put: () => Effect.void, getTransactionDetails: (hash) => Effect.succeed({ hash, timestamp: 0, status: "SUCCESS" as const }) }))
+        .withKeysDefaults(),
+      secretKey,
+    ),
   );
   type DustWallet = ReturnType<typeof Wallet.restore>;
   const open = async (wallet: DustWallet) => {

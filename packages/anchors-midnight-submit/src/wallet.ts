@@ -15,7 +15,7 @@ import { filter, firstValueFrom, map, of, take, timeout } from "rxjs";
 import { readPrivateFile, writePrivateFile, type MidnightNetwork, type MidnightSource, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { broadcast, nodeRefusal } from "./broadcast.js";
 import { refuseMainnetSecretsPath } from "./custody.js";
-import { feeTransacting } from "./fee-transacting.js";
+import { payingFees } from "./fee-transacting.js";
 import { addressesOf, walletSecrets, type WalletAddresses } from "./keys.js";
 import { credentialRelay } from "./relay.js";
 import { provingService } from "./zk.js";
@@ -227,7 +227,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       shielded: (c) => (saved ? ShieldedWallet(c).restore(saved.shielded) : ShieldedWallet(c).startWithSecretKeys(secrets.zswap)),
       unshielded: (c) => (saved ? UnshieldedWallet(c).restore(saved.unshielded) : UnshieldedWallet(c).startWithPublicKey(PublicKey.fromKeyStore(secrets.night))),
       dust: (c) => {
-        const Dust = CustomDustWallet(c, new V1Builder().withDefaults().withTransacting(feeTransacting(secrets.dust)));
+        const Dust = CustomDustWallet(c, payingFees(new V1Builder().withDefaults(), secrets.dust));
         return saved ? Dust.restore(saved.dust) : Dust.startWithSecretKey(secrets.dust, L.LedgerParameters.initialParameters().dust);
       },
       // The default service reverts bytes once their TTL has passed by this machine's clock while
