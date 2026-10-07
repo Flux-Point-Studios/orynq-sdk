@@ -14,10 +14,12 @@ export interface AnchorKey {
   attribute: string;
 }
 
-// A transaction ready to send: its final, balanced, bound bytes and its intent's TTL.
+// A transaction ready to send: its final, balanced, bound bytes, its intent's TTL and the address
+// of the wallet whose DUST paid its fee.
 export interface Submission {
   bytes: Uint8Array;
   ttl: Date;
+  payer?: string;
 }
 
 export interface ChainView {
@@ -40,6 +42,7 @@ export interface JournalRow {
   broadcasts: number;
   height?: number;
   blockHash?: string;
+  payer?: string;
 }
 
 const SCHEMA = `
@@ -52,7 +55,8 @@ create table if not exists attempts (
   state text not null check (state in ('pending', 'landed', 'failed')),
   broadcasts integer not null default 0,
   height integer,
-  block_hash text
+  block_hash text,
+  payer text
 );
 create unique index if not exists one_live_attempt on attempts(key) where state != 'failed';
 `;
@@ -66,6 +70,7 @@ interface Row {
   broadcasts: number;
   height: number | null;
   block_hash: string | null;
+  payer: string | null;
 }
 
 const keyOf = (k: AnchorKey) => [k.network, k.registry, k.author, k.kind, k.commitment, k.attribute].join("/");
@@ -76,6 +81,7 @@ const view = (r: Row): JournalRow => ({
   broadcasts: r.broadcasts,
   ...(r.height === null ? {} : { height: r.height }),
   ...(r.block_hash === null ? {} : { blockHash: r.block_hash }),
+  ...(r.payer === null ? {} : { payer: r.payer }),
 });
 
 const finalTransaction = (bytes: Uint8Array) => {
@@ -119,8 +125,10 @@ export function openJournal(path: string, { ttlMarginMillis = TTL_MARGIN_MILLIS 
   const db = new DatabaseSync(path);
   db.exec("pragma journal_mode = wal; pragma synchronous = full; pragma busy_timeout = 10000;");
   db.exec(SCHEMA);
+  // A journal whose table was created without the payer column gains it; its rows name no payer.
+  if (!db.prepare("select 1 from pragma_table_info('attempts') where name = 'payer'").get()) db.exec("alter table attempts add column payer text");
   const live = db.prepare("select * from attempts where key = ? and state != 'failed'");
-  const insert = db.prepare("insert into attempts (key, tx_hash, bytes, ttl_ms, state) values (?, ?, ?, ?, 'pending')");
+  const insert = db.prepare("insert into attempts (key, tx_hash, bytes, ttl_ms, state, payer) values (?, ?, ?, ?, 'pending', ?)");
   const settle = db.prepare("update attempts set state = ?, height = ?, block_hash = ? where tx_hash = ?");
   const sent = db.prepare("update attempts set broadcasts = broadcasts + 1 where tx_hash = ?");
   const byHash = db.prepare("select * from attempts where tx_hash = ?");
@@ -165,10 +173,10 @@ export function openJournal(path: string, { ttlMarginMillis = TTL_MARGIN_MILLIS 
       if (row?.state === "landed" || (row && row.broadcasts > 0)) return view(row);
       if (row) return broadcastRow(row, broadcast);
     }
-    const { bytes, ttl } = await prepare();
+    const { bytes, ttl, payer } = await prepare();
     const txHash = finalTransaction(bytes).transactionHash();
     try {
-      insert.run(k, txHash, bytes, ttl.getTime());
+      insert.run(k, txHash, bytes, ttl.getTime(), payer ?? null);
     } catch (error) {
       const other = live.get(k) as unknown as Row | undefined;
       if (other) return view(other);

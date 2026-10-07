@@ -41,14 +41,20 @@ function rehearsal(bundles: string[] = []) {
   const rawFile = `${root}/rehearsal/evidence/raw.json`;
   const raw = () => JSON.parse(readFileSync(rawFile, "utf8"));
   return {
-    async run(fault = "", phase = "deploy") {
+    // `onOutput` sees the output so far each time the run writes more.
+    async run(fault = "", phase = "deploy", onOutput?: (output: string) => void) {
       const child = spawn(process.execPath, ["--import", "tsx", "run.ts", phase], {
         cwd: `${root}/rehearsal`,
         env: { ...process.env, HOME: home, OFFLINE_CHAIN: chainFile, OFFLINE_FAULT: fault },
         timeout: 120_000,
       });
       let output = "";
-      for (const stream of [child.stdout, child.stderr]) stream.on("data", (chunk) => (output += chunk));
+      for (const stream of [child.stdout, child.stderr]) {
+        stream.on("data", (chunk) => {
+          output += chunk;
+          onOutput?.(output);
+        });
+      }
       const [status] = await once(child, "close");
       return { status: status as number | null, output };
     },
@@ -146,19 +152,25 @@ describe.concurrent("run.ts deploy", () => {
     expect(r.journal()).toEqual([{ tx_hash: refused, state: "landed" }]);
   });
 
-  it("between the refused bytes' TTL and that TTL plus the margin, sends them again, which the node refuses, and prepares nothing new", async ({ expect }) => {
+  it("between the refused bytes' TTL and that TTL plus the margin, sends nothing and prepares nothing new: once the chain retires them the run fails as expired", async ({ expect }) => {
     const r = rehearsal();
     expect(await r.run("refuse-broadcast")).toMatchObject({ status: 1 });
     const [refused] = r.chain().sent;
     const prepared = r.raw().deploy.prepared;
     r.advance(15 * MINUTE + 4 * MINUTE);
 
-    const rerun = await r.run();
+    let advanced = false;
+    const rerun = await r.run("", "deploy", (output) => {
+      if (advanced || !output.includes("resuming the journalled deploy")) return;
+      advanced = true;
+      r.advance(2 * MINUTE);
+    });
     expect(rerun.status, rerun.output).toBe(1);
-    expect(rerun.output).toContain(`offline node: author_submitExtrinsic failed: {"code":1010,"message":"Invalid Transaction","data":"the TTL is behind the chain's time"}`);
-    expect(r.chain().sent).toEqual([refused, refused]);
+    expect(rerun.output).toMatch(/resuming the journalled deploy \S+ \{ state: 'pending', broadcasts: 0, expired: true \}/);
+    expect(rerun.output).toContain("the journalled deploy expired without landing; rerun to prepare new bytes");
+    expect(r.chain().sent).toEqual([refused]);
     expect(r.raw().deploy).toEqual({ prepared, dustBefore: String(10n ** 16n) });
-    expect(r.journal()).toEqual([{ tx_hash: refused, state: "pending" }]);
+    expect(r.journal()).toEqual([{ tx_hash: refused, state: "failed" }]);
   });
 
   it("deploys new bytes, and records those, once the chain has carried the refused ones past their TTL", async ({ expect }) => {

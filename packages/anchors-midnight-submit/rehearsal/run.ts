@@ -66,6 +66,7 @@ const refusedBytes = new WeakMap<Error, string>();
 function instrument(wallet: OperatorWallet, label: string) {
   let payMs = 0;
   return {
+    addresses: wallet.addresses,
     async payFee(tx: Parameters<OperatorWallet["payFee"]>[0], ttl: Date) {
       const t = performance.now();
       const out = await wallet.payFee(tx, ttl);
@@ -219,6 +220,7 @@ const phases: Record<string, () => Promise<void>> = {
       const deployer = registryDeployer({ network: "preprod", wallet: instrument(await wallet("walletA"), "walletA"), source, prover, journalPath: `${SECRETS}/journal-deploy.sqlite` });
       try {
         let prepared = await deployer.journalled();
+        if (prepared !== null) log("resuming the journalled deploy", prepared.txHash, prepared.journal);
         if (prepared === null) {
           const dustBefore = (await balances("walletA")).dust;
           const t = performance.now();

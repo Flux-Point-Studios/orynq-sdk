@@ -6,8 +6,8 @@
 // run: "refuse-broadcast" (a proxy answers the broadcast with HTTP 403), "refuse-anchor" (the node
 // refuses every transaction that deploys nothing with Custom error: 170, InvalidDustSpendProof),
 // "lose-read" (the first read of a landed transaction fails), "lose-sync" (the wallet stops
-// syncing once a deploy landed) or "fail-save" (the shielded state does not serialize, as
-// ledger-v8 8.1.3 once trapped on preprod).
+// syncing once a deploy landed), "fail-save" (the shielded state does not serialize, as
+// ledger-v8 8.1.3 once trapped on preprod) or "low-dust" (the wallet holds 0.5 DUST).
 import { readFileSync, writeFileSync } from "node:fs";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { midnightSource, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
@@ -139,7 +139,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     saveState,
     async balances() {
       if (FAULTS.has("lose-sync") && Object.keys(read().landed).length > 0) throw new Error(`the ${options.network} wallet did not sync within 600 s`);
-      return { night: 10n ** 9n, dust: 10n ** 16n, nightUtxos: 1, registeredNightUtxos: 1 };
+      return { night: 10n ** 9n, dust: FAULTS.has("low-dust") ? 5n * 10n ** 14n : 10n ** 16n, nightUtxos: 1, registeredNightUtxos: 1 };
     },
     async registerNightForDust() {
       return null;

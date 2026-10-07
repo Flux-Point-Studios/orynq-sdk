@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { SyncProgress } from "@midnight-ntwrk/wallet-sdk-abstractions";
-import { buildRegistryDeploy, type IndexedTransaction, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { buildRegistryDeploy, registryInitialState, type IndexedTransaction, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { batchOver, ledgerNode, type NodeVersion } from "../../anchors-midnight/src/__tests__/ledger-node.js";
+import { prover } from "./prover.js";
 
 export const dir = mkdtempSync(join(tmpdir(), "orynq-submit-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -16,6 +17,15 @@ export const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 export const bytes32 = () => crypto.getRandomValues(new Uint8Array(32));
 afterEach(() => void vi.useRealTimers());
 const TIMESTAMP_NOW = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
+
+// A deploy whose maintenance authority has threshold 0, so maintenance updates can apply: final
+// bytes for `network` that deploy a state other than the immutable registry's.
+export const mutableDeploy = async (network: string) => {
+  const mutable = registryInitialState();
+  mutable.maintenanceAuthority = new L.ContractMaintenanceAuthority([], 0, 0n);
+  const tx = L.Transaction.fromParts(network, undefined, undefined, L.Intent.new(new Date(Date.now() + 600e3)).addDeploy(new L.ContractDeploy(mutable)));
+  return (await prover.prove(tx)).bind();
+};
 
 export const deployed = (() => {
   const { tx, address } = buildRegistryDeploy({ networkId: "preprod", ttl: new Date(Date.now() + 3600e3) });
@@ -84,13 +94,14 @@ export function chain({ spec = 1000300, state = deployed.state, node = "2.1.0" }
   return { source, land, advance };
 }
 
-// A wallet that binds without adding a fee, records what it is asked to submit (and what the
-// journal held at that moment), and lands it on `net`. `tamper` replaces the final bytes.
-export function wallet(net: ReturnType<typeof chain>, journalPath: () => string, tamper?: (tx: L.FinalizedTransaction) => L.FinalizedTransaction) {
+// A wallet named `name` that binds without adding a fee, records what it is asked to submit (and
+// what the journal held at that moment), and lands it on `net`. `tamper` replaces the final bytes.
+export function wallet(net: ReturnType<typeof chain>, journalPath: () => string, tamper?: (tx: L.FinalizedTransaction) => L.FinalizedTransaction, name = "a") {
   const submitted: L.FinalizedTransaction[] = [];
   const discarded: string[] = [];
   const rowsAtSubmit: unknown[] = [];
   return {
+    addresses: { unshielded: `mn_addr_test1${name}`, shielded: `mn_shield-addr_test1${name}`, dust: `mn_dust_test1${name}` },
     submitted,
     discarded,
     rowsAtSubmit,

@@ -10,7 +10,7 @@ import { chainView, openJournal } from "@fluxpointstudios/orynq-sdk-anchors-midn
 import { NETWORK_IDENTITY, assertChainIdentity, confirmOnTerminal, confirmationToken, deploySummary } from "../src/preflight.js";
 import type { PreparedDeploy } from "../src/deployer.js";
 import { batchOver, ledgerNode } from "../../anchors-midnight/src/__tests__/ledger-node.js";
-import { fresh } from "./fakes.js";
+import { fresh, mutableDeploy } from "./fakes.js";
 import type { OfflineChain } from "./offline.js";
 
 const source = (answers: Record<string, unknown>) =>
@@ -60,13 +60,14 @@ const prepared: PreparedDeploy = {
   authority: { committee: 0, threshold: 1, counter: "0" },
   verifierKeys: { ...REGISTRY_VERIFIER_KEY_SHA256 },
   declaredFee: 1_234_567_000_000n,
+  payer: "mn_addr1payer",
 };
 
 describe("the deploy summary a human approves", () => {
   const summary = (deploy: PreparedDeploy) =>
     deploySummary({
       chain: { chain: "Midnight Mainnet", genesis: "1941ca8e".padEnd(64, "0"), specVersion: 1000300, ledgerVersion: "8.1.1" },
-      wallet: { unshielded: "mn_addr1example", dust: "mn_dust1example" },
+      wallet: { dust: "mn_dust1example" },
       dust: 25_500_000_000_000_000n,
       prepared: deploy,
     });
@@ -83,7 +84,7 @@ describe("the deploy summary a human approves", () => {
       "authority        committee [] (0 members), threshold 1, counter 0: no maintenance update can ever apply",
       "fee (declared)   0.001234567 DUST, all of it burned",
       "DUST balance     25.5 DUST at mn_dust1example",
-      "paid from        mn_addr1example",
+      "paid from        mn_addr1payer",
       "valid until      2026-10-04T12:00:00.000Z",
     ]) {
       expect(text).toContain(expected);
@@ -92,10 +93,24 @@ describe("the deploy summary a human approves", () => {
 
   it("shows a deploy resumed from the journal as the journal holds it, and what confirming then does", () => {
     expect(summary(prepared)).not.toContain("resumed");
-    expect(summary({ ...prepared, journal: { state: "landed", broadcasts: 1 } })).toMatch(/^journal {10}resumed: these bytes landed; confirming sends nothing and reads the deploy back\n/);
-    expect(summary({ ...prepared, journal: { state: "pending", broadcasts: 2 } })).toMatch(/^journal {10}resumed: these bytes were sent 2 times and have not landed; confirming waits for them and sends nothing new\n/);
-    expect(summary({ ...prepared, journal: { state: "pending", broadcasts: 1 } })).toContain("these bytes were sent 1 time and have not landed");
-    expect(summary({ ...prepared, journal: { state: "pending", broadcasts: 0 } })).toMatch(/^journal {10}resumed: no send of these bytes ever returned; confirming sends them again\n/);
+    expect(summary({ ...prepared, journal: { state: "landed", broadcasts: 1, expired: false } })).toMatch(/^journal {10}resumed: these bytes landed; confirming sends nothing and reads the deploy back\n/);
+    expect(summary({ ...prepared, journal: { state: "pending", broadcasts: 2, expired: false } })).toMatch(/^journal {10}resumed: these bytes were sent 2 times and have not landed; confirming waits for them and sends nothing new\n/);
+    expect(summary({ ...prepared, journal: { state: "pending", broadcasts: 1, expired: false } })).toContain("these bytes were sent 1 time and have not landed");
+    expect(summary({ ...prepared, journal: { state: "pending", broadcasts: 0, expired: false } })).toMatch(/^journal {10}resumed: no send of these bytes ever returned; confirming sends them again\n/);
+  });
+
+  it("shows a journalled deploy past its TTL as expired, whatever its sends, and confirming it as sending nothing", () => {
+    for (const broadcasts of [0, 2]) {
+      expect(summary({ ...prepared, journal: { state: "pending", broadcasts, expired: true } })).toMatch(
+        /^journal {10}resumed: these bytes expired at 2026-10-04T12:00:00.000Z and the chain does not show them landed; confirming sends nothing and waits until the chain lands or retires them\n/,
+      );
+    }
+  });
+
+  it("names the wallet that paid the bytes, which for a resumed deploy is the one the journal recorded", () => {
+    expect(summary({ ...prepared, journal: { state: "landed", broadcasts: 1, expired: false } })).toContain("paid from        mn_addr1payer\n");
+    const { payer: _, ...unrecorded } = prepared;
+    expect(summary({ ...unrecorded, journal: { state: "landed", broadcasts: 1, expired: false } })).toContain("paid from        a wallet the journal did not record\n");
   });
 
   it("asks for a token bound to these exact bytes", () => {
@@ -185,7 +200,9 @@ function offlineMainnet() {
   writeFileSync(`${root}/package.json`, JSON.stringify({ type: "module" }));
   const chainFile = `${root}/chain.json`;
   writeFileSync(chainFile, JSON.stringify({ network: "mainnet", aheadMs: 0, sent: [], landed: {}, discarded: [] } satisfies OfflineChain));
-  writeFileSync(`${root}/wallet.json`, JSON.stringify({ addresses: { unshielded: "mn_addr1offline", shielded: "mn_shield-addr1offline", dust: "mn_dust1offline" } }));
+  // The recorded wallet the next run opens, named `name`.
+  const walletRecord = (name: string) => writeFileSync(`${root}/wallet.json`, JSON.stringify({ addresses: { unshielded: `mn_addr1${name}`, shielded: `mn_shield-addr1${name}`, dust: `mn_dust1${name}` } }));
+  walletRecord("offline");
   const journalPath = `${root}/state/deploy.sqlite`;
   // The offline wallet, prover and endpoints never open the mnemonic, ZK or Blockfrost paths.
   const inputs = ["--mnemonic", "/nonexistent/mnemonic.txt", "--wallet-record", "wallet.json", "--blockfrost", "/nonexistent/blockfrost.project_id", "--zk", "/nonexistent/zk"];
@@ -209,6 +226,7 @@ function offlineMainnet() {
     },
     chain,
     journalPath,
+    walletRecord,
     advance: (millis: number) => writeFileSync(chainFile, JSON.stringify({ ...chain(), aheadMs: chain().aheadMs + millis })),
     journal() {
       const db = new DatabaseSync(journalPath, { readOnly: true });
@@ -312,6 +330,87 @@ describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
       { tx_hash: refused, state: "failed" },
       { tx_hash: deployed, state: "landed" },
     ]);
+  });
+
+  it("finishes a deploy that landed while its readback failed though the wallet is now under the DUST floor: the floor applies only when bytes may be sent", async ({ expect }) => {
+    const m = offlineMainnet();
+    expect(await m.run((token) => token, "lose-read")).toMatchObject({ status: 1 });
+    const [sent] = m.chain().sent;
+    const rerun = await m.run((token) => token, "low-dust");
+    expect(rerun.status, rerun.output).toBe(0);
+    expect(rerun.output).toContain("journal          resumed: these bytes landed; confirming sends nothing and reads the deploy back");
+    expect(rerun.output).toContain("DUST balance     0.5 DUST at mn_dust1offline");
+    expect(rerun.output).toContain("deployed and read back from the node");
+    expect(m.chain()).toMatchObject({ sent: [sent], discarded: [] });
+    expect(m.journal()).toEqual([{ tx_hash: sent, state: "landed" }]);
+  });
+
+  it("under the DUST floor, prepares no deploy and resends no journalled bytes, refusing before any summary", async ({ expect }) => {
+    const m = offlineMainnet();
+    const fresh = await m.run((token) => token, "low-dust");
+    expect(fresh.status, fresh.output).toBe(1);
+    expect(fresh.output).toContain("deploy-mainnet: the wallet holds 0.5 DUST, below the 1 DUST floor");
+    expect([fresh.token, fresh.output.includes("deploy tx hash")]).toEqual([undefined, false]);
+    expect(m.chain()).toMatchObject({ sent: [], discarded: [] });
+    expect(m.journal()).toEqual([]);
+
+    expect(await m.run((token) => token, "refuse-broadcast")).toMatchObject({ status: 1 });
+    const [refused] = m.chain().sent;
+    const resend = await m.run((token) => token, "low-dust");
+    expect(resend.status, resend.output).toBe(1);
+    expect(resend.output).toContain("deploy-mainnet: the wallet holds 0.5 DUST, below the 1 DUST floor");
+    expect(resend.token).toBeUndefined();
+    expect(m.chain()).toMatchObject({ sent: [refused], discarded: [] });
+  });
+
+  it("refuses a resumed deploy confirmed once the chain is past its TTL plus the margin, sending nothing, and says to rerun", async ({ expect }) => {
+    const m = offlineMainnet();
+    expect(await m.run((token) => token, "refuse-broadcast")).toMatchObject({ status: 1 });
+    const [refused] = m.chain().sent;
+    m.advance(10 * MINUTE);
+    const late = await m.run((token) => {
+      m.advance(11 * MINUTE);
+      return token;
+    });
+    expect(late.status, late.output).toBe(1);
+    expect(late.output).toContain("journal          resumed: no send of these bytes ever returned; confirming sends them again");
+    expect(late.output).toContain("deploy-mainnet: the journalled deploy expired without landing; rerun to prepare new bytes");
+    expect(late.output).not.toContain("UNIQUE");
+    expect(m.chain()).toMatchObject({ sent: [refused], discarded: [] });
+    expect(m.journal()).toEqual([{ tx_hash: refused, state: "failed" }]);
+  });
+
+  it("shows a journalled deploy past its TTL as expired and paid by the wallet that journalled it, applies no DUST floor to it, and once confirmed sends nothing and waits until the chain retires it", async ({ expect }) => {
+    const m = offlineMainnet();
+    expect(await m.run((token) => token, "refuse-broadcast")).toMatchObject({ status: 1 });
+    const [refused] = m.chain().sent;
+    m.advance(16 * MINUTE);
+    m.walletRecord("other");
+    const r = await m.run((token) => {
+      setTimeout(() => m.advance(5 * MINUTE), 1_000);
+      return token;
+    }, "low-dust");
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toMatch(/journal {10}resumed: these bytes expired at \S+ and the chain does not show them landed; confirming sends nothing and waits until the chain lands or retires them\n/);
+    expect(r.output).toContain("paid from        mn_addr1offline\n");
+    expect(r.output).toContain("DUST balance     0.5 DUST at mn_dust1other\n");
+    expect(r.output).toContain("deploy-mainnet: the journalled deploy expired without landing; rerun to prepare new bytes");
+    expect(m.chain()).toMatchObject({ sent: [refused], discarded: [] });
+    expect(m.journal()).toEqual([{ tx_hash: refused, state: "failed" }]);
+  });
+
+  it("refuses journalled bytes that deploy a state other than the registry's before any summary or token", async ({ expect }) => {
+    const m = offlineMainnet();
+    expect(await m.run((token) => token, "refuse-broadcast")).toMatchObject({ status: 1 });
+    const [refused] = m.chain().sent;
+    const db = new DatabaseSync(m.journalPath);
+    db.prepare("update attempts set bytes = ?").run((await mutableDeploy("mainnet")).serialize());
+    db.close();
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toMatch(/deploy-mainnet: .*threshold must be exactly 1, got 0/);
+    expect([r.token, r.output.includes("deploy tx hash"), r.output.includes("resumed")]).toEqual([undefined, false, false]);
+    expect(m.chain()).toMatchObject({ sent: [refused], discarded: [] });
   });
 
   it("sends a journalled deploy whose broadcast a proxy refused again only once its token is typed again, and leaves it journalled when it is not", async ({ expect }) => {

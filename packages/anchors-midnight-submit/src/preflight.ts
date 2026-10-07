@@ -38,16 +38,19 @@ export function formatDust(speck: bigint): string {
 }
 
 // What the human confirms: a deploy resumed from the journal says so first, with what confirming
-// then does with its bytes.
-export function deploySummary({ chain, wallet, dust, prepared }: { chain: ChainFacts; wallet: { unshielded: string; dust: string }; dust: bigint; prepared: PreparedDeploy }): string {
+// then does with its bytes. The DUST balance is this run's wallet's; the payer is the wallet whose
+// DUST paid the bytes.
+export function deploySummary({ chain, wallet, dust, prepared }: { chain: ChainFacts; wallet: { dust: string }; dust: bigint; prepared: PreparedDeploy }): string {
   const { authority, journal } = prepared;
   const resumed =
     journal &&
     (journal.state === "landed"
       ? "these bytes landed; confirming sends nothing and reads the deploy back"
-      : journal.broadcasts > 0
-        ? `these bytes were sent ${journal.broadcasts} time${journal.broadcasts === 1 ? "" : "s"} and have not landed; confirming waits for them and sends nothing new`
-        : "no send of these bytes ever returned; confirming sends them again");
+      : journal.expired
+        ? `these bytes expired at ${prepared.ttl.toISOString()} and the chain does not show them landed; confirming sends nothing and waits until the chain lands or retires them`
+        : journal.broadcasts > 0
+          ? `these bytes were sent ${journal.broadcasts} time${journal.broadcasts === 1 ? "" : "s"} and have not landed; confirming waits for them and sends nothing new`
+          : "no send of these bytes ever returned; confirming sends them again");
   const rows = [
     ...(resumed ? [`journal          resumed: ${resumed}`] : []),
     `network          ${prepared.network} (${chain.chain}, genesis ${chain.genesis})`,
@@ -58,7 +61,7 @@ export function deploySummary({ chain, wallet, dust, prepared }: { chain: ChainF
     `authority        committee [] (${authority.committee} members), threshold ${authority.threshold}, counter ${authority.counter}: no maintenance update can ever apply`,
     `fee (declared)   ${formatDust(prepared.declaredFee)} DUST, all of it burned`,
     `DUST balance     ${formatDust(dust)} DUST at ${wallet.dust}`,
-    `paid from        ${wallet.unshielded}`,
+    `paid from        ${prepared.payer ?? "a wallet the journal did not record"}`,
     `valid until      ${prepared.ttl.toISOString()}`,
     `final bytes      ${prepared.bytes.length}`,
   ];

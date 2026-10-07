@@ -2,7 +2,8 @@
 // terminal. Every check fails closed and comes before anything is sent:
 //   the process carries no Claude Code environment, and its input and output are a terminal;
 //   the node is Midnight Mainnet (system_chain, genesis) on runtime 1000300;
-//   the mnemonic derives exactly the recorded wallet, which holds at least the DUST floor;
+//   the mnemonic derives exactly the recorded wallet, which holds at least the DUST floor
+//   whenever confirming may send bytes;
 //   the final, balanced bytes deploy exactly the registry's initial state (committee [],
 //   threshold 1, counter 0, the pinned verifier keys).
 // It then prints the exact summary and sends those bytes only after the token it shows, which
@@ -68,11 +69,14 @@ try {
   try {
     await wallet.waitForSync(3_600_000);
     const { dust } = await wallet.balances();
-    if (dust < floor) fail(`the wallet holds ${formatDust(dust)} DUST, below the ${formatDust(floor)} DUST floor`);
     mkdirSync(dirname(journalPath), { recursive: true, mode: 0o700 });
     const deployer = registryDeployer({ network: "mainnet", wallet, source, prover: provingService(zkDir), journalPath });
     try {
       const resumed = await deployer.journalled();
+      // Confirming sends bytes only for a new deploy or a journalled one no send of which ever
+      // returned and whose TTL has not passed; a landed deploy is finished whatever the balance.
+      const sends = !resumed || (resumed.journal!.state === "pending" && resumed.journal!.broadcasts === 0 && !resumed.journal!.expired);
+      if (sends && dust < floor) fail(`the wallet holds ${formatDust(dust)} DUST, below the ${formatDust(floor)} DUST floor`);
       const prepared = resumed ?? (await deployer.prepare());
       process.stdout.write(`\n${deploySummary({ chain, wallet: wallet.addresses, dust, prepared })}\n`);
       const token = confirmationToken(prepared);

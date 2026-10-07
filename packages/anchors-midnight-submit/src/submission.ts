@@ -4,7 +4,7 @@ import { KNOWN_RUNTIME_SPEC_VERSIONS, assertRegistryState, contractStateOnNode, 
 import type { AnchorKey, ChainView, Journal, JournalRow, Submission } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import type { OperatorWallet } from "./wallet.js";
 
-export type FeeWallet = Pick<OperatorWallet, "payFee" | "submit" | "discard">;
+export type FeeWallet = Pick<OperatorWallet, "addresses" | "payFee" | "submit" | "discard">;
 export type Prover = Pick<ProvingService<UnboundTransaction>, "prove">;
 
 export const finalTransaction = (bytes: Uint8Array) => L.Transaction.deserialize("signature", "proof", "binding", bytes) as L.FinalizedTransaction;
@@ -49,15 +49,27 @@ export function declaredFee(tx: L.FinalizedTransaction): bigint {
   return [...(tx.intents?.values() ?? [])].flatMap((intent) => intent.dustActions?.spends ?? []).reduce((sum, spend) => sum + spend.vFee, 0n);
 }
 
-// Submits through the write-ahead journal and waits, by txHash, until the transaction landed,
-// and returns it with its block as the indexer lists it; a transaction the chain reports failed,
-// or that outlives its TTL unseen, is an error.
-export async function submitJournalled(
-  { journal, chain, wallet, network, pollMillis }: { journal: Journal; chain: ChainView; wallet: FeeWallet; network: MidnightNetwork; pollMillis: number },
-  key: AnchorKey,
-  prepare: () => Promise<Submission>,
-): Promise<JournalRow & { height: number; blockHash: string }> {
-  let row = await journal.submitOnce(key, { prepare, broadcast: (bytes) => wallet.submit(finalTransaction(bytes)), chain });
+interface Journalling {
+  journal: Journal;
+  chain: ChainView;
+  wallet: FeeWallet;
+  network: MidnightNetwork;
+  pollMillis: number;
+}
+
+// Submits through the write-ahead journal, which records the wallet as the payer, and returns the
+// transaction once it landed (landedRow).
+export async function submitJournalled(journalling: Journalling, key: AnchorKey, prepare: () => Promise<Submission>): Promise<JournalRow & { height: number; blockHash: string }> {
+  const { journal, chain, wallet } = journalling;
+  const payer = wallet.addresses.unshielded;
+  const row = await journal.submitOnce(key, { prepare: async () => ({ ...(await prepare()), payer }), broadcast: (bytes) => wallet.submit(finalTransaction(bytes)), chain });
+  return landedRow(journalling, key, row);
+}
+
+// Waits, by txHash, until the journal settles `row`, sending nothing, and returns it landed with
+// its block as the indexer lists it; a transaction the chain reports failed, or that outlives its
+// TTL unseen, is an error.
+export async function landedRow({ journal, chain, network, pollMillis }: Journalling, key: AnchorKey, row: JournalRow): Promise<JournalRow & { height: number; blockHash: string }> {
   while (row.state === "pending") {
     await new Promise((resolve) => setTimeout(resolve, pollMillis));
     const settled = await journal.reconcile(chain);

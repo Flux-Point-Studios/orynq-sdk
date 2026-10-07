@@ -178,10 +178,12 @@ period (about three hours on preprod), so a rerun soon after such a failure wait
 until then. A registry deploy journalled earlier that the chain
 has carried past its TTL unseen is settled as failed, and `deploy` prepares new bytes. One the
 chain has not ruled out, landed or still pending, is resumed from the journal's bytes: `deploy`
-sends those same bytes again only if no broadcast of them ever returned, waits for them, and
-records them as the prepared deploy, so a run that failed between the broadcast and the readback
-leaves the next run that deploy to finish, never a second one. The crash drill runs once: a
-second pass would add to its log, and the gate would refuse the pack.
+sends those same bytes again only if no broadcast of them ever returned and their TTL has not
+passed, waits for them, and records them as the prepared deploy (bytes past their TTL that the
+chain then retires fail the run as expired, and the next run prepares new ones), so a run that
+failed between the broadcast and the readback leaves the next run that deploy to finish, never a
+second one. The crash drill runs once: a second pass would add to its log, and the gate would
+refuse the pack.
 
 A drill can abort before any kill point, as when wallet A cannot pay a fee: every step exits
 non-zero, no kill step logs, and every restart finds the crash journal empty. `rehearse.sh` runs

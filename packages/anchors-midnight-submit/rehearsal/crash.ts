@@ -48,6 +48,7 @@ const die = (event: string, txHash: string) => {
   process.kill(process.pid, "SIGKILL");
 };
 const fee = {
+  addresses: wallet.addresses,
   payFee: wallet.payFee,
   discard: wallet.discard,
   submit: async (tx: Parameters<typeof wallet.submit>[0]) => {

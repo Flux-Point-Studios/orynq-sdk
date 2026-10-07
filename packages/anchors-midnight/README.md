@@ -165,8 +165,11 @@ and a row is settled only from a view of its own: `reconcile(chain)` settles the
 the view's network alone, and `submitOnce` refuses a key of another network before preparing
 anything, so in a file that holds several networks' rows, another network's indexer, clock and
 node never retire a deploy or land one. Calls are serialized per journal, and across processes
-the attempt that writes its row second never broadcasts. `live(key)` returns a key's live attempt
-with its exact bytes, so a caller that lost its own record of an attempt can resume it.
+the attempt that writes its row second never broadcasts. Each row records the wallet that paid
+the attempt's fee when `prepare` names it (`payer`); a journal created before that column existed
+gains it on open, its older rows naming none. `live(key)` returns a key's live attempt with its
+exact bytes and payer, so a caller that lost its own record of an attempt can resume it and name
+the wallet that paid it.
 `chainView(source, network)` reads `network` through its source: transactions from its
 indexer, contracts from its node (`contractStateOnNode` at the block), and chain time from the
 indexer's newest block only once the source's node holds that block at that height, as the

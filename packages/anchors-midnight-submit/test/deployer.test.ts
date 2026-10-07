@@ -4,7 +4,7 @@ import * as L from "@midnight-ntwrk/ledger-v8";
 import { REGISTRY_VERIFIER_KEY_SHA256, createAuthorKeyFile, registryInitialState, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { registryDeployer } from "../src/deployer.js";
 import { registryOperator } from "../src/operator.js";
-import { chain, fresh, hex, wallet } from "./fakes.js";
+import { chain, fresh, hex, mutableDeploy, wallet } from "./fakes.js";
 import { prover } from "./prover.js";
 import type { NodeVersion } from "../../anchors-midnight/src/__tests__/ledger-node.js";
 
@@ -66,16 +66,9 @@ function setup({ tamper, spec, node }: { tamper?: (tx: L.FinalizedTransaction) =
   return { deployer, wallet: w, rows, net, journalPath, refusedByProxy, timedOutAfterAccept, laggingLookup };
 }
 
-const OUTDATED = `test node: author_submitExtrinsic failed: {"code":1010,"message":"Invalid Transaction","data":"the TTL is behind the chain's time"}`;
+const EXPIRED = "the journalled deploy expired without landing; rerun to prepare new bytes";
 
 const MINUTE = 60_000;
-
-const mutableDeploy = async () => {
-  const mutable = registryInitialState();
-  mutable.maintenanceAuthority = new L.ContractMaintenanceAuthority([], 0, 0n);
-  const tx = L.Transaction.fromParts("preprod", undefined, undefined, L.Intent.new(new Date(Date.now() + 600e3)).addDeploy(new L.ContractDeploy(mutable)));
-  return (await prover.prove(tx)).bind();
-};
 
 describe("registryDeployer", () => {
   it("prepares the final bytes and everything a human must see before they are sent, journalling and submitting nothing", async () => {
@@ -113,7 +106,7 @@ describe("registryDeployer", () => {
     const { deployer, wallet: w, rows } = setup();
     const prepared = await deployer.prepare();
     const sentNothing = () => expect([w.submitted.length, rows().length]).toEqual([0, 0]);
-    const mutable = (await mutableDeploy()).serialize();
+    const mutable = (await mutableDeploy("preprod")).serialize();
     await expect(deployer.submit({ ...prepared, bytes: mutable })).rejects.toThrow(/threshold must be exactly 1, got 0/);
     sentNothing();
     const other = await deployer.prepare();
@@ -191,7 +184,7 @@ describe("registryDeployer", () => {
     lossyIndexer.close();
 
     const resumed = await deployer.journalled();
-    expect(resumed).toEqual({ ...prepared, journal: { state: "landed", broadcasts: 1 } });
+    expect(resumed).toEqual({ ...prepared, journal: { state: "landed", broadcasts: 1, expired: false } });
     expect(await deployer.submit(resumed!)).toEqual({ network: "preprod", address: prepared.address, txHash: prepared.txHash, blockHeight: 500, blockHash: "ab".repeat(32) });
     expect(w.submitted.map((t) => t.transactionHash())).toEqual([prepared.txHash]);
     expect(w.discarded).toEqual([]);
@@ -205,7 +198,7 @@ describe("registryDeployer", () => {
     net.advance(15 * MINUTE + 5 * MINUTE + 1_000);
 
     const lagging = registryDeployer({ network: "preprod", wallet: w, source: laggingLookup, prover, journalPath, pollMillis: 1 });
-    expect(await lagging.journalled()).toEqual({ ...prepared, journal: { state: "landed", broadcasts: 0 } });
+    expect(await lagging.journalled()).toEqual({ ...prepared, journal: { state: "landed", broadcasts: 0, expired: false } });
     expect(rows()).toEqual([{ tx_hash: prepared.txHash, state: "landed" }]);
     const second = await lagging.prepare();
     await expect(lagging.submit(second)).rejects.toThrow(`a registry deploy is already journalled on preprod: ${prepared.txHash} (landed); the prepared bytes were discarded`);
@@ -229,7 +222,7 @@ describe("registryDeployer", () => {
     expect(await operator.reconcile()).toEqual([expect.objectContaining({ txHash: prepared.txHash, state: "landed" })]);
     operator.close();
 
-    expect(await deployer.journalled()).toEqual({ ...prepared, journal: { state: "landed", broadcasts: 0 } });
+    expect(await deployer.journalled()).toEqual({ ...prepared, journal: { state: "landed", broadcasts: 0, expired: false } });
     const second = await deployer.prepare();
     await expect(deployer.submit(second)).rejects.toThrow(`a registry deploy is already journalled on preprod: ${prepared.txHash} (landed); the prepared bytes were discarded`);
     expect(w.submitted.map((t) => t.transactionHash())).toEqual([prepared.txHash]);
@@ -278,7 +271,7 @@ describe("registryDeployer", () => {
 
     const deployer = registryDeployer({ network: "mainnet", wallet: w, source: mainnet.source, prover, journalPath, pollMillis: 1 });
     const resumed = await deployer.journalled();
-    expect(resumed).toEqual({ ...prepared, journal: { state: "landed", broadcasts: 1 } });
+    expect(resumed).toEqual({ ...prepared, journal: { state: "landed", broadcasts: 1, expired: false } });
     const second = await deployer.prepare();
     await expect(deployer.submit(second)).rejects.toThrow(`a registry deploy is already journalled on mainnet: ${prepared.txHash} (landed); the prepared bytes were discarded`);
     expect(await deployer.submit(resumed!)).toEqual({ network: "mainnet", address: prepared.address, txHash: prepared.txHash, blockHeight: 500, blockHash: "ab".repeat(32) });
@@ -292,29 +285,85 @@ describe("registryDeployer", () => {
     const refused = await refusedByProxy();
     net.advance(10 * MINUTE);
     const resumed = await deployer.journalled();
-    expect(resumed).toEqual({ ...refused, journal: { state: "pending", broadcasts: 0 } });
+    expect(resumed).toEqual({ ...refused, journal: { state: "pending", broadcasts: 0, expired: false } });
     expect(await deployer.submit(resumed!)).toMatchObject({ txHash: refused.txHash, address: refused.address });
     expect(w.submitted.map((t) => hex(t.serialize()))).toEqual([hex(refused.bytes)]);
     expect(rows()).toEqual([{ tx_hash: refused.txHash, state: "landed" }]);
     deployer.close();
   });
 
-  it("between a refused deploy's TTL and its TTL plus the margin, hands back that deploy, whose resend the node refuses, and prepares nothing new", async () => {
+  it("between a refused deploy's TTL and its TTL plus the margin, hands back that deploy marked expired, whose submit sends nothing and waits until the chain retires it, then refuses", async () => {
     const { deployer, wallet: w, rows, net, refusedByProxy } = setup();
     const refused = await refusedByProxy();
     net.advance(15 * MINUTE + 4 * MINUTE);
     const payFee = vi.spyOn(w, "payFee");
     const resumed = await deployer.journalled();
-    expect(resumed).toEqual({ ...refused, journal: { state: "pending", broadcasts: 0 } });
-    await expect(deployer.submit(resumed!)).rejects.toThrow(OUTDATED);
-    expect(w.submitted.map((t) => hex(t.serialize()))).toEqual([hex(refused.bytes)]);
-    expect(payFee).not.toHaveBeenCalled();
+    expect(resumed).toEqual({ ...refused, journal: { state: "pending", broadcasts: 0, expired: true } });
+    const submitted = deployer.submit(resumed!);
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(rows()).toEqual([{ tx_hash: refused.txHash, state: "pending" }]);
+    net.advance(2 * MINUTE);
+    await expect(submitted).rejects.toThrow(EXPIRED);
+    expect(w.submitted).toEqual([]);
+    expect(payFee).not.toHaveBeenCalled();
+    expect(rows()).toEqual([{ tx_hash: refused.txHash, state: "failed" }]);
+    deployer.close();
+  });
+
+  it("refuses a resumed deploy the chain retired while it waited for confirmation, sending nothing, instead of journalling its bytes again", async () => {
+    const { deployer, wallet: w, rows, net, refusedByProxy } = setup();
+    const refused = await refusedByProxy();
+    net.advance(10 * MINUTE);
+    const resumed = await deployer.journalled();
+    expect(resumed?.journal).toEqual({ state: "pending", broadcasts: 0, expired: false });
+    net.advance(11 * MINUTE);
+    await expect(deployer.submit(resumed!)).rejects.toThrow(EXPIRED);
+    expect([w.submitted, w.discarded]).toEqual([[], []]);
+    expect(rows()).toEqual([{ tx_hash: refused.txHash, state: "failed" }]);
+    deployer.close();
+  });
+
+  it("names the wallet that paid a resumed deploy, not the wallet resuming it", async () => {
+    const { net, journalPath, timedOutAfterAccept, wallet: payer } = setup();
+    const landed = await timedOutAfterAccept();
+    expect(landed.payer).toBe(payer.addresses.unshielded);
+    const other = wallet(net, () => journalPath, undefined, "b");
+    const resuming = registryDeployer({ network: "preprod", wallet: other, source: net.source, prover, journalPath, pollMillis: 1 });
+    expect(await resuming.journalled()).toMatchObject({ txHash: landed.txHash, payer: payer.addresses.unshielded });
+    expect(other.addresses.unshielded).not.toBe(payer.addresses.unshielded);
+    resuming.close();
+  });
+
+  it("with two deployers confirmed at once, the one whose bytes the journal did not take refuses and discards them, and only the other's deploy is sent", async () => {
+    const { deployer, wallet: w, rows, net, journalPath } = setup();
+    const w2 = wallet(net, () => journalPath, undefined, "b");
+    const second = registryDeployer({ network: "preprod", wallet: w2, source: net.source, prover, journalPath, pollMillis: 1 });
+    const [p1, p2] = [await deployer.prepare(), await second.prepare()];
+    const [r1, r2] = await Promise.allSettled([deployer.submit(p1), second.submit(p2)]);
+    const outcomes = [r1, r2].map((r) => r.status);
+    expect(outcomes.sort()).toEqual(["fulfilled", "rejected"]);
+    const [won, lost, loser] = r1.status === "fulfilled" ? [p1, p2, w2] : [p2, p1, w];
+    const refusal = (r1.status === "rejected" ? r1 : (r2 as PromiseRejectedResult)).reason as Error;
+    expect(refusal.message).toMatch(new RegExp(`^a registry deploy is already journalled on preprod: ${won.txHash} \\((pending|landed)\\); the prepared bytes were discarded$`));
+    expect(loser.discarded).toEqual([lost.txHash]);
+    expect([...w.submitted, ...w2.submitted].map((t) => t.transactionHash())).toEqual([won.txHash]);
+    expect(rows()).toEqual([{ tx_hash: won.txHash, state: "landed" }]);
+    deployer.close();
+    second.close();
+  });
+
+  it("refuses journalled bytes that deploy anything but the registry before handing back a deploy", async () => {
+    const { deployer, journalPath, refusedByProxy } = setup();
+    await refusedByProxy();
+    const db = new DatabaseSync(journalPath);
+    db.prepare("update attempts set bytes = ?").run((await mutableDeploy("preprod")).serialize());
+    db.close();
+    await expect(deployer.journalled()).rejects.toThrow(/threshold must be exactly 1, got 0/);
     deployer.close();
   });
 
   it("refuses final bytes whose deploy is not exactly the immutable registry, and releases their DUST", async () => {
-    const swapped = await mutableDeploy();
+    const swapped = await mutableDeploy("preprod");
     const { deployer, wallet: w, rows } = setup({ tamper: () => swapped });
     await expect(deployer.prepare()).rejects.toThrow(/threshold must be exactly 1, got 0/);
     expect(w.discarded).toEqual([swapped.transactionHash()]);

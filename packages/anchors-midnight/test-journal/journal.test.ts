@@ -333,6 +333,49 @@ describe("the write-ahead journal", () => {
     other.close();
   });
 
+  it("keeps with each attempt the wallet that paid its fee, so a caller resuming it can name that wallet", async () => {
+    const path = file();
+    const net = network();
+    const first = openJournal(path);
+    await first.submitOnce(key, { prepare: async () => ({ bytes: bytesOf("anchor"), ttl: TTL, payer: "mn_addr_preprod1payer" }), broadcast: net.send("anchor"), chain: net.chain });
+    first.close();
+
+    const restarted = openJournal(path);
+    expect(restarted.live(key)).toMatchObject({ txHash: fixture.anchor.txHash, payer: "mn_addr_preprod1payer" });
+    expect(restarted.history(key)).toEqual([expect.objectContaining({ payer: "mn_addr_preprod1payer" })]);
+    restarted.close();
+  });
+
+  it("opens a journal whose attempts name no payer, keeping its rows, and records the payer of the attempts after", async () => {
+    const path = file();
+    const older = new DatabaseSync(path);
+    older.exec(`
+      create table attempts (
+        id integer primary key, key text not null, tx_hash text not null unique, bytes blob not null, ttl_ms integer not null,
+        state text not null check (state in ('pending', 'landed', 'failed')), broadcasts integer not null default 0, height integer, block_hash text
+      );
+      create unique index one_live_attempt on attempts(key) where state != 'failed';
+    `);
+    const olderKey = { ...key, kind: 2 };
+    const keyText = [olderKey.network, olderKey.registry, olderKey.author, olderKey.kind, olderKey.commitment, olderKey.attribute].join("/");
+    older.prepare("insert into attempts (key, tx_hash, bytes, ttl_ms, state, broadcasts) values (?, ?, ?, ?, 'failed', 1)").run(keyText, fixture.hiding.txHash, bytesOf("hiding"), TTL.getTime());
+    older.close();
+    chmodSync(path, 0o600);
+
+    const journal = openJournal(path);
+    const net = network();
+    expect(journal.history(olderKey)).toEqual([{ txHash: fixture.hiding.txHash, state: "failed", ttl: TTL, broadcasts: 1 }]);
+    await journal.submitOnce(key, { prepare: async () => ({ bytes: bytesOf("anchor"), ttl: TTL, payer: "mn_addr_preprod1payer" }), broadcast: net.send("anchor"), chain: net.chain });
+    expect(journal.live(key)).toMatchObject({ payer: "mn_addr_preprod1payer" });
+    const rows = new DatabaseSync(path, { readOnly: true });
+    expect(rows.prepare("select tx_hash, payer from attempts order by id").all()).toEqual([
+      { tx_hash: fixture.hiding.txHash, payer: null },
+      { tx_hash: fixture.anchor.txHash, payer: "mn_addr_preprod1payer" },
+    ]);
+    rows.close();
+    journal.close();
+  });
+
   it("keeps its file, which holds final transaction bytes until they land, readable only by its owner", () => {
     const path = file();
     openJournal(path).close();
