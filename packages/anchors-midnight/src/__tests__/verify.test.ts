@@ -9,6 +9,7 @@ import { encodeHeader } from "../substrate.js";
 import { DEPLOY_HEIGHT, HEIGHTS, anchorChain, fixture, sendMnTransaction } from "./anchor-chain.js";
 import { NETWORK, finalBytes, unprovenRegistryCall } from "./registry-call.js";
 import { replaySource } from "./recorded-source.js";
+import { knownAuthors } from "../known-authors.js";
 import type { RegistryInfo } from "../registries.js";
 import type { IndexedTransaction, MidnightSource } from "../source.js";
 
@@ -24,6 +25,7 @@ const KIND2 = { kind: 2 as const, attribute: fixture.hiding.attribute };
 const verify = (chain: Chain, req: VerifyRequest, options: Partial<Parameters<typeof verifyMidnightAnchor>[1]> = {}) =>
   verifyMidnightAnchor(req, { source: chain.source, registries: [chain.registry], knownAuthors: chain.authors(), ...options });
 const check = (r: VerifyResult, name: string) => r.checks.find((c) => c.name === name);
+const lines = (r: VerifyResult) => r.checks.map((c) => `${c.ok ? "ok  " : "FAIL"} ${c.name}: ${c.detail}`);
 const withoutPrecommits = (hex: string) => {
   const proof = decodeFinalityProof(fromHex(hex, "proof"));
   const { round, target, ancestries } = proof.justification;
@@ -317,7 +319,6 @@ describe.each(["mainnet", "preprod"] as const)("golden: the verifier on a real %
   const generation = (address: string): RegistryInfo => ({ ...anchorChain().registry, address, deployTxHash: "cd".repeat(32), deployHeight: 1 });
   const run = (address: string, edit?: Parameters<typeof replaySource>[1]) =>
     verifyMidnightAnchor({ network, txHash: f.txHash, expect: { kind: 1, commitment: "00".repeat(32) } }, { source: replaySource(f.recording, edit), registries: [generation(address)], checkpoints: [checkpoint] });
-  const lines = (r: VerifyResult) => r.checks.map((c) => `${c.ok ? "ok  " : "FAIL"} ${c.name}: ${c.detail}`);
 
   it.each([0, 1])("reproduces recorded run %i check for check", async (i) => {
     const recorded = f.runs[i];
@@ -349,5 +350,34 @@ describe.each(["mainnet", "preprod"] as const)("golden: the verifier on a real %
     );
     expect(r.status).toBe("invalid");
     expect(r.assurance).toBe("none");
+  });
+});
+
+// Recorded by the preprod rehearsal's record-golden.ts through Blockfrost: a kind-1 anchor by the
+// relay key, a kind-2 anchor, and the anchor the second relay key wrote after the document that
+// revoked it, each verified against the rehearsal's registry and its signed KNOWN_AUTHORS
+// documents. The replay fails on any request that was not recorded.
+describe("golden: the preprod rehearsal's anchors, replayed", () => {
+  const f = JSON.parse(readFileSync(new URL("./fixtures/preprod-rehearsal.json", import.meta.url), "utf8"));
+  const verifyRecorded = (a: { txHash: string; expect: VerifyRequest["expect"] }) =>
+    verifyMidnightAnchor({ network: "preprod", txHash: a.txHash, expect: a.expect }, { source: replaySource(f.recording), registries: [f.registry], knownAuthors: knownAuthors({ documents: f.documents, trustRoots: [f.trustRoot] }) });
+
+  it("holds the rehearsal's verdicts: both relay-1 anchors valid and the revoked key's anchor author-revoked, all consensus-verified", () => {
+    expect(f.anchors.map((a: VerifyResult & { name: string }) => [a.name, a.status, a.assurance])).toEqual([
+      ["git-head", "valid", "consensus-verified"],
+      ["hidden-broadcast-suite", "valid", "consensus-verified"],
+      ["revoked-new-after", "author-revoked", "consensus-verified"],
+    ]);
+  });
+
+  it.each(f.anchors.map((a: { name: string }) => [a.name, a]))("%s: reproduces the recorded verdict check for check", async (_, a) => {
+    const r = await verifyRecorded(a);
+    expect({ status: r.status, assurance: r.assurance, author: r.author, verifiedFields: r.verifiedFields, checks: lines(r) }).toEqual({
+      status: a.status,
+      assurance: a.assurance,
+      author: a.author,
+      verifiedFields: a.verifiedFields,
+      checks: a.checks,
+    });
   });
 });

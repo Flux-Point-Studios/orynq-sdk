@@ -28,7 +28,7 @@ package publishes only `dist`, so nothing here ships.
 | `gate.mjs` | The claims the pack may make, from what was recorded and what the verifier returned. Each maintenance update counts as refused only on the node's answer 1010 Invalid Transaction with the maintenance authority's own custom code, and each forged document only on the verify package's answer from the check it targets (below). The deploy the pack describes must be the one that landed: a prepared record whose transaction hash or address differs, such as a prepare a later run abandoned, fails the gate. A recorded refusal of an anchor's bytes (`anchorRefusals`) passes only when a later transaction for the same label landed: the anchor recorded under the label is another transaction, recorded after the refusal. |
 | `compose.ts` | Writes the pack only when the gate passes, every journal's landed transactions match the recorded anchors, every kind-2 opening recomputes the commitment the verifier read, and the privacy scan finds no window of any secret. It discloses every crash-drill attempt archived as aborted (runbook, step 2), and writes no pack when `gate.mjs` (`abortedDrills`) refuses one, and carries every refusal of an anchor's bytes the gate accepted (`anchorRefusals`) beside the transaction that later landed for its label. |
 | `finish.sh` | `verify-all.mjs` from `$CONSUMER`, then `compose.ts`. |
-| `record-golden.ts` | Records the verifier's reads of three real anchors as a fixture the anchors-midnight suite can replay. |
+| `record-golden.ts` | Records the verifier's reads of three real anchors as the fixture the anchors-midnight suite replays (`src/__tests__/fixtures/preprod-rehearsal.json`). |
 | `wallets.json` | The public addresses of preprod wallets A and B. `openWallet` refuses a mnemonic that derives anything else. |
 
 ## The node's refusals
@@ -247,4 +247,6 @@ archived as aborted, the verifier negatives, the verify package's install record
 measurements, the statements mapped above, and the privacy scan. Kind-2 openings and every key
 stay on the operator host.
 
-After the pack, `node --import tsx record-golden.ts OUT.json` records the golden fixture.
+After the pack, `node --import tsx record-golden.ts ../../anchors-midnight/src/__tests__/fixtures/preprod-rehearsal.json`
+records the golden fixture that anchors-midnight's `verify.test.ts` replays: the verifier must
+reach the recorded verdict, check for check, from the recorded reads alone.

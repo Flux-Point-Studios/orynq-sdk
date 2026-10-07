@@ -1,8 +1,8 @@
 // Records the verifier's reads of three real preprod rehearsal anchors through Blockfrost (a
 // kind 1 from the relay key, a kind 2, and the revoked relay-2 anchor) into a fixture the
-// anchors-midnight suite replays: the registry generation, the drill's signed KNOWN_AUTHORS
-// documents and trust root, each request and the result the live run gave.
-//   node --import tsx record-golden.ts OUT.json
+// anchors-midnight suite replays (verify.test.ts): the registry generation, the drill's signed
+// KNOWN_AUTHORS documents and trust root, each request and the result the live run gave.
+//   node --import tsx record-golden.ts ../../anchors-midnight/src/__tests__/fixtures/preprod-rehearsal.json
 import { readFileSync, writeFileSync } from "node:fs";
 import { blockfrostEndpoints, knownAuthors, midnightSource, verifyMidnightAnchor, REGISTRY_VERIFIER_KEY_SHA256 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { recordingSource } from "../../anchors-midnight/src/__tests__/recorded-source.js";
