@@ -89,7 +89,8 @@ or FIDO2 signer.
   the preflight suite does exactly that, once with inputs that do not exist, so it stops at its
   first read, and over an offline mainnet (`test/offline.ts` in place of the submit package),
   where it deploys, declines, resumes a deploy whose run failed after its broadcast, and refuses
-  an expired one and journalled bytes that deploy anything but the registry. The
+  an expired one and journalled bytes that deploy anything but the registry, and where every way
+  out, declined, refused or failed, closes the journal and the wallet before the process exits. The
   protection is procedural: deci runs the deploy himself, at his own terminal.
 
 ## Keys

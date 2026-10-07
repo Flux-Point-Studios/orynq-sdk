@@ -31,6 +31,8 @@ export interface OfflineChain {
   discarded: string[];
   // Set while the node lacks the indexer's newest block, as a node behind the indexer does.
   nodeLags?: boolean;
+  // How many times a run closed its wallet.
+  walletCloses?: number;
 }
 
 const FILE = process.env.OFFLINE_CHAIN!;
@@ -173,6 +175,10 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       chain.discarded.push(tx.transactionHash());
       write(chain);
     },
-    close: saveState,
+    async close() {
+      const chain = read();
+      write({ ...chain, walletCloses: (chain.walletCloses ?? 0) + 1 });
+      return saveState();
+    },
   };
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { copyFileSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -229,6 +229,9 @@ function offlineMainnet() {
     walletRecord,
     advance: (millis: number) => writeFileSync(chainFile, JSON.stringify({ ...chain(), aheadMs: chain().aheadMs + millis })),
     lagNode: (nodeLags: boolean) => writeFileSync(chainFile, JSON.stringify({ ...chain(), nodeLags })),
+    // How many times the runs so far closed the wallet, and whether one left the journal open:
+    // SQLite removes the write-ahead log when the last connection to the database closes.
+    closes: () => ({ wallet: chain().walletCloses ?? 0, journalLeftOpen: existsSync(`${journalPath}-wal`) }),
     journal() {
       const db = new DatabaseSync(journalPath, { readOnly: true });
       const rows = db.prepare("select tx_hash, state from attempts order by id").all();
@@ -434,6 +437,23 @@ describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
     expect(r.output).toContain("deploy-mainnet: the mainnet node does not hold the indexer's newest block, so chain time is unknown and the journalled bytes may be past their TTL; nothing was sent");
     expect(m.chain()).toMatchObject({ sent: [refused], discarded: [] });
     expect(m.journal()).toEqual([{ tx_hash: refused, state: "pending" }]);
+  });
+
+  it("closes the journal and the wallet on every way out, with its exit code: declined, refused under the DUST floor, failed, declined on resume, deployed", async ({ expect }) => {
+    const m = offlineMainnet();
+    const exits: Array<number | null> = [];
+    const run = async (answer: (token: string) => string, fault: string, said: string) => {
+      const r = await m.run(answer, fault);
+      expect(r.output).toContain(said);
+      exits.push(r.status);
+      expect(m.closes()).toEqual({ wallet: exits.length, journalLeftOpen: false });
+    };
+    await run(() => "no", "", "deploy-mainnet: not confirmed; the prepared bytes were discarded and nothing was sent");
+    await run((token) => token, "low-dust", "deploy-mainnet: the wallet holds 0.5 DUST, below the 1 DUST floor");
+    await run((token) => token, "refuse-broadcast", "deploy-mainnet: offline node: HTTP 403: Forbidden");
+    await run(() => "no", "", "deploy-mainnet: not confirmed; nothing was sent, and the journalled deploy stays in the journal");
+    await run((token) => token, "", "deployed and read back from the node");
+    expect(exits).toEqual([1, 1, 1, 1, 0]);
   });
 
   it("refuses journalled bytes that deploy a state other than the registry's before any summary or token", async ({ expect }) => {

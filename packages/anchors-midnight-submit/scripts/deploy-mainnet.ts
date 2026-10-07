@@ -59,6 +59,8 @@ const zkDir = option("zk", process.env.MIDNIGHT_PP ?? `${home}/.cache/orynq-midn
 const journalPath = option("journal", `${home}/.local/state/orynq-midnight/mainnet-deploy.sqlite`);
 const floor = BigInt(Math.round(Number(option("dust-floor", "20")) * 1e6)) * 10n ** 9n;
 
+// Every refusal and failure in here throws: a process.exit before the finally blocks below have run
+// would leave the journal and the wallet open.
 try {
   const endpoints = networkEndpoints("mainnet", { blockfrostProjectIdFile: blockfrost });
   const source = midnightSource(endpoints);
@@ -76,18 +78,18 @@ try {
       // Confirming sends bytes only for a new deploy or a journalled one no send of which ever
       // returned and whose TTL has not passed; a landed deploy is finished whatever the balance.
       const sends = !resumed || (resumed.journal!.state === "pending" && resumed.journal!.broadcasts === 0 && !resumed.journal!.expired);
-      if (sends && dust < floor) fail(`the wallet holds ${formatDust(dust)} DUST, below the ${formatDust(floor)} DUST floor`);
+      if (sends && dust < floor) throw new Error(`the wallet holds ${formatDust(dust)} DUST, below the ${formatDust(floor)} DUST floor`);
       const prepared = resumed ?? (await deployer.prepare());
       process.stdout.write(`\n${deploySummary({ chain, wallet: wallet.addresses, dust, prepared })}\n`);
       const token = confirmationToken(prepared);
       if (!(await confirmOnTerminal({ input: process.stdin, output: process.stdout, token }))) {
         // Journalled bytes may already be with the node, so their DUST is not released.
-        if (resumed) fail("not confirmed; nothing was sent, and the journalled deploy stays in the journal");
+        if (resumed) throw new Error("not confirmed; nothing was sent, and the journalled deploy stays in the journal");
         await deployer.discard(prepared);
-        fail("not confirmed; the prepared bytes were discarded and nothing was sent");
+        throw new Error("not confirmed; the prepared bytes were discarded and nothing was sent");
       }
       const deployment = await deployer.submit(prepared);
-      if (!(await registryStateOnNode(source, deployment.address))) fail(`the node holds no contract at ${deployment.address}`);
+      if (!(await registryStateOnNode(source, deployment.address))) throw new Error(`the node holds no contract at ${deployment.address}`);
       process.stdout.write(`\ndeployed and read back from the node: ${JSON.stringify(deployment, null, 1)}\n`);
     } finally {
       deployer.close();
