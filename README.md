@@ -318,6 +318,7 @@ curl -H "project_id: $BLOCKFROST_KEY" \
 | `@fluxpointstudios/orynq-sdk-process-trace` | Cryptographic process trace builder with hash chains and Merkle trees |
 | `@fluxpointstudios/orynq-sdk-anchors-cardano` | Cardano anchor builder, serializer, and verifier |
 | `@fluxpointstudios/orynq-sdk-anchors-materios` | Materios chain receipts, certification, blob uploads, and verification |
+| `@fluxpointstudios/orynq-sdk-midnight-prover` | Local Compact capability and rolling-digest proofs with native verification; [build requirements and limits](packages/midnight-prover/README.md) |
 
 ### Payment Protocol (for Anchor-as-a-Service)
 
@@ -386,9 +387,11 @@ Orynq is built in the open and we are actively proposing primitives we believe e
 
 ## Development
 
+The Midnight package requires compiled circuits before the workspace build. Follow its [build instructions](packages/midnight-prover/README.md); CI uses Node 24, Rust 1.99.0 and a checksum-pinned Compact 0.31.1 installer.
+
 ```bash
 # Install dependencies
-pnpm install
+pnpm install --frozen-lockfile
 
 # Build all packages
 pnpm build
@@ -398,7 +401,13 @@ pnpm test
 
 # Type checking
 pnpm typecheck
+
+# Dependency guard regressions and blocking audit
+node --test scripts/dependency-security.test.mjs
+pnpm audit --audit-level=high
 ```
+
+The workspace replaces `braces` 3 with the exact MIT fork [`@dieub/braces-depth-guard@3.0.3-pn.3`](https://github.com/dieub/braces-depth-guard/tree/305a2e4bfe324bb53c336c1b03387ee1251c926f) because [the upstream depth exhaustion advisory](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) has no patched release. This guards parsed nesting and recursive AST traversal while preserving ordinary glob results. The lockfile records the fork's canonical identity and integrity. Review future upstream `braces` advisories separately because audit databases may not match the renamed fork. [AWS Labs documents the same guarded dependency](https://github.com/awslabs/cli-agent-orchestrator/blob/main/SECURITY.md#local-dependency-mitigations).
 
 ---
 

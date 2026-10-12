@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "circuits": {
+    "synthetic-sha256-fixture-v1": {
+      "entryPoint": "proveRoot",
+      "verifierKeyPath": "proveRoot.verifier",
+      "initialContractStatePath": "initial-contract-state.bin"
+    }
+  }
+}

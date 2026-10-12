@@ -18,7 +18,9 @@
  * - linking/: Publication and cross-chain linking
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { ProofPublisher } from "../linking/proof-publication.js";
+import { ProofServerClient } from "../midnight/proof-server-client.js";
 
 import {
   DefaultMidnightProver,
@@ -188,7 +190,7 @@ describe("DefaultMidnightProver", () => {
   const config = createMockConfig();
 
   beforeEach(async () => {
-    prover = new DefaultMidnightProver({ debug: false });
+    prover = new DefaultMidnightProver({ mode: "simulation", debug: false });
     await prover.connect(config);
   });
 
@@ -198,13 +200,13 @@ describe("DefaultMidnightProver", () => {
 
   describe("constructor", () => {
     it("should create a prover with default options", () => {
-      const defaultProver = new DefaultMidnightProver();
+      const defaultProver = new DefaultMidnightProver({ mode: "simulation" });
       expect(defaultProver).toBeInstanceOf(DefaultMidnightProver);
       expect(defaultProver.isConnected()).toBe(false);
     });
 
     it("should create a prover with custom options", () => {
-      const customProver = new DefaultMidnightProver({
+      const customProver = new DefaultMidnightProver({ mode: "simulation",
         debug: true,
         circuitsDir: "./custom-circuits",
         enableInference: false,
@@ -215,7 +217,7 @@ describe("DefaultMidnightProver", () => {
 
   describe("connection management", () => {
     it("should connect and disconnect successfully", async () => {
-      const newProver = new DefaultMidnightProver();
+      const newProver = new DefaultMidnightProver({ mode: "simulation" });
 
       expect(newProver.isConnected()).toBe(false);
       await newProver.connect(config);
@@ -227,7 +229,7 @@ describe("DefaultMidnightProver", () => {
     });
 
     it("should throw for operations when not connected", async () => {
-      const disconnectedProver = new DefaultMidnightProver();
+      const disconnectedProver = new DefaultMidnightProver({ mode: "simulation" });
 
       await expect(
         disconnectedProver.proveHashChain({
@@ -406,7 +408,7 @@ describe("DefaultMidnightProver", () => {
     });
 
     it("should throw not implemented even when enabled", async () => {
-      const enabledProver = new DefaultMidnightProver({ enableInference: true });
+      const enabledProver = new DefaultMidnightProver({ mode: "simulation", enableInference: true });
       await enabledProver.connect(config);
 
       const input = {
@@ -448,7 +450,7 @@ describe("DefaultMidnightProver", () => {
       const result = await prover.publish(hashChainProof);
 
       expect(result).toBeDefined();
-      expect(result.midnightTxHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(result.midnightTxHash).toMatch(/^simulation-[0-9a-f]{64}$/);
       expect(result.proofId).toBe(hashChainProof.proofId);
     });
   });
@@ -601,8 +603,8 @@ describe("Full Integration Flow", () => {
   const config = createMockConfig();
 
   beforeEach(async () => {
-    prover = new DefaultMidnightProver({ debug: false });
-    linker = new CardanoAnchorLinker({ debug: false });
+    prover = new DefaultMidnightProver({ mode: "simulation", debug: false });
+    linker = new CardanoAnchorLinker({ mode: "simulation", debug: false });
     await prover.connect(config);
   });
 
@@ -712,5 +714,44 @@ describe("Full Integration Flow", () => {
     // Should be able to find both links by anchor
     const anchorLinks = linker.getLinksByCardanoAnchor(cardanoAnchorTxHash);
     expect(anchorLinks).toHaveLength(2);
+  });
+});
+
+
+describe("DefaultMidnightProver production boundary", () => {
+  it("reports cleanup failure after attempting both disconnections", async () => {
+    const prover = new DefaultMidnightProver({ mode: "simulation" });
+    await prover.connect(createMockConfig());
+    const clientDisconnect = vi.spyOn(ProofServerClient.prototype, "disconnect").mockRejectedValueOnce(new Error("disconnect failed"));
+    const publisherDisconnect = vi.spyOn(ProofPublisher.prototype, "disconnect");
+    try {
+      await expect(prover.disconnect()).rejects.toThrow("Failed to disconnect prover components");
+      expect(clientDisconnect).toHaveBeenCalledOnce();
+      expect(publisherDisconnect).toHaveBeenCalledOnce();
+    } finally {
+      clientDisconnect.mockRestore();
+      publisherDisconnect.mockRestore();
+      await prover.disconnect();
+    }
+  });
+  it("cannot silently connect to a mock network", async () => {
+    const prover = new DefaultMidnightProver();
+    await expect(prover.connect(createMockConfig())).rejects.toThrow("Legacy proof-server client requires explicit simulation mode");
+    expect(prover.isConnected()).toBe(false);
+  });
+  it("rejects simulation fixtures and identifies their limitation", async () => {
+    const simulation = new DefaultMidnightProver({ mode: "simulation" });
+    await simulation.connect(createMockConfig());
+    const events = createMockEvents(2);
+    const genesisHash = await simulation.getGenesisHash();
+    const witness = await buildHashChainWitness(events, genesisHash);
+    const proof = await simulation.proveHashChain({ events, genesisHash, expectedRootHash: witness.computedRollingHash,
+      cardanoAnchorTxHash: createMockHash("anchor") });
+    const simulatedResult = await simulation.verify(proof);
+    expect(simulatedResult.warnings).toContain("Simulation fixture; not a cryptographic proof");
+    const realResult = await new DefaultMidnightProver().verify(proof);
+    expect(realResult.valid).toBe(false);
+    expect(realResult.errors).toContain("Legacy proof formats have no real cryptographic verifier");
+    await simulation.disconnect();
   });
 });

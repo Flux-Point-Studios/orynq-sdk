@@ -13,33 +13,42 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "tests",
+    ".eslintrc.cjs",
+    "circuits",
+    "managed",
+    "scripts",
+    "native/Cargo.toml",
+    "native/Cargo.lock",
+    "native/src",
+    "native/tests",
+    "native/README.md"
   ],
   "scripts": {
     "build": "tsc",
     "clean": "rimraf dist",
     "test": "vitest run",
     "lint": "eslint src --ext .ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:circuits": "node scripts/compile-circuits.mjs",
+    "build:native": "cargo build --release --locked --manifest-path native/Cargo.toml",
+    "test:real": "tsx tests/real-proofs.integration.ts"
   },
   "dependencies": {
     "@fluxpointstudios/orynq-sdk-core": "workspace:*",
     "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*",
     "@fluxpointstudios/orynq-sdk-anchors-cardano": "workspace:*",
-    "@fluxpointstudios/orynq-sdk-attestor": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-attestor": "workspace:*",
+    "@midnight-ntwrk/compact-runtime": "0.16.0",
+    "@midnight-ntwrk/onchain-runtime-v3": "3.0.0",
+    "@midnight-ntwrk/ledger-v8": "8.1.3",
+    "@midnight-ntwrk/zkir-v2": "2.1.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "typescript": "^5.3.3",
     "vitest": "^4.1.11"
-  },
-  "peerDependencies": {
-    "@midnight-ntwrk/compact-runtime": "^0.14.0"
-  },
-  "peerDependenciesMeta": {
-    "@midnight-ntwrk/compact-runtime": {
-      "optional": true
-    }
   },
   "keywords": [
     "poi",
@@ -49,6 +58,9 @@
     "zero-knowledge",
     "privacy"
   ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "author": "Flux Point Studios",
   "license": "MIT",
   "repository": {

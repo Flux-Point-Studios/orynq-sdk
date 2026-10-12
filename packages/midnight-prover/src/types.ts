@@ -1,26 +1,4 @@
-/**
- * @fileoverview Type definitions for the poi-midnight-prover package.
- *
- * Location: packages/midnight-prover/src/types.ts
- *
- * Summary:
- * This file contains all type definitions for ZK proof generation using the Midnight network.
- * It defines proof types, input/output structures for various proof circuits, configuration
- * options, and error handling.
- *
- * Usage:
- * Types are imported by the prover-interface.ts and will be used by proof generation
- * implementations in the proofs/ directory. These types integrate with process-trace
- * (TraceEvent, TraceBundle) and attestor (AttestationBundle, VerifierPolicy) packages.
- *
- * Key concepts:
- * - ProofType: Discriminator for different ZK proof circuits
- * - HashChainProof: Proves trace hash chain validity
- * - PolicyProof: Proves content compliance without revealing content
- * - AttestationProof: Proves valid TEE attestation
- * - DisclosureProof: Selective disclosure of spans without revealing others
- * - InferenceProof: Optional zkML proof for model inference correctness
- */
+/** Legacy proof statements and explicit simulation markers. */
 
 import type { TraceEvent, TraceSpan, TraceBundle } from "@fluxpointstudios/orynq-sdk-process-trace";
 import type { AttestationBundle, VerifierPolicy, TeeType } from "@fluxpointstudios/orynq-sdk-attestor";
@@ -31,7 +9,7 @@ import type { AttestationBundle, VerifierPolicy, TeeType } from "@fluxpointstudi
 
 /**
  * Discriminator for different ZK proof types.
- * Each type corresponds to a specific Compact circuit.
+ * Real circuits are exposed separately by RealMidnightProver.
  */
 export type ProofType =
   | "hash-chain"              // Trace hash chain is valid
@@ -56,6 +34,7 @@ export type ProofType =
  * @property proofSizeBytes - Size of the proof in bytes
  */
 export interface Proof {
+  readonly simulation?: true;
   proofType: ProofType;
   proofId: string;
   proof: Uint8Array;
@@ -381,6 +360,7 @@ export const DEFAULT_PROOF_SERVER_CONFIG: Partial<ProofServerConfig> = {
  * @property fee - Fee paid for publication
  */
 export interface PublicationResult {
+  readonly simulation?: true;
   midnightTxHash: string;
   proofId: string;
   timestamp: string;

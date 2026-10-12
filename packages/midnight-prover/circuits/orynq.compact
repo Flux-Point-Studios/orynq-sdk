@@ -1,0 +1,44 @@
+pragma language_version 0.23;
+import CompactStandardLibrary;
+
+export ledger rootHash: Bytes<32>;
+export ledger genesisHash: Bytes<64>;
+export ledger eventCount: Uint<64>;
+export ledger anchorHash: Bytes<32>;
+export ledger contextDigest: Bytes<32>;
+export ledger commitment: Bytes<32>;
+
+witness eventDigestHex(): Bytes<64>;
+witness capability(): Bytes<32>;
+
+struct RollingPreimage {
+  domain: Bytes<18>;
+  previous: Bytes<64>;
+  separator: Bytes<1>;
+  event: Bytes<64>;
+}
+
+circuit assertHex(value: Bytes<64>): [] {
+  for (const byte of value as Vector<64, Uint<8>>) {
+    assert((byte >= 48 && byte <= 57) || (byte >= 97 && byte <= 102), "noncanonical hex digest");
+  }
+}
+
+export circuit proveRolling1(genesis: Bytes<64>, root: Bytes<32>, anchor: Bytes<32>, context: Bytes<32>): [] {
+  assertHex(genesis);
+  const event = eventDigestHex();
+  assertHex(event);
+  const input = RollingPreimage { domain: pad(18, "poi-trace:roll:v1|"), previous: genesis, separator: pad(1, "|"), event: event };
+  assert(persistentHash<RollingPreimage>(input) == root, "rolling root mismatch");
+  rootHash = disclose(root);
+  genesisHash = disclose(genesis);
+  eventCount = 1;
+  anchorHash = disclose(anchor);
+  contextDigest = disclose(context);
+}
+
+export circuit proveCapability(expectedCommitment: Bytes<32>, context: Bytes<32>): [] {
+  assert(persistentHash<Vector<2, Bytes<32>>>([capability(), context]) == expectedCommitment, "capability mismatch");
+  commitment = disclose(expectedCommitment);
+  contextDigest = disclose(context);
+}
