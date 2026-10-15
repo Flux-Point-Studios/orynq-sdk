@@ -12,8 +12,12 @@ overrides:
   proxy-addr@2: ^2.0.8
   source-map-js@1: ^1.2.2
   pbkdf2@3: ^3.1.7
-  braces@3: npm:@dieub/braces-depth-guard@3.0.3-pn.3
   '@midnight-ntwrk/onchain-runtime-v3': 3.0.0
+
+patchedDependencies:
+  braces@3.0.3:
+    hash: sxdgvc6rtvtghxelwsk2isvkoa
+    path: patches/braces@3.0.3.patch
 
 importers:
 
@@ -44,8 +48,8 @@ importers:
         specifier: ^3.1.0
         version: 3.1.0
       braces:
-        specifier: npm:@dieub/braces-depth-guard@3.0.3-pn.3
-        version: /@dieub/braces-depth-guard@3.0.3-pn.3
+        specifier: 3.0.3
+        version: 3.0.3(patch_hash=sxdgvc6rtvtghxelwsk2isvkoa)
       cors:
         specifier: ^2.8.5
         version: 2.8.6
@@ -1588,12 +1592,6 @@ packages:
     dependencies:
       '@bufbuild/protobuf': 1.10.1
     dev: true
-
-  /@dieub/braces-depth-guard@3.0.3-pn.3:
-    resolution: {integrity: sha512-QY+Uq4s42STyIMPoRkBuUZfYyvz0uZuwuUburLwMx5N+lWqnHHaBxcKPtgKVKjTyFnS1q4ivKu9Wxi4VG7FE9Q==}
-    engines: {node: '>=8'}
-    dependencies:
-      fill-range: 7.1.1
 
   /@dnsquery/dns-packet@6.1.1:
     resolution: {integrity: sha512-WXTuFvL3G+74SchFAtz3FgIYVOe196ycvGsMgvSH/8Goptb1qpIQtIuM4SOK9G9lhMWYpHxnXyy544ZhluFOew==}
@@ -4347,6 +4345,13 @@ packages:
       balanced-match: 1.0.2
     dev: true
 
+  /braces@3.0.3(patch_hash=sxdgvc6rtvtghxelwsk2isvkoa):
+    resolution: {integrity: sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==}
+    engines: {node: '>=8'}
+    dependencies:
+      fill-range: 7.1.1
+    patched: true
+
   /buffer@6.0.3:
     resolution: {integrity: sha512-FTiCpNxtwiZZHEZbcbTIcZjERVICn9yq/pDFkTl95/AxzD1naBctN7YO68riM/gLSDY7sdrMby8hofADYuuqOA==}
     dependencies:
@@ -6142,7 +6147,7 @@ packages:
     resolution: {integrity: sha512-PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA==}
     engines: {node: '>=8.6'}
     dependencies:
-      braces: /@dieub/braces-depth-guard@3.0.3-pn.3
+      braces: 3.0.3(patch_hash=sxdgvc6rtvtghxelwsk2isvkoa)
       picomatch: 2.3.2
 
   /mime-db@1.52.0:

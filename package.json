@@ -31,7 +31,7 @@
     "@typescript-eslint/parser": "^6.21.0",
     "@vitest/coverage-v8": "4.1.11",
     "bip39": "^3.1.0",
-    "braces": "npm:@dieub/braces-depth-guard@3.0.3-pn.3",
+    "braces": "3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "eslint": "^8.57.0",
@@ -58,8 +58,15 @@
       "proxy-addr@2": "^2.0.8",
       "source-map-js@1": "^1.2.2",
       "pbkdf2@3": "^3.1.7",
-      "braces@3": "npm:@dieub/braces-depth-guard@3.0.3-pn.3",
       "@midnight-ntwrk/onchain-runtime-v3": "3.0.0"
+    },
+    "auditConfig": {
+      "ignoreCves": [
+        "CVE-2026-93687"
+      ]
+    },
+    "patchedDependencies": {
+      "braces@3.0.3": "patches/braces@3.0.3.patch"
     }
   }
 }

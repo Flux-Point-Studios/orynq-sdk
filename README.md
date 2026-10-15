@@ -407,7 +407,7 @@ node --test scripts/dependency-security.test.mjs
 pnpm audit --audit-level=high
 ```
 
-The workspace replaces `braces` 3 with the exact MIT fork [`@dieub/braces-depth-guard@3.0.3-pn.3`](https://github.com/dieub/braces-depth-guard/tree/305a2e4bfe324bb53c336c1b03387ee1251c926f) because [the upstream depth exhaustion advisory](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) has no patched release. This guards parsed nesting and recursive AST traversal while preserving ordinary glob results. The lockfile records the fork's canonical identity and integrity. Review future upstream `braces` advisories separately because audit databases may not match the renamed fork. [AWS Labs documents the same guarded dependency](https://github.com/awslabs/cli-agent-orchestrator/blob/main/SECURITY.md#local-dependency-mitigations).
+`braces` 3.0.3, its newest release, is open to [depth exhaustion](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) and has no fixed upstream release. `patches/braces@3.0.3.patch` makes its parser reject brace or parenthesis nesting deeper than 100 levels with a `SyntaxError`, before any recursive pass runs. `scripts/dependency-security.test.mjs` fails without the patch. The audit ignores only CVE-2026-93687, so any other `braces` advisory still fails it. When upstream ships a fix, remove the patch, that ignore and the root `braces` pin together. Workspace patches and overrides do not reach consumers of the published packages.
 
 ---
 
