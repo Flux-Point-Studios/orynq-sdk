@@ -93,6 +93,10 @@ export interface RegistryOperator {
   // Sends the bytes a human confirmed, journalled or new, through the journal at most once, and
   // returns the anchor once it landed; bytes past their TTL are never sent again.
   submit(prepared: PreparedAnchor): Promise<AnchorReceipt>;
+  // Settles the confirmed anchor afresh once the node's finalized chain holds another block at
+  // the height its journal row names, and returns it as submit does: where it landed since, or an
+  // error once the chain carried it past its TTL unseen.
+  relocate(prepared: PreparedAnchor): Promise<AnchorReceipt>;
   // Releases the DUST of prepared bytes nobody confirmed.
   discard(prepared: PreparedAnchor): Promise<void>;
   // Settles every journalled submission by its txHash, as after a restart.
@@ -218,6 +222,13 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
     };
   };
   const confirmed = (key: AnchorKey) => confirmedSends(journalling, key, "anchor", "this anchor");
+  const submit = async (prepared: PreparedAnchor) => {
+    const key = keyOf(prepared.kind, prepared.commitment, prepared.attribute);
+    assertExact(prepared.bytes, key);
+    assertConfirmedHash(prepared);
+    await assertKnownRuntime(source, network);
+    return receipt(key, await confirmed(key).submit(prepared));
+  };
 
   return {
     authorKey: author,
@@ -237,12 +248,10 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
       const { bytes, ttl } = await build(planned);
       return describe(planned.key, bytes, ttl, wallet.addresses.unshielded);
     },
-    async submit(prepared) {
-      const key = keyOf(prepared.kind, prepared.commitment, prepared.attribute);
-      assertExact(prepared.bytes, key);
-      assertConfirmedHash(prepared);
-      await assertKnownRuntime(source, network);
-      return receipt(key, await confirmed(key).submit(prepared));
+    submit,
+    async relocate(prepared) {
+      await journal.relocate(prepared.txHash, chain);
+      return submit(prepared);
     },
     discard: (prepared) => wallet.discard(finalTransaction(prepared.bytes)),
     reconcile: () => journal.reconcile(chain),

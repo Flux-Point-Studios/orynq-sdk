@@ -361,6 +361,45 @@ describe("registryOperator's anchors a human confirms", () => {
   });
 });
 
+describe("registryOperator.relocate", () => {
+  it("returns a confirmed anchor as its journal row places it while the node's final block at that height is the one the row names", async () => {
+    const { operator, wallet: w } = setup();
+    const prepared = await operator.prepare({ kind: 1, entry: entry() });
+    const landed = await operator.submit(prepared);
+    expect(await operator.relocate(prepared)).toEqual(landed);
+    expect(w.submitted.map((t) => t.transactionHash())).toEqual([prepared.txHash]);
+    operator.close();
+  });
+
+  it("settles a confirmed anchor afresh once the node finalized another block where its journal row placed it, and returns it where it landed since, sending nothing again", async () => {
+    const { operator, wallet: w, net, journalPath } = setup();
+    const prepared = await operator.prepare({ kind: 1, entry: entry() });
+    const landed = await operator.submit(prepared);
+    net.reorg(prepared.txHash, { height: 640, hash: "ef".repeat(32) });
+    expect(await operator.relocate(prepared)).toEqual({ ...landed, blockHeight: 640, blockHash: "ef".repeat(32) });
+    expect(w.submitted.map((t) => t.transactionHash())).toEqual([prepared.txHash]);
+    expect(rows(journalPath)).toEqual([{ tx_hash: prepared.txHash, state: "landed" }]);
+    operator.close();
+  });
+
+  it("refuses a confirmed anchor whose block the node finalized otherwise and that never landed again, once the chain carried it past its TTL plus the margin, sending nothing again", async () => {
+    const { operator, wallet: w, net, journalPath } = setup();
+    const e = entry();
+    const prepared = await operator.prepare({ kind: 1, entry: e });
+    await operator.submit(prepared);
+    net.reorg(prepared.txHash);
+    const relocated = operator.relocate(prepared);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(rows(journalPath)).toEqual([{ tx_hash: prepared.txHash, state: "pending" }]);
+    net.advance(15 * MINUTE + 5 * MINUTE + 1_000);
+    await expect(relocated).rejects.toThrow(EXPIRED);
+    expect(w.submitted.map((t) => t.transactionHash())).toEqual([prepared.txHash]);
+    expect(rows(journalPath)).toEqual([{ tx_hash: prepared.txHash, state: "failed" }]);
+    expect(await operator.journalled({ kind: 1, entry: e })).toBeNull();
+    operator.close();
+  });
+});
+
 describe("the FPS mainnet keys an operator off mainnet refuses by identity", () => {
   it("are the relay's author key and the salt key's id, as recorded when they were made", () => {
     expect(MAINNET_AUTHOR_KEYS).toEqual(["6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08"]);

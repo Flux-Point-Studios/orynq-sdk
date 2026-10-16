@@ -814,18 +814,106 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
     expect(m.results()).toEqual([expect.objectContaining({ label: "git-head", txHash: sent, block: 501 })]);
   });
 
-  it("refuses an anchor whose final block on the node is not the indexer's, or does not carry its bytes, and records nothing", async ({ expect }) => {
+  it("refuses an anchor whose final block on the node does not carry its bytes, or whose body the node does not hold, and records nothing", async ({ expect }) => {
     const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
     const r = await m.run((token) => token, "foreign-block");
     expect(r.status, r.output).toBe(1);
     expect(r.output).toContain("anchor-mainnet: the node's block 501 does not carry the anchor's bytes as exactly one Midnight.send_mn_transaction");
     expect(m.results()).toBeNull();
 
-    const forked = offlineAnchors({ entries: planEntries().slice(0, 1) });
-    const f = await forked.run((token) => token, "fork");
+    const bodiless = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    const b = await bodiless.run((token) => token, "lose-body");
+    expect(b.status, b.output).toBe(1);
+    expect(b.output).toContain(`anchor-mainnet: the node holds no body for its final block 501 (${"ab".repeat(32)})`);
+    expect(bodiless.results()).toBeNull();
+  });
+
+  it("records nothing while the indexer places an anchor in a block other than the node's final block at that height, sending nothing again", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    let late = false;
+    const f = await m.run(
+      (token) => token,
+      "fork",
+      (output) => {
+        if (!late && output.includes("settling git-head afresh from the chain")) {
+          late = true;
+          m.advance(11 * MINUTE);
+        }
+      },
+    );
     expect(f.status, f.output).toBe(1);
-    expect(f.output).toContain(`anchor-mainnet: the node's final block 501 is ${"00".repeat(32)}, not ${"ab".repeat(32)}, where the indexer places anchor ${forked.sent()[0]}`);
-    expect(forked.results()).toBeNull();
+    const [sent] = m.sent();
+    expect(f.output).toContain(`the node's final block 501 is ${"00".repeat(32)}, not ${"ab".repeat(32)}; settling git-head afresh from the chain...`);
+    expect(f.output).toContain(`anchor-mainnet: the node's final block 501 is ${"00".repeat(32)}, not ${"ab".repeat(32)}, where the indexer places anchor ${sent}`);
+    expect([m.sent(), m.results(), m.journal()]).toEqual([[sent], null, [{ tx_hash: sent, state: "landed" }]]);
+  });
+
+  // A run that recorded nothing because the node had not finalized its anchor's block in time,
+  // which leaves the journal holding the anchor landed in block 501 of BLOCK, as the indexer
+  // placed it then.
+  const landedUnfinal = async (m: ReturnType<typeof offlineAnchors>) => {
+    let late = false;
+    const failed = await m.run(
+      (token) => token,
+      "unfinal",
+      (output) => {
+        if (!late && output.includes("waiting until the node finalizes it")) {
+          late = true;
+          m.advance(11 * MINUTE);
+        }
+      },
+    );
+    expect(failed.output).toContain("block 501 is not final on the node after 10 minutes");
+    expect(m.journal()).toEqual([{ tx_hash: m.sent()[0], state: "landed" }]);
+    return m.sent()[0]!;
+  };
+
+  it("once the node finalized another block where the journal placed a landed anchor, records the block the anchor landed in since, sending nothing again", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    const sent = await landedUnfinal(m);
+    const relanded = "ef".repeat(32);
+    m.update({ landed: { ...m.chain().landed, [sent]: { ...m.chain().landed[sent]!, height: 640, block: relanded } } });
+
+    const rerun = await m.run((token) => token);
+    expect(rerun.status, rerun.output).toBe(0);
+    expect(rerun.output).toContain("journal          resumed: these bytes landed");
+    expect(rerun.output).toContain(`the node's final block 501 is ${"00".repeat(32)}, not ${"ab".repeat(32)}; settling git-head afresh from the chain...`);
+    expect(rerun.output).toContain(`git-head landed in block 640 (${relanded}); waiting until the node finalizes it...`);
+    expect(m.sent()).toEqual([sent]);
+    expect(m.results()).toEqual([expect.objectContaining({ label: "git-head", txHash: sent, block: 640, blockHash: relanded })]);
+    expect(m.journal()).toEqual([{ tx_hash: sent, state: "landed" }]);
+  });
+
+  it("once the node finalized another block where the journal placed a landed anchor that never landed again, records nothing, retires it when the chain carries it past its TTL plus the margin, and a rerun anchors new bytes", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    const sent = await landedUnfinal(m);
+    const { [sent]: _, ...rest } = m.chain().landed;
+    m.update({ landed: rest });
+
+    let late = false;
+    const orphaned = await m.run(
+      (token) => token,
+      "",
+      (output) => {
+        if (!late && output.includes("settling git-head afresh from the chain")) {
+          late = true;
+          m.advance(10 * MINUTE);
+        }
+      },
+    );
+    expect(orphaned.status, orphaned.output).toBe(1);
+    expect(orphaned.output).toContain("anchor-mainnet: the journalled anchor expired without landing; rerun to prepare new bytes");
+    expect([m.sent(), m.results(), m.journal()]).toEqual([[sent], null, [{ tx_hash: sent, state: "failed" }]]);
+
+    const next = await m.run((token) => token);
+    expect(next.status, next.output).toBe(0);
+    const [, anchored] = m.sent();
+    expect(anchored).not.toBe(sent);
+    expect(m.results()).toEqual([expect.objectContaining({ label: "git-head", txHash: anchored })]);
+    expect(m.journal()).toEqual([
+      { tx_hash: sent, state: "failed" },
+      { tx_hash: anchored, state: "landed" },
+    ]);
   });
 
   it("never sends a journalled anchor again once chain time is past its TTL: confirmed then, it waits until the chain retires it and refuses, and a rerun anchors new bytes", async ({ expect }) => {

@@ -9,9 +9,11 @@
 // syncing once a deploy landed), "fail-save" (the shielded state does not serialize, as
 // ledger-v8 8.1.3 once trapped on preprod), "low-dust" (the wallet holds 0.5 DUST), "unfinal"
 // (the node's finalized head stays below every landed transaction), "foreign-block" (the node's
-// block of the landed transactions carries none of them) or "fork" (the node's block at their
-// heights is another than the indexer's). The FPS mainnet keys an operator loads are the ones the
-// chain file pins, a test's throwaway keys, when it pins any.
+// block of the landed transactions carries none of them), "lose-body" (the node answers for no
+// block's body) or "fork" (the node's block at their heights is another than the indexer's). A
+// test reorganizes the chain by moving a landed transaction to another block, or dropping it.
+// The FPS mainnet keys an operator loads are the ones the chain file pins, a test's throwaway
+// keys, when it pins any.
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { midnightExtrinsic, midnightSource, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
@@ -30,9 +32,10 @@ export interface OfflineChain {
   aheadMs: number;
   // Every transaction handed to the node, in order, whether or not it landed.
   sent: string[];
-  // Each landed transaction, and for a deploy the contract's address and initial state; a contract
-  // a test deployed before its run carries no bytes (raw "").
-  landed: Record<string, { raw: string; height: number; address?: string; state?: string }>;
+  // Each landed transaction, in block BLOCK unless `block` names another, and for a deploy the
+  // contract's address and initial state; a contract a test deployed before its run carries no
+  // bytes (raw "").
+  landed: Record<string, { raw: string; height: number; block?: string; address?: string; state?: string }>;
   // Every transaction whose DUST the wallet was asked to release.
   discarded: string[];
   // Set while the node lacks the indexer's newest block, as a node behind the indexer does.
@@ -73,8 +76,8 @@ if (pinned) {
 // The node reads its ledger in the newest block and in the block every transaction lands in.
 const ledger = ledgerNode({ blocks: [HEAD, BLOCK], contracts: (address) => Object.values(read().landed).find((t) => t.address === address)?.state });
 
-// The node's answer to one JSON-RPC request. Every landed transaction is in block BLOCK at its own
-// height, and the newest block HEAD, at height 1000, is final.
+// The node's answer to one JSON-RPC request. Every landed transaction is in its block at its own
+// height, HEAD is every other block, and the newest block HEAD, at height 1000, is final.
 function nodeAnswer(method: string, params: unknown[] = []) {
   const chain = read();
   const identity = NETWORK_IDENTITY[chain.network];
@@ -84,14 +87,17 @@ function nodeAnswer(method: string, params: unknown[] = []) {
   if (method === "state_getRuntimeVersion") return { result: { specVersion: 1000300 } };
   if (method === "chain_getBlockHash") {
     if (params[0] === 0) return { result: `0x${identity.genesis}` };
-    if (landed.some((t) => t.height === params[0])) return { result: `0x${FAULTS.has("fork") ? HEAD : BLOCK}` };
+    const at = landed.find((t) => t.height === params[0]);
+    if (at) return { result: `0x${FAULTS.has("fork") ? HEAD : (at.block ?? BLOCK)}` };
     return { result: chain.nodeLags ? null : `0x${HEAD}` };
   }
   if (method === "chain_getFinalizedHead") return { result: `0x${HEAD}` };
   if (method === "chain_getHeader" && params[0] === `0x${HEAD}`) return { result: { number: FAULTS.has("unfinal") ? "0x0" : "0x3e8" } };
-  if (method === "chain_getBlock" && params[0] === `0x${BLOCK}`) {
-    const carried = FAULTS.has("foreign-block") ? [] : landed.map((t) => `0x${hex(midnightExtrinsic(new Uint8Array(Buffer.from(t.raw, "hex"))))}`);
-    return { result: { block: { extrinsics: carried } } };
+  if (method === "chain_getBlock") {
+    const carried = landed.filter((t) => `0x${t.block ?? BLOCK}` === params[0]);
+    if (carried.length === 0 || FAULTS.has("lose-body")) return { result: null };
+    const extrinsics = FAULTS.has("foreign-block") ? [] : carried.map((t) => `0x${hex(midnightExtrinsic(new Uint8Array(Buffer.from(t.raw, "hex"))))}`);
+    return { result: { block: { extrinsics } } };
   }
   if (method === "state_getStorage" && params[1] === `0x${HEAD}`) {
     const now = Buffer.alloc(8);
@@ -111,7 +117,7 @@ const indexer = {
       throw new Error("offline indexer: HTTP 502: Bad Gateway");
     }
     const actions = t.address === undefined ? [] : [{ kind: "ContractDeploy" as const, address: t.address, state: t.state! }];
-    return [{ hash, raw: t.raw, block: { height: t.height, hash: BLOCK, timestamp: Date.now() }, status: "SUCCESS", contractActions: actions }];
+    return [{ hash, raw: t.raw, block: { height: t.height, hash: t.block ?? BLOCK, timestamp: Date.now() }, status: "SUCCESS", contractActions: actions }];
   },
   async head() {
     return { height: 1000, hash: HEAD, timestamp: Date.now() };

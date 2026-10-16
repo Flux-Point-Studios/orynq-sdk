@@ -13,7 +13,9 @@
 //   whenever confirming an anchor may send bytes.
 // For each entry in order it prints the exact summary of the final, balanced bytes and sends them
 // only after the token it shows, which names their transaction hash, is typed at that terminal.
-// It then reads the anchor back from the node, final and carrying exactly those bytes, and appends
+// It then reads the anchor back from the node, final and carrying exactly those bytes, in the block
+// the node's finalized chain holds where the journal places it (where the node finalized another
+// block there, the journal settles the anchor afresh from the chain first), and appends
 // what anyone may know of it (label, kind, transaction, block, commitment, kind 2's attribute,
 // registry, author key) to the results file. An anchor the journal still holds, as after a run
 // that failed between its broadcast and its readback, is resumed as deploy-mainnet resumes a
@@ -25,7 +27,18 @@
 import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { includedTransactionIndex, writePrivateFile, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { anchorSummary, assertFpsRegistry, provingService, readAnchorPlan, registryOperator, registryStateOnNode, type AnchorReceipt } from "../src/index.js";
+import { chainView } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
+import {
+  anchorSummary,
+  assertFpsRegistry,
+  provingService,
+  readAnchorPlan,
+  registryOperator,
+  registryStateOnNode,
+  type AnchorReceipt,
+  type PreparedAnchor,
+  type RegistryOperator,
+} from "../src/index.js";
 import { DEPLOY_JOURNAL, STATE, home, mainnetScript } from "./mainnet-session.js";
 
 const SECRETS = `${home}/.secrets/orynq-midnight-mainnet`;
@@ -57,24 +70,49 @@ interface Recorded {
 
 const FINALITY_MINUTES = 10;
 
-// The node's word that the anchor's block is final and carries exactly its bytes: its finalized
-// head is at or past the block, its block at that height is the one the indexer named, and that
-// block's body holds the bytes as exactly one bare Midnight.send_mn_transaction. verifyMidnightAnchor
-// shows finality from a trusted GRANDPA checkpoint instead of the node's word.
-async function finalOnNode(source: MidnightSource, label: string, { blockHeight, blockHash, txHash }: AnchorReceipt, bytes: Uint8Array) {
-  const until = Date.now() + FINALITY_MINUTES * 60_000;
-  process.stdout.write(`\n${label} landed in block ${blockHeight} (${blockHash}); waiting until the node finalizes it...\n`);
+// The anchor as the node holds it final: the block the node's finalized chain holds at the
+// anchor's height is the one the journal names, and that block's body holds the bytes as exactly
+// one bare Midnight.send_mn_transaction. While the finalized chain holds another block there, the
+// journal settles the anchor afresh from the chain (operator.relocate): into the block it landed
+// in since, which is then awaited the same way, or out of the journal once the chain carried it
+// past its TTL unseen. verifyMidnightAnchor shows finality from a trusted GRANDPA checkpoint
+// instead of the node's word.
+async function finalOnNode(source: MidnightSource, operator: RegistryOperator, label: string, prepared: PreparedAnchor, landed: AnchorReceipt): Promise<AnchorReceipt> {
+  const chain = chainView(source, "mainnet");
+  const awaiting = ({ blockHeight, blockHash }: AnchorReceipt) => {
+    process.stdout.write(`\n${label} landed in block ${blockHeight} (${blockHash}); waiting until the node finalizes it...\n`);
+    return Date.now() + FINALITY_MINUTES * 60_000;
+  };
+  let receipt = landed;
+  let until = awaiting(receipt);
+  let told: string | null = null;
   for (;;) {
-    const head = await source.node.call<{ number: string }>("chain_getHeader", [await source.node.call<string>("chain_getFinalizedHead")]);
-    if (Number(head.number) >= blockHeight) break;
-    if (Date.now() > until) throw new Error(`block ${blockHeight} is not final on the node after ${FINALITY_MINUTES} minutes; anchor ${txHash} landed, and a rerun reads it back`);
+    const final = await chain.finalHash(receipt.blockHeight);
+    if (final === receipt.blockHash) break;
+    if (final !== null) {
+      if (told !== final) process.stdout.write(`the node's final block ${receipt.blockHeight} is ${final}, not ${receipt.blockHash}; settling ${label} afresh from the chain...\n`);
+      told = final;
+      const relocated = await operator.relocate(prepared);
+      if (relocated.blockHash !== receipt.blockHash) {
+        receipt = relocated;
+        until = awaiting(receipt);
+        continue;
+      }
+    }
+    if (Date.now() > until) {
+      throw new Error(
+        final === null
+          ? `block ${receipt.blockHeight} is not final on the node after ${FINALITY_MINUTES} minutes; anchor ${receipt.txHash} landed, and a rerun reads it back`
+          : `the node's final block ${receipt.blockHeight} is ${final}, not ${receipt.blockHash}, where the indexer places anchor ${receipt.txHash}`,
+      );
+    }
     await new Promise((resolve) => setTimeout(resolve, 3_000));
   }
-  const canonical = (await source.node.call<string>("chain_getBlockHash", [blockHeight])).replace(/^0x/, "");
-  if (canonical !== blockHash) throw new Error(`the node's final block ${blockHeight} is ${canonical}, not ${blockHash}, where the indexer places anchor ${txHash}`);
-  const { block } = await source.node.call<{ block: { extrinsics: string[] } }>("chain_getBlock", [`0x${blockHash}`]);
-  const extrinsics = block.extrinsics.map((e) => new Uint8Array(Buffer.from(e.replace(/^0x/, ""), "hex")));
-  if (includedTransactionIndex(extrinsics, bytes) === null) throw new Error(`the node's block ${blockHeight} does not carry the anchor's bytes as exactly one Midnight.send_mn_transaction`);
+  const body = await source.node.call<{ block: { extrinsics: string[] } } | null>("chain_getBlock", [`0x${receipt.blockHash}`]);
+  if (body === null) throw new Error(`the node holds no body for its final block ${receipt.blockHeight} (${receipt.blockHash})`);
+  const extrinsics = body.block.extrinsics.map((e) => new Uint8Array(Buffer.from(e.replace(/^0x/, ""), "hex")));
+  if (includedTransactionIndex(extrinsics, prepared.bytes) === null) throw new Error(`the node's block ${receipt.blockHeight} does not carry the anchor's bytes as exactly one Midnight.send_mn_transaction`);
+  return receipt;
 }
 
 await run(async (connect) => {
@@ -121,8 +159,7 @@ await run(async (connect) => {
       requireDustFloor(dust, resumed);
       const prepared = resumed ?? (await operator.prepare(planned));
       await confirm(prepared, anchorSummary({ chain, wallet: wallet.addresses, dust, label: planned.label, prepared }), () => operator.discard(prepared));
-      const receipt = await operator.submit(prepared);
-      await finalOnNode(source, planned.label, receipt, prepared.bytes);
+      const receipt = await finalOnNode(source, operator, planned.label, prepared, await operator.submit(prepared));
       record({
         label: planned.label,
         kind: receipt.kind,
