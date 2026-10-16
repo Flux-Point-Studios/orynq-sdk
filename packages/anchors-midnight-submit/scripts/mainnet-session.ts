@@ -22,6 +22,8 @@ import {
 } from "../src/index.js";
 
 export const home = homedir();
+// Where the FPS mainnet keys and the deploy wallet's mnemonic live.
+export const SECRETS = `${home}/.secrets/orynq-midnight-mainnet`;
 // Where the mainnet scripts keep their journals and results: deploy-mainnet journals the deploy at
 // DEPLOY_JOURNAL, where anchor-mainnet reads which registry FPS deployed.
 export const STATE = `${home}/.local/state/orynq-midnight`;
@@ -54,7 +56,7 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
 
   type Flag = F | "mnemonic" | "wallet-record" | "blockfrost" | "zk" | "dust-floor";
   const defaults: Record<string, string | undefined> = {
-    mnemonic: `${home}/.secrets/orynq-midnight-mainnet/mnemonic.txt`,
+    mnemonic: `${SECRETS}/mnemonic.txt`,
     "wallet-record": `${home}/work/orynq-midnight-mainnet-wallet.json`,
     blockfrost: `${home}/.secrets/blockfrost-midnight-mainnet.project_id`,
     zk: process.env.MIDNIGHT_PP ?? `${home}/.cache/orynq-midnight/zk`,
@@ -64,9 +66,14 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
   const given = new Map<string, string>();
   const argv = process.argv.slice(2);
   for (let i = 0; i < argv.length; i += 2) {
-    if (!argv[i]!.startsWith("--") || argv[i + 1] === undefined) fail(`unexpected argument ${argv[i]}`);
-    if (!Object.hasOwn(defaults, argv[i]!.slice(2))) fail(`unknown flag ${argv[i]}`);
-    given.set(argv[i]!.slice(2), argv[i + 1]!);
+    const [flag, value] = [argv[i]!, argv[i + 1]];
+    if (!flag.startsWith("--")) fail(`unexpected argument ${flag}`);
+    const name = flag.slice(2);
+    if (!Object.hasOwn(defaults, name)) fail(`unknown flag ${flag}`);
+    if (value === undefined) fail(`${flag} needs a value`);
+    if (value!.startsWith("--")) fail(`${flag} needs a value, not the flag ${value}`);
+    if (given.has(name)) fail(`${flag} is given twice`);
+    given.set(name, value!);
   }
   for (const [flag, fallback] of Object.entries(defaults)) if (fallback === undefined && !given.has(flag)) fail(`--${flag} is required`);
   const option = (flag: Flag): string => given.get(flag) ?? defaults[flag]!;
@@ -78,35 +85,41 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
     option,
 
     // Runs `body`, which connects to mainnet when it is ready to, closes whatever wallet it synced
-    // on every way out, and exits: 0 once `body` returned, 1 with its error. Every refusal in
-    // `body` throws, since exiting from inside it would leave what it opened open.
+    // on every way out, and exits: 0 once `body` returned and every wallet closed, 1 with `body`'s
+    // error followed by any wallet's failure to close. Every refusal in `body` throws, since
+    // exiting from inside it would leave what it opened open.
     async run(body: (connect: () => Promise<Mainnet>) => Promise<void>): Promise<never> {
       const opened: OperatorWallet[] = [];
+      const failures: string[] = [];
       try {
-        try {
-          await body(async () => {
-            const endpoints = networkEndpoints("mainnet", { blockfrostProjectIdFile: option("blockfrost") });
-            const source = midnightSource(endpoints);
-            const chain = await assertChainIdentity(source, "mainnet");
-            return {
-              source,
-              chain,
-              async syncWallet() {
-                const expectedAddresses = (JSON.parse(readFileSync(option("wallet-record"), "utf8")) as { addresses: { unshielded: string; shielded: string; dust: string } }).addresses;
-                process.stdout.write(`${chain.chain}, runtime ${chain.specVersion}, ledger ${chain.ledgerVersion}. Syncing the deploy wallet...\n`);
-                const wallet = await openWallet({ network: "mainnet", mnemonicFile: option("mnemonic"), endpoints, source, zkDir: option("zk"), expectedAddresses });
-                opened.push(wallet);
-                await wallet.waitForSync(3_600_000);
-                return wallet;
-              },
-            };
-          });
-        } finally {
-          for (const wallet of opened) await wallet.close();
-        }
+        await body(async () => {
+          const endpoints = networkEndpoints("mainnet", { blockfrostProjectIdFile: option("blockfrost") });
+          const source = midnightSource(endpoints);
+          const chain = await assertChainIdentity(source, "mainnet");
+          return {
+            source,
+            chain,
+            async syncWallet() {
+              const expectedAddresses = (JSON.parse(readFileSync(option("wallet-record"), "utf8")) as { addresses: { unshielded: string; shielded: string; dust: string } }).addresses;
+              process.stdout.write(`${chain.chain}, runtime ${chain.specVersion}, ledger ${chain.ledgerVersion}. Syncing the wallet...\n`);
+              const wallet = await openWallet({ network: "mainnet", mnemonicFile: option("mnemonic"), endpoints, source, zkDir: option("zk"), expectedAddresses });
+              opened.push(wallet);
+              await wallet.waitForSync(3_600_000);
+              return wallet;
+            },
+          };
+        });
       } catch (error) {
-        fail((error as Error).message);
+        failures.push((error as Error).message);
       }
+      for (const wallet of opened) {
+        try {
+          await wallet.close();
+        } catch (error) {
+          failures.push(`closing the wallet failed: ${(error as Error).message}`);
+        }
+      }
+      if (failures.length > 0) fail(failures.join("; "));
       process.exit(0);
     },
 

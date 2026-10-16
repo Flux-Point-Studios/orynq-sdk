@@ -369,6 +369,18 @@ describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
     expect(m.journal()).toEqual([{ tx_hash: sent, state: "landed" }]);
   });
 
+  it("reports the run's own failure when closing the wallet fails too, and that failure alone otherwise", async ({ expect }) => {
+    const m = offlineMainnet();
+    const both = await m.run((token) => token, "refuse-broadcast,fail-close");
+    expect(both.status, both.output).toBe(1);
+    expect(both.output).toContain("deploy-mainnet: offline node: HTTP 403: Forbidden; closing the wallet failed: offline wallet: the facade did not stop");
+    const closing = await m.run((token) => token, "fail-close");
+    expect(closing.status, closing.output).toBe(1);
+    expect(closing.output).toContain("deployed and read back from the node");
+    expect(closing.output).toContain("deploy-mainnet: closing the wallet failed: offline wallet: the facade did not stop");
+    expect(m.closes()).toEqual({ wallet: 2, journalLeftOpen: false });
+  });
+
   it("discards the prepared bytes and sends nothing when anything but the token is typed", async ({ expect }) => {
     const m = offlineMainnet();
     const r = await m.run(() => "yes");
@@ -639,12 +651,16 @@ describe("scripts/anchor-mainnet.ts", () => {
     expect(r.out).toMatch(/anchor-mainnet: ENOENT: no such file or directory, open '\/nonexistent\/plan\.json'/);
   });
 
-  it("refuses an unknown flag and a missing plan before reading anything", async () => {
+  it("refuses an unknown flag, a missing plan, a flag whose value is another flag and a flag given twice before reading anything", async () => {
     const typo = await runMainnet("anchor-mainnet", withoutClaudeCode(), "pty", [...ANCHOR_NOWHERE, "--dust-flor", "50"]);
     expect([typo.code, typo.out]).toEqual([1, expect.stringContaining("anchor-mainnet: unknown flag --dust-flor")]);
     const planless = await runMainnet("anchor-mainnet", withoutClaudeCode(), "pty", NOWHERE);
     expect([planless.code, planless.out]).toEqual([1, expect.stringContaining("anchor-mainnet: --plan is required")]);
-    expect(typo.out + planless.out).not.toMatch(/nonexistent/);
+    const valueless = await runMainnet("anchor-mainnet", withoutClaudeCode(), "pty", ["--plan", "--journal", "/nonexistent/journal.sqlite"]);
+    expect([valueless.code, valueless.out]).toEqual([1, expect.stringContaining("anchor-mainnet: --plan needs a value, not the flag --journal")]);
+    const twice = await runMainnet("anchor-mainnet", withoutClaudeCode(), "pty", [...ANCHOR_NOWHERE, "--dust-floor", "50", "--dust-floor", "5"]);
+    expect([twice.code, twice.out]).toEqual([1, expect.stringContaining("anchor-mainnet: --dust-floor is given twice")]);
+    expect(typo.out + planless.out + valueless.out + twice.out).not.toMatch(/nonexistent/);
   });
 });
 
@@ -750,6 +766,18 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
     expect(lost.status, lost.output).toBe(1);
     expect(lost.output).toContain(`anchor-mainnet: ${m.resultsPath} records git-head as ${first}, which the journal does not hold landed for this entry of the plan`);
     expect([lost.tokens, m.sent()]).toEqual([[], [first, second]]);
+  });
+
+  it("adds each anchor to the results file as it stands then, keeping the rows another run recorded meanwhile", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    const other = { label: "another-run", kind: 1, txHash: "77".repeat(32), block: 9, blockHash: "88".repeat(32), commitment: "99".repeat(32), registry: REGISTRY, author: m.author };
+    const r = await m.run((token) => {
+      writeFileSync(m.resultsPath, JSON.stringify([other]), { mode: 0o600 });
+      return token;
+    });
+    expect(r.status, r.output).toBe(0);
+    expect(m.results()).toEqual([other, expect.objectContaining({ label: "git-head", txHash: m.sent()[0] })]);
+    expect(r.output).toContain(`2 anchors are recorded in ${m.resultsPath}`);
   });
 
   it("discards the prepared bytes and sends and records nothing when anything but the token is typed", async ({ expect }) => {

@@ -10,17 +10,18 @@
 //   the node holds exactly the immutable registry at the plan's address (committee [],
 //   threshold 1, counter 0, the pinned verifier keys);
 //   the mnemonic derives exactly the recorded wallet, which holds at least the DUST floor
-//   whenever confirming an anchor may send bytes.
+//   whenever confirming an anchor may send bytes;
+//   the author and salt keys are the FPS mainnet keys (MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS).
 // For each entry in order it prints the exact summary of the final, balanced bytes and sends them
 // only after the token it shows, which names their transaction hash, is typed at that terminal.
 // It then reads the anchor back from the node, final and carrying exactly those bytes, in the block
 // the node's finalized chain holds where the journal places it (where the node finalized another
-// block there, the journal settles the anchor afresh from the chain first), and appends
-// what anyone may know of it (label, kind, transaction, block, commitment, kind 2's attribute,
-// registry, author key) to the results file. An anchor the journal still holds, as after a run
-// that failed between its broadcast and its readback, is resumed as deploy-mainnet resumes a
-// deploy, and an entry the results file records is not sent again. The gates stop accidents, not
-// code running as deci; see deploy-mainnet.
+// block there, the journal settles the anchor afresh from the chain first), and adds what anyone
+// may know of it (label, kind, transaction, block, commitment, kind 2's attribute, registry,
+// author key) to the results file as that file then stands. An anchor the journal still holds,
+// as after a run that failed between its broadcast and its readback, is resumed as deploy-mainnet
+// resumes a deploy, and an entry the results file records is not sent again. The gates stop
+// accidents, not code running as deci; see deploy-mainnet.
 //   node --import tsx scripts/anchor-mainnet.ts --plan PLAN.json [--deploy-journal F] [--mnemonic F]
 //        [--wallet-record F] [--blockfrost F] [--zk DIR] [--journal F] [--dust-floor DUST]
 //        [--author-key F] [--salt-key F] [--results F]
@@ -39,9 +40,8 @@ import {
   type PreparedAnchor,
   type RegistryOperator,
 } from "../src/index.js";
-import { DEPLOY_JOURNAL, STATE, home, mainnetScript } from "./mainnet-session.js";
+import { DEPLOY_JOURNAL, SECRETS, STATE, mainnetScript } from "./mainnet-session.js";
 
-const SECRETS = `${home}/.secrets/orynq-midnight-mainnet`;
 const { option, run, requireDustFloor, confirm } = mainnetScript({
   name: "anchor-mainnet",
   noun: "anchor",
@@ -119,13 +119,19 @@ await run(async (connect) => {
   const plan = readAnchorPlan(option("plan"));
   assertFpsRegistry("mainnet", plan.registry, option("deploy-journal"));
   const resultsPath = option("results");
-  const results: Recorded[] = existsSync(resultsPath) ? JSON.parse(readFileSync(resultsPath, "utf8")) : [];
-  if (!Array.isArray(results)) throw new Error(`${resultsPath} does not hold a list of anchors`);
-  // Replaces the results file only once the new list is wholly written and flushed, owner-only.
+  // The results file as it stands now: another run may have added to it since this one started.
+  const recorded = (): Recorded[] => {
+    const rows: unknown = existsSync(resultsPath) ? JSON.parse(readFileSync(resultsPath, "utf8")) : [];
+    if (!Array.isArray(rows)) throw new Error(`${resultsPath} does not hold a list of anchors`);
+    return rows;
+  };
+  // A results file that is not a list is refused before the chain is read.
+  recorded();
+  // Adds `row` to the results file as it stands, replacing the file only once the new list is
+  // wholly written and flushed, owner-only.
   const record = (row: Recorded) => {
-    results.push(row);
     const next = `${resultsPath}.${process.pid}.next`;
-    writePrivateFile(next, JSON.stringify(results, null, 1));
+    writePrivateFile(next, JSON.stringify([...recorded(), row], null, 1));
     renameSync(next, resultsPath);
   };
 
@@ -147,7 +153,7 @@ await run(async (connect) => {
   try {
     for (const planned of plan.entries) {
       const resumed = await operator.journalled(planned);
-      const done = results.find((row) => row.label === planned.label);
+      const done = recorded().find((row) => row.label === planned.label);
       if (done) {
         if (resumed?.journal?.state !== "landed" || resumed.txHash !== done.txHash) {
           throw new Error(`${resultsPath} records ${planned.label} as ${done.txHash}, which the journal does not hold landed for this entry of the plan`);
@@ -176,5 +182,6 @@ await run(async (connect) => {
   } finally {
     operator.close();
   }
-  process.stdout.write(`\n${results.length} anchor${results.length === 1 ? " is" : "s are"} recorded in ${resultsPath}; send that file back.\n`);
+  const count = recorded().length;
+  process.stdout.write(`\n${count} anchor${count === 1 ? " is" : "s are"} recorded in ${resultsPath}; send that file back.\n`);
 });

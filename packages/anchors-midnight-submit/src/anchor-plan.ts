@@ -4,7 +4,7 @@ import type { AnchorRequest } from "./operator.js";
 
 export type PlannedAnchor = AnchorRequest & { label: string };
 
-// What scripts/anchor-mainnet.ts writes: the registry and the anchors, in order.
+// What scripts/anchor-mainnet.ts reads: the registry and the anchors it writes there, in order.
 export interface AnchorPlan {
   registry: string;
   entries: PlannedAnchor[];

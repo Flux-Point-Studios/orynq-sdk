@@ -7,7 +7,8 @@
 // refuses every transaction that deploys nothing with Custom error: 170, InvalidDustSpendProof),
 // "lose-read" (the first read of a landed transaction fails), "lose-sync" (the wallet stops
 // syncing once a deploy landed), "fail-save" (the shielded state does not serialize, as
-// ledger-v8 8.1.3 once trapped on preprod), "low-dust" (the wallet holds 0.5 DUST), "unfinal"
+// ledger-v8 8.1.3 once trapped on preprod), "fail-close" (closing the wallet throws), "low-dust"
+// (the wallet holds 0.5 DUST), "unfinal"
 // (the node's finalized head stays below every landed transaction), "foreign-block" (the node's
 // block of the landed transactions carries none of them), "lose-body" (the node answers for no
 // block's body) or "fork" (the node's block at their heights is another than the indexer's). A
@@ -217,6 +218,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     async close() {
       const chain = read();
       write({ ...chain, walletCloses: (chain.walletCloses ?? 0) + 1 });
+      if (FAULTS.has("fail-close")) throw new Error("offline wallet: the facade did not stop");
       return saveState();
     },
   };
