@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -23,11 +23,12 @@ import {
 import { chainView, openJournal } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { MAINNET_AUTHOR_KEYS } from "../src/custody.js";
 import { NETWORK_IDENTITY, anchorSummary, assertChainIdentity, confirmOnTerminal, confirmationToken, deploySummary } from "../src/preflight.js";
-import type { PreparedDeploy } from "../src/deployer.js";
+import { registryDeployer, type PreparedDeploy } from "../src/deployer.js";
 import type { PreparedAnchor } from "../src/operator.js";
 import { batchOver, ledgerNode } from "../../anchors-midnight/src/__tests__/ledger-node.js";
-import { fresh, hex, mutableDeploy } from "./fakes.js";
+import { chain, fresh, hex, mutableDeploy, wallet } from "./fakes.js";
 import type { OfflineChain } from "./offline.js";
+import { prover } from "./prover.js";
 
 const source = (answers: Record<string, unknown>) =>
   ({
@@ -601,7 +602,19 @@ describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
 
 // Every anchor-mainnet input is a path that does not exist, so a run that gets past the gates
 // stops at its first read, the plan, before any network request.
-const ANCHOR_NOWHERE = [...NOWHERE, "--plan", "/nonexistent/plan.json", "--author-key", "/nonexistent/author.key", "--salt-key", "/nonexistent/salt.key", "--results", "/nonexistent/results.json"];
+const ANCHOR_NOWHERE = [
+  ...NOWHERE,
+  "--plan",
+  "/nonexistent/plan.json",
+  "--deploy-journal",
+  "/nonexistent/deploy.sqlite",
+  "--author-key",
+  "/nonexistent/author.key",
+  "--salt-key",
+  "/nonexistent/salt.key",
+  "--results",
+  "/nonexistent/results.json",
+];
 
 describe("scripts/anchor-mainnet.ts", () => {
   it("refuses before reading anything when its input and output are not a terminal", async () => {
@@ -640,22 +653,49 @@ const planEntries = () => [
   { label: "git-head", kind: 1, rootHash: randomHash(), manifestHash: randomHash(), merkleRoot: randomHash() },
   { label: "hidden-suite", kind: 2, rootHash: randomHash(), manifestHash: randomHash(), merkleRoot: randomHash(), attribute: randomHash() },
 ];
-const REGISTRY = buildRegistryDeploy({ networkId: "mainnet", ttl: new Date(Date.now() + 3_600_000) }).address;
+// FPS's mainnet registry as deploy-mainnet leaves its journal: deployed through registryDeployer,
+// sent and landed. Every anchor test copies that journal as its deploy journal.
+const FPS_DEPLOY = await (async () => {
+  const net = chain();
+  const journalPath = fresh("mainnet-deploy.sqlite");
+  const deployer = registryDeployer({ network: "mainnet", wallet: wallet(net, () => journalPath), source: net.source, prover, journalPath, pollMillis: 1 });
+  const { address } = await deployer.submit(await deployer.prepare());
+  deployer.close();
+  return { journalPath, address };
+})();
+const REGISTRY = FPS_DEPLOY.address;
 type PlanEntry = ReturnType<typeof planEntries>[number] & { attribute?: string };
 
-// anchor-mainnet over an offline mainnet whose node holds `state` at REGISTRY, deployed before
-// the run, with throwaway author and salt keys it pins as the FPS mainnet keys and a plan of
-// `entries` for `registry`.
-function offlineAnchors({ state = registryInitialState(), entries = planEntries() as unknown[], registry = REGISTRY }: { state?: L.ContractState; entries?: unknown[]; registry?: string } = {}) {
-  const m = offlineMainnet("anchor-mainnet", (root) => ["--plan", `${root}/plan.json`, "--author-key", `${root}/author.key`, "--salt-key", `${root}/salt.key`, "--results", `${root}/state/results.json`]);
+// anchor-mainnet over an offline mainnet whose node holds `state` at REGISTRY (none when null),
+// deployed before the run as FPS's deploy journal records, with throwaway author and salt keys it
+// pins as the FPS mainnet keys and a plan of `entries` for `registry`.
+function offlineAnchors({ state = registryInitialState(), entries = planEntries() as unknown[], registry = REGISTRY }: { state?: L.ContractState | null; entries?: unknown[]; registry?: string } = {}) {
+  const m = offlineMainnet("anchor-mainnet", (root) => [
+    "--plan",
+    `${root}/plan.json`,
+    "--deploy-journal",
+    `${root}/state/deploy.sqlite`,
+    "--author-key",
+    `${root}/author.key`,
+    "--salt-key",
+    `${root}/salt.key`,
+    "--results",
+    `${root}/state/results.json`,
+  ]);
+  const deployJournal = `${m.root}/state/deploy.sqlite`;
+  mkdirSync(`${m.root}/state`, { mode: 0o700 });
+  copyFileSync(FPS_DEPLOY.journalPath, deployJournal);
+  chmodSync(deployJournal, 0o600);
   const author = createAuthorKeyFile(`${m.root}/author.key`);
   const saltKeyId = createSaltKeyFile(`${m.root}/salt.key`);
-  m.update({ landed: { ["d0".repeat(32)]: { raw: "", height: 400, address: REGISTRY, state: hex(state.serialize()) } }, fpsKeys: { authorKeys: [author], saltKeyIds: [saltKeyId] } });
+  const deployed = state === null ? {} : { ["d0".repeat(32)]: { raw: "", height: 400, address: REGISTRY, state: hex(state.serialize()) } };
+  m.update({ landed: deployed, fpsKeys: { authorKeys: [author], saltKeyIds: [saltKeyId] } });
   writeFileSync(`${m.root}/plan.json`, JSON.stringify({ registry, entries }));
   const resultsPath = `${m.root}/state/results.json`;
   return {
     ...m,
     entries: entries as PlanEntry[],
+    deployJournal,
     author,
     saltKeyId,
     saltKey: readAuthorSecret(`${m.root}/salt.key`),
@@ -820,12 +860,29 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
     expect(r.output).toContain("anchor-mainnet: threshold must be exactly 1, got 0");
     expect([r.tokens, r.output.includes("Syncing"), m.closes().wallet, m.sent()]).toEqual([[], false, 0, []]);
 
-    const nowhere = "cd".repeat(32);
-    const absent = offlineAnchors({ registry: nowhere });
+    const absent = offlineAnchors({ state: null });
     const s = await absent.run((token) => token);
     expect(s.status, s.output).toBe(1);
-    expect(s.output).toContain(`anchor-mainnet: the mainnet node holds no contract at ${nowhere}`);
+    expect(s.output).toContain(`anchor-mainnet: the mainnet node holds no contract at ${REGISTRY}`);
     expect([s.tokens, s.output.includes("Syncing"), absent.closes().wallet, absent.sent()]).toEqual([[], false, 0, []]);
+  });
+
+  it("refuses a registry that is not FPS's deployment, though the node holds the immutable registry there, before reading the chain or the wallet", async ({ expect }) => {
+    const lookalike = buildRegistryDeploy({ networkId: "mainnet", ttl: new Date(Date.now() + 3_600_000) }).address;
+    const m = offlineAnchors({ registry: lookalike });
+    m.update({ landed: { ...m.chain().landed, ["d1".repeat(32)]: { raw: "", height: 401, address: lookalike, state: hex(registryInitialState().serialize()) } } });
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain(
+      `anchor-mainnet: registry ${lookalike} is not the FPS mainnet registry: MIDNIGHT_REGISTRIES pins no generation there, and ${m.deployJournal} holds the landed deploy of ${REGISTRY}`,
+    );
+    expect([r.tokens, r.output.includes("holds the immutable registry"), m.closes().wallet, m.sent()]).toEqual([[], false, 0, []]);
+
+    rmSync(m.deployJournal);
+    const s = await m.run((token) => token);
+    expect(s.status, s.output).toBe(1);
+    expect(s.output).toContain(`anchor-mainnet: registry ${lookalike} is not the FPS mainnet registry: MIDNIGHT_REGISTRIES pins no generation there, and ${m.deployJournal} holds no landed mainnet registry deploy`);
+    expect([s.tokens, existsSync(m.deployJournal), m.sent()]).toEqual([[], false, []]);
   });
 
   it("refuses an author key or a salt key that is not an FPS mainnet key as the operator loads it, before any byte", async ({ expect }) => {

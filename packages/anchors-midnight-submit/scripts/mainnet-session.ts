@@ -22,6 +22,10 @@ import {
 } from "../src/index.js";
 
 export const home = homedir();
+// Where the mainnet scripts keep their journals and results: deploy-mainnet journals the deploy at
+// DEPLOY_JOURNAL, where anchor-mainnet reads which registry FPS deployed.
+export const STATE = `${home}/.local/state/orynq-midnight`;
+export const DEPLOY_JOURNAL = `${STATE}/mainnet-deploy.sqlite`;
 
 export interface Mainnet {
   source: MidnightSource;

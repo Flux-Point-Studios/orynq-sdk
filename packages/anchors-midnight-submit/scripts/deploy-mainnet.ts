@@ -22,13 +22,13 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { deploySummary, provingService, registryDeployer, registryStateOnNode } from "../src/index.js";
-import { home, mainnetScript } from "./mainnet-session.js";
+import { DEPLOY_JOURNAL, mainnetScript } from "./mainnet-session.js";
 
 const { option, run, requireDustFloor, confirm } = mainnetScript({
   name: "deploy-mainnet",
   noun: "deploy",
   does: "runs a mainnet deploy",
-  flags: { journal: `${home}/.local/state/orynq-midnight/mainnet-deploy.sqlite` },
+  flags: { journal: DEPLOY_JOURNAL },
 });
 
 await run(async (connect) => {

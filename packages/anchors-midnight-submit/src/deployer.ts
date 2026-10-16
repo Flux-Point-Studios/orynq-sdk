@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import {
+  MIDNIGHT_REGISTRIES,
   REGISTRY_CIRCUITS,
   assertRegistryDeployBytes,
   buildRegistryDeploy,
@@ -42,6 +44,30 @@ export interface DeployerOptions {
 
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
+// The journal key of `network`'s registry deploy: one live deploy per network and registry state.
+const deployKey = (network: MidnightNetwork): AnchorKey => ({ network, registry: "registry-deploy", author: "", kind: 0, commitment: sha256(registryInitialState().serialize()), attribute: "" });
+
+// Refuses a registry that is not FPS's on `network`: one MIDNIGHT_REGISTRIES pins, or the one
+// whose deploy the journal at `deployJournal` holds landed, read from the journalled bytes, which
+// must deploy exactly the registry. The same immutable registry deployed by anyone else is
+// refused. The journal is only read: where none is, none is created.
+export function assertFpsRegistry(network: MidnightNetwork, address: string, deployJournal: string): void {
+  if (MIDNIGHT_REGISTRIES[network].some((generation) => generation.address === address)) return;
+  let deployed: string | null = null;
+  if (existsSync(deployJournal)) {
+    const journal = openJournal(deployJournal);
+    try {
+      const row = journal.live(deployKey(network));
+      if (row?.state === "landed") deployed = assertRegistryDeployBytes(row.bytes, "final");
+    } finally {
+      journal.close();
+    }
+  }
+  if (deployed === address) return;
+  const journalled = deployed === null ? `holds no landed ${network} registry deploy` : `holds the landed deploy of ${deployed}`;
+  throw new Error(`registry ${address} is not the FPS ${network} registry: MIDNIGHT_REGISTRIES pins no generation there, and ${deployJournal} ${journalled}`);
+}
+
 // Deploys the immutable registry in two steps, so a human can approve the exact bytes: prepare
 // builds, proves, pays and binds them, and refuses unless they deploy exactly the registry's
 // initial state; submit sends those bytes through the write-ahead journal, at most once per
@@ -51,7 +77,7 @@ export function registryDeployer(options: DeployerOptions) {
   const journal = openJournal(options.journalPath);
   const chain = chainView(source, network);
   const ttlMillis = (options.ttlMinutes ?? 15) * 60_000;
-  const key: AnchorKey = { network, registry: "registry-deploy", author: "", kind: 0, commitment: sha256(registryInitialState().serialize()), attribute: "" };
+  const key = deployKey(network);
 
   const describe = (bytes: Uint8Array, ttl: Date, runtime: number, payer: string | undefined, journal?: PreparedDeploy["journal"]): PreparedDeploy => {
     const address = assertRegistryDeployBytes(bytes, "final");

@@ -4,6 +4,8 @@
 // the confirmation and the way out it shares with deploy-mainnet):
 //   the process carries no Claude Code environment, and its input and output are a terminal;
 //   the plan names exactly a registry and its entries, with no field it does not define;
+//   that registry is FPS's: one MIDNIGHT_REGISTRIES pins, or the one whose deploy deploy-mainnet's
+//   journal holds landed, so the same immutable registry deployed by anyone else is refused;
 //   the node is Midnight Mainnet (system_chain, genesis) on runtime 1000300;
 //   the node holds exactly the immutable registry at the plan's address (committee [],
 //   threshold 1, counter 0, the pinned verifier keys);
@@ -17,16 +19,15 @@
 // that failed between its broadcast and its readback, is resumed as deploy-mainnet resumes a
 // deploy, and an entry the results file records is not sent again. The gates stop accidents, not
 // code running as deci; see deploy-mainnet.
-//   node --import tsx scripts/anchor-mainnet.ts --plan PLAN.json [--mnemonic F] [--wallet-record F]
-//        [--blockfrost F] [--zk DIR] [--journal F] [--dust-floor DUST] [--author-key F] [--salt-key F]
-//        [--results F]
+//   node --import tsx scripts/anchor-mainnet.ts --plan PLAN.json [--deploy-journal F] [--mnemonic F]
+//        [--wallet-record F] [--blockfrost F] [--zk DIR] [--journal F] [--dust-floor DUST]
+//        [--author-key F] [--salt-key F] [--results F]
 import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { includedTransactionIndex, writePrivateFile, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { anchorSummary, provingService, readAnchorPlan, registryOperator, registryStateOnNode, type AnchorReceipt } from "../src/index.js";
-import { home, mainnetScript } from "./mainnet-session.js";
+import { anchorSummary, assertFpsRegistry, provingService, readAnchorPlan, registryOperator, registryStateOnNode, type AnchorReceipt } from "../src/index.js";
+import { DEPLOY_JOURNAL, STATE, home, mainnetScript } from "./mainnet-session.js";
 
-const STATE = `${home}/.local/state/orynq-midnight`;
 const SECRETS = `${home}/.secrets/orynq-midnight-mainnet`;
 const { option, run, requireDustFloor, confirm } = mainnetScript({
   name: "anchor-mainnet",
@@ -34,6 +35,7 @@ const { option, run, requireDustFloor, confirm } = mainnetScript({
   does: "writes mainnet anchors",
   flags: {
     plan: undefined,
+    "deploy-journal": DEPLOY_JOURNAL,
     journal: `${STATE}/mainnet-anchors.sqlite`,
     "author-key": `${SECRETS}/author-relay.key`,
     "salt-key": `${SECRETS}/salt.key`,
@@ -77,6 +79,7 @@ async function finalOnNode(source: MidnightSource, label: string, { blockHeight,
 
 await run(async (connect) => {
   const plan = readAnchorPlan(option("plan"));
+  assertFpsRegistry("mainnet", plan.registry, option("deploy-journal"));
   const resultsPath = option("results");
   const results: Recorded[] = existsSync(resultsPath) ? JSON.parse(readFileSync(resultsPath, "utf8")) : [];
   if (!Array.isArray(results)) throw new Error(`${resultsPath} does not hold a list of anchors`);
