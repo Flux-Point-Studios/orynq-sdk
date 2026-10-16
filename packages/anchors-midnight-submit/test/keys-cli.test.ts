@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,25 +28,20 @@ describe("the keys CLI an operator runs to create wallets and author keys", () =
     const wallet = await run("new-wallet", mnemonicFile, "preprod");
     expect(wallet.stderr).toBe("");
     expect(wallet.status).toBe(0);
-    expect(JSON.parse(wallet.stdout)).toEqual(walletAddresses(mnemonicFile, "preprod"));
+    expect(wallet.stdout).toBe(`${JSON.stringify(walletAddresses(mnemonicFile, "preprod"), null, 1)}\n`);
 
     const keyFile = join(dir, "author.key");
     const author = await run("new-author", keyFile);
     expect(author.status).toBe(0);
-    expect(author.stdout.trim()).toBe(Buffer.from(authorKey(readAuthorSecret(keyFile))).toString("hex"));
+    expect(author.stderr).toBe("");
+    expect(author.stdout).toBe(`${Buffer.from(authorKey(readAuthorSecret(keyFile))).toString("hex")}\n`);
 
     const saltFile = join(dir, "salt.key");
     const salt = await run("new-salt", saltFile);
     expect(salt.status).toBe(0);
     expect(statSync(saltFile).mode & 0o777).toBe(0o600);
-    expect(salt.stdout.trim()).toBe(Buffer.from(saltKeyId(readAuthorSecret(saltFile))).toString("hex"));
-
-    const words = readFileSync(mnemonicFile, "utf8").trim().split(" ");
-    const secrets = [readFileSync(keyFile, "utf8").trim(), readFileSync(saltFile, "utf8").trim()];
-    for (const out of [wallet.stdout, wallet.stderr, author.stdout, author.stderr, salt.stdout, salt.stderr]) {
-      for (const secret of secrets) expect(out).not.toContain(secret.slice(0, 16));
-      for (const word of words) expect(out.split(/[^a-z]+/)).not.toContain(word);
-    }
+    expect(salt.stderr).toBe("");
+    expect(salt.stdout).toBe(`${Buffer.from(saltKeyId(readAuthorSecret(saltFile))).toString("hex")}\n`);
   });
 
   it("answers whether a mnemonic derives a recorded public wallet, as a boolean", async () => {

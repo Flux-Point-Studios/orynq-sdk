@@ -80,6 +80,20 @@ const run = (script: string, args: string[], env: Record<string, string>) =>
   });
 
 describe("compactc installer", () => {
+  it.each(["COMPACTC_RELEASE_URL", "MIDNIGHT_PARAM_SOURCE"])("fails closed when %s cannot be downloaded", async (source) => {
+    const release = fakeRelease();
+    const dest = temp("download-dest-");
+    const params = temp("download-params-");
+    const r = await run(installerWith(release.pins), [dest, params], {
+      COMPACTC_RELEASE_URL: release.url,
+      MIDNIGHT_PARAM_SOURCE: release.url,
+      [source]: pathToFileURL(join(release.dir, "missing")).href,
+    });
+    expect(r.status).toBe(37);
+    expect(r.stderr).toContain("curl:");
+    expect(execFileSync("find", [dest, params, "-type", "f"], { encoding: "utf8" })).toBe("");
+  });
+
   it("pins compactc 0.31.1 for every published platform and the k=13, 14 and 16 parameters", () => {
     expect(pinned).toContain("e291b4bab4d4e857707008f8b1c25c2b8e0c843f6c737d0ee6c0d9ac69a6bbfb  compactc_v0.31.1_x86_64-unknown-linux-musl.zip");
     expect(pinned).toContain("3054ffa89d7a4dfe24afd31c27ef37e87a95757de0fc24485f335635e26dce57  x86_64-unknown-linux-musl/compactc.bin");

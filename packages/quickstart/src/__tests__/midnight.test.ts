@@ -328,7 +328,7 @@ describe("the orynq bin", () => {
     const r = spawnSync(process.execPath, [join(pkg, "bin", "orynq.mjs"), "verify", "midnight", "00".repeat(32)], { encoding: "utf8", input: "" });
     expect([r.status, r.stderr]).toEqual([
       1,
-      expect.stringContaining("the Midnight commands need @fluxpointstudios/orynq-sdk-anchors-midnight, an optional peer dependency that is not installed"),
+      expect.stringContaining("the Midnight commands need @fluxpointstudios/orynq-sdk-anchors-midnight, an optional peer dependency that is not installed. Midnight is not yet published on npm; use a built orynq-sdk source checkout (see the package README)."),
     ]);
     expect(r.stderr).not.toContain(pkg);
   });

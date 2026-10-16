@@ -63,7 +63,7 @@ export function registerVerifyMidnightAnchor(server: McpServer, _store: TraceSto
         midnight = await import("@fluxpointstudios/orynq-sdk-anchors-midnight");
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ERR_MODULE_NOT_FOUND" && String((error as Error).message).includes(`'${MIDNIGHT_PACKAGE}'`)) {
-          return toolError(`verify_midnight_anchor needs ${MIDNIGHT_PACKAGE}, an optional peer dependency of orynq-mcp that is not installed.`);
+          return toolError(`verify_midnight_anchor needs ${MIDNIGHT_PACKAGE}, an optional peer dependency of orynq-mcp that is not installed. Midnight is not yet published on npm; use a built orynq-sdk source checkout (see the package README).`);
         }
         throw error;
       }

@@ -86,23 +86,34 @@ if [ "$intact" = 0 ]; then
   mkdir "$work/release"
   unzip -q "$work/$zip" -d "$work/release"
   for f in $files; do verify "$work/release/$f" "$platform/$f"; done
+fi
+compiler=$dest/compactc
+[ "$intact" = 1 ] || compiler=$work/release/compactc
+reported=$("$compiler" --version)
+[ "$reported" = "$version" ] || die "compactc reports $reported, expected $version"
+
+private_dir "$params/dust"
+private_dir "$params/dust/9"
+parameters="bls_midnight_2p13 bls_midnight_2p14 bls_midnight_2p16 dust/9/spend.prover dust/9/spend.verifier dust/9/spend.bzkir"
+for name in $parameters; do
+  installed "$params/$name" "$name" && continue
+  fetched=$work/$(basename "$name")
+  curl -sSfL -o "$fetched" "$param_source/$name"
+  verify "$fetched" "$name"
+  chmod 0444 "$fetched"
+done
+
+# Commit files only after all downloads and pins have passed.
+if [ "$intact" = 0 ]; then
   for f in $files; do
     rm -f "$dest/$f"
     cp "$work/release/$f" "$dest/$f"
     chmod 0555 "$dest/$f"
   done
 fi
-reported=$("$dest/compactc" --version)
-[ "$reported" = "$version" ] || die "compactc reports $reported, expected $version"
-
-private_dir "$params/dust"
-private_dir "$params/dust/9"
-for name in bls_midnight_2p13 bls_midnight_2p14 bls_midnight_2p16 dust/9/spend.prover dust/9/spend.verifier dust/9/spend.bzkir; do
-  installed "$params/$name" "$name" && continue
+for name in $parameters; do
   fetched=$work/$(basename "$name")
-  curl -sSfL -o "$fetched" "$param_source/$name"
-  verify "$fetched" "$name"
-  chmod 0444 "$fetched"
+  [ -f "$fetched" ] || continue
   rm -f "$params/$name"
   mv "$fetched" "$params/$name"
 done

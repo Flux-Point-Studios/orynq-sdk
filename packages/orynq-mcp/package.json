@@ -65,7 +65,7 @@
     "vitest": "^4.1.11"
   },
   "peerDependencies": {
-    "@fluxpointstudios/orynq-sdk-anchors-midnight": "workspace:^"
+    "@fluxpointstudios/orynq-sdk-anchors-midnight": "workspace:>=0.1.0 <1.0.0"
   },
   "peerDependenciesMeta": {
     "@fluxpointstudios/orynq-sdk-anchors-midnight": {
