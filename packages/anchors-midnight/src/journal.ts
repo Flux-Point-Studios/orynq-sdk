@@ -33,6 +33,9 @@ export interface ChainView {
   // Whether the node holds a contract at `address` in block `at`: what retires a row whose bytes
   // deploy a contract, asked at the block whose time is past its TTL plus the margin.
   holdsContract(address: string, at: string): Promise<boolean>;
+  // The hash of the block the node's finalized chain holds at `height`, or null while its
+  // finalized head is below `height`.
+  finalHash(height: number): Promise<string | null>;
 }
 
 export interface JournalRow {
@@ -209,6 +212,27 @@ export function openJournal(path: string, { ttlMarginMillis = TTL_MARGIN_MILLIS 
         for (const row of rows) await reconcile(row, chain);
         return rows.map((row) => view(byHash.get(row.tx_hash) as unknown as Row));
       }),
+    // Settles a landed row afresh once the node's finalized chain holds another block at its
+    // height than the one it names: its transaction is not in that block, so the row is pending
+    // again and settled from the chain by its txHash as reconcile settles any, landed where the
+    // indexer now places it, failed once the chain carried it past its TTL plus the margin unseen,
+    // or pending until one of those. Nothing is prepared or broadcast. Returns the row as it then
+    // stands.
+    relocate: (txHash: string, chain: ChainView): Promise<JournalRow> =>
+      serialized(async () => {
+        const row = byHash.get(txHash) as unknown as Row | undefined;
+        if (!row) throw new Error(`the journal holds no transaction ${txHash}`);
+        const network = row.key.slice(0, row.key.indexOf("/"));
+        if (network !== chain.network) throw new Error(`a ${chain.network} chain view settles no ${network} attempt`);
+        if (row.state === "landed" && row.height !== null) {
+          const final = await chain.finalHash(row.height);
+          if (final !== null && final !== row.block_hash) {
+            settle.run("pending", null, null, txHash);
+            await reconcile(byHash.get(txHash) as unknown as Row, chain);
+          }
+        }
+        return view(byHash.get(txHash) as unknown as Row);
+      }),
     history: (key: AnchorKey) => (history.all(keyOf(key)) as unknown as Row[]).map(view),
     // The key's live attempt with the exact bytes it holds, so a caller that lost its own record
     // can resume that attempt instead of preparing one the journal would refuse.
@@ -251,6 +275,16 @@ export function chainView(source: MidnightSource, network: string): ChainView {
     },
     async holdsContract(address, at) {
       return (await contractStateOnNode(source, address, at)) !== null;
+    },
+    async finalHash(height) {
+      const finalized = await source.node.call<string>("chain_getFinalizedHead");
+      const header = await source.node.call<{ number: string } | null>("chain_getHeader", [finalized]);
+      if (header === null) throw new Error(`the node holds no header for its finalized head ${finalized}`);
+      const head = Number(header.number);
+      if (head < height) return null;
+      const hash = await source.node.call<string | null>("chain_getBlockHash", [height]);
+      if (hash === null) throw new Error(`the node holds no block ${height}, below its finalized head ${head}`);
+      return hash.replace(/^0x/, "");
     },
   };
 }

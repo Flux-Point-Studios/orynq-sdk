@@ -38,7 +38,10 @@ export const deployed = (() => {
 // node. Its newest block, the one block whose ledger the node reads besides its best, is as new
 // as the local clock, and `advance` moves both: a deployer stamps its TTLs from that clock. The
 // node refuses bytes whose TTL the chain has passed, and lands the rest. `lag(true)` takes that
-// newest block from the node, as a node behind the indexer lacks it, until `lag(false)`.
+// newest block from the node, as a node behind the indexer lacks it, until `lag(false)`. The
+// node's finalized chain reaches that newest block, at height 1000, and holds each landed
+// transaction's block at its height and an anchorless block at every other; `reorg` moves a
+// landed transaction to another block, or off the chain, as a reorg that orphans its block does.
 export function chain({ spec = 1000300, state = deployed.state, node = "2.1.0" }: { spec?: number; state?: L.ContractState; node?: NodeVersion } = {}) {
   const landed = new Map<string, IndexedTransaction>();
   let lags = false;
@@ -56,6 +59,9 @@ export function chain({ spec = 1000300, state = deployed.state, node = "2.1.0" }
     if (method === "state_getRuntimeVersion") return { specVersion: spec };
     if (method === "midnight_zswapStateRoot" || method === "midnight_contractState") return ledger.call("test", method, params);
     if (method === "chain_getBlockHash" && params[0] === 1000) return lags ? null : `0x${HEAD}`;
+    if (method === "chain_getBlockHash") return `0x${[...landed.values()].find((t) => t.block.height === params[0])?.block.hash ?? "0f".repeat(32)}`;
+    if (method === "chain_getFinalizedHead") return `0x${HEAD}`;
+    if (method === "chain_getHeader" && params[0] === `0x${HEAD}`) return { number: "0x3e8" };
     if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && params[1] === `0x${HEAD}`) {
       const now = Buffer.alloc(8);
       now.writeBigUInt64LE(BigInt(Date.now()));
@@ -94,7 +100,12 @@ export function chain({ spec = 1000300, state = deployed.state, node = "2.1.0" }
     vi.setSystemTime(Date.now() + millis);
   };
   const lag = (on: boolean) => void (lags = on);
-  return { source, land, advance, lag };
+  const reorg = (txHash: string, to?: { height: number; hash: string }) => {
+    const moved = landed.get(txHash)!;
+    if (to) landed.set(txHash, { ...moved, block: { ...moved.block, ...to } });
+    else landed.delete(txHash);
+  };
+  return { source, land, advance, lag, reorg };
 }
 
 // A wallet named `name` that binds without adding a fee, records what it is asked to submit (and

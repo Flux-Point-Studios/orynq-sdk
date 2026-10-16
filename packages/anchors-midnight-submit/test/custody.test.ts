@@ -42,22 +42,26 @@ const copyOf = (file: string, name: string) => {
 const operator = (overrides: Partial<OperatorOptions>) => {
   const net = chain();
   const journalPath = fresh("journal.sqlite");
-  const w = wallet(net, () => journalPath);
-  const op = registryOperator({ network: "preprod", wallet: w, source: net.source, prover, journalPath, authorKeyFile: "", registry: deployed.address, pollMillis: 1, ...overrides });
-  return { op, wallet: w };
+  return registryOperator({ network: "preprod", wallet: wallet(net, () => journalPath), source: net.source, prover, journalPath, authorKeyFile: "", registry: deployed.address, pollMillis: 1, ...overrides });
 };
-const entry = () => ({ rootHash: "11".repeat(32), manifestHash: "22".repeat(32), merkleRoot: "33".repeat(32) });
 
-// Runs `fn` in a process without Claude Code's environment, as deci at his own terminal is.
-const withoutClaudeCode = <T>(fn: () => T): T => {
+// Runs `fn` with `env` added to the process's environment, then restores it as it was.
+const withEnv = <T>(env: Record<string, string>, fn: () => T): T => {
   const saved = { ...process.env };
-  for (const name of Object.keys(process.env)) if (name === "CLAUDECODE" || name.startsWith("CLAUDE_CODE_")) delete process.env[name];
+  Object.assign(process.env, env);
   try {
     return fn();
   } finally {
+    for (const name of Object.keys(process.env)) delete process.env[name];
     Object.assign(process.env, saved);
   }
 };
+// Runs `fn` in a process without Claude Code or Codex environment, as deci at his own terminal is.
+const withoutAgents = <T>(fn: () => T): T =>
+  withEnv({}, () => {
+    for (const name of Object.keys(process.env)) if (name === "CLAUDECODE" || name.startsWith("CLAUDE_CODE_") || name.startsWith("CODEX_")) delete process.env[name];
+    return fn();
+  });
 
 describe("off mainnet, the FPS mainnet keys are refused by what they are, wherever the file lives", () => {
   it("an operator refuses a copy of the mainnet author key, and loads any other key from the same place", () => {
@@ -65,21 +69,49 @@ describe("off mainnet, the FPS mainnet keys are refused by what they are, wherev
     expect(() => operator({ authorKeyFile: copy })).toThrow(`${copy} holds the FPS mainnet author key ${mainnet.authorKey}; a preprod operator never loads it`);
     const other = join(root, "relay-other.key");
     createAuthorKeyFile(other);
-    expect(() => operator({ authorKeyFile: other }).op.close()).not.toThrow();
+    expect(() => operator({ authorKeyFile: other }).close()).not.toThrow();
   });
 
-  it("an operator refuses a copy of the mainnet salt key before preparing anything", async () => {
+  it("an operator refuses a copy of the mainnet salt key as it loads it, before preparing anything", () => {
     const author = join(root, "author-for-salt.key");
     createAuthorKeyFile(author);
     const copy = copyOf(mainnet.saltKeyFile, "salt-copy.key");
-    const { op, wallet: w } = operator({ authorKeyFile: author, saltKeyFile: copy });
-    await expect(op.anchorHiding(entry(), "44".repeat(32))).rejects.toThrow(`${copy} holds the FPS mainnet salt key ${mainnet.saltKeyId}; a preprod operator never uses it`);
-    expect(w.submitted).toHaveLength(0);
+    expect(() => operator({ authorKeyFile: author, saltKeyFile: copy })).toThrow(`${copy} holds the FPS mainnet salt key ${mainnet.saltKeyId}; a preprod operator never uses it`);
+  });
+});
+
+describe("on mainnet, an operator writes only under the FPS mainnet keys, by what they are", () => {
+  it("loads the mainnet author and salt keys in a process without Claude Code or Codex environment", () => {
+    const op = withoutAgents(() => operator({ network: "mainnet", authorKeyFile: mainnet.authorKeyFile, saltKeyFile: mainnet.saltKeyFile }));
+    expect(op.authorKey).toBe(mainnet.authorKey);
     op.close();
   });
 
-  it("a mainnet operator, in a process without Claude Code's environment, loads the mainnet author key", () => {
-    expect(withoutClaudeCode(() => operator({ network: "mainnet", authorKeyFile: mainnet.authorKeyFile }).op.authorKey)).toBe(mainnet.authorKey);
+  it("refuses to load them in a process that carries Claude Code or Codex environment, which off mainnet loads any other key", () => {
+    const other = join(root, "preprod-in-agent.key");
+    createAuthorKeyFile(other);
+    for (const env of [{ CODEX_THREAD_ID: "" }, { CODEX_SESSION_ID: "1" }, { CODEX_CI: "1" }, { CODEX_MANAGED_BY_NPM: "1" }, { CODEX_MANAGED_BY_OTHER: "" }, { CLAUDECODE: "1" }, { CLAUDE_CODE_ENTRYPOINT: "cli" }]) {
+      expect(() => withoutAgents(() => withEnv(env, () => operator({ network: "mainnet", authorKeyFile: mainnet.authorKeyFile, saltKeyFile: mainnet.saltKeyFile })))).toThrow(
+        "registryOperator refuses to load a mainnet author key in a process that carries Claude Code or Codex environment",
+      );
+      expect(() => withoutAgents(() => withEnv(env, () => operator({ authorKeyFile: other }).close()))).not.toThrow();
+    }
+  });
+
+  it("refuses any other author key as it loads it, before preparing anything", () => {
+    const other = join(root, "not-the-relay.key");
+    const key = createAuthorKeyFile(other);
+    expect(() => withoutAgents(() => operator({ network: "mainnet", authorKeyFile: other, saltKeyFile: mainnet.saltKeyFile }))).toThrow(
+      `${other} holds author key ${key}, not an FPS mainnet author key (${mainnet.authorKey}); a mainnet operator writes under no other`,
+    );
+  });
+
+  it("refuses any other salt key as it loads it, before preparing anything", () => {
+    const other = join(root, "not-the-salt.key");
+    const id = createSaltKeyFile(other);
+    expect(() => withoutAgents(() => operator({ network: "mainnet", authorKeyFile: mainnet.authorKeyFile, saltKeyFile: other }))).toThrow(
+      `${other} holds salt key ${id}, not an FPS mainnet salt key (${mainnet.saltKeyId}); a mainnet operator derives no kind-2 salt from any other`,
+    );
   });
 });
 
@@ -96,7 +128,7 @@ describe("off mainnet, nothing is opened from the mainnet secrets directory, how
   });
   mkdirSync(secrets, { recursive: true, mode: 0o700 });
   const author = join(secrets, "author-relay.key");
-  createAuthorKeyFile(author);
+  copyFileSync(mainnet.authorKeyFile, author);
   createSaltKeyFile(join(secrets, "salt.key"));
   createWalletMnemonicFile(join(secrets, "mnemonic.txt"));
   symlinkSync(secrets, join(root, "alias"));
@@ -118,7 +150,7 @@ describe("off mainnet, nothing is opened from the mainnet secrets directory, how
     );
   });
 
-  it("a mainnet operator, in a process without Claude Code's environment, loads its key from there", () => {
-    expect(() => withoutClaudeCode(() => operator({ network: "mainnet", authorKeyFile: author }).op.close())).not.toThrow();
+  it("a mainnet operator, in a process without Claude Code or Codex environment, loads its key from there", () => {
+    expect(() => withoutAgents(() => operator({ network: "mainnet", authorKeyFile: author }).close())).not.toThrow();
   });
 });

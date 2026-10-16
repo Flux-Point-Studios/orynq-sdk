@@ -1,13 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
-import { REGISTRY_VERIFIER_KEY_SHA256, createAuthorKeyFile, registryInitialState, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { registryDeployer } from "../src/deployer.js";
+import { REGISTRY_VERIFIER_KEY_SHA256, buildRegistryDeploy, createAuthorKeyFile, registryInitialState, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { assertFpsRegistry, registryDeployer } from "../src/deployer.js";
 import { registryOperator } from "../src/operator.js";
 import { chain, fresh, hex, mutableDeploy, wallet } from "./fakes.js";
 import { prover } from "./prover.js";
 import type { NodeVersion } from "../../anchors-midnight/src/__tests__/ledger-node.js";
+
+// One mainnet registry generation pinned, as MIDNIGHT_REGISTRIES pins FPS's once it is deployed.
+vi.mock("@fluxpointstudios/orynq-sdk-anchors-midnight", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@fluxpointstudios/orynq-sdk-anchors-midnight")>()),
+  MIDNIGHT_REGISTRIES: { mainnet: [{ generation: 1, address: "fe".repeat(32) }], preprod: [] },
+}));
 
 function setup({ tamper, spec, node }: { tamper?: (tx: L.FinalizedTransaction) => L.FinalizedTransaction; spec?: number; node?: NodeVersion } = {}) {
   const net = chain({ ...(spec === undefined ? {} : { spec }), ...(node === undefined ? {} : { node }) });
@@ -364,6 +371,28 @@ describe("registryDeployer", () => {
     deployer.close();
   });
 
+  it("refuses new bytes whose TTL chain time passed while they awaited confirmation, discarding them and journalling and sending nothing", async () => {
+    const { deployer, wallet: w, rows, net } = setup();
+    const prepared = await deployer.prepare();
+    net.advance(15 * MINUTE + 1_000);
+    await expect(deployer.submit(prepared)).rejects.toThrow(
+      `chain time passed the prepared deploy's TTL ${prepared.ttl.toISOString()} while it awaited confirmation; its bytes were discarded and nothing was sent; rerun to prepare new bytes`,
+    );
+    expect([w.submitted, w.discarded, rows()]).toEqual([[], [prepared.txHash], []]);
+    deployer.close();
+  });
+
+  it("refuses new bytes while the node lacks the indexer's newest block, discarding them and journalling and sending nothing", async () => {
+    const { deployer, wallet: w, rows, net } = setup();
+    const prepared = await deployer.prepare();
+    net.lag(true);
+    await expect(deployer.submit(prepared)).rejects.toThrow(
+      "the preprod node does not hold the indexer's newest block, so chain time is unknown and the prepared bytes may be past their TTL; they were discarded and nothing was sent",
+    );
+    expect([w.submitted, w.discarded, rows()]).toEqual([[], [prepared.txHash], []]);
+    deployer.close();
+  });
+
   it("names the wallet that paid a resumed deploy, not the wallet resuming it", async () => {
     const { net, journalPath, timedOutAfterAccept, wallet: payer } = setup();
     const landed = await timedOutAfterAccept();
@@ -457,5 +486,60 @@ describe("registryDeployer", () => {
     expect(w.discarded).toEqual([prepared.txHash]);
     expect(w.submitted).toHaveLength(0);
     deployer.close();
+  });
+});
+
+describe("assertFpsRegistry", () => {
+  // A mainnet deploy journal as deploy-mainnet leaves it: its registry deploy sent and landed, or,
+  // `refused`, journalled with a broadcast a proxy refused.
+  const mainnetDeploy = async ({ refused = false } = {}) => {
+    const net = chain();
+    const journalPath = fresh("mainnet-deploy.sqlite");
+    const w = wallet(net, () => journalPath);
+    const refusing = {
+      ...w,
+      submit: async () => {
+        throw new Error("test node: HTTP 403: Forbidden");
+      },
+    };
+    const deployer = registryDeployer({ network: "mainnet", wallet: refused ? refusing : w, source: net.source, prover, journalPath, pollMillis: 1 });
+    const prepared = await deployer.prepare();
+    if (refused) await expect(deployer.submit(prepared)).rejects.toThrow(/HTTP 403/);
+    else await deployer.submit(prepared);
+    deployer.close();
+    return { journalPath, address: prepared.address };
+  };
+
+  it("accepts the registry whose deploy the journal holds landed on the network, and refuses any other there, a look-alike deploy of the same registry included", async () => {
+    const { journalPath, address } = await mainnetDeploy();
+    expect(() => assertFpsRegistry("mainnet", address, journalPath)).not.toThrow();
+    const lookalike = buildRegistryDeploy({ networkId: "mainnet", ttl: new Date(Date.now() + 600e3) }).address;
+    expect(lookalike).not.toBe(address);
+    expect(() => assertFpsRegistry("mainnet", lookalike, journalPath)).toThrow(
+      `registry ${lookalike} is not the FPS mainnet registry: MIDNIGHT_REGISTRIES pins no generation there, and ${journalPath} holds the landed deploy of ${address}`,
+    );
+    expect(() => assertFpsRegistry("preprod", address, journalPath)).toThrow(
+      `registry ${address} is not the FPS preprod registry: MIDNIGHT_REGISTRIES pins no generation there, and ${journalPath} holds no landed preprod registry deploy`,
+    );
+  });
+
+  it("refuses the registry of a journalled deploy that has not landed", async () => {
+    const { journalPath, address } = await mainnetDeploy({ refused: true });
+    expect(() => assertFpsRegistry("mainnet", address, journalPath)).toThrow(
+      `registry ${address} is not the FPS mainnet registry: MIDNIGHT_REGISTRIES pins no generation there, and ${journalPath} holds no landed mainnet registry deploy`,
+    );
+  });
+
+  it("refuses every registry where no deploy journal is, and creates none there", () => {
+    const missing = fresh("no-deploy.sqlite");
+    expect(() => assertFpsRegistry("mainnet", "ab".repeat(32), missing)).toThrow(
+      `registry ${"ab".repeat(32)} is not the FPS mainnet registry: MIDNIGHT_REGISTRIES pins no generation there, and ${missing} holds no landed mainnet registry deploy`,
+    );
+    expect(existsSync(missing)).toBe(false);
+  });
+
+  it("accepts a registry generation MIDNIGHT_REGISTRIES pins for the network without any deploy journal", () => {
+    expect(() => assertFpsRegistry("mainnet", "fe".repeat(32), fresh("no-deploy.sqlite"))).not.toThrow();
+    expect(() => assertFpsRegistry("preprod", "fe".repeat(32), fresh("no-deploy.sqlite"))).toThrow(/is not the FPS preprod registry/);
   });
 });

@@ -1,17 +1,34 @@
 import { describe, expect, it } from "vitest";
 import { execFile, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { REGISTRY_VERIFIER_KEY_SHA256, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import * as L from "@midnight-ntwrk/ledger-v8";
+import {
+  REGISTRY_VERIFIER_KEY_SHA256,
+  buildRegistryDeploy,
+  createAuthorKeyFile,
+  createSaltKeyFile,
+  deriveSalt,
+  entryCommitment,
+  hiddenDigest,
+  hidingCommitment,
+  readAuthorSecret,
+  registryInitialState,
+  type MidnightSource,
+} from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { chainView, openJournal } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
-import { NETWORK_IDENTITY, assertChainIdentity, confirmOnTerminal, confirmationToken, deploySummary } from "../src/preflight.js";
-import type { PreparedDeploy } from "../src/deployer.js";
+import { MAINNET_AUTHOR_KEYS } from "../src/custody.js";
+import { NETWORK_IDENTITY, anchorSummary, assertChainIdentity, confirmOnTerminal, confirmationToken, deploySummary } from "../src/preflight.js";
+import { registryDeployer, type PreparedDeploy } from "../src/deployer.js";
+import type { PreparedAnchor } from "../src/operator.js";
 import { batchOver, ledgerNode } from "../../anchors-midnight/src/__tests__/ledger-node.js";
-import { fresh, mutableDeploy } from "./fakes.js";
+import { chain, fresh, hex, mutableDeploy, wallet } from "./fakes.js";
 import type { OfflineChain } from "./offline.js";
+import { prover } from "./prover.js";
 
 const source = (answers: Record<string, unknown>) =>
   ({
@@ -118,6 +135,71 @@ describe("the deploy summary a human approves", () => {
   });
 });
 
+const anchor: PreparedAnchor = {
+  network: "mainnet",
+  registry: "ab".repeat(32),
+  author: "6a".repeat(32),
+  kind: 1,
+  commitment: "c1".repeat(32),
+  attribute: "00".repeat(32),
+  txHash: "fedcba9876543210".repeat(4),
+  bytes: new Uint8Array([1, 2, 3, 4]),
+  ttl: new Date("2026-10-15T12:00:00Z"),
+  declaredFee: 1_000n,
+  payer: "mn_addr1payer",
+};
+
+describe("the anchor summary a human approves", () => {
+  const summary = (prepared: PreparedAnchor) =>
+    anchorSummary({
+      entry: { rootHash: "0x" + "A1".repeat(32), manifestHash: "b2".repeat(32) },
+      chain: { chain: "Midnight Mainnet", genesis: "1941ca8e".padEnd(64, "0"), specVersion: 1000300, ledgerVersion: "8.1.3" },
+      wallet: { dust: "mn_dust1example" },
+      dust: 25_500_000_000_000_000n,
+      label: "git-head",
+      prepared,
+    });
+
+  it("names the label, kind, registry, commitment, author key, transaction, fee and DUST balance, and no attribute for kind 1", () => {
+    expect(summary(anchor)).toBe(
+      [
+        "network          mainnet (Midnight Mainnet, genesis 1941ca8e00000000000000000000000000000000000000000000000000000000)",
+        "runtime          1000300, ledger 8.1.3",
+        "label            git-head",
+        "kind             1: anchor(), a public commitment to the entry",
+        `registry         ${"ab".repeat(32)}`,
+        `commitment       ${"c1".repeat(32)}`,
+        `root hash        ${"a1".repeat(32)}`,
+        `manifest hash    ${"b2".repeat(32)}`,
+        `merkle root      ${"00".repeat(32)}`,
+        `author key       ${"6a".repeat(32)}`,
+        `anchor tx hash   ${anchor.txHash}`,
+        "fee (declared)   0.000000000001 DUST, all of it burned",
+        "DUST balance     25.5 DUST at mn_dust1example",
+        "paid from        mn_addr1payer",
+        "valid until      2026-10-15T12:00:00.000Z",
+        "final bytes      4",
+      ].join("\n"),
+    );
+  });
+
+  it("shows a kind-2 anchor's published attribute", () => {
+    const text = summary({ ...anchor, kind: 2, attribute: "a7".repeat(32) });
+    expect(text).toContain("kind             2: anchor_hiding(), a hiding commitment the attribute is bound to\n");
+    expect(text).toContain(`commitment       ${"c1".repeat(32)}\nattribute        ${"a7".repeat(32)}\nauthor key       `);
+  });
+
+  it("shows an anchor resumed from the journal as the journal holds it, and what confirming then does", () => {
+    expect(summary({ ...anchor, journal: { state: "landed", broadcasts: 1, expired: false } })).toMatch(/^journal {10}resumed: these bytes landed; confirming sends nothing and reads the anchor back\n/);
+    expect(summary({ ...anchor, journal: { state: "pending", broadcasts: 0, expired: false } })).toMatch(/^journal {10}resumed: no send of these bytes ever returned; confirming sends them again\n/);
+    expect(summary({ ...anchor, journal: { state: "pending", broadcasts: 0, expired: true } })).toMatch(/^journal {10}resumed: these bytes expired at 2026-10-15T12:00:00.000Z/);
+  });
+
+  it("asks for a token bound to these exact bytes", () => {
+    expect(confirmationToken(anchor)).toBe("ANCHOR fedcba9876543210");
+  });
+});
+
 // A terminal stand-in: a stream that says it is a TTY and carries what the human typed.
 const terminal = (typed: string, isTTY = true) => {
   const input = Object.assign(new PassThrough(), { isTTY });
@@ -128,6 +210,10 @@ const terminal = (typed: string, isTTY = true) => {
 const human = { PATH: "/usr/bin" };
 
 describe("confirmOnTerminal", () => {
+  it.each(["DEPLOY", "ANCHOR"])("rejects a well-formed %s token naming other bytes", async (verb) => {
+    expect(await confirmOnTerminal({ ...terminal(`${verb} 0123456789abcdee\n`), token: `${verb} 0123456789abcdef`, env: human })).toBe(false);
+  });
+
   it("is true only when the human types the exact token", async () => {
     expect(await confirmOnTerminal({ ...terminal("DEPLOY 0123456789abcdef\n"), token: "DEPLOY 0123456789abcdef", env: human })).toBe(true);
     expect(await confirmOnTerminal({ ...terminal("deploy 0123456789abcdef\n"), token: "DEPLOY 0123456789abcdef", env: human })).toBe(false);
@@ -139,62 +225,86 @@ describe("confirmOnTerminal", () => {
     await expect(confirmOnTerminal({ ...terminal("DEPLOY 0123456789abcdef\n", false), token: "DEPLOY 0123456789abcdef", env: human })).rejects.toThrow(/needs deci at an interactive terminal/);
   });
 
-  it("refuses a process that carries Claude Code's environment, even at a terminal with the token", async () => {
+  it("refuses a process that carries Claude Code or Codex environment, even at a terminal with the token", async () => {
     for (const env of [{ CLAUDECODE: "1" }, { CLAUDE_CODE_ENTRYPOINT: "cli" }]) {
-      await expect(confirmOnTerminal({ ...terminal("DEPLOY 0123456789abcdef\n"), token: "DEPLOY 0123456789abcdef", env })).rejects.toThrow(/this process carries Claude Code's environment; deci confirms a mainnet deploy himself/);
+      await expect(confirmOnTerminal({ ...terminal("DEPLOY 0123456789abcdef\n"), token: "DEPLOY 0123456789abcdef", env })).rejects.toThrow(/this process carries Claude Code or Codex environment; deci confirms a mainnet deploy himself/);
     }
+  });
+
+  it.each(["CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_CI", "CODEX_MANAGED_BY_NPM", "CODEX_MANAGED_BY_OTHER"])("refuses Codex marker %s even when empty", async (name) => {
+    await expect(confirmOnTerminal({ ...terminal("DEPLOY 0123456789abcdef\n"), token: "DEPLOY 0123456789abcdef", env: { [name]: "" } })).rejects.toThrow("Claude Code or Codex environment");
+  });
+
+  it("names what it confirms in its refusals", async () => {
+    const token = "ANCHOR fedcba9876543210";
+    await expect(confirmOnTerminal({ ...terminal(`${token}\n`), token, env: { CLAUDECODE: "1" }, what: "a mainnet anchor" })).rejects.toThrow(
+      "this process carries Claude Code or Codex environment; deci confirms a mainnet anchor himself, at his own terminal",
+    );
+    await expect(confirmOnTerminal({ ...terminal(`${token}\n`, false), token, env: human, what: "a mainnet anchor" })).rejects.toThrow("needs deci at an interactive terminal; a pipe or a file cannot confirm a mainnet anchor");
   });
 });
 
 // Every input is a path that does not exist, so a run that gets past the gates stops at its first
 // read, before any network request.
 const NOWHERE = ["--mnemonic", "/nonexistent/mnemonic.txt", "--wallet-record", "/nonexistent/wallet.json", "--blockfrost", "/nonexistent/blockfrost.project_id", "--zk", "/nonexistent/zk", "--journal", "/nonexistent/journal.sqlite"];
-const withoutClaudeCode = () => Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== "CLAUDECODE" && !name.startsWith("CLAUDE_CODE_")));
+const humanEnvironment = () => ({ PATH: process.env.PATH, HOME: process.env.HOME, MIDNIGHT_PP: process.env.MIDNIGHT_PP });
 const quoted = (arg: string) => `'${arg.replaceAll("'", `'\\''`)}'`;
 
-// deploy-mainnet with `env`, its stdin and stdout pipes, or a pseudo-terminal from util-linux script.
-function deployMainnet(env: NodeJS.ProcessEnv, terminal: "pipe" | "pty") {
-  const command = [process.execPath, "--import", "tsx", fileURLToPath(new URL("../scripts/deploy-mainnet.ts", import.meta.url)), ...NOWHERE];
+// `script` given `inputs`, with `env`, its stdin and stdout pipes, or a pseudo-terminal from util-linux script.
+function runMainnet(script: string, env: NodeJS.ProcessEnv, terminal: "pipe" | "pty", inputs: string[]) {
+  const command = [process.execPath, "--import", "tsx", fileURLToPath(new URL(`../scripts/${script}.ts`, import.meta.url)), ...inputs];
   const [file, args] = terminal === "pty" ? ["script", ["-qec", command.map(quoted).join(" "), "/dev/null"]] : [command[0]!, command.slice(1)];
   return new Promise<{ code: number; out: string }>((resolve) =>
     execFile(file, args, { env, encoding: "utf8", timeout: 60_000 }, (error, stdout, stderr) => resolve({ code: error ? Number(error.code) : 0, out: stdout + stderr })),
   );
 }
+const deployMainnet = (env: NodeJS.ProcessEnv, terminal: "pipe" | "pty") => runMainnet("deploy-mainnet", env, terminal, NOWHERE);
 
 describe("scripts/deploy-mainnet.ts", () => {
+  it.each(["deploy-mainnet", "anchor-mainnet"])("refuses Codex before any file read in %s", async (script) => {
+    for (const name of ["CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_CI", "CODEX_MANAGED_BY_NPM", "CODEX_MANAGED_BY_OTHER"]) {
+      const r = await runMainnet(script, { ...humanEnvironment(), [name]: "" }, "pty", NOWHERE);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("Claude Code or Codex environment");
+      expect(r.out).not.toContain("nonexistent");
+    }
+  });
+
   it("refuses before reading anything when its input and output are not a terminal", async () => {
-    const r = await deployMainnet(withoutClaudeCode(), "pipe");
+    const r = await deployMainnet(humanEnvironment(), "pipe");
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/deploy-mainnet: needs deci at an interactive terminal/);
     expect(r.out).not.toMatch(/nonexistent/);
   });
 
-  it("refuses at a terminal when the process carries Claude Code's environment", async () => {
-    const r = await deployMainnet({ ...withoutClaudeCode(), CLAUDECODE: "1" }, "pty");
+  it("refuses at a terminal when the process carries Claude Code or Codex environment", async () => {
+    const r = await deployMainnet({ ...humanEnvironment(), CLAUDECODE: "1" }, "pty");
     expect(r.code).toBe(1);
-    expect(r.out).toMatch(/deploy-mainnet: this process carries Claude Code's environment; deci runs a mainnet deploy himself, at his own terminal/);
+    expect(r.out).toMatch(/deploy-mainnet: this process carries Claude Code or Codex environment; deci runs a mainnet deploy himself, at his own terminal/);
     expect(r.out).not.toMatch(/nonexistent/);
   });
 
   it("is passed by any process of deci's that drops that environment and drives a pty: the gates stop accidents, not code running as deci", async () => {
-    const r = await deployMainnet(withoutClaudeCode(), "pty");
+    const r = await deployMainnet(humanEnvironment(), "pty");
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/deploy-mainnet: ENOENT: no such file or directory, open '\/nonexistent\/blockfrost\.project_id'/);
   });
 });
 
 const MINUTE = 60_000;
-const PROMPT = /Type exactly "(DEPLOY [0-9a-f]{16})"/;
+const PROMPT = /Type exactly "((?:DEPLOY|ANCHOR) [0-9a-f]{16})"/g;
 const PACKAGE = new URL("..", import.meta.url).pathname;
 
-// deploy-mainnet itself, copied beside a src/index.ts that is test/offline.ts, so it runs every
-// gate in a pseudo-terminal and deploys through the submit package over an offline mainnet. At
-// the confirmation prompt, `answer` types its reply to the token the script asks for.
-function offlineMainnet() {
-  const root = fresh("deploy-mainnet");
+// `script` itself (deploy-mainnet unless named), copied with the module it shares beside a
+// src/index.ts that is test/offline.ts, so it runs every gate in a pseudo-terminal and sends
+// through the submit package over an offline mainnet, with the flags `flags` names beside it. At
+// each confirmation prompt, `answer` types its reply to the token the script asks for, and
+// `watch` sees the output so far whenever more arrives.
+function offlineMainnet(script = "deploy-mainnet", flags: (root: string) => string[] = () => []) {
+  const root = fresh(script);
   mkdirSync(`${root}/scripts`, { recursive: true });
   mkdirSync(`${root}/src`);
-  copyFileSync(`${PACKAGE}scripts/deploy-mainnet.ts`, `${root}/scripts/deploy-mainnet.ts`);
+  for (const file of [`${script}.ts`, "mainnet-session.ts"]) copyFileSync(`${PACKAGE}scripts/${file}`, `${root}/scripts/${file}`);
   symlinkSync(`${PACKAGE}test/offline.ts`, `${root}/src/index.ts`);
   symlinkSync(`${PACKAGE}node_modules`, `${root}/node_modules`);
   writeFileSync(`${root}/package.json`, JSON.stringify({ type: "module" }));
@@ -203,32 +313,40 @@ function offlineMainnet() {
   // The recorded wallet the next run opens, named `name`.
   const walletRecord = (name: string) => writeFileSync(`${root}/wallet.json`, JSON.stringify({ addresses: { unshielded: `mn_addr1${name}`, shielded: `mn_shield-addr1${name}`, dust: `mn_dust1${name}` } }));
   walletRecord("offline");
-  const journalPath = `${root}/state/deploy.sqlite`;
+  const journalPath = `${root}/state/${script === "deploy-mainnet" ? "deploy" : "anchors"}.sqlite`;
   // The offline wallet, prover and endpoints never open the mnemonic, ZK or Blockfrost paths.
   const inputs = ["--mnemonic", "/nonexistent/mnemonic.txt", "--wallet-record", "wallet.json", "--blockfrost", "/nonexistent/blockfrost.project_id", "--zk", "/nonexistent/zk"];
-  const command = [process.execPath, "--import", "tsx", "scripts/deploy-mainnet.ts", ...inputs, "--journal", journalPath, "--dust-floor", "1"];
+  const command = [process.execPath, "--import", "tsx", `scripts/${script}.ts`, ...inputs, "--journal", journalPath, "--dust-floor", "1", ...flags(root)];
   const chain = (): OfflineChain => JSON.parse(readFileSync(chainFile, "utf8"));
+  // Renamed over the chain file whole, as test/offline.ts writes it, since the script reads it at any moment.
+  const save = (change: Partial<OfflineChain>) => {
+    writeFileSync(`${chainFile}.test`, JSON.stringify({ ...chain(), ...change }));
+    renameSync(`${chainFile}.test`, chainFile);
+  };
   return {
-    async run(answer: (token: string) => string, fault = "") {
-      const child = spawn("script", ["-qec", command.map(quoted).join(" "), "/dev/null"], { cwd: root, env: { ...withoutClaudeCode(), OFFLINE_CHAIN: chainFile, OFFLINE_FAULT: fault }, timeout: 120_000 });
+    async run(answer: (token: string) => string | Promise<string>, fault = "", watch: (output: string) => void = () => undefined) {
+      const child = spawn("script", ["-qec", command.map(quoted).join(" "), "/dev/null"], { cwd: root, env: { ...humanEnvironment(), OFFLINE_CHAIN: chainFile, OFFLINE_FAULT: fault }, timeout: 120_000 });
       let output = "";
-      let token: string | undefined;
+      const tokens: string[] = [];
       child.stdout.on("data", (chunk) => {
         output += chunk;
-        const asked = token === undefined ? PROMPT.exec(output) : null;
-        if (asked) {
-          token = asked[1]!;
-          child.stdin.write(`${answer(token)}\n`);
+        for (const [, token] of [...output.matchAll(PROMPT)].slice(tokens.length)) {
+          tokens.push(token!);
+          void Promise.resolve(answer(token!)).then((reply) => child.stdin.write(`${reply}\n`));
         }
+        watch(output);
       });
       const [status] = await once(child, "close");
-      return { status: status as number | null, output: output.replaceAll("\r\n", "\n"), token };
+      return { status: status as number | null, output: output.replaceAll("\r\n", "\n"), token: tokens[0], tokens };
     },
+    floor: (value: string) => { command[command.indexOf("--dust-floor") + 1] = value; },
+    root,
     chain,
+    update: save,
     journalPath,
     walletRecord,
-    advance: (millis: number) => writeFileSync(chainFile, JSON.stringify({ ...chain(), aheadMs: chain().aheadMs + millis })),
-    lagNode: (nodeLags: boolean) => writeFileSync(chainFile, JSON.stringify({ ...chain(), nodeLags })),
+    advance: (millis: number) => save({ aheadMs: chain().aheadMs + millis }),
+    lagNode: (nodeLags: boolean) => save({ nodeLags }),
     // How many times the runs so far closed the wallet, and whether one left the journal open:
     // SQLite removes the write-ahead log when the last connection to the database closes.
     closes: () => ({ wallet: chain().walletCloses ?? 0, journalLeftOpen: existsSync(`${journalPath}-wal`) }),
@@ -273,11 +391,35 @@ describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
     expect(m.journal()).toEqual([{ tx_hash: sent, state: "landed" }]);
   });
 
+  it("reports the run's own failure when closing the wallet fails too, and that failure alone otherwise", async ({ expect }) => {
+    const m = offlineMainnet();
+    const both = await m.run((token) => token, "refuse-broadcast,fail-close");
+    expect(both.status, both.output).toBe(1);
+    expect(both.output).toContain("deploy-mainnet: offline node: HTTP 403: Forbidden; closing the wallet failed: offline wallet: the facade did not stop");
+    const closing = await m.run((token) => token, "fail-close");
+    expect(closing.status, closing.output).toBe(1);
+    expect(closing.output).toContain("deployed and read back from the node");
+    expect(closing.output).toContain("deploy-mainnet: closing the wallet failed: offline wallet: the facade did not stop");
+    expect(m.closes()).toEqual({ wallet: 2, journalLeftOpen: false });
+  });
+
   it("discards the prepared bytes and sends nothing when anything but the token is typed", async ({ expect }) => {
     const m = offlineMainnet();
     const r = await m.run(() => "yes");
     expect(r.status, r.output).toBe(1);
     expect(r.output).toContain("deploy-mainnet: not confirmed; the prepared bytes were discarded and nothing was sent");
+    expect(m.chain()).toMatchObject({ sent: [], discarded: [expect.stringMatching(new RegExp(`^${r.token!.slice(7)}`))] });
+    expect(m.journal()).toEqual([]);
+  });
+
+  it("discards the prepared bytes and sends nothing when chain time passes their TTL while the prompt waits for the token", async ({ expect }) => {
+    const m = offlineMainnet();
+    const r = await m.run((token) => {
+      m.advance(16 * MINUTE);
+      return token;
+    });
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toMatch(/deploy-mainnet: chain time passed the prepared deploy's TTL \S+ while it awaited confirmation; its bytes were discarded and nothing was sent; rerun to prepare new bytes/);
     expect(m.chain()).toMatchObject({ sent: [], discarded: [expect.stringMatching(new RegExp(`^${r.token!.slice(7)}`))] });
     expect(m.journal()).toEqual([]);
   });
@@ -489,5 +631,533 @@ describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
     expect(confirmed.token).toBe(`DEPLOY ${refused!.slice(0, 16)}`);
     expect(m.chain()).toMatchObject({ sent: [refused, refused], discarded: [] });
     expect(m.journal()).toEqual([{ tx_hash: refused, state: "landed" }]);
+  });
+});
+
+// Every anchor-mainnet input is a path that does not exist, so a run that gets past the gates
+// stops at its first read, the plan, before any network request.
+const ANCHOR_NOWHERE = [
+  ...NOWHERE,
+  "--plan",
+  "/nonexistent/plan.json",
+  "--deploy-journal",
+  "/nonexistent/deploy.sqlite",
+  "--author-key",
+  "/nonexistent/author.key",
+  "--salt-key",
+  "/nonexistent/salt.key",
+  "--results",
+  "/nonexistent/results.json",
+];
+
+describe("scripts/anchor-mainnet.ts", () => {
+  it("refuses before reading anything when its input and output are not a terminal", async () => {
+    const r = await runMainnet("anchor-mainnet", humanEnvironment(), "pipe", ANCHOR_NOWHERE);
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/anchor-mainnet: needs deci at an interactive terminal; a pipe or a file cannot confirm a mainnet anchor/);
+    expect(r.out).not.toMatch(/nonexistent/);
+  });
+
+  it("refuses at a terminal when the process carries Claude Code or Codex environment", async () => {
+    for (const env of [{ CLAUDECODE: "1" }, { CLAUDE_CODE_ENTRYPOINT: "cli" }]) {
+      const r = await runMainnet("anchor-mainnet", { ...humanEnvironment(), ...env }, "pty", ANCHOR_NOWHERE);
+      expect(r.code).toBe(1);
+      expect(r.out).toMatch(/anchor-mainnet: this process carries Claude Code or Codex environment; deci writes mainnet anchors himself, at his own terminal/);
+      expect(r.out).not.toMatch(/nonexistent/);
+    }
+  });
+
+  it("is passed by any process of deci's that drops that environment and drives a pty, which then reads the plan first", async () => {
+    const r = await runMainnet("anchor-mainnet", humanEnvironment(), "pty", ANCHOR_NOWHERE);
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/anchor-mainnet: ENOENT: no such file or directory, open '\/nonexistent\/plan\.json'/);
+  });
+
+  it("refuses an unknown flag, a missing plan, a flag whose value is another flag and a flag given twice before reading anything", async () => {
+    const typo = await runMainnet("anchor-mainnet", humanEnvironment(), "pty", [...ANCHOR_NOWHERE, "--dust-flor", "50"]);
+    expect([typo.code, typo.out]).toEqual([1, expect.stringContaining("anchor-mainnet: unknown flag --dust-flor")]);
+    const planless = await runMainnet("anchor-mainnet", humanEnvironment(), "pty", NOWHERE);
+    expect([planless.code, planless.out]).toEqual([1, expect.stringContaining("anchor-mainnet: --plan is required")]);
+    const valueless = await runMainnet("anchor-mainnet", humanEnvironment(), "pty", ["--plan", "--journal", "/nonexistent/journal.sqlite"]);
+    expect([valueless.code, valueless.out]).toEqual([1, expect.stringContaining("anchor-mainnet: --plan needs a value, not the flag --journal")]);
+    const twice = await runMainnet("anchor-mainnet", humanEnvironment(), "pty", [...ANCHOR_NOWHERE, "--dust-floor", "50", "--dust-floor", "5"]);
+    expect([twice.code, twice.out]).toEqual([1, expect.stringContaining("anchor-mainnet: --dust-floor is given twice")]);
+    expect(typo.out + planless.out + valueless.out + twice.out).not.toMatch(/nonexistent/);
+  });
+});
+
+const randomHash = () => randomBytes(32).toString("hex");
+const planEntries = () => [
+  { label: "git-head", kind: 1, rootHash: randomHash(), manifestHash: randomHash(), merkleRoot: randomHash() },
+  { label: "hidden-suite", kind: 2, rootHash: randomHash(), manifestHash: randomHash(), merkleRoot: randomHash(), attribute: randomHash() },
+];
+// FPS's mainnet registry as deploy-mainnet leaves its journal: deployed through registryDeployer,
+// sent and landed. Every anchor test copies that journal as its deploy journal.
+const FPS_DEPLOY = await (async () => {
+  const net = chain();
+  const journalPath = fresh("mainnet-deploy.sqlite");
+  const deployer = registryDeployer({ network: "mainnet", wallet: wallet(net, () => journalPath), source: net.source, prover, journalPath, pollMillis: 1 });
+  const { address } = await deployer.submit(await deployer.prepare());
+  deployer.close();
+  return { journalPath, address };
+})();
+const REGISTRY = FPS_DEPLOY.address;
+type PlanEntry = ReturnType<typeof planEntries>[number] & { attribute?: string };
+
+// anchor-mainnet over an offline mainnet whose node holds `state` at REGISTRY (none when null),
+// deployed before the run as FPS's deploy journal records, with throwaway author and salt keys it
+// pins as the FPS mainnet keys and a plan of `entries` for `registry`.
+function offlineAnchors({ state = registryInitialState(), entries = planEntries() as unknown[], registry = REGISTRY }: { state?: L.ContractState | null; entries?: unknown[]; registry?: string } = {}) {
+  const m = offlineMainnet("anchor-mainnet", (root) => [
+    "--plan",
+    `${root}/plan.json`,
+    "--deploy-journal",
+    `${root}/state/deploy.sqlite`,
+    "--author-key",
+    `${root}/author.key`,
+    "--salt-key",
+    `${root}/salt.key`,
+    "--results",
+    `${root}/state/results.json`,
+  ]);
+  const deployJournal = `${m.root}/state/deploy.sqlite`;
+  mkdirSync(`${m.root}/state`, { mode: 0o700 });
+  copyFileSync(FPS_DEPLOY.journalPath, deployJournal);
+  chmodSync(deployJournal, 0o600);
+  const author = createAuthorKeyFile(`${m.root}/author.key`);
+  const saltKeyId = createSaltKeyFile(`${m.root}/salt.key`);
+  const deployed = state === null ? {} : { ["d0".repeat(32)]: { raw: "", height: 400, address: REGISTRY, state: hex(state.serialize()) } };
+  m.update({ landed: deployed, fpsKeys: { authorKeys: [author], saltKeyIds: [saltKeyId] } });
+  writeFileSync(`${m.root}/plan.json`, JSON.stringify({ registry, entries }));
+  const resultsPath = `${m.root}/state/results.json`;
+  return {
+    ...m,
+    entries: entries as PlanEntry[],
+    deployJournal,
+    author,
+    saltKeyId,
+    saltKey: readAuthorSecret(`${m.root}/salt.key`),
+    resultsPath,
+    results: () => (existsSync(resultsPath) ? JSON.parse(readFileSync(resultsPath, "utf8")) : null),
+    // The transactions the node was handed, past the registry's deploy.
+    sent: () => m.chain().sent,
+  };
+}
+
+const kind2Commitment = (e: PlanEntry, saltKey: Uint8Array) => {
+  const digest = hiddenDigest(e, e.attribute!);
+  return hex(hidingCommitment(digest, deriveSalt(saltKey, digest)));
+};
+
+describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
+  it("rejects a token naming other bytes and discards the unconfirmed anchor", async ({ expect }) => {
+    const m = offlineAnchors();
+    const r = await m.run((token) => token.slice(0, -1) + (token.endsWith("0") ? "1" : "0"));
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("not confirmed; the prepared bytes were discarded");
+    expect(m.sent()).toEqual([]);
+    expect(m.chain().discarded).toHaveLength(1);
+    expect(m.results()).toBeNull();
+  });
+
+  it("records a label once when another run records the same landed anchor during confirmation", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    expect((await m.run((token) => token)).status).toBe(0);
+    rmSync(m.resultsPath);
+    let other: Awaited<ReturnType<typeof m.run>>;
+    const r = await m.run(async (token) => {
+      other = await m.run((token) => token);
+      return token;
+    });
+    expect(other!.status, other!.output).toBe(0);
+    expect(r.status, r.output).toBe(0);
+    expect(m.results()).toHaveLength(1);
+    expect(m.sent()).toHaveLength(1);
+  });
+
+  it("refuses a conflicting label written during confirmation", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    const r = await m.run((token) => {
+      writeFileSync(m.resultsPath, JSON.stringify([{ label: "git-head", txHash: "ff".repeat(32) }]));
+      return token;
+    });
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("already records git-head with another transaction");
+    expect(m.results()).toEqual([{ label: "git-head", txHash: "ff".repeat(32) }]);
+  });
+
+  it.each(["results", "wallet-record"])("never echoes malformed %s contents", async (target) => {
+    const m = offlineAnchors();
+    const path = target === "results" ? m.resultsPath : `${m.root}/wallet.json`;
+    writeFileSync(path, "fixture-private-content-not-json");
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain(`${path === m.resultsPath ? path : "wallet.json"} is not JSON`);
+    expect(r.output).not.toContain("fixture-pr");
+    expect(m.sent()).toEqual([]);
+  });
+
+  it("refuses a results hash different from the journal's landed transaction", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    expect((await m.run((token) => token)).status).toBe(0);
+    const rows = m.results();
+    rows[0].txHash = "ff".repeat(32);
+    writeFileSync(m.resultsPath, JSON.stringify(rows));
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("which the journal does not hold landed for this entry");
+    expect(r.tokens).toEqual([]);
+    expect(m.sent()).toHaveLength(1);
+  });
+
+  it("refuses non-list results before reading the chain or syncing the wallet", async ({ expect }) => {
+    const m = offlineAnchors();
+    writeFileSync(m.resultsPath, "{}");
+    m.update({ network: "preprod" });
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("does not hold a list of anchors");
+    expect(r.output).not.toMatch(/Syncing|node serves/);
+    expect(m.closes().wallet).toBe(0);
+    expect(m.sent()).toEqual([]);
+  });
+
+  it.each(["1e3", "0.1234567890123456"])("refuses malformed DUST floor %s with the format diagnostic", async (floor) => {
+    const m = offlineAnchors();
+    m.floor(floor);
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("--dust-floor takes DUST as a decimal number with at most 15 places");
+    expect(r.output).not.toContain("Syncing");
+    expect(m.sent()).toEqual([]);
+  });
+
+  it.each(["0.4", "0.5"])("enforces a 0.5 DUST floor at balance %s", async (balance) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    m.floor("0.5");
+    const r = await m.run((token) => token, balance === "0.4" ? "dust-0.4" : "low-dust");
+    expect(r.status, r.output).toBe(balance === "0.4" ? 1 : 0);
+    if (balance === "0.4") {
+      expect(r.output).toContain("holds 0.4 DUST, below the 0.5 DUST floor");
+      expect(r.tokens).toEqual([]);
+    }
+    expect(m.sent()).toHaveLength(balance === "0.4" ? 0 : 1);
+  });
+
+  it("anchors each entry of the plan in order once its token is typed, reads each back final from the node, records only public data, and a rerun sends nothing", async ({ expect }) => {
+    const m = offlineAnchors();
+    const [one, two] = m.entries as [PlanEntry, PlanEntry];
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(0);
+    const [first, second] = m.sent();
+    expect(r.tokens).toEqual([`ANCHOR ${first!.slice(0, 16)}`, `ANCHOR ${second!.slice(0, 16)}`]);
+    expect(r.output).toContain(`registry ${REGISTRY} holds the immutable registry`);
+    expect(r.output).toContain(
+      `label            git-head\nkind             1: anchor(), a public commitment to the entry\nregistry         ${REGISTRY}\ncommitment       ${hex(entryCommitment(one))}\nroot hash        ${one.rootHash}\nmanifest hash    ${one.manifestHash}\nmerkle root      ${one.merkleRoot}\nauthor key       ${m.author}\nanchor tx hash   ${first}\n`,
+    );
+    expect(r.output).toContain(`label            hidden-suite\nkind             2: anchor_hiding(), a hiding commitment the attribute is bound to\nregistry         ${REGISTRY}\ncommitment       ${kind2Commitment(two, m.saltKey)}\nattribute        ${two.attribute}\n`);
+    expect(m.results()).toEqual([
+      { label: "git-head", kind: 1, txHash: first, block: 501, blockHash: "ab".repeat(32), commitment: hex(entryCommitment(one)), registry: REGISTRY, author: m.author },
+      { label: "hidden-suite", kind: 2, txHash: second, block: 502, blockHash: "ab".repeat(32), commitment: kind2Commitment(two, m.saltKey), attribute: two.attribute, registry: REGISTRY, author: m.author },
+    ]);
+    expect(statSync(m.resultsPath).mode & 0o777).toBe(0o600);
+    const published = readFileSync(m.resultsPath, "utf8") + r.output;
+    for (const hidden of [two.rootHash, two.manifestHash, two.merkleRoot, hex(m.saltKey), readFileSync(`${m.root}/author.key`, "utf8").trim()]) expect(published).not.toContain(hidden);
+    expect(r.output).toContain(`2 anchors are recorded in ${m.resultsPath}`);
+    expect(m.journal()).toEqual([
+      { tx_hash: first, state: "landed" },
+      { tx_hash: second, state: "landed" },
+    ]);
+
+    const again = await m.run((token) => token);
+    expect(again.status, again.output).toBe(0);
+    expect(again.tokens).toEqual([]);
+    expect(again.output).toContain(`git-head: anchored as ${first}, read back and recorded; nothing to send`);
+    expect(m.sent()).toEqual([first, second]);
+    expect(m.results()).toHaveLength(2);
+
+    // A results file whose anchors the journal no longer holds is never answered with new bytes.
+    rmSync(m.journalPath);
+    const lost = await m.run((token) => token);
+    expect(lost.status, lost.output).toBe(1);
+    expect(lost.output).toContain(`anchor-mainnet: ${m.resultsPath} records git-head as ${first}, which the journal does not hold landed for this entry of the plan`);
+    expect([lost.tokens, m.sent()]).toEqual([[], [first, second]]);
+  });
+
+  it("adds each anchor to the results file as it stands then, keeping the rows another run recorded meanwhile", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    const other = { label: "another-run", kind: 1, txHash: "77".repeat(32), block: 9, blockHash: "88".repeat(32), commitment: "99".repeat(32), registry: REGISTRY, author: m.author };
+    const r = await m.run((token) => {
+      writeFileSync(m.resultsPath, JSON.stringify([other]), { mode: 0o600 });
+      return token;
+    });
+    expect(r.status, r.output).toBe(0);
+    expect(m.results()).toEqual([other, expect.objectContaining({ label: "git-head", txHash: m.sent()[0] })]);
+    expect(r.output).toContain(`2 anchors are recorded in ${m.resultsPath}`);
+  });
+
+  it("discards the prepared bytes and sends and records nothing when anything but the token is typed", async ({ expect }) => {
+    const m = offlineAnchors();
+    const r = await m.run(() => "yes");
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("anchor-mainnet: not confirmed; the prepared bytes were discarded and nothing was sent");
+    expect(m.chain()).toMatchObject({ sent: [], discarded: [expect.stringMatching(new RegExp(`^${r.token!.slice(7)}`))] });
+    expect([m.journal(), m.results()]).toEqual([[], null]);
+  });
+
+  it("discards the prepared bytes and sends and records nothing when chain time passes their TTL while the prompt waits for the token", async ({ expect }) => {
+    const m = offlineAnchors();
+    const r = await m.run((token) => {
+      m.advance(16 * MINUTE);
+      return token;
+    });
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toMatch(/anchor-mainnet: chain time passed the prepared anchor's TTL \S+ while it awaited confirmation; its bytes were discarded and nothing was sent; rerun to prepare new bytes/);
+    expect(m.chain()).toMatchObject({ sent: [], discarded: [expect.stringMatching(new RegExp(`^${r.token!.slice(7)}`))] });
+    expect([m.journal(), m.results()]).toEqual([[], null]);
+  });
+
+  it("after a run that failed between the broadcast and its readback, shows the journalled anchor again, asks for its token, and finishes it without sending again", async ({ expect }) => {
+    const m = offlineAnchors();
+    const failed = await m.run((token) => token, "lose-read");
+    expect(failed.status, failed.output).toBe(1);
+    expect(failed.output).toContain("anchor-mainnet: offline indexer: HTTP 502: Bad Gateway");
+    const [sent] = m.sent();
+    expect(m.results()).toBeNull();
+
+    const rerun = await m.run((token) => token);
+    expect(rerun.status, rerun.output).toBe(0);
+    expect(rerun.output).toContain("journal          resumed: these bytes landed; confirming sends nothing and reads the anchor back");
+    expect(rerun.tokens[0]).toBe(failed.token);
+    expect(m.sent()).toEqual([sent, expect.any(String)]);
+    expect(m.results().map((row: { txHash: string }) => row.txHash)).toEqual(m.sent());
+  });
+
+  it("records nothing while the node does not show the anchor's block final, and a rerun reads it back without sending again", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    let late = false;
+    const failed = await m.run(
+      (token) => token,
+      "unfinal",
+      (output) => {
+        if (!late && output.includes("waiting until the node finalizes it")) {
+          late = true;
+          m.advance(11 * MINUTE);
+        }
+      },
+    );
+    expect(failed.status, failed.output).toBe(1);
+    const [sent] = m.sent();
+    expect(failed.output).toContain(`anchor-mainnet: block 501 is not final on the node after 10 minutes; anchor ${sent} landed, and a rerun reads it back`);
+    expect(m.results()).toBeNull();
+
+    const rerun = await m.run((token) => token);
+    expect(rerun.status, rerun.output).toBe(0);
+    expect(rerun.output).toContain("journal          resumed: these bytes landed");
+    expect(m.sent()).toEqual([sent]);
+    expect(m.results()).toEqual([expect.objectContaining({ label: "git-head", txHash: sent, block: 501 })]);
+  });
+
+  it("refuses an anchor whose final block on the node does not carry its bytes, or whose body the node does not hold, and records nothing", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    const r = await m.run((token) => token, "foreign-block");
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("anchor-mainnet: the node's block 501 does not carry the anchor's bytes as exactly one Midnight.send_mn_transaction");
+    expect(m.results()).toBeNull();
+
+    const bodiless = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    const b = await bodiless.run((token) => token, "lose-body");
+    expect(b.status, b.output).toBe(1);
+    expect(b.output).toContain(`anchor-mainnet: the node holds no body for its final block 501 (${"ab".repeat(32)})`);
+    expect(bodiless.results()).toBeNull();
+  });
+
+  it("records nothing while the indexer places an anchor in a block other than the node's final block at that height, sending nothing again", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    let late = false;
+    const f = await m.run(
+      (token) => token,
+      "fork",
+      (output) => {
+        if (!late && output.includes("settling git-head afresh from the chain")) {
+          late = true;
+          m.advance(11 * MINUTE);
+        }
+      },
+    );
+    expect(f.status, f.output).toBe(1);
+    const [sent] = m.sent();
+    expect(f.output).toContain(`the node's final block 501 is ${"00".repeat(32)}, not ${"ab".repeat(32)}; settling git-head afresh from the chain...`);
+    expect(f.output).toContain(`anchor-mainnet: the node's final block 501 is ${"00".repeat(32)}, not ${"ab".repeat(32)}, where the indexer places anchor ${sent}`);
+    expect([m.sent(), m.results(), m.journal()]).toEqual([[sent], null, [{ tx_hash: sent, state: "landed" }]]);
+  });
+
+  // A run that recorded nothing because the node had not finalized its anchor's block in time,
+  // which leaves the journal holding the anchor landed in block 501 of BLOCK, as the indexer
+  // placed it then.
+  const landedUnfinal = async (m: ReturnType<typeof offlineAnchors>) => {
+    let late = false;
+    const failed = await m.run(
+      (token) => token,
+      "unfinal",
+      (output) => {
+        if (!late && output.includes("waiting until the node finalizes it")) {
+          late = true;
+          m.advance(11 * MINUTE);
+        }
+      },
+    );
+    expect(failed.output).toContain("block 501 is not final on the node after 10 minutes");
+    expect(m.journal()).toEqual([{ tx_hash: m.sent()[0], state: "landed" }]);
+    return m.sent()[0]!;
+  };
+
+  it("once the node finalized another block where the journal placed a landed anchor, records the block the anchor landed in since, sending nothing again", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    const sent = await landedUnfinal(m);
+    const relanded = "ef".repeat(32);
+    m.update({ landed: { ...m.chain().landed, [sent]: { ...m.chain().landed[sent]!, height: 640, block: relanded } } });
+
+    const rerun = await m.run((token) => token);
+    expect(rerun.status, rerun.output).toBe(0);
+    expect(rerun.output).toContain("journal          resumed: these bytes landed");
+    expect(rerun.output).toContain(`the node's final block 501 is ${"00".repeat(32)}, not ${"ab".repeat(32)}; settling git-head afresh from the chain...`);
+    expect(rerun.output).toContain(`git-head landed in block 640 (${relanded}); waiting until the node finalizes it...`);
+    expect(m.sent()).toEqual([sent]);
+    expect(m.results()).toEqual([expect.objectContaining({ label: "git-head", txHash: sent, block: 640, blockHash: relanded })]);
+    expect(m.journal()).toEqual([{ tx_hash: sent, state: "landed" }]);
+  });
+
+  it("once the node finalized another block where the journal placed a landed anchor that never landed again, records nothing, retires it when the chain carries it past its TTL plus the margin, and a rerun anchors new bytes", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    const sent = await landedUnfinal(m);
+    const { [sent]: _, ...rest } = m.chain().landed;
+    m.update({ landed: rest });
+
+    let late = false;
+    const orphaned = await m.run(
+      (token) => token,
+      "",
+      (output) => {
+        if (!late && output.includes("settling git-head afresh from the chain")) {
+          late = true;
+          m.advance(10 * MINUTE);
+        }
+      },
+    );
+    expect(orphaned.status, orphaned.output).toBe(1);
+    expect(orphaned.output).toContain("anchor-mainnet: the journalled anchor expired without landing; rerun to prepare new bytes");
+    expect([m.sent(), m.results(), m.journal()]).toEqual([[sent], null, [{ tx_hash: sent, state: "failed" }]]);
+
+    const next = await m.run((token) => token);
+    expect(next.status, next.output).toBe(0);
+    const [, anchored] = m.sent();
+    expect(anchored).not.toBe(sent);
+    expect(m.results()).toEqual([expect.objectContaining({ label: "git-head", txHash: anchored })]);
+    expect(m.journal()).toEqual([
+      { tx_hash: sent, state: "failed" },
+      { tx_hash: anchored, state: "landed" },
+    ]);
+  });
+
+  it("never sends a journalled anchor again once chain time is past its TTL: confirmed then, it waits until the chain retires it and refuses, and a rerun anchors new bytes", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    expect(await m.run((token) => token, "refuse-broadcast")).toMatchObject({ status: 1, output: expect.stringContaining("anchor-mainnet: offline node: HTTP 403: Forbidden") });
+    const [refused] = m.sent();
+    m.advance(10 * MINUTE);
+    const late = await m.run((token) => {
+      m.advance(6 * MINUTE);
+      setTimeout(() => m.advance(5 * MINUTE), 1_000);
+      return token;
+    });
+    expect(late.status, late.output).toBe(1);
+    expect(late.output).toContain("journal          resumed: no send of these bytes ever returned; confirming sends them again");
+    expect(late.output).toContain("anchor-mainnet: the journalled anchor expired without landing; rerun to prepare new bytes");
+    expect(m.sent()).toEqual([refused]);
+    expect(m.journal()).toEqual([{ tx_hash: refused, state: "failed" }]);
+
+    const next = await m.run((token) => token);
+    expect(next.status, next.output).toBe(0);
+    const [, anchored] = m.sent();
+    expect(anchored).not.toBe(refused);
+    expect(m.results()).toEqual([expect.objectContaining({ txHash: anchored })]);
+  });
+
+  it("refuses a registry whose state on the node is not the immutable registry, or an address holding no contract, before the wallet, any key or any byte", async ({ expect }) => {
+    const mutable = registryInitialState();
+    mutable.maintenanceAuthority = new L.ContractMaintenanceAuthority([], 0, 0n);
+    const m = offlineAnchors({ state: mutable });
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("anchor-mainnet: threshold must be exactly 1, got 0");
+    expect([r.tokens, r.output.includes("Syncing"), m.closes().wallet, m.sent()]).toEqual([[], false, 0, []]);
+
+    const absent = offlineAnchors({ state: null });
+    const s = await absent.run((token) => token);
+    expect(s.status, s.output).toBe(1);
+    expect(s.output).toContain(`anchor-mainnet: the mainnet node holds no contract at ${REGISTRY}`);
+    expect([s.tokens, s.output.includes("Syncing"), absent.closes().wallet, absent.sent()]).toEqual([[], false, 0, []]);
+  });
+
+  it("refuses a registry that is not FPS's deployment, though the node holds the immutable registry there, before reading the chain or the wallet", async ({ expect }) => {
+    const lookalike = buildRegistryDeploy({ networkId: "mainnet", ttl: new Date(Date.now() + 3_600_000) }).address;
+    const m = offlineAnchors({ registry: lookalike });
+    m.update({ landed: { ...m.chain().landed, ["d1".repeat(32)]: { raw: "", height: 401, address: lookalike, state: hex(registryInitialState().serialize()) } } });
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain(
+      `anchor-mainnet: registry ${lookalike} is not the FPS mainnet registry: MIDNIGHT_REGISTRIES pins no generation there, and ${m.deployJournal} holds the landed deploy of ${REGISTRY}`,
+    );
+    expect([r.tokens, r.output.includes("holds the immutable registry"), m.closes().wallet, m.sent()]).toEqual([[], false, 0, []]);
+
+    rmSync(m.deployJournal);
+    const s = await m.run((token) => token);
+    expect(s.status, s.output).toBe(1);
+    expect(s.output).toContain(`anchor-mainnet: registry ${lookalike} is not the FPS mainnet registry: MIDNIGHT_REGISTRIES pins no generation there, and ${m.deployJournal} holds no landed mainnet registry deploy`);
+    expect([s.tokens, existsSync(m.deployJournal), m.sent()]).toEqual([[], false, []]);
+  });
+
+  it("refuses an author key or a salt key that is not an FPS mainnet key as the operator loads it, before any byte", async ({ expect }) => {
+    const m = offlineAnchors();
+    m.update({ fpsKeys: { authorKeys: [...MAINNET_AUTHOR_KEYS], saltKeyIds: [m.saltKeyId] } });
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain(`anchor-mainnet: ${m.root}/author.key holds author key ${m.author}, not an FPS mainnet author key (${MAINNET_AUTHOR_KEYS[0]}); a mainnet operator writes under no other`);
+    expect([r.tokens, m.sent(), m.closes()]).toEqual([[], [], { wallet: 1, journalLeftOpen: false }]);
+
+    const otherSalt = "5a".repeat(32);
+    m.update({ fpsKeys: { authorKeys: [m.author], saltKeyIds: [otherSalt] } });
+    const s = await m.run((token) => token);
+    expect(s.status, s.output).toBe(1);
+    expect(s.output).toContain(`anchor-mainnet: ${m.root}/salt.key holds salt key ${m.saltKeyId}, not an FPS mainnet salt key (${otherSalt}); a mainnet operator derives no kind-2 salt from any other`);
+    expect([s.tokens, m.sent()]).toEqual([[], []]);
+  });
+
+  it("refuses a plan with a field it does not define before reading the chain or the wallet", async ({ expect }) => {
+    const [one] = planEntries();
+    const m = offlineAnchors({ entries: [{ ...one, salt: randomHash() }] });
+    // A node of another chain: a run that read the chain before the plan would refuse it instead.
+    m.update({ network: "preprod" });
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain(`anchor-mainnet: ${m.root}/plan.json: entries[0]: unknown field "salt"`);
+    expect([r.tokens, r.output.includes("Midnight Mainnet, runtime"), m.closes().wallet, m.sent()]).toEqual([[], false, 0, []]);
+  });
+
+  it("closes the journal and the wallet on every way out, with its exit code: declined, refused under the DUST floor, failed, declined on resume, anchored", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    const exits: Array<number | null> = [];
+    const run = async (answer: (token: string) => string, fault: string, said: string) => {
+      const r = await m.run(answer, fault);
+      expect(r.output).toContain(said);
+      exits.push(r.status);
+      expect(m.closes()).toEqual({ wallet: exits.length, journalLeftOpen: false });
+    };
+    await run(() => "no", "", "anchor-mainnet: not confirmed; the prepared bytes were discarded and nothing was sent");
+    await run((token) => token, "low-dust", "anchor-mainnet: the wallet holds 0.5 DUST, below the 1 DUST floor");
+    await run((token) => token, "refuse-broadcast", "anchor-mainnet: offline node: HTTP 403: Forbidden");
+    await run(() => "no", "", "anchor-mainnet: not confirmed; nothing was sent, and the journalled anchor stays in the journal");
+    await run((token) => token, "", "1 anchor is recorded in");
+    expect(exits).toEqual([1, 1, 1, 1, 0]);
   });
 });

@@ -1,8 +1,9 @@
 import { createInterface } from "node:readline";
-import { REGISTRY_CIRCUITS, type MidnightNetwork, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { REGISTRY_CIRCUITS, hash32, type EntryHashes, type MidnightNetwork, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { agentDriven } from "./custody.js";
 import type { PreparedDeploy } from "./deployer.js";
-import { assertKnownRuntime } from "./submission.js";
+import type { PreparedAnchor } from "./operator.js";
+import { assertKnownRuntime, type PreparedBytes } from "./submission.js";
 
 // The chain each network name must be: its node's system_chain and genesis block hash.
 export const NETWORK_IDENTITY: Readonly<Record<MidnightNetwork, { chain: string; genesis: string }>> = {
@@ -37,57 +38,113 @@ export function formatDust(speck: bigint): string {
   return fraction ? `${whole}.${fraction}` : String(whole);
 }
 
-// What the human confirms: a deploy resumed from the journal says so first, with what confirming
-// then does with its bytes. The DUST balance is this run's wallet's; the payer is the wallet whose
-// DUST paid the bytes.
-export function deploySummary({ chain, wallet, dust, prepared }: { chain: ChainFacts; wallet: { dust: string }; dust: bigint; prepared: PreparedDeploy }): string {
-  const { authority, journal } = prepared;
+// What the human confirms of any final bytes, around the rows that say what they do: bytes
+// resumed from the journal say so first, with what confirming then does with them, `noun` naming
+// what they are. The DUST balance is this run's wallet's; the payer is the wallet whose DUST paid
+// the bytes.
+function bytesSummary({ chain, wallet, dust, prepared, noun }: { chain: ChainFacts; wallet: { dust: string }; dust: bigint; prepared: PreparedBytes; noun: string }, rows: string[]): string {
+  const { journal } = prepared;
   const resumed =
     journal &&
     (journal.state === "landed"
-      ? "these bytes landed; confirming sends nothing and reads the deploy back"
+      ? `these bytes landed; confirming sends nothing and reads the ${noun} back`
       : journal.expired
         ? `these bytes expired at ${prepared.ttl.toISOString()} and the chain does not show them landed; confirming sends nothing and waits until the chain lands or retires them`
         : journal.broadcasts > 0
           ? `these bytes were sent ${journal.broadcasts} time${journal.broadcasts === 1 ? "" : "s"} and have not landed; confirming waits for them and sends nothing new`
           : "no send of these bytes ever returned; confirming sends them again");
-  const rows = [
+  return [
     ...(resumed ? [`journal          resumed: ${resumed}`] : []),
     `network          ${prepared.network} (${chain.chain}, genesis ${chain.genesis})`,
     `runtime          ${chain.specVersion}, ledger ${chain.ledgerVersion}`,
-    `contract address ${prepared.address}`,
-    `deploy tx hash   ${prepared.txHash}`,
-    ...REGISTRY_CIRCUITS.map((name) => `${name.padEnd(16)} vk sha256 ${prepared.verifierKeys[name]}`),
-    `authority        committee [] (${authority.committee} members), threshold ${authority.threshold}, counter ${authority.counter}: no maintenance update can ever apply`,
+    ...rows,
     `fee (declared)   ${formatDust(prepared.declaredFee)} DUST, all of it burned`,
     `DUST balance     ${formatDust(dust)} DUST at ${wallet.dust}`,
     `paid from        ${prepared.payer ?? "a wallet the journal did not record"}`,
     `valid until      ${prepared.ttl.toISOString()}`,
     `final bytes      ${prepared.bytes.length}`,
-  ];
-  return rows.join("\n");
+  ].join("\n");
 }
 
-// Binds the confirmation to these exact final bytes: a token typed for other bytes never matches.
-export const confirmationToken = (prepared: PreparedDeploy) => `DEPLOY ${prepared.txHash.slice(0, 16)}`;
+type SummaryOf<P> = { chain: ChainFacts; wallet: { dust: string }; dust: bigint; prepared: P };
 
-// Asks the human at the terminal to type `token`. Only an interactive terminal, in a process
-// without Claude Code's environment, may confirm: a flag, a pipe, a file or an environment
-// variable never can. A process running as deci that drives a pseudo-terminal can, so this
-// guards against accidents, not against code with deci's privileges.
+// What the human confirms of a registry deploy: its address, transaction, verifier keys and
+// maintenance authority.
+export function deploySummary({ prepared, ...facts }: SummaryOf<PreparedDeploy>): string {
+  const { authority } = prepared;
+  return bytesSummary({ ...facts, prepared, noun: "deploy" }, [
+    `contract address ${prepared.address}`,
+    `deploy tx hash   ${prepared.txHash}`,
+    ...REGISTRY_CIRCUITS.map((name) => `${name.padEnd(16)} vk sha256 ${prepared.verifierKeys[name]}`),
+    `authority        committee [] (${authority.committee} members), threshold ${authority.threshold}, counter ${authority.counter}: no maintenance update can ever apply`,
+  ]);
+}
+
+const KIND = { 1: "1: anchor(), a public commitment to the entry", 2: "2: anchor_hiding(), a hiding commitment the attribute is bound to" } as const;
+
+// What the human confirms of an anchor: its plan label, what it writes to which registry, under
+// which author key, and its transaction. A kind-2 anchor shows the attribute it publishes; nothing
+// that opens its commitment is shown.
+export function anchorSummary({ prepared, label, entry, ...facts }: SummaryOf<PreparedAnchor> & { label: string; entry: EntryHashes }): string {
+  return bytesSummary({ ...facts, prepared, noun: "anchor" }, [
+    `label            ${label}`,
+    `kind             ${KIND[prepared.kind]}`,
+    `registry         ${prepared.registry}`,
+    `commitment       ${prepared.commitment}`,
+    ...(prepared.kind === 2
+      ? [`attribute        ${prepared.attribute}`]
+      : [
+          `root hash        ${Buffer.from(hash32(entry.rootHash, "rootHash")).toString("hex")}`,
+          `manifest hash    ${Buffer.from(hash32(entry.manifestHash, "manifestHash")).toString("hex")}`,
+          `merkle root      ${Buffer.from(entry.merkleRoot === undefined ? new Uint8Array(32) : hash32(entry.merkleRoot, "merkleRoot")).toString("hex")}`,
+        ]),
+    `author key       ${prepared.author}`,
+    `anchor tx hash   ${prepared.txHash}`,
+  ]);
+}
+
+// Binds the confirmation to these exact final bytes, and says what they are: a token typed for
+// other bytes never matches.
+export const confirmationToken = (prepared: PreparedDeploy | PreparedAnchor) => `${"kind" in prepared ? "ANCHOR" : "DEPLOY"} ${prepared.txHash.slice(0, 16)}`;
+
+// Refuses unless `input` and `output` are an interactive terminal in a process without Claude Code or Codex
+// environment: what deci `does` himself there, and what a pipe or a file cannot confirm.
+// A process running as deci that drives a pseudo-terminal passes, so this guards against
+// accidents, not against code with deci's privileges.
+export function assertHumanTerminal({
+  input,
+  output,
+  env = process.env,
+  does,
+  what,
+}: {
+  input: { isTTY?: boolean };
+  output: { isTTY?: boolean };
+  env?: NodeJS.ProcessEnv;
+  does: string;
+  what: string;
+}): void {
+  if (agentDriven(env)) throw new Error(`this process carries Claude Code or Codex environment; deci ${does} himself, at his own terminal`);
+  if (!input.isTTY || !output.isTTY) throw new Error(`needs deci at an interactive terminal; a pipe or a file cannot confirm ${what}`);
+}
+
+// Asks the human at the terminal to type `token` to confirm `what`. Only an interactive terminal,
+// in a process without Claude Code or Codex environment, may confirm (assertHumanTerminal): a flag, a
+// pipe, a file or an environment variable never can.
 export async function confirmOnTerminal({
   input,
   output,
   token,
   env = process.env,
+  what = "a mainnet deploy",
 }: {
   input: NodeJS.ReadableStream & { isTTY?: boolean };
   output: NodeJS.WritableStream & { isTTY?: boolean };
   token: string;
   env?: NodeJS.ProcessEnv;
+  what?: string;
 }): Promise<boolean> {
-  if (agentDriven(env)) throw new Error("this process carries Claude Code's environment; deci confirms a mainnet deploy himself, at his own terminal");
-  if (!input.isTTY || !output.isTTY) throw new Error("needs deci at an interactive terminal; a pipe or a file cannot confirm a mainnet deploy");
+  assertHumanTerminal({ input, output, env, does: `confirms ${what}`, what });
   const lines = createInterface({ input, output, terminal: false });
   output.write(`\nType exactly "${token}" to confirm these bytes for mainnet, anything else to send nothing: `);
   try {

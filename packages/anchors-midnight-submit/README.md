@@ -14,10 +14,11 @@ registry exists.
 | `relay` | `credentialRelay(endpoints)`: the wallet SDK's indexer clients take a bare URL and echo it into errors, so a Blockfrost project id cannot ride in the URL. A loopback relay adds the credential header instead; its URLs carry only a random path prefix. |
 | `wallet` | `openWallet` runs a `WalletFacade` (wallet-sdk-facade 4.1.0) over the network's indexer, refuses a mnemonic that does not derive the recorded addresses, pays fees from DUST only, and submits through the source's node. Every fee carries at least 1 SPECK of overhead (`DEFAULT_COST_PARAMETERS`; `openWallet` refuses less), so every fee is paid with a DUST spend: unpatched, wallet-sdk-dust-wallet 4.2.0 never finishes paying a fee it computes as 0 (its fee loop selects no DUST, round after round, until the ledger's wasm heap is exhausted), and with the workspace's patch (below) such a fee would be balanced with no DUST spend at all. `saveState()` writes the three sub-wallets' sync state to a new owner-only file of that save's own (named for its process and a random suffix) and renames it over the state file only once all three serialized and the whole file is written and flushed to disk; a write a full disk or a quota cuts short fails the save instead of installing a truncated file, and two processes saving one state file never install or remove each other's unfinished write. Opening the wallet removes the file of a save whose process died before renaming it. A save that fails returns `{ saved: false, failures }`, each failure naming the sub-wallet (or `file`) and its error, logs one line saying so, and leaves the last good save, which the next open restores before replaying the events since. `close()` saves a synced wallet's state first and returns that outcome. The DUST a fee spends is held until its bytes land or are ruled out. The node's refusal of the first delivery of bytes the wallet balanced frees exactly the coins they spent, and so does `discard` of bytes never handed to a node; those bytes are then never sent. A failure that is not the node's answer, or a refusal of bytes an earlier delivery may have left with a node, keeps the coins held until the bytes land or the ledger's grace period (three hours) ends. The wallet takes DUST coins largest first (`payingFees` in `fee-transacting.ts`; the measurements are in the patch section below), and its fee transactions are wallet-sdk-dust-wallet 4.2.0's with two changes (`feeTransacting`). A fee's DUST spend is dated at the newest DUST event the wallet applied, not at the indexer's newest block: the node checks the spend's proof against the DUST trees as they stood at that date, and on preprod a DUST event in the newest block that the wallet had not applied yet made the node refuse a fee (`Custom error: 170`, InvalidDustSpendProof). The node accepts the spend only in blocks up to that date plus the grace period, and the coin stays held until then, so a fee whose date is too old for the transaction's TTL plus the journal's margin (`TTL_MARGIN_MILLIS`, five minutes) is refused before anything is spent. And reverting a fee frees exactly the coins it spent: the SDK's own revert frees nothing once the wallet has applied a newer sync update or restarted, and frees too much otherwise. `payFee` balances only once the DUST sync has applied every event the indexer's last message announced, since with part of a block's events applied the wallet's DUST trees match no state the chain held; it waits up to two minutes, then fails with the sync's progress and pays nothing. `progress()` reports, for the shielded and DUST sync, the newest event the indexer announced. The facade's default pending-transactions service, which reverts bytes once their TTL passes by the local clock while the indexer does not list them, is not run. |
 | `broadcast` | Sends the exact final bytes as the bare extrinsic `Midnight.send_mn_transaction` over JSON-RPC (`author_submitExtrinsic`), the same framing the verifier's strict inclusion check reads. `nodeRefusal(error)` gives the node's own JSON-RPC refusal (code, message, data) and is null for anything else, such as a transport failure, after which the bytes may still have been delivered. |
-| `deployer` | `registryDeployer`: `prepare()` builds, proves, pays and binds a deploy and refuses it unless the final bytes deploy exactly the registry's initial state; `submit(prepared)` checks the bytes again, refusing any that do not deploy exactly the registry or do not hash to the confirmed transaction hash and address, then, once the journal has settled any earlier deploy from the chain, sends them through the write-ahead journal at most once per network and reads the address back from the landed transaction. An earlier deploy that never landed blocks new bytes until the chain, as the node confirms it, is past that deploy's TTL plus the journal's margin and, at the block whose time shows that, the node holds no contract at the address that deploy's bytes deploy. If the node holds the registry there, the deploy is landed and blocks new bytes for good, however far the indexer's lookup lags or whatever it reports. The journal itself keeps that rule, so it holds for every reconcile of the journal, including an operator's sharing its file, and it settles a row only from a chain view of the row's own network, so a deployer or operator of another network sharing the file never settles the deploy. `journalled()` settles the journal from the chain and returns the deploy it still holds, rebuilt from its journalled bytes, naming the wallet that paid it (`payer`, as the journal recorded it) and marked with how the journal holds it (`journal`: its state, how many broadcasts returned, and whether chain time is past its TTL), or null when none is live: a caller that lost its own record of a deploy, after a failure between the broadcast and the readback, submits that one, which the journal resumes (resending the same bytes only if no broadcast of them ever returned and chain time is known and not past their TTL), instead of preparing bytes the journal would refuse. Bytes past their TTL are never sent again: submit waits until the chain lands or retires them, and a resumed deploy the chain has retired is refused ("the journalled deploy expired without landing; rerun to prepare new bytes"). A deploy `journalled()` marked expired is waited for in the same way whatever chain time submit reads, and while the node lacks the indexer's newest block, so that chain time is unknown, submit refuses bytes no send of which returned, sending nothing. When another deployer's row reached the journal first, submit refuses and discards its own bytes at once, sending nothing: the journal hands that row back unsent, so its bytes never leave through this deployer's wallet, and submit never returns the other's deployment. |
-| `submission` | `registryStateOnNode(source, address)` reads the node's best block through `contractStateOnNode`, returns null when no contract is there (however the node's version answers for one), and refuses a contract that is not the immutable registry. `submitJournalled` sends through the journal, which records the wallet's unshielded address as the payer, and returns the landed transaction with its block as the indexer lists it (`landedRow`, which waits for a journalled row without sending anything). Its first step, `journalOnce`, returns the key's live row as the journal answered; given the hash of the final bytes its caller holds, it hands back another attempt's row unsent. |
-| `operator` | `registryOperator`: `anchor(entry)` (kind 1) and `anchorHiding(entry, attribute)` (kind 2, salt derived from a salt key so every opening is recoverable) under the FPS author key, through the journal; the final bytes must decode to exactly the intended anchor before they leave. |
-| `preflight` | Chain identity (system_chain, genesis, runtime), the exact deploy summary (a deploy resumed from the journal says so first, with what confirming then does with its bytes), and the terminal-only confirmation `scripts/deploy-mainnet.ts` uses. |
+| `deployer` | `registryDeployer`: `prepare()` builds, proves, pays and binds a deploy and refuses it unless the final bytes deploy exactly the registry's initial state; `submit(prepared)` checks the bytes again, refusing any that do not deploy exactly the registry or do not hash to the confirmed transaction hash and address, then, once the journal has settled any earlier deploy from the chain, sends them through the write-ahead journal at most once per network and reads the address back from the landed transaction. An earlier deploy that never landed blocks new bytes until the chain, as the node confirms it, is past that deploy's TTL plus the journal's margin and, at the block whose time shows that, the node holds no contract at the address that deploy's bytes deploy. If the node holds the registry there, the deploy is landed and blocks new bytes for good, however far the indexer's lookup lags or whatever it reports. The journal itself keeps that rule, so it holds for every reconcile of the journal, including an operator's sharing its file, and it settles a row only from a chain view of the row's own network, so a deployer or operator of another network sharing the file never settles the deploy. `assertFpsRegistry(network, address, deployJournal)` refuses a registry that is not FPS's on the network: one `MIDNIGHT_REGISTRIES` pins, or the one whose deploy the journal at `deployJournal` holds landed, read from its journalled bytes (the journal is only read; where none is, none is created). `journalled()` settles the journal from the chain and returns the deploy it still holds, rebuilt from its journalled bytes, naming the wallet that paid it (`payer`, as the journal recorded it) and marked with how the journal holds it (`journal`: its state, how many broadcasts returned, and whether chain time is past its TTL), or null when none is live: a caller that lost its own record of a deploy, after a failure between the broadcast and the readback, submits that one, which the journal resumes (resending the same bytes only if no broadcast of them ever returned and chain time is known and not past their TTL), instead of preparing bytes the journal would refuse. Bytes past their TTL are never sent again: submit waits until the chain lands or retires them, and a resumed deploy the chain has retired is refused ("the journalled deploy expired without landing; rerun to prepare new bytes"). A deploy `journalled()` marked expired is waited for in the same way whatever chain time submit reads, and while the node lacks the indexer's newest block, so that chain time is unknown, submit refuses bytes no send of which returned, sending nothing. New bytes leave only while chain time is known and short of their TTL, however long the human took to confirm them: past it, or while it is unknown, submit discards them and sends nothing ("chain time passed the prepared deploy's TTL ... while it awaited confirmation"). When another deployer's row reached the journal first, submit refuses and discards its own bytes at once, sending nothing: the journal hands that row back unsent, so its bytes never leave through this deployer's wallet, and submit never returns the other's deployment. |
+| `submission` | `registryStateOnNode(source, address)` reads the node's best block through `contractStateOnNode`, returns null when no contract is there (however the node's version answers for one), and refuses a contract that is not the immutable registry. `submitJournalled` sends through the journal, which records the wallet's unshielded address as the payer, and returns the landed transaction with its block as the indexer lists it (`landedRow`, which waits for a journalled row without sending anything). Its first step, `journalOnce`, returns the key's live row as the journal answered; given the hash of the final bytes its caller holds, it hands back another attempt's row unsent. `confirmedSends(journalling, key, ...)` is the deployer's and the operator's send of bytes a human confirmed: `held()` settles the journal and returns the key's live attempt marked expired once chain time is past its TTL, and `submit(prepared)` sends at most once under the key, as the `deployer` row describes for a deploy. |
+| `operator` | `registryOperator`: `anchor(entry)` (kind 1) and `anchorHiding(entry, attribute)` (kind 2, salt derived from a salt key, read once when the operator is made, so every opening is recoverable) under the FPS author key, through the journal; the final bytes must decode to exactly the intended anchor before they leave. The same anchors in two steps, so a human confirms their exact bytes: `prepare(request)` builds, proves, pays and binds them and sends nothing; `journalled(request)` returns the attempt the journal still holds for that anchor, rebuilt from its bytes and marked as the journal holds it, or null; `submit(prepared)` refuses bytes that do not carry exactly the confirmed anchor or do not hash to the confirmed transaction, then sends them through `confirmedSends`, so an anchor is sent at most once, a journalled attempt resumes, bytes past their TTL are never sent again, and another attempt's bytes are discarded unsent; `relocate(prepared)` settles a confirmed anchor afresh once the node's finalized chain holds another block where its journal row places it, and returns it as `submit` does: where it landed since, or refused as expired once the chain carried it past its TTL unseen; `discard(prepared)` releases the DUST of bytes nobody confirmed. |
+| `anchor-plan` | `readAnchorPlan(path)` reads the plan `scripts/anchor-mainnet.ts` takes, the anchors it writes: `{ "registry": "<64 hex>", "entries": [{ "label", "kind": 1 or 2, "rootHash", "manifestHash", "merkleRoot"?, "attribute" (kind 2 only) }] }`, hashes as 64 hex characters, optionally prefixed `sha256:` or `0x`. It refuses unknown fields, a kind the registry does not write, an attribute on kind 1 or none on kind 2, a hash that is not 32 bytes, a label a terminal could misprint (1 to 64 of letters, digits, `.`, `_`, `-`), and a label or an anchor that repeats. |
+| `preflight` | Chain identity (system_chain, genesis, runtime), the exact deploy and anchor summaries (bytes resumed from the journal say so first, with what confirming then does with them; an anchor shows its label, kind, registry, commitment, kind 2's attribute, author key and transaction, never what opens a kind-2 commitment), the token that names the bytes' transaction hash (`DEPLOY` or `ANCHOR` and its first 16 hex characters), and the terminal-only gate and confirmation the mainnet scripts use (`assertHumanTerminal`, `confirmOnTerminal`). |
 
 ## The wallet-sdk-dust-wallet patch
 
@@ -86,9 +87,14 @@ or FIDO2 signer.
 
 - The FPS author key is a 32-byte random secret in a 0600 file, never derived from a wallet seed.
   `registryOperator` takes its path; nothing accepts the key itself, and no environment variable
-  carries it. On mainnet it refuses to load the key in a process that carries Claude Code's
-  environment (`CLAUDECODE` or any `CLAUDE_CODE_*` variable), which stops an agent session that
+  carries it. On mainnet it refuses to load the key in a process that carries Claude Code or Codex
+  environment (`CLAUDECODE`, any `CLAUDE_CODE_*`, `CODEX_THREAD_ID`, `CODEX_SESSION_ID`,
+  `CODEX_CI`, or any `CODEX_MANAGED_BY_*`, including empty values), which stops an agent session that
   loads it as it is, not code that drops those variables.
+- On mainnet, `registryOperator` writes under the FPS mainnet keys and no others: it refuses an
+  author key file whose key is not in `MAINNET_AUTHOR_KEYS` and a salt key file whose `saltKeyId`
+  is not in `MAINNET_SALT_KEY_IDS` as it loads them, when it is made, before anything is prepared,
+  so a wrong key file never authors an FPS anchor.
 - Off mainnet, the FPS mainnet keys are refused by identity and by place. `registryOperator`
   refuses an author key file holding the mainnet relay's author key (`MAINNET_AUTHOR_KEYS`) and a
   salt key file whose `saltKeyId` is the mainnet salt key's (`MAINNET_SALT_KEY_IDS`), wherever the
@@ -97,7 +103,7 @@ or FIDO2 signer.
   the path reaches it (a symlinked directory, `..`), before opening it.
 - `scripts/deploy-mainnet.ts` sends a mainnet deploy only after the token it prints (`DEPLOY` and
   the first 16 hex characters of the final bytes' transaction hash) is typed at an interactive
-  terminal, in a process without Claude Code's environment. That stops an agent session running
+  terminal, in a process without Claude Code or Codex environment. That stops an agent session running
   the script as it is, a pipe, a file, a flag or an environment variable, and bytes other than
   the ones summarized. A run that failed between the broadcast and the readback leaves the next
   run the journalled deploy (`journalled()`), never a second one: it shows that deploy, marked as
@@ -105,13 +111,100 @@ or FIDO2 signer.
   the same token is typed again; declining it releases no DUST, since its bytes may already be with
   the node. The DUST floor applies only when confirming may send bytes, so a landed deploy whose
   readback failed is finished however little DUST the wallet holds. The gates do not stop a process running as deci
-  that drops Claude Code's variables, drives a pseudo-terminal and types back the token it reads:
+  that drops the agent variables, drives a pseudo-terminal and types back the token it reads:
   the preflight suite does exactly that, once with inputs that do not exist, so it stops at its
   first read, and over an offline mainnet (`test/offline.ts` in place of the submit package),
   where it deploys, declines, resumes a deploy whose run failed after its broadcast, and refuses
   an expired one and journalled bytes that deploy anything but the registry, and where every way
-  out, declined, refused or failed, closes the journal and the wallet before the process exits. The
+  out, declined, refused or failed, closes the journal and the wallet before the process exits; a
+  wallet that fails to close is reported after the run's own failure, never in its place. The
   protection is procedural: deci runs the deploy himself, at his own terminal.
+- `scripts/anchor-mainnet.ts` writes a plan's anchors behind the same gates, through the same code
+  (`scripts/mainnet-session.ts`): it refuses a Claude Code or Codex environment and a pipe before reading
+  anything, an unknown flag, a flag given twice or followed by another flag instead of its value,
+  and a plan with any field it does not define before reading the chain.
+  It writes only to FPS's registry (`assertFpsRegistry`): one `MIDNIGHT_REGISTRIES` pins, or the
+  one whose deploy deploy-mainnet's journal (`--deploy-journal`, by default deploy-mainnet's own)
+  holds landed, read from the journalled bytes; the same immutable registry deployed by anyone else
+  is refused before the chain is read, and a registry address where the node does not hold exactly
+  the immutable registry before opening the wallet or loading a key. Each anchor is sent only
+  after `ANCHOR` and the first 16 hex characters of its final bytes' transaction hash are typed,
+  resumes from the journal like a deploy (never sent twice, never sent past its TTL, however long
+  the prompt waited), and is recorded only once the node shows its block final and carrying
+  exactly those bytes. That block is the one the node's finalized chain holds at the anchor's
+  height, never only the one the journal cached: where that chain holds another block, a reorg
+  orphaned the cached one, and the journal settles the anchor afresh from the chain, into the
+  block it landed in since or, once the chain carried it past its TTL unseen, out of the journal,
+  so a rerun anchors new bytes. Each anchor is added to the results file as the file stands then,
+  so a row another run recorded meanwhile is kept. A label already recorded with the same
+  transaction is not appended again; a different transaction for that label is refused.
+  Kind-1 summaries show normalized root, manifest and Merkle hashes; kind 2 keeps its opening
+  private. Plan, results and wallet-record JSON errors never include file contents.
+  The results file holds public data only; nothing that opens a kind-2 commitment is printed or written. The preflight suite drives it over the offline mainnet
+  too: kind 1 and kind 2 anchors, a decline, a token typed after the bytes' TTL, a resume after a
+  failure between the broadcast and the readback, a block not final in time, a block that does not
+  carry the bytes or whose body the node lacks, an indexer placing the anchor in a block the node
+  did not finalize, an orphaned block whose anchor landed again elsewhere or never, an expired
+  attempt, a registry that is not FPS's, not the immutable one or no contract at all, an author or
+  salt key that is not an FPS mainnet key, an unknown plan field, and every way out closing the
+  journal and the wallet.
+
+## Mainnet proof runbook
+
+deci runs both commands himself, in his OWN terminal on Gemtek, never through Claude Code's `!`
+prefix or any agent session: the scripts refuse a process that carries Claude Code or Codex environment.
+Both read the FPS mainnet keys from their default paths (`~/.secrets/orynq-midnight-mainnet`), the
+Blockfrost project id from `~/.secrets/blockfrost-midnight-mainnet.project_id`, the recorded wallet
+from `~/work/orynq-midnight-mainnet-wallet.json` and the ZK material from
+`~/.cache/orynq-midnight/zk`. Both run from this package's directory
+(`packages/anchors-midnight-submit`). Once, before the first command, at the checkout's root:
+`pnpm install --frozen-lockfile --filter @fluxpointstudios/orynq-sdk-anchors-midnight-submit...`
+and `pnpm --filter "@fluxpointstudios/orynq-sdk-anchors-midnight-submit^..." build`.
+
+1. Deploy the registry:
+
+   ```
+   node --import tsx scripts/deploy-mainnet.ts
+   ```
+
+   It prints the chain (`Midnight Mainnet, runtime 1000300, ledger ...`), syncs the deploy wallet
+   (it refuses a mnemonic that does not derive the recorded addresses, and a wallet under 20 DUST),
+   prints the deploy summary (contract address, deploy transaction hash, the two verifier keys'
+   sha256, `committee [] (0 members), threshold 1, counter 0`, the fee) and asks:
+   `Type exactly "DEPLOY <16 hex>" to confirm these bytes for mainnet`. Type that token to send;
+   anything else sends nothing. It ends with `deployed and read back from the node: {...}`, whose
+   `address` is the registry. A run that fails after its broadcast is finished by running the same
+   command again: it shows the journalled deploy and asks for the same token.
+
+2. Put that `address` into the plan as `"registry"`, then write the anchors:
+
+   ```
+   node --import tsx scripts/anchor-mainnet.ts --plan ~/orynq-midnight-mainnet-plan.json
+   ```
+
+   The plan is written beforehand with the entries FPS anchors first, in order (see `anchor-plan`
+   above); only its `registry` comes from step 1. For example:
+
+   ```json
+   { "registry": "<address from step 1>",
+     "entries": [
+       { "label": "git-head", "kind": 1, "rootHash": "sha256:...", "manifestHash": "sha256:...", "merkleRoot": "sha256:..." },
+       { "label": "model-manifest", "kind": 2, "rootHash": "...", "manifestHash": "...", "merkleRoot": "...", "attribute": "..." } ] }
+   ```
+
+   It refuses a `registry` other than the one whose deploy step 1 journalled as landed, then
+   checks the chain and that the registry on the node is exactly the immutable one, syncs the
+   same wallet, then for each entry prints its summary (label, kind, registry, commitment, the
+   attribute for kind 2, the FPS author key, the anchor transaction hash, the fee) and asks:
+   `Type exactly "ANCHOR <16 hex>" to confirm these bytes for mainnet`. After each confirmed anchor
+   it waits until the node shows its block final and carrying exactly those bytes, then records it.
+   Anything but the token stops the run with nothing sent; running the same command again skips
+   what is recorded and resumes what the journal holds, asking for each token again.
+
+3. Send back `~/.local/state/orynq-midnight/mainnet-anchors.json` (label, kind, transaction hash,
+   block, block hash, commitment, kind 2's attribute, registry, author key: public data only) and
+   the `deployed and read back from the node` line from step 1. Every anchor in it is then verified
+   from a separate process with `verifyMidnightAnchor`.
 
 ## Keys
 
