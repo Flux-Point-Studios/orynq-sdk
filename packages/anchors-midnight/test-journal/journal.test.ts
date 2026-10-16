@@ -23,24 +23,29 @@ const deployKey: AnchorKey = { network: "preprod", registry: "registry-deploy", 
 const bytesOf = (name: Recorded) => new Uint8Array(Buffer.from(fixture[name].tx, "hex"));
 
 // A network named `name` that records what reaches it and an indexer that lags it: `index()`
-// makes what arrived visible, and `indexedAt` is the time of the newest block the indexer has
-// read, INDEXED_HEAD, which the node holds. The node holds a contract at each address in
-// `contracts`, and every question put to it about one is recorded in `asked`.
+// makes what arrived visible, in block 7 "ab…" unless `place` moved it and until `forget` drops
+// it, and `indexedAt` is the time of the newest block the indexer has read, INDEXED_HEAD, which
+// the node holds. The node holds a contract at each address in `contracts`, and every question
+// put to it about one is recorded in `asked`; its finalized chain holds the blocks `finalize`
+// names, and none above them.
 const INDEXED_HEAD = "cd".repeat(32);
 function network(name = "preprod") {
   const arrived: string[] = [];
   const indexed = new Map<string, "SUCCESS" | "FAILURE">();
+  const placed = new Map<string, { height: number; blockHash: string }>();
+  const final = new Map<number, string>();
   const contracts = new Set<string>();
   const asked: Array<[string, string]> = [];
   let indexedAt = new Date("2029-12-31T23:00:00Z");
   const chain: ChainView = {
     network: name,
-    lookup: async (txHash) => (indexed.has(txHash) ? { status: indexed.get(txHash)!, height: 7, blockHash: "ab".repeat(32) } : null),
+    lookup: async (txHash) => (indexed.has(txHash) ? { status: indexed.get(txHash)!, ...(placed.get(txHash) ?? { height: 7, blockHash: "ab".repeat(32) }) } : null),
     indexedThrough: async () => ({ hash: INDEXED_HEAD, time: indexedAt }),
     holdsContract: async (address, at) => {
       asked.push([address, at]);
       return contracts.has(address);
     },
+    finalHash: async (height) => final.get(height) ?? null,
   };
   return {
     chain,
@@ -48,6 +53,9 @@ function network(name = "preprod") {
     contracts,
     asked,
     index: (status: "SUCCESS" | "FAILURE" = "SUCCESS") => arrived.forEach((h) => indexed.set(h, status)),
+    place: (txHash: string, height: number, blockHash: string) => placed.set(txHash, { height, blockHash }),
+    forget: (txHash: string) => indexed.delete(txHash),
+    finalize: (height: number, blockHash: string) => final.set(height, blockHash),
     advance: (to: Date) => (indexedAt = to),
     send: (name: Recorded) => async (bytes: Uint8Array) => {
       expect(Buffer.from(bytes).toString("hex")).toBe(fixture[name].tx);
@@ -431,27 +439,98 @@ describe("the write-ahead journal", () => {
   });
 });
 
+describe("a landed row whose block the node's finalized chain does not hold", () => {
+  const ORPHANED = "ab".repeat(32);
+  const ELSEWHERE = "ef".repeat(32);
+  const landedAnchor = async () => {
+    const journal = openJournal(file());
+    const net = network();
+    await journal.submitOnce(key, { prepare: prepared("anchor", { n: 0 }), broadcast: net.send("anchor"), chain: net.chain });
+    net.index();
+    expect(await journal.reconcile(net.chain)).toEqual([expect.objectContaining({ state: "landed", height: 7, blockHash: ORPHANED })]);
+    return { journal, net };
+  };
+
+  it("stays as it is while the node has not finalized its height, or finalized the very block it names, wherever the indexer now places it", async () => {
+    const { journal, net } = await landedAnchor();
+    net.place(fixture.anchor.txHash, 9, ELSEWHERE);
+    expect(await journal.relocate(fixture.anchor.txHash, net.chain)).toMatchObject({ state: "landed", height: 7, blockHash: ORPHANED });
+    net.finalize(7, ORPHANED);
+    expect(await journal.relocate(fixture.anchor.txHash, net.chain)).toMatchObject({ state: "landed", height: 7, blockHash: ORPHANED });
+    journal.close();
+  });
+
+  it("is settled afresh once the node finalized another block at its height: landed where the indexer now places it, and sent nowhere again", async () => {
+    const { journal, net } = await landedAnchor();
+    net.finalize(7, "11".repeat(32));
+    net.place(fixture.anchor.txHash, 9, ELSEWHERE);
+    expect(await journal.relocate(fixture.anchor.txHash, net.chain)).toEqual({ txHash: fixture.anchor.txHash, state: "landed", ttl: TTL, broadcasts: 1, height: 9, blockHash: ELSEWHERE });
+    expect(journal.live(key)).toMatchObject({ state: "landed", height: 9, blockHash: ELSEWHERE });
+    expect(net.arrived).toEqual([fixture.anchor.txHash]);
+    journal.close();
+  });
+
+  it("is pending again while the indexer lists it nowhere, then retired once the chain carried it past its TTL plus the margin unseen, which frees its key", async () => {
+    const { journal, net } = await landedAnchor();
+    net.finalize(7, "11".repeat(32));
+    net.forget(fixture.anchor.txHash);
+    expect(await journal.relocate(fixture.anchor.txHash, net.chain)).toEqual({ txHash: fixture.anchor.txHash, state: "pending", ttl: TTL, broadcasts: 1 });
+    net.advance(new Date(TTL.getTime() + 5 * MINUTE + 1));
+    expect(await journal.reconcile(net.chain)).toEqual([expect.objectContaining({ txHash: fixture.anchor.txHash, state: "failed" })]);
+    expect(journal.live(key)).toBeUndefined();
+    expect(net.arrived).toEqual([fixture.anchor.txHash]);
+    journal.close();
+  });
+
+  it("is settled only from a chain view of its own network, and only a row the journal holds", async () => {
+    const { journal } = await landedAnchor();
+    const mainnet = network("mainnet");
+    mainnet.finalize(7, "11".repeat(32));
+    await expect(journal.relocate(fixture.anchor.txHash, mainnet.chain)).rejects.toThrow("a mainnet chain view settles no preprod attempt");
+    expect(journal.live(key)).toMatchObject({ state: "landed", height: 7, blockHash: ORPHANED });
+    await expect(journal.relocate(fixture.hiding.txHash, mainnet.chain)).rejects.toThrow(`the journal holds no transaction ${fixture.hiding.txHash}`);
+    journal.close();
+  });
+});
+
 describe("chainView over a Midnight source", () => {
   const TIMESTAMP_NOW = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
   const HEAD = { height: 10, hash: "ef".repeat(32), timestamp: Date.UTC(2030, 0, 2) };
+  const FINALIZED = `0x${"fa".repeat(32)}`;
   const timestamp = (ms: number) => `0x${Buffer.from(u64le(BigInt(ms))).toString("hex")}`;
-  // An indexer whose newest block is HEAD, and a node that holds `nodeHash` at HEAD's height,
-  // records `nodeNow` (by default `nodeTime`, encoded) as that block's Timestamp.Now, and reads
-  // its ledger in the blocks `ledgerIn`, by default HEAD, holding a contract at each address in
-  // `contracts` and answering for any other as midnight-node `version` does.
+  // An indexer whose newest block is HEAD, and a node that holds `nodeHash` at HEAD's height and
+  // `below` at the height under it, records `nodeNow` (by default `nodeTime`, encoded) as HEAD's
+  // Timestamp.Now, has finalized its chain up to height `finalized` (holding no header for its
+  // finalized head when null), and reads its ledger in the blocks `ledgerIn`, by default HEAD,
+  // holding a contract at each address in `contracts` and answering for any other as
+  // midnight-node `version` does.
   const source = ({
     nodeHash = `0x${HEAD.hash}`,
+    below = `0x${"99".repeat(32)}`,
     nodeTime = HEAD.timestamp,
     nodeNow = nodeTime === null ? null : timestamp(nodeTime),
+    finalized = HEAD.height,
     ledgerIn = [HEAD.hash],
     contracts = [fixture.registry.address],
     version = "2.1.0",
-  }: { nodeHash?: string | null; nodeTime?: number | null; nodeNow?: string | null; ledgerIn?: string[]; contracts?: string[]; version?: NodeVersion } = {}) => {
+  }: {
+    nodeHash?: string | null;
+    below?: string | null;
+    nodeTime?: number | null;
+    nodeNow?: string | null;
+    finalized?: number | null;
+    ledgerIn?: string[];
+    contracts?: string[];
+    version?: NodeVersion;
+  } = {}) => {
     const calls: Array<[string, unknown[]]> = [];
     const ledger = ledgerNode({ blocks: ledgerIn, contracts: (address) => (contracts.includes(address) ? "0102" : undefined), version });
     const call = async (method: string, params: unknown[] = []) => {
       calls.push([method, params]);
       if (method === "chain_getBlockHash" && params[0] === HEAD.height) return nodeHash;
+      if (method === "chain_getBlockHash" && params[0] === HEAD.height - 1) return below;
+      if (method === "chain_getFinalizedHead") return FINALIZED;
+      if (method === "chain_getHeader" && params[0] === FINALIZED) return finalized === null ? null : { number: `0x${finalized.toString(16)}` };
       if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && params[1] === `0x${HEAD.hash}`) return nodeNow;
       if (method === "midnight_zswapStateRoot" || method === "midnight_contractState") return ledger.call("test", method, params);
       throw new Error(`unexpected ${method} ${JSON.stringify(params)}`);
@@ -525,6 +604,20 @@ describe("chainView over a Midnight source", () => {
     expect(await landed.reconcile(chainView(source().s, "preprod"))).toEqual([expect.objectContaining({ txHash: fixture.registry.txHash, state: "landed" })]);
     journal.close();
     landed.close();
+  });
+
+  it("names the block the node's finalized chain holds at a height up to its finalized head, and none above it", async () => {
+    const below = source({ finalized: HEAD.height - 1 });
+    const view = chainView(below.s, "preprod");
+    expect(await view.finalHash(HEAD.height - 1)).toBe("99".repeat(32));
+    expect(await view.finalHash(HEAD.height)).toBeNull();
+    expect(below.calls.filter(([method]) => method === "chain_getBlockHash")).toEqual([["chain_getBlockHash", [HEAD.height - 1]]]);
+    expect(await chainView(source().s, "preprod").finalHash(HEAD.height)).toBe(HEAD.hash);
+  });
+
+  it("refuses a node that holds no header for its finalized head, or no block below it", async () => {
+    await expect(chainView(source({ finalized: null }).s, "preprod").finalHash(HEAD.height)).rejects.toThrow(`the node holds no header for its finalized head ${FINALIZED}`);
+    await expect(chainView(source({ below: null }).s, "preprod").finalHash(HEAD.height - 1)).rejects.toThrow(`the node holds no block ${HEAD.height - 1}, below its finalized head ${HEAD.height}`);
   });
 
   it("proves no chain time while the node holds another block at the indexer's newest height, or none yet", async () => {

@@ -3,10 +3,11 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 
-// True in a process that carries Claude Code's environment (CLAUDECODE or a CLAUDE_CODE_*
-// variable): an agent session that starts a script or loads a key as it is. It is an accident
-// guard, not a boundary: code running as deci can drop those variables.
-export const agentDriven = (env: NodeJS.ProcessEnv = process.env) => Object.keys(env).some((name) => name === "CLAUDECODE" || name.startsWith("CLAUDE_CODE_"));
+// An accident guard, not a boundary against code that can change its own environment.
+export const agentDriven = (env: NodeJS.ProcessEnv = process.env) =>
+  Object.keys(env).some(
+    (name) => name === "CLAUDECODE" || name.startsWith("CLAUDE_CODE_") || name === "CODEX_THREAD_ID" || name === "CODEX_SESSION_ID" || name === "CODEX_CI" || name.startsWith("CODEX_MANAGED_BY_"),
+  );
 
 // The FPS mainnet keys by their public halves, as recorded when they were made: the relay's author
 // key and the kind-2 salt key's id. Off mainnet an operator refuses a key file holding one of
