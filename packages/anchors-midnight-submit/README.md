@@ -87,8 +87,9 @@ or FIDO2 signer.
 
 - The FPS author key is a 32-byte random secret in a 0600 file, never derived from a wallet seed.
   `registryOperator` takes its path; nothing accepts the key itself, and no environment variable
-  carries it. On mainnet it refuses to load the key in a process that carries Claude Code's
-  environment (`CLAUDECODE` or any `CLAUDE_CODE_*` variable), which stops an agent session that
+  carries it. On mainnet it refuses to load the key in a process that carries Claude Code or Codex
+  environment (`CLAUDECODE`, any `CLAUDE_CODE_*`, `CODEX_THREAD_ID`, `CODEX_SESSION_ID`,
+  `CODEX_CI`, or any `CODEX_MANAGED_BY_*`, including empty values), which stops an agent session that
   loads it as it is, not code that drops those variables.
 - On mainnet, `registryOperator` writes under the FPS mainnet keys and no others: it refuses an
   author key file whose key is not in `MAINNET_AUTHOR_KEYS` and a salt key file whose `saltKeyId`
@@ -102,7 +103,7 @@ or FIDO2 signer.
   the path reaches it (a symlinked directory, `..`), before opening it.
 - `scripts/deploy-mainnet.ts` sends a mainnet deploy only after the token it prints (`DEPLOY` and
   the first 16 hex characters of the final bytes' transaction hash) is typed at an interactive
-  terminal, in a process without Claude Code's environment. That stops an agent session running
+  terminal, in a process without Claude Code or Codex environment. That stops an agent session running
   the script as it is, a pipe, a file, a flag or an environment variable, and bytes other than
   the ones summarized. A run that failed between the broadcast and the readback leaves the next
   run the journalled deploy (`journalled()`), never a second one: it shows that deploy, marked as
@@ -110,7 +111,7 @@ or FIDO2 signer.
   the same token is typed again; declining it releases no DUST, since its bytes may already be with
   the node. The DUST floor applies only when confirming may send bytes, so a landed deploy whose
   readback failed is finished however little DUST the wallet holds. The gates do not stop a process running as deci
-  that drops Claude Code's variables, drives a pseudo-terminal and types back the token it reads:
+  that drops the agent variables, drives a pseudo-terminal and types back the token it reads:
   the preflight suite does exactly that, once with inputs that do not exist, so it stops at its
   first read, and over an offline mainnet (`test/offline.ts` in place of the submit package),
   where it deploys, declines, resumes a deploy whose run failed after its broadcast, and refuses
@@ -119,7 +120,7 @@ or FIDO2 signer.
   wallet that fails to close is reported after the run's own failure, never in its place. The
   protection is procedural: deci runs the deploy himself, at his own terminal.
 - `scripts/anchor-mainnet.ts` writes a plan's anchors behind the same gates, through the same code
-  (`scripts/mainnet-session.ts`): it refuses a Claude Code environment and a pipe before reading
+  (`scripts/mainnet-session.ts`): it refuses a Claude Code or Codex environment and a pipe before reading
   anything, an unknown flag, a flag given twice or followed by another flag instead of its value,
   and a plan with any field it does not define before reading the chain.
   It writes only to FPS's registry (`assertFpsRegistry`): one `MIDNIGHT_REGISTRIES` pins, or the
@@ -135,8 +136,11 @@ or FIDO2 signer.
   orphaned the cached one, and the journal settles the anchor afresh from the chain, into the
   block it landed in since or, once the chain carried it past its TTL unseen, out of the journal,
   so a rerun anchors new bytes. Each anchor is added to the results file as the file stands then,
-  so a row another run recorded meanwhile is kept. The results file holds public data only; nothing
-  that opens a kind-2 commitment is printed or written. The preflight suite drives it over the offline mainnet
+  so a row another run recorded meanwhile is kept. A label already recorded with the same
+  transaction is not appended again; a different transaction for that label is refused.
+  Kind-1 summaries show normalized root, manifest and Merkle hashes; kind 2 keeps its opening
+  private. Plan, results and wallet-record JSON errors never include file contents.
+  The results file holds public data only; nothing that opens a kind-2 commitment is printed or written. The preflight suite drives it over the offline mainnet
   too: kind 1 and kind 2 anchors, a decline, a token typed after the bytes' TTL, a resume after a
   failure between the broadcast and the readback, a block not final in time, a block that does not
   carry the bytes or whose body the node lacks, an indexer placing the anchor in a block the node
@@ -148,7 +152,7 @@ or FIDO2 signer.
 ## Mainnet proof runbook
 
 deci runs both commands himself, in his OWN terminal on Gemtek, never through Claude Code's `!`
-prefix or any agent session: the scripts refuse a process that carries Claude Code's environment.
+prefix or any agent session: the scripts refuse a process that carries Claude Code or Codex environment.
 Both read the FPS mainnet keys from their default paths (`~/.secrets/orynq-midnight-mainnet`), the
 Blockfrost project id from `~/.secrets/blockfrost-midnight-mainnet.project_id`, the recorded wallet
 from `~/work/orynq-midnight-mainnet-wallet.json` and the ZK material from

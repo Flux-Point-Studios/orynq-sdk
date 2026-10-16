@@ -1,10 +1,9 @@
 // What deploy-mainnet and anchor-mainnet share. Before anything is read, the process must carry no
-// Claude Code environment and its input and output must be a terminal; then the flags, every one
+// Claude Code or Codex environment and its input and output must be a terminal; then the flags, every one
 // of them known; then a node that is Midnight Mainnet, the wallet the mnemonic derives only if it
 // is the recorded one, and the DUST floor whenever confirming may send bytes. Each set of final
 // bytes is sent only after the token naming its transaction hash is typed at that terminal, and
 // every way out closes the wallet before the process exits.
-import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { midnightSource, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import {
@@ -13,6 +12,7 @@ import {
   confirmOnTerminal,
   confirmationToken,
   formatDust,
+  readJsonFile,
   networkEndpoints,
   openWallet,
   type ChainFacts,
@@ -100,7 +100,7 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
             source,
             chain,
             async syncWallet() {
-              const expectedAddresses = (JSON.parse(readFileSync(option("wallet-record"), "utf8")) as { addresses: { unshielded: string; shielded: string; dust: string } }).addresses;
+              const expectedAddresses = (readJsonFile(option("wallet-record")) as { addresses: { unshielded: string; shielded: string; dust: string } }).addresses;
               process.stdout.write(`${chain.chain}, runtime ${chain.specVersion}, ledger ${chain.ledgerVersion}. Syncing the wallet...\n`);
               const wallet = await openWallet({ network: "mainnet", mnemonicFile: option("mnemonic"), endpoints, source, zkDir: option("zk"), expectedAddresses });
               opened.push(wallet);

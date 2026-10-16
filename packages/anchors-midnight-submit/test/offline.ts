@@ -183,7 +183,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     saveState,
     async balances() {
       if (FAULTS.has("lose-sync") && Object.keys(read().landed).length > 0) throw new Error(`the ${options.network} wallet did not sync within 600 s`);
-      return { night: 10n ** 9n, dust: FAULTS.has("low-dust") ? 5n * 10n ** 14n : 10n ** 16n, nightUtxos: 1, registeredNightUtxos: 1 };
+      return { night: 10n ** 9n, dust: FAULTS.has("dust-0.4") ? 4n * 10n ** 14n : FAULTS.has("low-dust") ? 5n * 10n ** 14n : 10n ** 16n, nightUtxos: 1, registeredNightUtxos: 1 };
     },
     async registerNightForDust() {
       return null;

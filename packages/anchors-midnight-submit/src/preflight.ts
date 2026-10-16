@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline";
-import { REGISTRY_CIRCUITS, type MidnightNetwork, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { REGISTRY_CIRCUITS, hash32, type EntryHashes, type MidnightNetwork, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { agentDriven } from "./custody.js";
 import type { PreparedDeploy } from "./deployer.js";
 import type { PreparedAnchor } from "./operator.js";
@@ -85,13 +85,19 @@ const KIND = { 1: "1: anchor(), a public commitment to the entry", 2: "2: anchor
 // What the human confirms of an anchor: its plan label, what it writes to which registry, under
 // which author key, and its transaction. A kind-2 anchor shows the attribute it publishes; nothing
 // that opens its commitment is shown.
-export function anchorSummary({ prepared, label, ...facts }: SummaryOf<PreparedAnchor> & { label: string }): string {
+export function anchorSummary({ prepared, label, entry, ...facts }: SummaryOf<PreparedAnchor> & { label: string; entry: EntryHashes }): string {
   return bytesSummary({ ...facts, prepared, noun: "anchor" }, [
     `label            ${label}`,
     `kind             ${KIND[prepared.kind]}`,
     `registry         ${prepared.registry}`,
     `commitment       ${prepared.commitment}`,
-    ...(prepared.kind === 2 ? [`attribute        ${prepared.attribute}`] : []),
+    ...(prepared.kind === 2
+      ? [`attribute        ${prepared.attribute}`]
+      : [
+          `root hash        ${Buffer.from(hash32(entry.rootHash, "rootHash")).toString("hex")}`,
+          `manifest hash    ${Buffer.from(hash32(entry.manifestHash, "manifestHash")).toString("hex")}`,
+          `merkle root      ${Buffer.from(entry.merkleRoot === undefined ? new Uint8Array(32) : hash32(entry.merkleRoot, "merkleRoot")).toString("hex")}`,
+        ]),
     `author key       ${prepared.author}`,
     `anchor tx hash   ${prepared.txHash}`,
   ]);
@@ -101,8 +107,8 @@ export function anchorSummary({ prepared, label, ...facts }: SummaryOf<PreparedA
 // other bytes never matches.
 export const confirmationToken = (prepared: PreparedDeploy | PreparedAnchor) => `${"kind" in prepared ? "ANCHOR" : "DEPLOY"} ${prepared.txHash.slice(0, 16)}`;
 
-// Refuses unless `input` and `output` are an interactive terminal in a process without Claude
-// Code's environment: what deci `does` himself there, and what a pipe or a file cannot confirm.
+// Refuses unless `input` and `output` are an interactive terminal in a process without Claude Code or Codex
+// environment: what deci `does` himself there, and what a pipe or a file cannot confirm.
 // A process running as deci that drives a pseudo-terminal passes, so this guards against
 // accidents, not against code with deci's privileges.
 export function assertHumanTerminal({
@@ -118,12 +124,12 @@ export function assertHumanTerminal({
   does: string;
   what: string;
 }): void {
-  if (agentDriven(env)) throw new Error(`this process carries Claude Code's environment; deci ${does} himself, at his own terminal`);
+  if (agentDriven(env)) throw new Error(`this process carries Claude Code or Codex environment; deci ${does} himself, at his own terminal`);
   if (!input.isTTY || !output.isTTY) throw new Error(`needs deci at an interactive terminal; a pipe or a file cannot confirm ${what}`);
 }
 
 // Asks the human at the terminal to type `token` to confirm `what`. Only an interactive terminal,
-// in a process without Claude Code's environment, may confirm (assertHumanTerminal): a flag, a
+// in a process without Claude Code or Codex environment, may confirm (assertHumanTerminal): a flag, a
 // pipe, a file or an environment variable never can.
 export async function confirmOnTerminal({
   input,

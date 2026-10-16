@@ -1,3 +1,4 @@
+export { readJsonFile } from "./json-file.js";
 export { readAnchorPlan } from "./anchor-plan.js";
 export type { AnchorPlan, PlannedAnchor } from "./anchor-plan.js";
 export { agentDriven } from "./custody.js";

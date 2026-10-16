@@ -152,6 +152,7 @@ const anchor: PreparedAnchor = {
 describe("the anchor summary a human approves", () => {
   const summary = (prepared: PreparedAnchor) =>
     anchorSummary({
+      entry: { rootHash: "0x" + "A1".repeat(32), manifestHash: "b2".repeat(32) },
       chain: { chain: "Midnight Mainnet", genesis: "1941ca8e".padEnd(64, "0"), specVersion: 1000300, ledgerVersion: "8.1.3" },
       wallet: { dust: "mn_dust1example" },
       dust: 25_500_000_000_000_000n,
@@ -168,6 +169,9 @@ describe("the anchor summary a human approves", () => {
         "kind             1: anchor(), a public commitment to the entry",
         `registry         ${"ab".repeat(32)}`,
         `commitment       ${"c1".repeat(32)}`,
+        `root hash        ${"a1".repeat(32)}`,
+        `manifest hash    ${"b2".repeat(32)}`,
+        `merkle root      ${"00".repeat(32)}`,
         `author key       ${"6a".repeat(32)}`,
         `anchor tx hash   ${anchor.txHash}`,
         "fee (declared)   0.000000000001 DUST, all of it burned",
@@ -206,6 +210,10 @@ const terminal = (typed: string, isTTY = true) => {
 const human = { PATH: "/usr/bin" };
 
 describe("confirmOnTerminal", () => {
+  it.each(["DEPLOY", "ANCHOR"])("rejects a well-formed %s token naming other bytes", async (verb) => {
+    expect(await confirmOnTerminal({ ...terminal(`${verb} 0123456789abcdee\n`), token: `${verb} 0123456789abcdef`, env: human })).toBe(false);
+  });
+
   it("is true only when the human types the exact token", async () => {
     expect(await confirmOnTerminal({ ...terminal("DEPLOY 0123456789abcdef\n"), token: "DEPLOY 0123456789abcdef", env: human })).toBe(true);
     expect(await confirmOnTerminal({ ...terminal("deploy 0123456789abcdef\n"), token: "DEPLOY 0123456789abcdef", env: human })).toBe(false);
@@ -217,16 +225,20 @@ describe("confirmOnTerminal", () => {
     await expect(confirmOnTerminal({ ...terminal("DEPLOY 0123456789abcdef\n", false), token: "DEPLOY 0123456789abcdef", env: human })).rejects.toThrow(/needs deci at an interactive terminal/);
   });
 
-  it("refuses a process that carries Claude Code's environment, even at a terminal with the token", async () => {
+  it("refuses a process that carries Claude Code or Codex environment, even at a terminal with the token", async () => {
     for (const env of [{ CLAUDECODE: "1" }, { CLAUDE_CODE_ENTRYPOINT: "cli" }]) {
-      await expect(confirmOnTerminal({ ...terminal("DEPLOY 0123456789abcdef\n"), token: "DEPLOY 0123456789abcdef", env })).rejects.toThrow(/this process carries Claude Code's environment; deci confirms a mainnet deploy himself/);
+      await expect(confirmOnTerminal({ ...terminal("DEPLOY 0123456789abcdef\n"), token: "DEPLOY 0123456789abcdef", env })).rejects.toThrow(/this process carries Claude Code or Codex environment; deci confirms a mainnet deploy himself/);
     }
+  });
+
+  it.each(["CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_CI", "CODEX_MANAGED_BY_NPM", "CODEX_MANAGED_BY_OTHER"])("refuses Codex marker %s even when empty", async (name) => {
+    await expect(confirmOnTerminal({ ...terminal("DEPLOY 0123456789abcdef\n"), token: "DEPLOY 0123456789abcdef", env: { [name]: "" } })).rejects.toThrow("Claude Code or Codex environment");
   });
 
   it("names what it confirms in its refusals", async () => {
     const token = "ANCHOR fedcba9876543210";
     await expect(confirmOnTerminal({ ...terminal(`${token}\n`), token, env: { CLAUDECODE: "1" }, what: "a mainnet anchor" })).rejects.toThrow(
-      "this process carries Claude Code's environment; deci confirms a mainnet anchor himself, at his own terminal",
+      "this process carries Claude Code or Codex environment; deci confirms a mainnet anchor himself, at his own terminal",
     );
     await expect(confirmOnTerminal({ ...terminal(`${token}\n`, false), token, env: human, what: "a mainnet anchor" })).rejects.toThrow("needs deci at an interactive terminal; a pipe or a file cannot confirm a mainnet anchor");
   });
@@ -235,7 +247,7 @@ describe("confirmOnTerminal", () => {
 // Every input is a path that does not exist, so a run that gets past the gates stops at its first
 // read, before any network request.
 const NOWHERE = ["--mnemonic", "/nonexistent/mnemonic.txt", "--wallet-record", "/nonexistent/wallet.json", "--blockfrost", "/nonexistent/blockfrost.project_id", "--zk", "/nonexistent/zk", "--journal", "/nonexistent/journal.sqlite"];
-const withoutClaudeCode = () => Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== "CLAUDECODE" && !name.startsWith("CLAUDE_CODE_")));
+const humanEnvironment = () => ({ PATH: process.env.PATH, HOME: process.env.HOME, MIDNIGHT_PP: process.env.MIDNIGHT_PP });
 const quoted = (arg: string) => `'${arg.replaceAll("'", `'\\''`)}'`;
 
 // `script` given `inputs`, with `env`, its stdin and stdout pipes, or a pseudo-terminal from util-linux script.
@@ -249,22 +261,31 @@ function runMainnet(script: string, env: NodeJS.ProcessEnv, terminal: "pipe" | "
 const deployMainnet = (env: NodeJS.ProcessEnv, terminal: "pipe" | "pty") => runMainnet("deploy-mainnet", env, terminal, NOWHERE);
 
 describe("scripts/deploy-mainnet.ts", () => {
+  it.each(["deploy-mainnet", "anchor-mainnet"])("refuses Codex before any file read in %s", async (script) => {
+    for (const name of ["CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_CI", "CODEX_MANAGED_BY_NPM", "CODEX_MANAGED_BY_OTHER"]) {
+      const r = await runMainnet(script, { ...humanEnvironment(), [name]: "" }, "pty", NOWHERE);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("Claude Code or Codex environment");
+      expect(r.out).not.toContain("nonexistent");
+    }
+  });
+
   it("refuses before reading anything when its input and output are not a terminal", async () => {
-    const r = await deployMainnet(withoutClaudeCode(), "pipe");
+    const r = await deployMainnet(humanEnvironment(), "pipe");
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/deploy-mainnet: needs deci at an interactive terminal/);
     expect(r.out).not.toMatch(/nonexistent/);
   });
 
-  it("refuses at a terminal when the process carries Claude Code's environment", async () => {
-    const r = await deployMainnet({ ...withoutClaudeCode(), CLAUDECODE: "1" }, "pty");
+  it("refuses at a terminal when the process carries Claude Code or Codex environment", async () => {
+    const r = await deployMainnet({ ...humanEnvironment(), CLAUDECODE: "1" }, "pty");
     expect(r.code).toBe(1);
-    expect(r.out).toMatch(/deploy-mainnet: this process carries Claude Code's environment; deci runs a mainnet deploy himself, at his own terminal/);
+    expect(r.out).toMatch(/deploy-mainnet: this process carries Claude Code or Codex environment; deci runs a mainnet deploy himself, at his own terminal/);
     expect(r.out).not.toMatch(/nonexistent/);
   });
 
   it("is passed by any process of deci's that drops that environment and drives a pty: the gates stop accidents, not code running as deci", async () => {
-    const r = await deployMainnet(withoutClaudeCode(), "pty");
+    const r = await deployMainnet(humanEnvironment(), "pty");
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/deploy-mainnet: ENOENT: no such file or directory, open '\/nonexistent\/blockfrost\.project_id'/);
   });
@@ -303,21 +324,22 @@ function offlineMainnet(script = "deploy-mainnet", flags: (root: string) => stri
     renameSync(`${chainFile}.test`, chainFile);
   };
   return {
-    async run(answer: (token: string) => string, fault = "", watch: (output: string) => void = () => undefined) {
-      const child = spawn("script", ["-qec", command.map(quoted).join(" "), "/dev/null"], { cwd: root, env: { ...withoutClaudeCode(), OFFLINE_CHAIN: chainFile, OFFLINE_FAULT: fault }, timeout: 120_000 });
+    async run(answer: (token: string) => string | Promise<string>, fault = "", watch: (output: string) => void = () => undefined) {
+      const child = spawn("script", ["-qec", command.map(quoted).join(" "), "/dev/null"], { cwd: root, env: { ...humanEnvironment(), OFFLINE_CHAIN: chainFile, OFFLINE_FAULT: fault }, timeout: 120_000 });
       let output = "";
       const tokens: string[] = [];
       child.stdout.on("data", (chunk) => {
         output += chunk;
         for (const [, token] of [...output.matchAll(PROMPT)].slice(tokens.length)) {
           tokens.push(token!);
-          child.stdin.write(`${answer(token!)}\n`);
+          void Promise.resolve(answer(token!)).then((reply) => child.stdin.write(`${reply}\n`));
         }
         watch(output);
       });
       const [status] = await once(child, "close");
       return { status: status as number | null, output: output.replaceAll("\r\n", "\n"), token: tokens[0], tokens };
     },
+    floor: (value: string) => { command[command.indexOf("--dust-floor") + 1] = value; },
     root,
     chain,
     update: save,
@@ -630,35 +652,35 @@ const ANCHOR_NOWHERE = [
 
 describe("scripts/anchor-mainnet.ts", () => {
   it("refuses before reading anything when its input and output are not a terminal", async () => {
-    const r = await runMainnet("anchor-mainnet", withoutClaudeCode(), "pipe", ANCHOR_NOWHERE);
+    const r = await runMainnet("anchor-mainnet", humanEnvironment(), "pipe", ANCHOR_NOWHERE);
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/anchor-mainnet: needs deci at an interactive terminal; a pipe or a file cannot confirm a mainnet anchor/);
     expect(r.out).not.toMatch(/nonexistent/);
   });
 
-  it("refuses at a terminal when the process carries Claude Code's environment", async () => {
+  it("refuses at a terminal when the process carries Claude Code or Codex environment", async () => {
     for (const env of [{ CLAUDECODE: "1" }, { CLAUDE_CODE_ENTRYPOINT: "cli" }]) {
-      const r = await runMainnet("anchor-mainnet", { ...withoutClaudeCode(), ...env }, "pty", ANCHOR_NOWHERE);
+      const r = await runMainnet("anchor-mainnet", { ...humanEnvironment(), ...env }, "pty", ANCHOR_NOWHERE);
       expect(r.code).toBe(1);
-      expect(r.out).toMatch(/anchor-mainnet: this process carries Claude Code's environment; deci writes mainnet anchors himself, at his own terminal/);
+      expect(r.out).toMatch(/anchor-mainnet: this process carries Claude Code or Codex environment; deci writes mainnet anchors himself, at his own terminal/);
       expect(r.out).not.toMatch(/nonexistent/);
     }
   });
 
   it("is passed by any process of deci's that drops that environment and drives a pty, which then reads the plan first", async () => {
-    const r = await runMainnet("anchor-mainnet", withoutClaudeCode(), "pty", ANCHOR_NOWHERE);
+    const r = await runMainnet("anchor-mainnet", humanEnvironment(), "pty", ANCHOR_NOWHERE);
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/anchor-mainnet: ENOENT: no such file or directory, open '\/nonexistent\/plan\.json'/);
   });
 
   it("refuses an unknown flag, a missing plan, a flag whose value is another flag and a flag given twice before reading anything", async () => {
-    const typo = await runMainnet("anchor-mainnet", withoutClaudeCode(), "pty", [...ANCHOR_NOWHERE, "--dust-flor", "50"]);
+    const typo = await runMainnet("anchor-mainnet", humanEnvironment(), "pty", [...ANCHOR_NOWHERE, "--dust-flor", "50"]);
     expect([typo.code, typo.out]).toEqual([1, expect.stringContaining("anchor-mainnet: unknown flag --dust-flor")]);
-    const planless = await runMainnet("anchor-mainnet", withoutClaudeCode(), "pty", NOWHERE);
+    const planless = await runMainnet("anchor-mainnet", humanEnvironment(), "pty", NOWHERE);
     expect([planless.code, planless.out]).toEqual([1, expect.stringContaining("anchor-mainnet: --plan is required")]);
-    const valueless = await runMainnet("anchor-mainnet", withoutClaudeCode(), "pty", ["--plan", "--journal", "/nonexistent/journal.sqlite"]);
+    const valueless = await runMainnet("anchor-mainnet", humanEnvironment(), "pty", ["--plan", "--journal", "/nonexistent/journal.sqlite"]);
     expect([valueless.code, valueless.out]).toEqual([1, expect.stringContaining("anchor-mainnet: --plan needs a value, not the flag --journal")]);
-    const twice = await runMainnet("anchor-mainnet", withoutClaudeCode(), "pty", [...ANCHOR_NOWHERE, "--dust-floor", "50", "--dust-floor", "5"]);
+    const twice = await runMainnet("anchor-mainnet", humanEnvironment(), "pty", [...ANCHOR_NOWHERE, "--dust-floor", "50", "--dust-floor", "5"]);
     expect([twice.code, twice.out]).toEqual([1, expect.stringContaining("anchor-mainnet: --dust-floor is given twice")]);
     expect(typo.out + planless.out + valueless.out + twice.out).not.toMatch(/nonexistent/);
   });
@@ -728,6 +750,100 @@ const kind2Commitment = (e: PlanEntry, saltKey: Uint8Array) => {
 };
 
 describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
+  it("rejects a token naming other bytes and discards the unconfirmed anchor", async ({ expect }) => {
+    const m = offlineAnchors();
+    const r = await m.run((token) => token.slice(0, -1) + (token.endsWith("0") ? "1" : "0"));
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("not confirmed; the prepared bytes were discarded");
+    expect(m.sent()).toEqual([]);
+    expect(m.chain().discarded).toHaveLength(1);
+    expect(m.results()).toBeNull();
+  });
+
+  it("records a label once when another run records the same landed anchor during confirmation", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    expect((await m.run((token) => token)).status).toBe(0);
+    rmSync(m.resultsPath);
+    let other: Awaited<ReturnType<typeof m.run>>;
+    const r = await m.run(async (token) => {
+      other = await m.run((token) => token);
+      return token;
+    });
+    expect(other!.status, other!.output).toBe(0);
+    expect(r.status, r.output).toBe(0);
+    expect(m.results()).toHaveLength(1);
+    expect(m.sent()).toHaveLength(1);
+  });
+
+  it("refuses a conflicting label written during confirmation", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    const r = await m.run((token) => {
+      writeFileSync(m.resultsPath, JSON.stringify([{ label: "git-head", txHash: "ff".repeat(32) }]));
+      return token;
+    });
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("already records git-head with another transaction");
+    expect(m.results()).toEqual([{ label: "git-head", txHash: "ff".repeat(32) }]);
+  });
+
+  it.each(["results", "wallet-record"])("never echoes malformed %s contents", async (target) => {
+    const m = offlineAnchors();
+    const path = target === "results" ? m.resultsPath : `${m.root}/wallet.json`;
+    writeFileSync(path, "fixture-private-content-not-json");
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain(`${path === m.resultsPath ? path : "wallet.json"} is not JSON`);
+    expect(r.output).not.toContain("fixture-pr");
+    expect(m.sent()).toEqual([]);
+  });
+
+  it("refuses a results hash different from the journal's landed transaction", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    expect((await m.run((token) => token)).status).toBe(0);
+    const rows = m.results();
+    rows[0].txHash = "ff".repeat(32);
+    writeFileSync(m.resultsPath, JSON.stringify(rows));
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("which the journal does not hold landed for this entry");
+    expect(r.tokens).toEqual([]);
+    expect(m.sent()).toHaveLength(1);
+  });
+
+  it("refuses non-list results before reading the chain or syncing the wallet", async ({ expect }) => {
+    const m = offlineAnchors();
+    writeFileSync(m.resultsPath, "{}");
+    m.update({ network: "preprod" });
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("does not hold a list of anchors");
+    expect(r.output).not.toMatch(/Syncing|node serves/);
+    expect(m.closes().wallet).toBe(0);
+    expect(m.sent()).toEqual([]);
+  });
+
+  it.each(["1e3", "0.1234567890123456"])("refuses malformed DUST floor %s with the format diagnostic", async (floor) => {
+    const m = offlineAnchors();
+    m.floor(floor);
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("--dust-floor takes DUST as a decimal number with at most 15 places");
+    expect(r.output).not.toContain("Syncing");
+    expect(m.sent()).toEqual([]);
+  });
+
+  it.each(["0.4", "0.5"])("enforces a 0.5 DUST floor at balance %s", async (balance) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    m.floor("0.5");
+    const r = await m.run((token) => token, balance === "0.4" ? "dust-0.4" : "low-dust");
+    expect(r.status, r.output).toBe(balance === "0.4" ? 1 : 0);
+    if (balance === "0.4") {
+      expect(r.output).toContain("holds 0.4 DUST, below the 0.5 DUST floor");
+      expect(r.tokens).toEqual([]);
+    }
+    expect(m.sent()).toHaveLength(balance === "0.4" ? 0 : 1);
+  });
+
   it("anchors each entry of the plan in order once its token is typed, reads each back final from the node, records only public data, and a rerun sends nothing", async ({ expect }) => {
     const m = offlineAnchors();
     const [one, two] = m.entries as [PlanEntry, PlanEntry];
@@ -737,7 +853,7 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
     expect(r.tokens).toEqual([`ANCHOR ${first!.slice(0, 16)}`, `ANCHOR ${second!.slice(0, 16)}`]);
     expect(r.output).toContain(`registry ${REGISTRY} holds the immutable registry`);
     expect(r.output).toContain(
-      `label            git-head\nkind             1: anchor(), a public commitment to the entry\nregistry         ${REGISTRY}\ncommitment       ${hex(entryCommitment(one))}\nauthor key       ${m.author}\nanchor tx hash   ${first}\n`,
+      `label            git-head\nkind             1: anchor(), a public commitment to the entry\nregistry         ${REGISTRY}\ncommitment       ${hex(entryCommitment(one))}\nroot hash        ${one.rootHash}\nmanifest hash    ${one.manifestHash}\nmerkle root      ${one.merkleRoot}\nauthor key       ${m.author}\nanchor tx hash   ${first}\n`,
     );
     expect(r.output).toContain(`label            hidden-suite\nkind             2: anchor_hiding(), a hiding commitment the attribute is bound to\nregistry         ${REGISTRY}\ncommitment       ${kind2Commitment(two, m.saltKey)}\nattribute        ${two.attribute}\n`);
     expect(m.results()).toEqual([

@@ -113,7 +113,7 @@ const ZERO = "00".repeat(32);
 // prepare (or journalled) and submit let a human confirm the exact bytes in between.
 export function registryOperator(options: OperatorOptions): RegistryOperator {
   const { network, wallet, source, prover } = options;
-  if (network === "mainnet" && agentDriven()) throw new Error("registryOperator refuses to load a mainnet author key in a process that carries Claude Code's environment");
+  if (network === "mainnet" && agentDriven()) throw new Error("registryOperator refuses to load a mainnet author key in a process that carries Claude Code or Codex environment");
   for (const file of [options.authorKeyFile, options.saltKeyFile]) if (file !== undefined) refuseMainnetSecretsPath(network, file);
   // A mainnet operator writes FPS anchors, so it loads only the FPS mainnet keys, and an operator
   // anywhere else never loads one of them: each key is told by what it is, wherever its file lives.

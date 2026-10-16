@@ -1,7 +1,7 @@
 // Deploys the immutable orynq-anchor-registry on Midnight MAINNET, for deci to run at his own
 // terminal. Every check fails closed and comes before anything is sent (mainnet-session.ts holds
 // the gates, the confirmation and the way out it shares with anchor-mainnet):
-//   the process carries no Claude Code environment, and its input and output are a terminal;
+//   the process carries no Claude Code or Codex environment, and its input and output are a terminal;
 //   the node is Midnight Mainnet (system_chain, genesis) on runtime 1000300;
 //   the mnemonic derives exactly the recorded wallet, which holds at least the DUST floor
 //   whenever confirming may send bytes;
@@ -14,7 +14,7 @@
 // same checks, the summary shows it as the journal holds it, and nothing is sent again before its
 // token is typed. These gates stop accidents: an agent session running the script as it is,
 // input from a pipe or a file, bytes other than the summarized ones. They do not stop code
-// running as deci, which can drop Claude Code's variables, drive a pseudo-terminal and type back
+// running as deci, which can drop the agent variables, drive a pseudo-terminal and type back
 // the token it reads. Under the "ship now, harden after" decision the protection is procedural,
 // deci running this himself; the custody boundary is the planned separate-uid or FIDO2 signer.
 //   node --import tsx scripts/deploy-mainnet.ts [--mnemonic F] [--wallet-record F] [--blockfrost F]

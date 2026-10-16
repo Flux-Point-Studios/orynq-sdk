@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readJsonFile } from "./json-file.js";
 import { hash32, type EntryHashes } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import type { AnchorRequest } from "./operator.js";
 
@@ -31,15 +31,7 @@ const hashField = (value: Record<string, unknown>, name: string, at: string): st
 // does not write, an attribute on kind 1 or none on kind 2, a hash that is not 32 bytes, and a
 // label or an anchor that repeats, so each label names one transaction.
 export function readAnchorPlan(path: string): AnchorPlan {
-  let json: unknown;
-  try {
-    json = JSON.parse(readFileSync(path, "utf8"));
-  } catch (error) {
-    // V8 quotes a stretch of the input in some of its reasons, and a plan holds the hashes a kind-2
-    // anchor hides.
-    if (error instanceof SyntaxError) throw new Error(`${path} is not JSON: ${error.message.replace(/, (?:\.\.\.)?".*$/s, "")}`);
-    throw error;
-  }
+  const json = readJsonFile(path);
   if (!isObject(json)) throw new Error(`${path}: the plan must be an object`);
   onlyFields(json, ["registry", "entries"], `${path}: `);
   if (typeof json.registry !== "string" || !HEX64.test(json.registry)) throw new Error(`${path}: registry must be 64 lowercase hex characters`);

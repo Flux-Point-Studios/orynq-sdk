@@ -2,7 +2,7 @@
 // the FPS author key, for deci to run at his own terminal after deploy-mainnet. Every check fails
 // closed and comes before any key is loaded or any byte is sent (mainnet-session.ts holds the gates,
 // the confirmation and the way out it shares with deploy-mainnet):
-//   the process carries no Claude Code environment, and its input and output are a terminal;
+//   the process carries no Claude Code or Codex environment, and its input and output are a terminal;
 //   the plan names exactly a registry and its entries, with no field it does not define;
 //   that registry is FPS's: one MIDNIGHT_REGISTRIES pins, or the one whose deploy deploy-mainnet's
 //   journal holds landed, so the same immutable registry deployed by anyone else is refused;
@@ -25,7 +25,7 @@
 //   node --import tsx scripts/anchor-mainnet.ts --plan PLAN.json [--deploy-journal F] [--mnemonic F]
 //        [--wallet-record F] [--blockfrost F] [--zk DIR] [--journal F] [--dust-floor DUST]
 //        [--author-key F] [--salt-key F] [--results F]
-import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { includedTransactionIndex, writePrivateFile, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { chainView } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
@@ -34,6 +34,7 @@ import {
   assertFpsRegistry,
   provingService,
   readAnchorPlan,
+  readJsonFile,
   registryOperator,
   registryStateOnNode,
   type AnchorReceipt,
@@ -121,7 +122,7 @@ await run(async (connect) => {
   const resultsPath = option("results");
   // The results file as it stands now: another run may have added to it since this one started.
   const recorded = (): Recorded[] => {
-    const rows: unknown = existsSync(resultsPath) ? JSON.parse(readFileSync(resultsPath, "utf8")) : [];
+    const rows: unknown = existsSync(resultsPath) ? readJsonFile(resultsPath) : [];
     if (!Array.isArray(rows)) throw new Error(`${resultsPath} does not hold a list of anchors`);
     return rows;
   };
@@ -130,8 +131,14 @@ await run(async (connect) => {
   // Adds `row` to the results file as it stands, replacing the file only once the new list is
   // wholly written and flushed, owner-only.
   const record = (row: Recorded) => {
+    const rows = recorded();
+    const existing = rows.find((saved) => saved.label === row.label);
+    if (existing) {
+      if (existing.txHash !== row.txHash) throw new Error(`${resultsPath} already records ${row.label} with another transaction`);
+      return;
+    }
     const next = `${resultsPath}.${process.pid}.next`;
-    writePrivateFile(next, JSON.stringify([...recorded(), row], null, 1));
+    writePrivateFile(next, JSON.stringify([...rows, row], null, 1));
     renameSync(next, resultsPath);
   };
 
@@ -164,7 +171,7 @@ await run(async (connect) => {
       const { dust } = await wallet.balances();
       requireDustFloor(dust, resumed);
       const prepared = resumed ?? (await operator.prepare(planned));
-      await confirm(prepared, anchorSummary({ chain, wallet: wallet.addresses, dust, label: planned.label, prepared }), () => operator.discard(prepared));
+      await confirm(prepared, anchorSummary({ entry: planned.entry, chain, wallet: wallet.addresses, dust, label: planned.label, prepared }), () => operator.discard(prepared));
       const receipt = await finalOnNode(source, operator, planned.label, prepared, await operator.submit(prepared));
       record({
         label: planned.label,

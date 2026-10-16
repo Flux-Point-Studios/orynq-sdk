@@ -40,7 +40,7 @@ describe("readAnchorPlan", () => {
         return (thrown as Error).message;
       }
     })();
-    expect(error).toMatch(/plan\.json is not JSON: Unexpected token 'h'$/);
+    expect(error).toMatch(/plan\.json is not JSON$/);
     expect(error).not.toContain(hidden.slice(0, 12));
   });
 
