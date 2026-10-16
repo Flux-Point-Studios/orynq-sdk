@@ -59,9 +59,18 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@fluxpointstudios/orynq-sdk-anchors-midnight": "workspace:*",
     "tsup": "^8.0.1",
     "typescript": "^5.3.3",
     "vitest": "^4.1.11"
+  },
+  "peerDependencies": {
+    "@fluxpointstudios/orynq-sdk-anchors-midnight": "workspace:>=0.1.0 <1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@fluxpointstudios/orynq-sdk-anchors-midnight": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=18.0.0"

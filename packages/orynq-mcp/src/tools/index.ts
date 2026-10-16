@@ -7,7 +7,7 @@
  * Tools are grouped into three categories:
  *   1. Trace lifecycle: create, add-span, append-events, close-span, finalize, summary
  *   2. Cardano anchoring: anchor-cardano-prepare, anchor-cardano-submit
- *   3. Verification & cost: verify-cardano-anchor, estimate-cost
+ *   3. Verification & cost: verify-cardano-anchor, verify-midnight-anchor, estimate-cost
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -24,6 +24,7 @@ import { registerAnchorCardanoPrepare } from "./anchor-cardano-prepare.js";
 import { registerAnchorCardanoSubmit } from "./anchor-cardano-submit.js";
 import { registerAnchorMateriosSubmit } from "./anchor-materios-submit.js";
 import { registerVerifyCardanoAnchor } from "./verify-cardano-anchor.js";
+import { registerVerifyMidnightAnchor } from "./verify-midnight-anchor.js";
 import { registerEstimateCost } from "./estimate-cost.js";
 
 export function registerAllTools(
@@ -48,5 +49,6 @@ export function registerAllTools(
 
   // Verification & cost estimation tools
   registerVerifyCardanoAnchor(server, store, config);
+  registerVerifyMidnightAnchor(server, store, config);
   registerEstimateCost(server, store, config);
 }

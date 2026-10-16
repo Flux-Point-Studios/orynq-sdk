@@ -41,6 +41,120 @@
       "status": "live"
     },
     {
+      "id": "compactc-toolchain",
+      "name": "Compact toolchain installer",
+      "desc": "tools/compactc/install.sh installs compactc 0.31.1 (language 0.23.0) for Linux x86_64 and aarch64 and macOS x86_64 and arm64, refusing a release zip or any file inside it whose sha256 differs from compactc.sha256, and installs beside it the ZK public parameters k=13, 14 and 16 and the DUST spend circuit's prover key, verifier key and zkir (dust/9, k=13), each pinned as midnight-ledger 8.1.3 pins it, so compactc and zkir find every parameter they need and fetch nothing. It installs only into directories that no one but the caller can write or swap out: every directory above them is owned by the caller or root and closed to group and others, and nothing is installed below a shared sticky directory such as /tmp. An existing install counts only if every file still matches its pin. The one installer for every Compact build in the repo: the registry contract's compile.sh, midnight-prover's circuits, the submitter's DUST spend proofs, CI and the release pack. All downloads are staged and verified before installing files, so a failed download leaves a fresh destination empty.",
+      "kind": "toolkit",
+      "paths": [
+        "tools/compactc"
+      ],
+      "consumes": [],
+      "status": "experimental"
+    },
+    {
+      "id": "orynq-anchor-registry",
+      "name": "Orynq anchor registry (Midnight)",
+      "desc": "Compact contract (compactc 0.31.1) that records orynq anchors on Midnight with a maintenance authority of committee [], threshold 1, counter 0, so no update can ever apply. anchor(commitment, kind) refuses kind 2; anchor_hiding(attribute) computes a SHA-256 hiding commitment in-circuit from a private opening and binds the attribute to that commitment, not to the trace; neither reads state. Pure circuits author_key, entry_digest, hidden_digest, hiding_commitment and derive_salt are plain SHA-256. compile.sh --check reproduces the committed managed/ byte for byte with the compactc-toolchain compiler.",
+      "kind": "contract",
+      "paths": [
+        "packages/anchors-midnight/contract"
+      ],
+      "consumes": [
+        "compactc-toolchain"
+      ],
+      "status": "experimental"
+    },
+    {
+      "id": "grandpa-finality-verifier",
+      "name": "GRANDPA finality and strict inclusion verifier",
+      "desc": "Decides from untrusted grandpa_proveFinality and chain_getHeader answers (batched JSON-RPC) whether a block is final, trusting only given checkpoints: it follows each authority set change from the nearest checkpoint below the block (the outgoing set's supermajority-signed justification of a set-change block whose header hashes to it and names the next set in FRNK; forced and delayed changes refused), then checks the finalizing set's justification and the header chain down to the block. Cost is bounded by maxSetChanges (default 2016, six weeks of 30-minute sets, about 6.7 KB each), never by chain age. Inclusion is a strict decode: the ordered-trie (layout V1) extrinsicsRoot of the body and exactly one bare Midnight.send_mn_transaction(tx) extrinsic, never a byte search. Golden vectors from Midnight mainnet and preprod; Materios, also a GRANDPA chain, can verify against it.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight/src/grandpa.ts",
+        "packages/anchors-midnight/src/substrate.ts",
+        "packages/anchors-midnight/src/scale.ts",
+        "packages/anchors-midnight/src/ed25519.ts"
+      ],
+      "consumes": [],
+      "status": "experimental"
+    },
+    {
+      "id": "known-authors-document",
+      "name": "Signed KNOWN_AUTHORS document",
+      "desc": "orynq-known-authors/v1: the author keys a Midnight anchor verifier recognizes, each with a role (relay) and an inclusive window of block heights, plus the GRANDPA finality checkpoints it trusts, as a JSON string signed with Ed25519 by an offline trust-root key over a domain-separated message. Parsing is strict (unknown fields, networks, roles and overlapping windows refused), and each signature check refuses with its own message: no signature by a trust root, a malformed trust-root signature, or one Ed25519 does not verify. Revocation is a higher-serial document closing a key's window, so no verifier scans the permissionless registry; the highest serial wins and an older one never rolls a revocation back. scripts/known-authors.ts creates the root key and signs documents offline. No root or document ships until deci signs the first.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight/src/known-authors.ts",
+        "packages/anchors-midnight/known-authors.json",
+        "packages/anchors-midnight/scripts/known-authors.ts"
+      ],
+      "consumes": [
+        "grandpa-finality-verifier"
+      ],
+      "status": "experimental"
+    },
+    {
+      "id": "anchors-midnight",
+      "name": "Midnight anchor toolkit",
+      "desc": "verifyMidnightAnchor checks an anchor from the transaction's own bytes: hash binding first, then exactly one registry call whose guaranteed transcript equals the compiled circuits' op for op, the node's block (hash, header, extrinsicsRoot, known runtime, strict send_mn_transaction inclusion), GRANDPA finality from a signed or caller checkpoint, the registry's pinned deploy verified the same way, the request's expectation (or kind \"any\", which matches nothing and reports the anchor) and a KNOWN_AUTHORS author window; statuses invalid, conflict, unavailable, unverified-finality, unauthenticated, author-revoked and valid, which exists only at consensus-verified assurance; verifiedFields name only what the commitment binds (kind 2: committedAttribute, never the trace). verifyReport makes a result printable for a terminal or a model: no finality checkpoint, source-shaped text stripped of control, format and unassigned characters and cut at 300 characters, a block hash that is not one dropped. findMidnightAnchors lists an author set's anchor candidates in a window of at most 20,000 blocks from the indexer's contractActions subscription (WebSocket, credential in a header), decoding each from its own bytes, bounded by maxActions with a resumable cursor. It also computes commitments with the compiled contract's own pure circuits (entryCommitment, hiddenDigest, hidingCommitment, deriveSalt, authorKey), writes (wholly and flushed to disk, or not at all) and reads random author key files only their owner can read, writes random salt key files published only by their id (saltKeyId), and user key files (orynq-midnight-user-key/v1: author secret and salt key) whose reader refuses a bare service author key file, lists the deployed registry generations per network (none yet) with their pinned verifier keys and runtime, reads a Midnight indexer and node through midnightSource (Blockfrost endpoints with the project id read from an owner-only file, refused unless shaped like a project id so no other secret is sent as one, and kept out of every error, or a configured indexer and node URL through sourceEndpoints; a node's JSON-RPC error is a NodeError naming the method and its code, and a batch is refused at its first failed request), reads a contract's state at a block or null where none is (contractStateOnNode: midnight-node 1.0 answers an absent contract with an empty string, 2.x with -32602, which counts as absent only behind a zswap-root read of the same block's ledger in one batched request, since 2.x answers a block whose ledger it cannot read the same way), builds registry calls for a given network from the compiled circuits (unprovenRegistryCall), serves each file of the committed build only while it matches contract/HASHES.txt (compiledContractFile), frames a transaction as the bare Midnight.send_mn_transaction extrinsic a node accepts (midnightExtrinsic, the inverse of the strict inclusion decode), and builds the registry's exact deploy state from the compiled constructor and the sha256-pinned verifier keys, and refuses anything else: assertImmutableAuthority (committee [], threshold 1, counter 0), assertRegistryState (operations, canonical verifier keys, schema) and assertRegistryDeployBytes, which decodes the exact deploy bytes before or after proving and requires the initial state byte for byte. Private until the mainnet registry exists.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight"
+      ],
+      "consumes": [
+        "grandpa-finality-verifier",
+        "known-authors-document",
+        "orynq-anchor-registry",
+        "process-trace"
+      ],
+      "status": "experimental"
+    },
+    {
+      "id": "anchor-submission-journal",
+      "name": "Write-ahead anchor submission journal",
+      "desc": "SQLite (node:sqlite) journal for anchor submissions, exported as anchors-midnight/journal: one live attempt per anchor key, the attempt's row written with the hash computed from its final bytes before they are broadcast, so a broadcast that times out after acceptance or a process that dies around it is answered by txHash and never sent twice; a row whose broadcast never returned is resent with the same bytes, except to a caller that holds its final bytes already and names their txHash, which gets a live row of other bytes back unsent; pending rows retire only on the indexer's report or when the indexer's newest block passes the TTL plus a margin (chain time, not the local clock; TTL_MARGIN_MILLIS, five minutes, by default), that block's time counted only once the node holds it at that height, as the smaller of the indexer's time and the node's own Timestamp.Now in it. A row whose bytes deploy a contract is never retired on the indexer's word, whichever caller reconciles the journal: it stays live until that chain time is past its TTL plus the margin, and is retired only if the node, at that very block, holds no contract at an address the bytes deploy (chainView's holdsContract: contractStateOnNode at the block, so the -32602 midnight-node 2.x answers for an absent contract, which is also its answer in a block whose ledger it cannot read, counts as absent only behind a zswap-root read of that block's ledger in the same batched request); otherwise it is landed, so neither a lookup answered from an older indexer snapshot than the head nor an indexer reporting a landed deploy failed frees the key for a second deploy. A chain view names its network (chainView(source, network)) and a row is settled only from a view of its own: reconcile settles the view's network's pending rows alone and submitOnce refuses a key of another network, so in a file holding several networks' rows another network's indexer, clock and node never retire a deploy or land one. The file (and its -wal and -shm) is created owner-only and an open one is refused, since pending final bytes are a bearer instrument until they land or expire. reconcile(chain) settles every pending row of the view's network by txHash alone after a restart, preparing and broadcasting nothing. Each attempt records the wallet that paid its fee (payer; a journal created without that column gains it, its older rows naming none). live(key) returns a key's live attempt with its exact bytes and payer, so a caller that lost its own record of an attempt resumes it instead of preparing one the journal would refuse. Serialized per journal; across processes the second writer never broadcasts. For the Midnight submit package and the signer.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight/src/journal.ts"
+      ],
+      "consumes": [],
+      "status": "experimental"
+    },
+    {
+      "id": "anchors-midnight-submit",
+      "name": "Midnight anchor submitter",
+      "desc": "Deploys the immutable orynq-anchor-registry and writes anchors to it. openWallet runs a wallet-sdk-facade 4.1.0 WalletFacade (HD account 0 index 0) that refuses a mnemonic deriving other than the recorded addresses, pays fees from DUST only, through wallet-sdk-dust-wallet 4.2.0 with midnight-wallet#741 (aae483d) applied to its shipped dist as a pnpm patch (patches/, pnpm.patchedDependencies; drop it once a stable release contains aae483d), so balancing ends with a fee paid or InsufficientFundsError where 4.2.0 loops forever on first coins that cover a fee but not their own DUST spends (with coins taken largest first, a largest coin that cannot pay a fee with its own spend), and a transaction that already covers its fee gets no intent with empty DustActions, taking DUST coins largest first (payingFees: one coin pays a fee whenever one can, where the SDK's default smallest-first order spent every coin too small to pay alone on every fee, 1.7x to 3.3x the fee on the simulator, without paying more fees back to back), and with at least 1 SPECK of overhead (openWallet refuses less), so every fee carries a DUST spend and no install of 4.2.0 without the patch meets a fee computed as 0, proves in a worker thread with zkir-v2 from sha256-pinned key material (registry circuits from the committed build, the DUST spend and k=13/14 parameters from the installer's directory; nothing fetched), saves and restores its sync state in an owner-only file bound to the wallet, the network and the indexer it was synced from (event ids differ between indexers), replacing the file only once all three sub-wallets serialized and that save's own new file is wholly written and flushed to disk (a write a full disk or a quota cuts short fails the save instead of installing a truncated file; each save's file is named for its process and a random suffix, so two processes saving at once never install or remove each other's unfinished write, and an open removes one whose process died), and returning a failed save (each sub-wallet or the file that failed, with its error) as a value that close() passes on, never a throw, so the next open resumes from the last good save, frees exactly the DUST a fee spent when the node refuses the first delivery of bytes it balanced or a caller discards bytes never handed to a node, never sending those bytes again, and otherwise holds that DUST until the bytes land or the ledger's grace period ends (wallet-sdk-dust-wallet 4.2.0's own revert frees nothing once a newer sync update or a restart has passed and too much otherwise, so feeTransacting replaces it, and the facade's pending-transactions service, which reverts on the local clock while the indexer lags, is not run), dates each fee's DUST spend at the newest DUST event the wallet applied rather than at the indexer's newest block (feeTransacting: the node checks the spend's proof against the DUST trees at that date, and a DUST event in the newest block not yet applied made preprod's node refuse a fee with Custom error 170), refuses before spending anything a fee whose date plus the ledger's grace period would not outlast the transaction's TTL plus the journal's TTL_MARGIN_MILLIS, and balances a fee only once the DUST sync has applied every event the indexer's last message announced (payFee waits up to two minutes, then fails with the sync's progress), chooses its endpoints by network (networkEndpoints: Blockfrost on mainnet and preprod alike, refusing to start without a project id file, since Midnight retired its hosted mainnet endpoints and its hosted preprod node refuses JSON-RPC request bodies over about 7 KB, smaller than any deploy or anchor), and reaches Blockfrost through a loopback relay that adds the project-id header so the credential never sits in a URL the SDK logs. registryDeployer prepares the final balanced bytes, refuses them unless they deploy exactly the registry's initial state, and submits them through the write-ahead journal at most once per network, after settling any journalled deploy from the chain (one the node-confirmed chain time has carried past its TTL unseen no longer blocks a new one, unless the node at that block holds a contract at the address its bytes deploy, which lands it however far the indexer's lookup lags; the journal keeps that rule for every reconcile, so an operator sharing the journal file keeps it too, and settles a row only from a chain view of its own network, so a deployer or operator of another network sharing the file never settles the deploy) and checking again that the bytes it sends are that deploy and hash to the confirmed transaction hash, and journalled() returns the deploy the journal still holds, rebuilt from its journalled bytes, with the wallet that paid it and whether chain time is past its TTL, so a caller that failed between broadcast and readback resumes that deploy instead of preparing one the journal would refuse; bytes past their TTL, or that journalled() marked expired, are never sent again (submit waits until the chain lands or retires them), while the node lacks the indexer's newest block, so that chain time is unknown, submit refuses bytes no send of which returned, a resumed deploy the chain retired is refused as expired, and a submit whose key another deployer journalled first refuses and discards its own bytes, sending nothing (journalOnce binds the journal to the confirmed transaction hash, so the other deployer's row comes back unsent); registryOperator writes kind-1 anchor and kind-2 anchor_hiding calls under an author key read only from a 0600 file (salts derived from a salt key, openings returned only to the caller), checks the final bytes decode to exactly the intended anchor before broadcast, broadcasts the bare Midnight.send_mn_transaction over JSON-RPC (nodeRefusal tells the node's own JSON-RPC refusal, with its code, from a transport failure that may have delivered the bytes), and waits by txHash. registryStateOnNode reads the registry's state from the node's best block through contractStateOnNode, null meaning no contract there however the node's version answers for one. Every submission first checks the runtime is 1000300. scripts/deploy-mainnet.ts is the fail-closed mainnet preflight (chain name and genesis, runtime, recorded wallet, a DUST floor applied whenever confirming may send bytes, exact summary naming the wallet that paid) that sends only after a token bound to the bytes' transaction hash is typed at an interactive terminal, in a process without Claude Code's environment, and resumes the deploy its journal still holds (journalled()) instead of preparing another, re-showing it marked as resumed and sending nothing before the same token is typed, and closing the journal and the wallet on every way out: an accident guard under the ship-now decision, which a process running as deci passes by dropping that environment and driving a pseudo-terminal; the custody boundary is the planned separate-uid or FIDO2 signer. Off mainnet, registryOperator refuses the FPS mainnet author key and salt key by identity (MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS) wherever the file lives, and it and openWallet refuse any key or mnemonic path inside ~/.secrets/orynq-midnight-mainnet, however the path reaches it. Private until the mainnet registry exists.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight-submit",
+        "patches/@midnight-ntwrk__wallet-sdk-dust-wallet@4.2.0.patch"
+      ],
+      "consumes": [
+        "anchors-midnight",
+        "anchor-submission-journal",
+        "orynq-anchor-registry",
+        "compactc-toolchain"
+      ],
+      "status": "experimental"
+    },
+    {
+      "id": "midnight-preprod-rehearsal",
+      "name": "Midnight preprod rehearsal and evidence gate",
+      "desc": "The Midnight submitter's preprod rehearsal, committed so its evidence is reproducible. bundles.ts traces real read-only processes into process-trace bundles (entries via anchors-cardano); run.ts and crash.ts, on preprod test tokens only, deploy the registry (resuming the deploy its journal holds, so a run that fails between broadcast and readback leaves the next run that deploy to finish, never a second) and write kind-1 and kind-2 anchors, a same-block pair from two wallets, three maintenance updates the node must refuse, a SIGKILL drill on each journal crash window and a KNOWN_AUTHORS rotation and revocation, recording every wallet state save (after sync and at close) without letting a failed one fail a phase, and every node refusal of an anchor's bytes (anchorRefusals: label, transaction, code and data, time) before the error leaves the phase. verify-all.mjs verifies every recorded anchor, and the absence of every refused maintenance transaction, through Blockfrost from a separate process that loads the verify package only as npm installed it from a packed tarball beside it whose integrity still matches npm's record, and opens KNOWN_AUTHORS documents forged from serial 3. gate.mjs decides what the evidence pack may claim: every anchor a distinct transaction of kind 1 or 2, valid at consensus-verified for its recorded hash and commitment; each crash window's kill mode, words and journal behaviour; the same-block pair in one block as the verifier reads it; each maintenance update refused with exactly JSON-RPC 1010 Invalid Transaction and the maintenance authority's own code (Custom error 136 ThresholdMissed for the unsigned update, 134 KeyNotInCommittee for the stranger-signed ones) and unknown to both indexers; the rotation verdict matrix; each forged document refused by the check it targets (Ed25519 verification for the two under the trust root's key), with a control that opens it under the stranger; a drill trust root the package does not ship; each verifier negative failing for its expected check; and each recorded anchor refusal followed by another transaction for its label that landed and was recorded after it. compose.ts writes the pack only when the gate passes, the journals' landed transactions equal the recorded anchors, every kind-2 opening recomputes the commitment the verifier read and a privacy scan finds no window of any secret, carries each accepted anchor refusal beside the transaction that landed for its label, and discloses every crash-drill attempt that aborted before any kill point, archived unmodified with a sha256sum manifest, refusing an archive whose files differ from or are missing in its manifest and a partial drill archived as aborted; the README maps every statement to its check. record-golden.ts records the verifier's Blockfrost reads of three of its anchors (a valid kind 1, a valid kind 2, the revoked key's author-revoked anchor), which anchors-midnight's suite replays to the recorded verdicts check for check. The offline suite, which also runs run.ts's deploy and kind1 phases in their own processes over a replaced wallet, prover and chain with one run failed at a chosen step, runs in CI; the network steps run by hand after the faucet (README runbook).",
+      "kind": "pipeline",
+      "paths": [
+        "packages/anchors-midnight-submit/rehearsal"
+      ],
+      "consumes": [
+        "anchors-midnight-submit",
+        "anchors-midnight",
+        "anchors-cardano",
+        "process-trace",
+        "known-authors-document"
+      ],
+      "status": "experimental"
+    },
+    {
       "id": "tool-receipts",
       "name": "Tool-call receipts",
       "desc": "Verifiable tool-call receipts with RFC 9421, webhook-signature and JWS verifiers for the process-trace SDK.",
@@ -84,15 +198,16 @@
     {
       "id": "orynq-mcp",
       "name": "Orynq MCP server",
-      "desc": "MCP server exposing process tracing, Cardano anchoring and verification as agent tools.",
+      "desc": "MCP server exposing process tracing, Cardano and Materios anchoring and verification as agent tools. verify_midnight_anchor (read-only) verifies a Midnight anchor with anchors-midnight, an optional peer dependency loaded on first use (without it the server starts and the tool returns an error naming the package), and returns its verifyReport; its schema is strict (txHash, network, one of entry, commitment or attribute, expectedAuthor), so a model can pass it no key, file or URL, and the source comes from the server's environment as a file path or URLs. There is no Midnight anchoring tool and no tool takes a Flux Point Studios key: anchoring with the user's own key goes through the quickstart CLI's terminal confirmation.",
       "kind": "agent",
       "paths": [
         "packages/orynq-mcp"
       ],
       "consumes": [
-        "process-trace",
         "anchors-cardano",
-        "anchors-materios"
+        "anchors-materios",
+        "anchors-midnight",
+        "process-trace"
       ],
       "status": "live"
     },
@@ -155,14 +270,16 @@
     {
       "id": "orynq-quickstart",
       "name": "Orynq quickstart",
-      "desc": "Solo-developer quickstart: generates an identity, faucet-drips MATRA and anchors a first trace in minutes.",
+      "desc": "Solo-developer quickstart: generates an identity, faucet-drips MATRA and anchors a first trace in minutes. For Midnight, with anchors-midnight installed as an optional peer dependency (without it the Midnight commands exit 1 naming it): `orynq verify midnight <txHash|bundle>` verifies an anchor read-only and prints its status, assurance, author, matched fields and every check (Blockfrost project id file or any indexer and node URL); `orynq keys init midnight` writes the user's own key file; `orynq anchor midnight` plans an anchor with that key only, refusing bare service key files and every KNOWN_AUTHORS key, as a dry run unless --submit is confirmed at a TTY by typing the commitment's first 8 characters (no registry or submitter in this build, so it stops before asking).",
       "kind": "toolkit",
       "paths": [
         "packages/quickstart"
       ],
       "consumes": [
         "anchors-materios",
-        "gateway-faucet"
+        "anchors-midnight",
+        "gateway-faucet",
+        "process-trace"
       ],
       "status": "live"
     },
@@ -186,9 +303,10 @@
         "packages/midnight-prover"
       ],
       "consumes": [
+        "compactc-toolchain",
         "process-trace"
       ],
-      "status": "built"
+      "status": "experimental"
     },
     {
       "id": "compute-meter-sdk",
@@ -234,11 +352,12 @@
     {
       "id": "npm-release",
       "name": "npm release",
-      "desc": "Publishes every workspace package version npm lacks on a push to main: a token-less step installs, builds and packs them (scripts/pack-unpublished.mjs, the choice changeset publish makes), and only the digest-pinned npm-publish plugin, named by the npm_token secret's image filter, holds the token.",
+      "desc": "Publishes every workspace package version npm lacks on a push to main: a token-less step installs, runs release-guard (refuses a public package with a runtime dependency on a private one, named directly, through an npm: or workspace: alias or by a workspace: path resolved through symlinks, or on a local path (link:, file: or bare) or a spec npm-package-arg cannot classify, a version npm would record differently, and a version below one npm already has by npm's semver order, prereleases included), then builds and packs them (scripts/pack-unpublished.mjs, the choice changeset publish makes); only the digest-pinned npm-publish plugin, named by the npm_token secret's image filter, holds the token; post-publish-check then installs each published version from npm, alone and together, imports it and requires one copy of each WASM singleton. CI dry-runs changeset version in isolated manifest copies with a minor probe for each private package and refuses public major bumps.",
       "kind": "pipeline",
       "paths": [
         ".woodpecker/release.yaml",
-        "scripts/pack-unpublished.mjs"
+        "scripts/pack-unpublished.mjs",
+        "tools/release-guard"
       ],
       "consumes": [
         "npm-publish-plugin"

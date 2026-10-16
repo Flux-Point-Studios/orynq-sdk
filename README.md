@@ -387,7 +387,7 @@ Orynq is built in the open and we are actively proposing primitives we believe e
 
 ## Development
 
-The Midnight package requires compiled circuits before the workspace build. Follow its [build instructions](packages/midnight-prover/README.md); CI uses Node 24, Rust 1.99.0 and a checksum-pinned Compact 0.31.1 installer.
+The Midnight package requires compiled circuits before the workspace build. Follow its [build instructions](packages/midnight-prover/README.md); CI uses Node 24, Rust 1.99.0 and `tools/compactc/install.sh`, which installs Compact 0.31.1 and its ZK parameters with every file pinned by sha256.
 
 ```bash
 # Install dependencies

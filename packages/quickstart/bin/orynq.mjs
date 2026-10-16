@@ -11,6 +11,8 @@
  *                      Combines `init` + first submission.
  *   orynq whoami       Print the saved address. No network calls.
  *   orynq status       GET ${gateway}/health and print the summary.
+ *   orynq verify midnight, orynq anchor midnight, orynq keys init midnight
+ *                      Midnight anchors (src/midnight.ts), loaded only when run.
  *
  * Env overrides:
  *   ORYNQ_CONFIG_PATH    Path to identity file (default: ~/.orynq/config.json).
@@ -25,12 +27,29 @@
  *   1   user-facing error (printed to stderr, no stack trace)
  *   2   internal/unexpected error (full stack trace)
  */
-import { argv, env, exit, stderr, stdout, version as nodeVersion } from "node:process";
+import { existsSync } from "node:fs";
+import { argv, env, exit, stderr, stdin, stdout, version as nodeVersion } from "node:process";
 
 // Lazy-resolve the package's own dist so the CLI works both from the
 // monorepo dev tree and from a published tarball.
 async function loadSdk() {
   return import("../dist/index.js").catch(() => import("../src/index.ts"));
+}
+
+// The Midnight commands load the ledger WASM, so only they import it, and they need
+// @fluxpointstudios/orynq-sdk-anchors-midnight, an optional peer dependency. The source fallback
+// is for a monorepo checkout that has not been built; any other load failure is the user's to see.
+const MIDNIGHT_PACKAGE = "@fluxpointstudios/orynq-sdk-anchors-midnight";
+async function loadMidnight() {
+  const built = new URL("../dist/midnight.js", import.meta.url);
+  try {
+    return await (existsSync(built) ? import(built.href) : import("../src/midnight.ts"));
+  } catch (e) {
+    if (e?.code === "ERR_MODULE_NOT_FOUND" && String(e.message).includes(`'${MIDNIGHT_PACKAGE}'`)) {
+      throw new Error(`the Midnight commands need ${MIDNIGHT_PACKAGE}, an optional peer dependency that is not installed. Midnight is not yet published on npm; use a built orynq-sdk source checkout (see the package README).`);
+    }
+    throw e;
+  }
 }
 
 function ansi(s, code) {
@@ -57,6 +76,17 @@ function printUsage() {
       `  ${bold("orynq whoami")}   Print the saved SS58 address.`,
       `  ${bold("orynq status")}   Show gateway + chain health.`,
       `  ${bold("orynq help")}     Show this message.`,
+      ``,
+      `Midnight anchors:`,
+      `  ${bold("orynq verify midnight <txHash|bundle>")}   Verify an anchor (read-only).`,
+      `      A bundle needs --tx <hash>; --hidden expects its kind-2 anchor; --author <key>`,
+      `      trusts that author key; --network mainnet|preprod (default mainnet); --json.`,
+      `      Source: --blockfrost-file <project id file> (or ORYNQ_MIDNIGHT_BLOCKFROST_FILE),`,
+      `      or --indexer <url> --rpc <url>.`,
+      `  ${bold("orynq keys init midnight --out <file>")}   Create your own anchoring key file.`,
+      `  ${bold("orynq anchor midnight --network <n> --key <file> --bundle <file> [--hidden]")}`,
+      `      Plan an anchor with your own key: a dry run. --submit sends it only after you`,
+      `      confirm at a terminal; --json prints the plan.`,
       ``,
       `Env overrides:`,
       `  ORYNQ_CONFIG_PATH=<path>   Where to save identity (default: ~/.orynq/config.json)`,
@@ -272,6 +302,10 @@ async function main() {
         return await cmdWhoami();
       case "status":
         return await cmdStatus();
+      case "verify":
+      case "anchor":
+      case "keys":
+        return await (await loadMidnight()).midnightCommand(argv.slice(2), { stdin, stdout, stderr, env });
       case "help":
       case "--help":
       case "-h":
