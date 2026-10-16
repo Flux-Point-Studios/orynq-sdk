@@ -55,6 +55,7 @@ interface Journalling {
   wallet: FeeWallet;
   network: MidnightNetwork;
   pollMillis: number;
+  rebroadcastMillis?: number | undefined;
 }
 
 // Sends through the write-ahead journal, which records the wallet as the payer, and returns the
@@ -99,7 +100,7 @@ export function assertConfirmedHash(prepared: PreparedBytes): void {
   if (txHash !== prepared.txHash) throw new Error(`the bytes hash to ${txHash}, not the confirmed ${prepared.txHash}; nothing was sent`);
 }
 
-// Sends confirmed bytes through the write-ahead journal under `key`, at most once. `what` names
+// Sends confirmed bytes through the journal under one live attempt for `key`. `what` names
 // them in errors ("deploy"), `holder` the attempt another set of bytes holds the key as ("a
 // registry deploy"). The caller checks the bytes are the ones the human confirmed first.
 export function confirmedSends(journalling: Journalling, key: AnchorKey, what: string, holder: string) {
@@ -155,7 +156,7 @@ export function confirmedSends(journalling: Journalling, key: AnchorKey, what: s
         // An attempt confirmed at the same moment wrote its row first, and the journal answered
         // with it, unsent.
         if (journalled.txHash !== prepared.txHash) await refuse(journalled);
-        return await landedRow(journalling, key, journalled);
+        return await landedRow(past !== false ? { ...journalling, rebroadcastMillis: undefined } : journalling, key, journalled);
       } catch (error) {
         throw retired(prepared.txHash) ? new Error(EXPIRED) : error;
       }
@@ -163,14 +164,23 @@ export function confirmedSends(journalling: Journalling, key: AnchorKey, what: s
   };
 }
 
-// Waits, by txHash, until the journal settles `row`, sending nothing, and returns it landed with
+// Waits by txHash, optionally rebroadcasting identical pending bytes, and returns it landed with
 // its block as the indexer lists it; a transaction the chain reports failed, or that outlives its
 // TTL unseen, is an error.
-export async function landedRow({ journal, chain, network, pollMillis }: Journalling, key: AnchorKey, row: JournalRow): Promise<JournalRow & { height: number; blockHash: string }> {
+export async function landedRow({ journal, chain, wallet, network, pollMillis, rebroadcastMillis }: Journalling, key: AnchorKey, row: JournalRow): Promise<JournalRow & { height: number; blockHash: string }> {
+  let nextBroadcast = Date.now() + (rebroadcastMillis ?? Infinity);
   while (row.state === "pending") {
     await new Promise((resolve) => setTimeout(resolve, pollMillis));
     const settled = await journal.reconcile(chain);
     row = settled.find((r) => r.txHash === row.txHash) ?? journal.history(key).find((r) => r.txHash === row.txHash)!;
+    if (row.state === "pending" && Date.now() >= nextBroadcast) {
+      nextBroadcast = Date.now() + (rebroadcastMillis ?? Infinity);
+      try {
+        await journal.rebroadcast(row.txHash, chain, (bytes) => wallet.submit(finalTransaction(bytes)));
+      } catch {
+        process.stderr.write("rebroadcast failed; reconciliation will retry\n");
+      }
+    }
   }
   if (row.state !== "landed") throw new Error(`transaction ${row.txHash} failed on ${network}`);
   if (row.height !== undefined && row.blockHash !== undefined) return { ...row, height: row.height, blockHash: row.blockHash };

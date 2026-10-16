@@ -79,6 +79,7 @@ export interface OperatorOptions {
   registry: string;
   ttlMinutes?: number;
   pollMillis?: number;
+  rebroadcastMillis?: number;
 }
 
 export interface RegistryOperator {
@@ -90,7 +91,7 @@ export interface RegistryOperator {
   journalled(request: AnchorRequest): Promise<PreparedAnchor | null>;
   // New final bytes for `request`, checked to carry exactly that anchor; nothing is journalled or sent.
   prepare(request: AnchorRequest): Promise<PreparedAnchor>;
-  // Sends the bytes a human confirmed, journalled or new, through the journal at most once, and
+  // Sends the bytes a human confirmed, journalled or new, through one live journal attempt, and
   // returns the anchor once it landed; bytes past their TTL are never sent again.
   submit(prepared: PreparedAnchor): Promise<AnchorReceipt>;
   // Settles the confirmed anchor afresh once the node's finalized chain holds another block at
@@ -134,7 +135,7 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
   const journal = openJournal(options.journalPath);
   const chain = chainView(source, network);
   const ttlMillis = (options.ttlMinutes ?? 15) * 60_000;
-  const journalling = { journal, chain, wallet, network, pollMillis: options.pollMillis ?? 3_000 };
+  const journalling = { journal, chain, wallet, network, pollMillis: options.pollMillis ?? 3_000, rebroadcastMillis: options.rebroadcastMillis };
   const keyOf = (kind: 1 | 2, commitment: string, attribute: string): AnchorKey => ({ network, registry: options.registry, author, kind, commitment, attribute });
 
   // What `request` writes and how its circuit is called; for kind 2 also what opens it.

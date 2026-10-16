@@ -40,6 +40,7 @@ export interface DeployerOptions {
   journalPath: string;
   ttlMinutes?: number;
   pollMillis?: number;
+  rebroadcastMillis?: number;
 }
 
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
@@ -70,8 +71,8 @@ export function assertFpsRegistry(network: MidnightNetwork, address: string, dep
 
 // Deploys the immutable registry in two steps, so a human can approve the exact bytes: prepare
 // builds, proves, pays and binds them, and refuses unless they deploy exactly the registry's
-// initial state; submit sends those bytes through the write-ahead journal, at most once per
-// network and registry state, and reads the address back from the landed transaction.
+// initial state; submit keeps one live attempt per network and registry state in the journal,
+// and reads the address back from the landed transaction.
 export function registryDeployer(options: DeployerOptions) {
   const { network, wallet, source, prover } = options;
   const journal = openJournal(options.journalPath);
@@ -107,7 +108,7 @@ export function registryDeployer(options: DeployerOptions) {
 
   // A deploy row fails only when the chain has carried it past its TTL plus the margin unseen,
   // with no contract at its address.
-  const confirmed = confirmedSends({ journal, chain, wallet, network, pollMillis: options.pollMillis ?? 3_000 }, key, "deploy", "a registry deploy");
+  const confirmed = confirmedSends({ journal, chain, wallet, network, pollMillis: options.pollMillis ?? 3_000, rebroadcastMillis: options.rebroadcastMillis }, key, "deploy", "a registry deploy");
 
   return {
     async prepare(): Promise<PreparedDeploy> {

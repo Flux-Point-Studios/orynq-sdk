@@ -84,12 +84,13 @@ export async function dustOnSimulator(nights: readonly bigint[], { simulator, ad
   const anotherBlock = (w = wallet) => blocks(1, w);
   const now = async () => (await run(simulator.getLatestState())).currentTime;
   // Balances a transaction of its own the way payFee does: the wallet books the DUST it spends.
-  const balanced = async (w = wallet, ttl?: Date) => {
+  const balance = async (w = wallet, ttl?: Date) => {
     ttl ??= new Date((await now()).getTime() + 15 * 60_000);
     const tx = L.Transaction.fromParts(NETWORK, undefined, undefined, L.Intent.new(ttl));
     const fee = await w.balanceTransactions(secretKey, [tx], ttl);
-    return prover.prove(tx.merge(fee));
+    return tx.merge(fee) as L.UnprovenTransaction;
   };
+  const balanced = async (w = wallet, ttl?: Date) => prover.prove(await balance(w, ttl));
   const coins = async (w = wallet) => (await firstValueFrom(w.state)).availableCoins.map((c) => c.token.nonce);
   // The time of the newest DUST event the wallet has applied.
   const syncTime = async (w = wallet) => (await firstValueFrom(w.state)).state.state.syncTime;
@@ -100,5 +101,5 @@ export async function dustOnSimulator(nights: readonly bigint[], { simulator, ad
     running.push(w);
     return w;
   };
-  return { simulator, wallet, blocks, anotherBlock, now, balanced, coins, syncTime, reopen, restored };
+  return { simulator, wallet, blocks, anotherBlock, now, balance, balanced, coins, syncTime, reopen, restored };
 }

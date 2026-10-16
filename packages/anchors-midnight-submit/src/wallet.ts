@@ -183,6 +183,8 @@ export interface WalletOptions {
   // A private file the wallet restores its sync state from and saves it to on close.
   stateFile?: string;
   costParameters?: CostParameters;
+  // All paths complete before the wallet decides whether its DUST reservation can be released.
+  broadcast?: (tx: L.FinalizedTransaction) => Promise<void>;
 }
 
 // A Midnight wallet (HD account 0, index 0) over the network's indexer, proving in-process and
@@ -203,7 +205,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
   if (options.stateFile) removeAbandonedSaves(options.stateFile);
   const saved = options.stateFile ? readWalletState(options.stateFile, network, addresses, endpoints.indexer) : null;
   const transport = await credentialRelay(endpoints);
-  const submitTo = (tx: L.FinalizedTransaction) => broadcast(source, tx.serialize());
+  const submitTo = options.broadcast ?? ((tx: L.FinalizedTransaction) => broadcast(source, tx.serialize()));
   const configuration = {
     networkId: network,
     indexerClientConnection: { indexerHttpUrl: transport.indexerHttpUrl, indexerWsUrl: transport.indexerWsUrl },

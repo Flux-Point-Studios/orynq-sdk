@@ -1,30 +1,5 @@
-// Writes the anchors a plan names to the immutable orynq-anchor-registry on Midnight MAINNET, under
-// the FPS author key, for deci to run at his own terminal after deploy-mainnet. Every check fails
-// closed and comes before any key is loaded or any byte is sent (mainnet-session.ts holds the gates,
-// the confirmation and the way out it shares with deploy-mainnet):
-//   the process carries no Claude Code or Codex environment, and its input and output are a terminal;
-//   the plan names exactly a registry and its entries, with no field it does not define;
-//   that registry is FPS's: one MIDNIGHT_REGISTRIES pins, or the one whose deploy deploy-mainnet's
-//   journal holds landed, so the same immutable registry deployed by anyone else is refused;
-//   the node is Midnight Mainnet (system_chain, genesis) on runtime 1000300;
-//   the node holds exactly the immutable registry at the plan's address (committee [],
-//   threshold 1, counter 0, the pinned verifier keys);
-//   the mnemonic derives exactly the recorded wallet, which holds at least the DUST floor
-//   whenever confirming an anchor may send bytes;
-//   the author and salt keys are the FPS mainnet keys (MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS).
-// For each entry in order it prints the exact summary of the final, balanced bytes and sends them
-// only after the token it shows, which names their transaction hash, is typed at that terminal.
-// It then reads the anchor back from the node, final and carrying exactly those bytes, in the block
-// the node's finalized chain holds where the journal places it (where the node finalized another
-// block there, the journal settles the anchor afresh from the chain first), and adds what anyone
-// may know of it (label, kind, transaction, block, commitment, kind 2's attribute, registry,
-// author key) to the results file as that file then stands. An anchor the journal still holds,
-// as after a run that failed between its broadcast and its readback, is resumed as deploy-mainnet
-// resumes a deploy, and an entry the results file records is not sent again. The gates stop
-// accidents, not code running as deci; see deploy-mainnet.
-//   node --import tsx scripts/anchor-mainnet.ts --plan PLAN.json [--deploy-journal F] [--mnemonic F]
-//        [--wallet-record F] [--blockfrost F] [--zk DIR] [--journal F] [--dust-floor DUST]
-//        [--author-key F] [--salt-key F] [--results F]
+// Run by deci at his own terminal. --pre-authorize approves the bounded intent before sync;
+// without it, every final transaction requires its existing per-bytes confirmation.
 import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { includedTransactionIndex, writePrivateFile, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
@@ -43,7 +18,7 @@ import {
 } from "../src/index.js";
 import { DEPLOY_JOURNAL, SECRETS, STATE, mainnetScript } from "./mainnet-session.js";
 
-const { option, run, requireDustFloor, confirm } = mainnetScript({
+const { option, run, requireDustFloor, confirm, authorize } = mainnetScript({
   name: "anchor-mainnet",
   noun: "anchor",
   does: "writes mainnet anchors",
@@ -119,6 +94,7 @@ async function finalOnNode(source: MidnightSource, operator: RegistryOperator, l
 await run(async (connect) => {
   const plan = readAnchorPlan(option("plan"));
   assertFpsRegistry("mainnet", plan.registry, option("deploy-journal"));
+  await authorize({ path: option("plan"), value: plan });
   const resultsPath = option("results");
   // The results file as it stands now: another run may have added to it since this one started.
   const recorded = (): Recorded[] => {
@@ -153,6 +129,7 @@ await run(async (connect) => {
     source,
     prover: provingService(option("zk")),
     journalPath: option("journal"),
+    rebroadcastMillis: 60_000,
     authorKeyFile: option("author-key"),
     saltKeyFile: option("salt-key"),
     registry: plan.registry,

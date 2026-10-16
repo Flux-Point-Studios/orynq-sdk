@@ -203,6 +203,18 @@ export function openJournal(path: string, { ttlMarginMillis = TTL_MARGIN_MILLIS 
 
   return {
     submitOnce: (key: AnchorKey, how: Parameters<typeof once>[1]): Promise<JournalRow> => serialized(() => once(key, how)),
+    rebroadcast: (txHash: string, chain: ChainView, broadcast: (bytes: Uint8Array) => Promise<void>): Promise<void> =>
+      serialized(async () => {
+        const existing = byHash.get(txHash) as unknown as Row | undefined;
+        if (!existing) throw new Error("cannot rebroadcast an unjournalled transaction");
+        if (existing.key.split("/")[0] !== chain.network) throw new Error("rebroadcast network mismatch");
+        if (existing.state !== "pending") return;
+        const row = await reconcile(existing, chain);
+        if (!row || row.state !== "pending" || Date.now() >= row.ttl_ms) return;
+        const head = await chain.indexedThrough();
+        if (!head || head.time.getTime() >= row.ttl_ms || Date.now() >= row.ttl_ms) return;
+        await broadcastRow(row, broadcast);
+      }),
     // Settles every pending row of the chain view's network by its txHash, after a restart or
     // while waiting for inclusion; nothing is prepared or broadcast. Returns those rows as they
     // now stand.

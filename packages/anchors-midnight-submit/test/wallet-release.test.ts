@@ -8,6 +8,7 @@ import { of } from "rxjs";
 import type { MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { createWalletMnemonicFile } from "../src/keys.js";
 import { openWallet, type OperatorWallet } from "../src/wallet.js";
+import { broadcast, broadcastPaths } from "../src/broadcast.js";
 import { facadeSyncedTo } from "./fakes.js";
 
 const dir = mkdtempSync(join(tmpdir(), "orynq-wallet-release-"));
@@ -25,7 +26,7 @@ afterEach(async () => {
 // submission with the next of `answers` (an Error is thrown, anything else returned), balancing
 // every fee as nothing: the SDK's own finalizeRecipe binds the bytes and hands them to the
 // facade's pending-transactions service.
-async function walletWithNode(...answers: Array<Error | string>) {
+async function walletWithNode(answers: Array<Error | string> = [], paths?: "accepted" | "uncertain") {
   const mnemonicFile = join(dir, `${opened.length}-${Math.random().toString(16).slice(2)}.mnemonic`);
   createWalletMnemonicFile(mnemonicFile);
   const submitted: string[] = [];
@@ -44,7 +45,10 @@ async function walletWithNode(...answers: Array<Error | string>) {
   vi.spyOn(WalletFacade.prototype, "state").mockReturnValue(of(facadeSyncedTo(1n, 1n)) as never);
   vi.spyOn(WalletFacade.prototype, "balanceUnboundTransaction").mockImplementation(async (tx) => ({ type: "UNBOUND_TRANSACTION", baseTransaction: tx, balancingTransaction: undefined }));
   const reverted = vi.spyOn(WalletFacade.prototype, "revert");
-  const wallet = await openWallet({ network: "preprod", mnemonicFile, endpoints: OFFLINE, source, zkDir: "/nonexistent" });
+  const wallet = await openWallet({ network: "preprod", mnemonicFile, endpoints: OFFLINE, source, zkDir: "/nonexistent", ...(paths ? { broadcast: (tx: L.FinalizedTransaction) => broadcastPaths(tx.serialize(), [
+    { name: "primary", send: bytes => broadcast(source, bytes) },
+    { name: "extra", send: async () => { if (paths === "uncertain") throw new Error("transport failed after acceptance"); } },
+  ], () => undefined) } : {}) });
   opened.push(wallet);
   const paid = (ttlMs = 15 * 60_000, dustActionsAt?: Date) => {
     const ttl = new Date(Date.now() + ttlMs);
@@ -57,8 +61,17 @@ async function walletWithNode(...answers: Array<Error | string>) {
 }
 
 describe("the DUST of final bytes the node refused", () => {
+  it.each(["accepted", "uncertain"] as const)("keeps DUST held when an extra path is %s after the primary refuses", async (paths) => {
+    const { wallet, paid, submitted, revertedHashes } = await walletWithNode([new Error(REFUSED)], paths);
+    const tx = await paid();
+    if (paths === "accepted") await expect(wallet.submit(tx)).resolves.toBeUndefined();
+    else await expect(wallet.submit(tx)).rejects.toThrow("all broadcast paths failed");
+    expect(submitted).toHaveLength(1);
+    expect(revertedHashes()).toEqual([]);
+  });
+
   it("is freed when the node refused their first delivery, and those bytes are never sent again", async () => {
-    const { wallet, paid, submitted, revertedHashes } = await walletWithNode(new Error(REFUSED));
+    const { wallet, paid, submitted, revertedHashes } = await walletWithNode([new Error(REFUSED)]);
     const tx = await paid();
     await expect(wallet.submit(tx)).rejects.toThrow(REFUSED);
     expect(revertedHashes()).toEqual([tx.transactionHash()]);
@@ -70,7 +83,7 @@ describe("the DUST of final bytes the node refused", () => {
   // A delivery the node never answered may have reached it: a later refusal of the same bytes
   // can mean they are already in a block.
   it("stays held when an earlier delivery of the same bytes went unanswered", async () => {
-    const { wallet, paid, submitted, revertedHashes } = await walletWithNode(new Error("test node: fetch failed"), new Error(REFUSED));
+    const { wallet, paid, submitted, revertedHashes } = await walletWithNode([new Error("test node: fetch failed"), new Error(REFUSED)]);
     const tx = await paid();
     await expect(wallet.submit(tx)).rejects.toThrow("fetch failed");
     await expect(wallet.submit(tx)).rejects.toThrow(REFUSED);
@@ -81,7 +94,7 @@ describe("the DUST of final bytes the node refused", () => {
   // Bytes another process balanced, a journal's resend after a restart, may have reached a node
   // before that process died.
   it("stays held for bytes this wallet did not balance", async () => {
-    const { wallet, revertedHashes } = await walletWithNode(new Error(REFUSED));
+    const { wallet, revertedHashes } = await walletWithNode([new Error(REFUSED)]);
     const elsewhere = L.Transaction.fromParts("preprod", undefined, undefined, L.Intent.new(new Date(Date.now() + 60_000))).mockProve().bind() as L.FinalizedTransaction;
     await expect(wallet.submit(elsewhere)).rejects.toThrow(REFUSED);
     expect(revertedHashes()).toEqual([]);
@@ -113,7 +126,7 @@ describe("discarding final bytes", () => {
   });
 
   it("is refused for bytes already handed to a node, whose DUST stays held", async () => {
-    const { wallet, paid, revertedHashes } = await walletWithNode(new Error("test node: fetch failed"));
+    const { wallet, paid, revertedHashes } = await walletWithNode([new Error("test node: fetch failed")]);
     const tx = await paid();
     await expect(wallet.submit(tx)).rejects.toThrow("fetch failed");
     await expect(wallet.discard(tx)).rejects.toThrow(`transaction ${tx.transactionHash()} was handed to a node, or not balanced by this wallet since it opened, so its DUST stays held until the chain settles it`);
