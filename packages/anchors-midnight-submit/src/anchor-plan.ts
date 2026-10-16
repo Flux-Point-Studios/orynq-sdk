@@ -35,7 +35,9 @@ export function readAnchorPlan(path: string): AnchorPlan {
   try {
     json = JSON.parse(readFileSync(path, "utf8"));
   } catch (error) {
-    if (error instanceof SyntaxError) throw new Error(`${path} is not JSON: ${error.message}`);
+    // V8 quotes a stretch of the input in some of its reasons, and a plan holds the hashes a kind-2
+    // anchor hides.
+    if (error instanceof SyntaxError) throw new Error(`${path} is not JSON: ${error.message.replace(/, (?:\.\.\.)?".*$/s, "")}`);
     throw error;
   }
   if (!isObject(json)) throw new Error(`${path}: the plan must be an object`);

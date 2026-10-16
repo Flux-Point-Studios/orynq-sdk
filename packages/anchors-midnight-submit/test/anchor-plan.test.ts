@@ -31,6 +31,19 @@ describe("readAnchorPlan", () => {
     expect(readAnchorPlan(plan({ registry: REGISTRY, entries })).entries[0]!.entry).toEqual({ rootHash: `sha256:${H(1)}`, manifestHash: `0x${H(2)}`, merkleRoot: H(3) });
   });
 
+  it("says why a plan is not JSON without echoing what it holds", () => {
+    const hidden = "5ec7e75ec7e7".repeat(5);
+    const error = (() => {
+      try {
+        readAnchorPlan(plan(`{"registry": "${REGISTRY}", "entries": [{"label": "x", "kind": 2, "rootHash": h${hidden}}]}`));
+      } catch (thrown) {
+        return (thrown as Error).message;
+      }
+    })();
+    expect(error).toMatch(/plan\.json is not JSON: Unexpected token 'h'$/);
+    expect(error).not.toContain(hidden.slice(0, 12));
+  });
+
   it.each([
     ["JSON it cannot parse", "{", /plan\.json is not JSON/],
     ["something other than an object", [], /plan\.json: the plan must be an object/],
