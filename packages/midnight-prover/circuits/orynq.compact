@@ -7,6 +7,7 @@ export ledger eventCount: Uint<64>;
 export ledger anchorHash: Bytes<32>;
 export ledger contextDigest: Bytes<32>;
 export ledger commitment: Bytes<32>;
+export ledger notAfter: Uint<64>;
 
 witness eventDigestHex(): Bytes<64>;
 witness capability(): Bytes<32>;
@@ -24,7 +25,14 @@ circuit assertHex(value: Bytes<64>): [] {
   }
 }
 
-export circuit proveRolling1(genesis: Bytes<64>, root: Bytes<32>, anchor: Bytes<32>, context: Bytes<32>): [] {
+// The ledger re-checks blockTimeLt against its own block time whenever it applies the call.
+circuit expiresAt(deadline: Uint<64>): [] {
+  const bound = disclose(deadline);
+  assert(blockTimeLt(bound), "proof deadline passed");
+  notAfter = bound;
+}
+
+export circuit proveRolling1(genesis: Bytes<64>, root: Bytes<32>, anchor: Bytes<32>, context: Bytes<32>, deadline: Uint<64>): [] {
   assertHex(genesis);
   const event = eventDigestHex();
   assertHex(event);
@@ -35,10 +43,12 @@ export circuit proveRolling1(genesis: Bytes<64>, root: Bytes<32>, anchor: Bytes<
   eventCount = 1;
   anchorHash = disclose(anchor);
   contextDigest = disclose(context);
+  expiresAt(deadline);
 }
 
-export circuit proveCapability(expectedCommitment: Bytes<32>, context: Bytes<32>): [] {
+export circuit proveCapability(expectedCommitment: Bytes<32>, context: Bytes<32>, deadline: Uint<64>): [] {
   assert(persistentHash<Vector<2, Bytes<32>>>([capability(), context]) == expectedCommitment, "capability mismatch");
   commitment = disclose(expectedCommitment);
   contextDigest = disclose(context);
+  expiresAt(deadline);
 }

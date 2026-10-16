@@ -1,4 +1,7 @@
-use base_crypto::{signatures::Signature, time::Timestamp};
+use base_crypto::{
+    signatures::Signature,
+    time::{Duration, Timestamp},
+};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use ledger::structure::{ContractAction, LedgerState, ProofMarker, Transaction};
 use onchain_runtime::state::{ChargedState, StateValue};
@@ -11,7 +14,7 @@ use std::{
     process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
-use storage::db::InMemoryDB;
+use storage::{arena::Sp, db::InMemoryDB};
 use transient_crypto::commitment::{PedersenRandomness, PureGeneratorPedersen};
 
 fn fixtures() -> PathBuf {
@@ -43,6 +46,25 @@ fn request(transaction: &str) -> Value {
         "referenceStateBase64": STANDARD.encode(fs::read(fixtures().join("reference-state.bin")).unwrap()),
         "verificationTimeUnixSeconds": now
     })
+}
+
+// The binding signature does not cover the TTL, so anyone holding a transaction can rewrite it.
+fn retimed(input: &Value, ttl: u64) -> String {
+    type Bound = Transaction<Signature, ProofMarker, PureGeneratorPedersen, InMemoryDB>;
+    let raw = STANDARD
+        .decode(input["transactionBase64"].as_str().unwrap())
+        .unwrap();
+    let mut tx: Bound = tagged_deserialize(&raw[..]).unwrap();
+    let Transaction::Standard(standard) = &mut tx else {
+        panic!("expected standard fixture");
+    };
+    let selected = standard.intents.iter().next().unwrap();
+    let mut intent = (*selected.1).clone();
+    intent.ttl = Timestamp::from_secs(ttl);
+    standard.intents = standard.intents.insert(*selected.0, intent);
+    let mut bytes = Vec::new();
+    tagged_serialize(&tx, &mut bytes).unwrap();
+    STANDARD.encode(bytes)
 }
 
 fn invoke(input: Value, registry: PathBuf) -> Value {
@@ -149,21 +171,7 @@ fn caller_cannot_choose_a_stale_validation_clock() {
 fn past_clock_cannot_resurrect_an_expired_transaction() {
     let mut input = request("valid-unbound.bin");
     let now = input["verificationTimeUnixSeconds"].as_u64().unwrap();
-    type Bound = Transaction<Signature, ProofMarker, PureGeneratorPedersen, InMemoryDB>;
-    let raw = STANDARD
-        .decode(input["transactionBase64"].as_str().unwrap())
-        .unwrap();
-    let mut tx: Bound = tagged_deserialize(&raw[..]).unwrap();
-    let Transaction::Standard(standard) = &mut tx else {
-        panic!("expected standard fixture");
-    };
-    let selected = standard.intents.iter().next().unwrap();
-    let mut intent = (*selected.1).clone();
-    intent.ttl = Timestamp::from_secs(now - 60);
-    standard.intents = standard.intents.insert(*selected.0, intent);
-    let mut expired = Vec::new();
-    tagged_serialize(&tx, &mut expired).unwrap();
-    input["transactionBase64"] = json!(STANDARD.encode(expired));
+    input["transactionBase64"] = json!(retimed(&input, now - 60));
     input["verificationTimeUnixSeconds"] = json!(now - 300);
     let result = invoke(input, fixtures().join("registry.json"));
     assert_eq!(result["valid"], false);
@@ -210,6 +218,32 @@ fn substituted_reference_key_or_ledger_values_are_rejected() {
         assert_eq!(result["valid"], false);
         assert_eq!(result["code"], "untrusted-state");
     }
+}
+
+#[test]
+fn reference_state_must_carry_initial_ledger_parameters() {
+    let mut input = request("valid-unbound.bin");
+    let mut state: LedgerState<InMemoryDB> =
+        tagged_deserialize(&fs::read(fixtures().join("reference-state.bin")).unwrap()[..]).unwrap();
+    let mut parameters = (*state.parameters).clone();
+    parameters.global_ttl = Duration::from_secs(400_000_000);
+    state.parameters = Sp::new(parameters);
+    let mut modified = Vec::new();
+    tagged_serialize(&state, &mut modified).unwrap();
+    input["referenceStateBase64"] = json!(STANDARD.encode(modified));
+    let result = invoke(input, fixtures().join("registry.json"));
+    assert_eq!(result["valid"], false);
+    assert_eq!(result["code"], "untrusted-state");
+}
+
+#[test]
+fn expired_ttl_is_rejected_at_the_current_clock() {
+    let mut input = request("valid-unbound.bin");
+    let now = input["verificationTimeUnixSeconds"].as_u64().unwrap();
+    input["transactionBase64"] = json!(retimed(&input, now - 60));
+    let result = invoke(input, fixtures().join("registry.json"));
+    assert_eq!(result["valid"], false);
+    assert_eq!(result["code"], "invalid-transaction");
 }
 
 #[test]

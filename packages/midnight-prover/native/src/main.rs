@@ -2,7 +2,7 @@ use base_crypto::{signatures::Signature, time::Timestamp};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use ledger::{
     error::MalformedTransaction,
-    structure::{ContractAction, LedgerState, ProofMarker, Transaction},
+    structure::{ContractAction, INITIAL_PARAMETERS, LedgerState, ProofMarker, Transaction},
     verify::WellFormedStrictness,
 };
 use onchain_runtime::state::ContractState;
@@ -121,6 +121,9 @@ fn verify(registry_path: &Path, input: &[u8]) -> Result<(), &'static str> {
     };
     if call.entry_point != entry_point {
         return Err("unexpected-transaction");
+    }
+    if *state.parameters != INITIAL_PARAMETERS {
+        return Err("untrusted-state");
     }
     let selected_state = state.index(call.address).ok_or("untrusted-state")?;
     let selected_operation = selected_state

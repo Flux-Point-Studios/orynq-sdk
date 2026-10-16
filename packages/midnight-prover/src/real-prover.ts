@@ -11,6 +11,9 @@ import type { Contract } from "../managed/contract/index.js";
 const HASH = /^[0-9a-f]{64}$/;
 const MAX_LINKS = 128;
 const MAX_ENVELOPE_BYTES = 4 * 1024 * 1024;
+const MAX_VALIDITY_SECONDS = 3600;
+// Default deadlines stop a minute short of the bound so a verifier whose clock lags the prover's still accepts them.
+const DEFAULT_VALIDITY_SECONDS = MAX_VALIDITY_SECONDS - 60;
 const CIRCUITS = {
   "rolling-hash-chain-v1": "proveRolling1",
   "lease-capability-v1": "proveCapability",
@@ -23,7 +26,7 @@ export interface RealProverOptions {
 }
 
 export interface CircuitProof {
-  version: 1;
+  version: 2;
   circuitId: keyof typeof CIRCUITS;
   transactionBase64: string;
   referenceStateBase64: string;
@@ -32,11 +35,11 @@ export interface CircuitProof {
 
 export interface CapabilityProof extends CircuitProof {
   proofType: "lease-capability-v1";
-  publicInputs: { contextDigest: string; commitment: string };
+  publicInputs: { contextDigest: string; commitment: string; notAfter: number };
 }
 
 export interface RollingHashChainProof {
-  version: 1;
+  version: 2;
   proofType: "rolling-hash-chain-v1";
   publicInputs: {
     genesisHash: string;
@@ -44,6 +47,7 @@ export interface RollingHashChainProof {
     eventCount: number;
     anchorHash: string;
     contextDigest: string;
+    notAfter: number;
   };
   links: CircuitProof[];
 }
@@ -51,6 +55,22 @@ export interface RollingHashChainProof {
 function requireHash(value: string): Uint8Array {
   if (typeof value !== "string" || !HASH.test(value)) throw new Error("Expected a canonical SHA-256 digest");
   return new Uint8Array(Buffer.from(value, "hex"));
+}
+
+function nowSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+// A proof is acceptable only before its proved deadline, and only when that deadline is at most an hour away.
+function withinValidity(notAfter: unknown, now: number): boolean {
+  return typeof notAfter === "number" && Number.isSafeInteger(notAfter) && now < notAfter && notAfter <= now + MAX_VALIDITY_SECONDS;
+}
+
+function proofDeadline(notAfter: number | undefined): number {
+  const now = nowSeconds();
+  const deadline = notAfter ?? now + DEFAULT_VALIDITY_SECONDS;
+  if (!withinValidity(deadline, now)) throw new Error("notAfter must be a Unix time within the next hour");
+  return deadline;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -76,27 +96,29 @@ export class RealMidnightProver {
     this.options = Object.freeze({ ...options });
   }
 
-  async proveCapability(input: { capability: Uint8Array; contextDigest: string; commitment: string }): Promise<CapabilityProof> {
+  async proveCapability(input: { capability: Uint8Array; contextDigest: string; commitment: string; notAfter?: number }): Promise<CapabilityProof> {
     if (!(input.capability instanceof Uint8Array) || input.capability.length !== 32) throw new Error("Capability must contain 32 bytes");
     const context = requireHash(input.contextDigest);
     const commitment = requireHash(input.commitment);
-    const publicInputs = { contextDigest: input.contextDigest, commitment: input.commitment };
+    const notAfter = proofDeadline(input.notAfter);
+    const publicInputs = { contextDigest: input.contextDigest, commitment: input.commitment, notAfter };
     const secret = new Uint8Array(input.capability);
     try {
-      const proof = await this.proveCircuit("lease-capability-v1", new Uint8Array(64), secret, [commitment, context]);
+      const proof = await this.proveCircuit("lease-capability-v1", new Uint8Array(64), secret, [commitment, context], notAfter);
       return { ...proof, proofType: "lease-capability-v1", publicInputs };
     } finally {
       secret.fill(0);
     }
   }
 
-  async proveRollingHashChain(input: { eventHashes: string[]; genesisHash: string; rootHash: string; anchorHash: string; contextDigest: string }): Promise<RollingHashChainProof> {
+  async proveRollingHashChain(input: { eventHashes: string[]; genesisHash: string; rootHash: string; anchorHash: string; contextDigest: string; notAfter?: number }): Promise<RollingHashChainProof> {
     input = { ...input, eventHashes: [...input.eventHashes] };
     if (input.eventHashes.length === 0 || input.eventHashes.length > MAX_LINKS) throw new Error("Rolling chain must contain 1 to 128 digests");
     requireHash(input.genesisHash);
     requireHash(input.rootHash);
     const anchor = requireHash(input.anchorHash);
     const context = requireHash(input.contextDigest);
+    const notAfter = proofDeadline(input.notAfter);
     const roots = input.eventHashes.reduce<string[]>((values, event) => {
       requireHash(event);
       const previous = values.at(-1) ?? input.genesisHash;
@@ -108,29 +130,31 @@ export class RealMidnightProver {
     for (let index = 0; index < roots.length; index++) {
       const previous = roots[index - 1] ?? input.genesisHash;
       const event = new TextEncoder().encode(input.eventHashes[index]!);
-      links.push(await this.proveCircuit("rolling-hash-chain-v1", event, new Uint8Array(32), [new TextEncoder().encode(previous), requireHash(roots[index]!), anchor, context]));
+      links.push(await this.proveCircuit("rolling-hash-chain-v1", event, new Uint8Array(32), [new TextEncoder().encode(previous), requireHash(roots[index]!), anchor, context], notAfter));
     }
     return {
-      version: 1,
+      version: 2,
       proofType: "rolling-hash-chain-v1",
-      publicInputs: { genesisHash: input.genesisHash, rootHash: input.rootHash, eventCount: links.length, anchorHash: input.anchorHash, contextDigest: input.contextDigest },
+      publicInputs: { genesisHash: input.genesisHash, rootHash: input.rootHash, eventCount: links.length, anchorHash: input.anchorHash, contextDigest: input.contextDigest, notAfter },
       links,
     };
   }
 
   async verify(value: unknown): Promise<boolean> {
     try {
-      if (!record(value) || value["version"] !== 1 || value["simulation"] !== undefined) return false;
+      if (!record(value) || value["version"] !== 2 || value["simulation"] !== undefined) return false;
       const serialized = JSON.stringify(value);
       if (Buffer.byteLength(serialized) > MAX_ENVELOPE_BYTES) return false;
       value = JSON.parse(serialized) as unknown;
-      if (!record(value) || value["version"] !== 1 || value["simulation"] !== undefined) return false;
+      if (!record(value) || value["version"] !== 2 || value["simulation"] !== undefined) return false;
       if (value["proofType"] === "lease-capability-v1") {
         const proof = value as unknown as CapabilityProof;
         requireHash(proof.publicInputs.contextDigest);
         requireHash(proof.publicInputs.commitment);
+        if (!withinValidity(proof.publicInputs.notAfter, nowSeconds())) return false;
         const result = await this.verifyCircuit(proof, "lease-capability-v1");
         return result !== undefined &&
+          result.notAfter === BigInt(proof.publicInputs.notAfter) &&
           Buffer.from(result.contextDigest).toString("hex") === proof.publicInputs.contextDigest &&
           Buffer.from(result.commitment).toString("hex") === proof.publicInputs.commitment;
       }
@@ -138,11 +162,12 @@ export class RealMidnightProver {
       const proof = value as unknown as RollingHashChainProof;
       const inputs = proof.publicInputs;
       for (const digest of [inputs.genesisHash, inputs.rootHash, inputs.anchorHash, inputs.contextDigest]) requireHash(digest);
+      if (!withinValidity(inputs.notAfter, nowSeconds())) return false;
       if (!Array.isArray(proof.links) || proof.links.length === 0 || proof.links.length > MAX_LINKS || inputs.eventCount !== proof.links.length) return false;
       let previous = inputs.genesisHash;
       for (const link of proof.links) {
         const result = await this.verifyCircuit(link, "rolling-hash-chain-v1");
-        if (result === undefined || result.eventCount !== 1n || Buffer.from(result.genesisHash).toString("utf8") !== previous || Buffer.from(result.anchorHash).toString("hex") !== inputs.anchorHash || Buffer.from(result.contextDigest).toString("hex") !== inputs.contextDigest) return false;
+        if (result === undefined || result.eventCount !== 1n || result.notAfter !== BigInt(inputs.notAfter) || Buffer.from(result.genesisHash).toString("utf8") !== previous || Buffer.from(result.anchorHash).toString("hex") !== inputs.anchorHash || Buffer.from(result.contextDigest).toString("hex") !== inputs.contextDigest) return false;
         previous = Buffer.from(result.rootHash).toString("hex");
       }
       return previous === inputs.rootHash;
@@ -156,7 +181,7 @@ export class RealMidnightProver {
     return await import(pathToFileURL(join(this.options.artifactsDir, "contract/index.js")).href) as typeof import("../managed/contract/index.js");
   }
 
-  private async proveCircuit(circuitId: keyof typeof CIRCUITS, event: Uint8Array, secret: Uint8Array, args: Uint8Array[]): Promise<CircuitProof> {
+  private async proveCircuit(circuitId: keyof typeof CIRCUITS, event: Uint8Array, secret: Uint8Array, args: Uint8Array[], notAfter: number): Promise<CircuitProof> {
     const entryPoint = CIRCUITS[circuitId];
     const module = await this.contract();
     const contract = new module.Contract({ eventDigestHex: ctx => [ctx.privateState, event], capability: ctx => [ctx.privateState, secret] });
@@ -168,7 +193,7 @@ export class RealMidnightProver {
     const now = new Date();
     const seconds = BigInt(Math.floor(now.getTime() / 1000));
     const block = { secondsSinceEpoch: seconds, secondsSinceEpochErr: 0, parentBlockHash: "0".repeat(64), lastBlockTime: seconds - 1n };
-    const ttl = new Date(now.getTime() + 3_600_000);
+    const ttl = new Date(notAfter * 1000);
     const strictness = new ledger.WellFormedStrictness();
     strictness.enforceBalancing = false;
     const provider = provingProvider({
@@ -189,8 +214,8 @@ export class RealMidnightProver {
     const context = runtime.createCircuitContext(deploy.address, coinKey, initial.currentContractState, undefined);
     const circuit = contract.circuits[entryPoint] as Contract["circuits"]["proveRolling1"];
     const circuitResult = entryPoint === "proveRolling1"
-      ? circuit(context, args[0]!, args[1]!, args[2]!, args[3]!)
-      : contract.circuits.proveCapability(context, args[0]!, args[1]!);
+      ? circuit(context, args[0]!, args[1]!, args[2]!, args[3]!, BigInt(notAfter))
+      : contract.circuits.proveCapability(context, args[0]!, args[1]!, BigInt(notAfter));
     const data = circuitResult.proofData;
     const operation = template.operation(entryPoint);
     if (operation === undefined) throw new Error("Missing trusted circuit operation");
@@ -199,18 +224,18 @@ export class RealMidnightProver {
       data.privateTranscriptOutputs, data.input, data.output, ledger.communicationCommitmentRandomness(), entryPoint);
     const transaction = ledger.Transaction.fromParts("undeployed").addCalls({ tag: "first" }, [call], ledger.LedgerParameters.initialParameters(), ttl);
     const proven = (await transaction.prove(provider, ledger.CostModel.initialCostModel())).bind();
-    const proof: CircuitProof = { version: 1, circuitId, transactionBase64: Buffer.from(proven.serialize()).toString("base64"), referenceStateBase64: Buffer.from(state.serialize()).toString("base64"), verificationTimeUnixSeconds: Number(seconds) };
-    if (!await this.nativeVerify({ circuitId, transactionBase64: proof.transactionBase64, referenceStateBase64: proof.referenceStateBase64, verificationTimeUnixSeconds: Math.floor(Date.now() / 1000) })) {
+    const proof: CircuitProof = { version: 2, circuitId, transactionBase64: Buffer.from(proven.serialize()).toString("base64"), referenceStateBase64: Buffer.from(state.serialize()).toString("base64"), verificationTimeUnixSeconds: Number(seconds) };
+    if (!await this.nativeVerify({ circuitId, transactionBase64: proof.transactionBase64, referenceStateBase64: proof.referenceStateBase64, verificationTimeUnixSeconds: nowSeconds() })) {
       throw new Error("Generated proof failed native verification");
     }
     return proof;
   }
 
   private async verifyCircuit(proof: CircuitProof, circuitId: keyof typeof CIRCUITS) {
-    if (!record(proof) || proof.version !== 1 || proof.circuitId !== circuitId || proof["simulation"] !== undefined) return undefined;
+    if (!record(proof) || proof.version !== 2 || proof.circuitId !== circuitId || proof["simulation"] !== undefined) return undefined;
     const txBytes = strictBase64(proof.transactionBase64);
     const stateBytes = strictBase64(proof.referenceStateBase64);
-    const verified = await this.nativeVerify({ circuitId, transactionBase64: proof.transactionBase64, referenceStateBase64: proof.referenceStateBase64, verificationTimeUnixSeconds: Math.floor(Date.now() / 1000) });
+    const verified = await this.nativeVerify({ circuitId, transactionBase64: proof.transactionBase64, referenceStateBase64: proof.referenceStateBase64, verificationTimeUnixSeconds: nowSeconds() });
     if (!verified) return undefined;
     const module = await this.contract();
     const state = ledger.LedgerState.deserialize(stateBytes);

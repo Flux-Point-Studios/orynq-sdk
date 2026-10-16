@@ -3,6 +3,6 @@
 "@fluxpointstudios/orynq-mcp": patch
 ---
 
-Add genuine Compact capability and rolling-digest proofs with a pinned native ledger verifier. Verification binds public outputs to the expected statement and refuses untrusted keys, malformed transactions and simulations. Existing mock APIs require explicit simulation mode and cannot provide production proof or publication claims.
+Add genuine Compact capability and rolling-digest proofs with a pinned native ledger verifier. Each proof carries a proved deadline at most one hour ahead, which a rewritten transaction TTL cannot extend. Verification binds public outputs to the expected statement and refuses untrusted keys, altered ledger parameters, malformed transactions and simulations. Existing mock APIs require explicit simulation mode and cannot provide production proof or publication claims.
 
 Require an MCP SDK version containing the OAuth credential handling fix.
