@@ -377,6 +377,18 @@ describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
     expect(m.journal()).toEqual([]);
   });
 
+  it("discards the prepared bytes and sends nothing when chain time passes their TTL while the prompt waits for the token", async ({ expect }) => {
+    const m = offlineMainnet();
+    const r = await m.run((token) => {
+      m.advance(16 * MINUTE);
+      return token;
+    });
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toMatch(/deploy-mainnet: chain time passed the prepared deploy's TTL \S+ while it awaited confirmation; its bytes were discarded and nothing was sent; rerun to prepare new bytes/);
+    expect(m.chain()).toMatchObject({ sent: [], discarded: [expect.stringMatching(new RegExp(`^${r.token!.slice(7)}`))] });
+    expect(m.journal()).toEqual([]);
+  });
+
   it("after a run that failed between the broadcast and its readback, shows the journalled deploy again, asks for its token, and finishes it without sending again", async ({ expect }) => {
     const m = offlineMainnet();
     const failed = await m.run((token) => token, "lose-read");
@@ -703,6 +715,18 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
     const r = await m.run(() => "yes");
     expect(r.status, r.output).toBe(1);
     expect(r.output).toContain("anchor-mainnet: not confirmed; the prepared bytes were discarded and nothing was sent");
+    expect(m.chain()).toMatchObject({ sent: [], discarded: [expect.stringMatching(new RegExp(`^${r.token!.slice(7)}`))] });
+    expect([m.journal(), m.results()]).toEqual([[], null]);
+  });
+
+  it("discards the prepared bytes and sends and records nothing when chain time passes their TTL while the prompt waits for the token", async ({ expect }) => {
+    const m = offlineAnchors();
+    const r = await m.run((token) => {
+      m.advance(16 * MINUTE);
+      return token;
+    });
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toMatch(/anchor-mainnet: chain time passed the prepared anchor's TTL \S+ while it awaited confirmation; its bytes were discarded and nothing was sent; rerun to prepare new bytes/);
     expect(m.chain()).toMatchObject({ sent: [], discarded: [expect.stringMatching(new RegExp(`^${r.token!.slice(7)}`))] });
     expect([m.journal(), m.results()]).toEqual([[], null]);
   });

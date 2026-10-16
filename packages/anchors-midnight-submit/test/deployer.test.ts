@@ -364,6 +364,28 @@ describe("registryDeployer", () => {
     deployer.close();
   });
 
+  it("refuses new bytes whose TTL chain time passed while they awaited confirmation, discarding them and journalling and sending nothing", async () => {
+    const { deployer, wallet: w, rows, net } = setup();
+    const prepared = await deployer.prepare();
+    net.advance(15 * MINUTE + 1_000);
+    await expect(deployer.submit(prepared)).rejects.toThrow(
+      `chain time passed the prepared deploy's TTL ${prepared.ttl.toISOString()} while it awaited confirmation; its bytes were discarded and nothing was sent; rerun to prepare new bytes`,
+    );
+    expect([w.submitted, w.discarded, rows()]).toEqual([[], [prepared.txHash], []]);
+    deployer.close();
+  });
+
+  it("refuses new bytes while the node lacks the indexer's newest block, discarding them and journalling and sending nothing", async () => {
+    const { deployer, wallet: w, rows, net } = setup();
+    const prepared = await deployer.prepare();
+    net.lag(true);
+    await expect(deployer.submit(prepared)).rejects.toThrow(
+      "the preprod node does not hold the indexer's newest block, so chain time is unknown and the prepared bytes may be past their TTL; they were discarded and nothing was sent",
+    );
+    expect([w.submitted, w.discarded, rows()]).toEqual([[], [prepared.txHash], []]);
+    deployer.close();
+  });
+
   it("names the wallet that paid a resumed deploy, not the wallet resuming it", async () => {
     const { net, journalPath, timedOutAfterAccept, wallet: payer } = setup();
     const landed = await timedOutAfterAccept();

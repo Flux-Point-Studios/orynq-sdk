@@ -230,6 +230,17 @@ describe("registryOperator's anchors a human confirms", () => {
     operator.close();
   });
 
+  it("refuses new bytes whose TTL chain time passed while they awaited confirmation, discarding them and journalling and sending nothing", async () => {
+    const { operator, wallet: w, net, journalPath } = setup();
+    const prepared = await operator.prepare({ kind: 1, entry: entry() });
+    net.advance(15 * MINUTE + 1_000);
+    await expect(operator.submit(prepared)).rejects.toThrow(
+      `chain time passed the prepared anchor's TTL ${prepared.ttl.toISOString()} while it awaited confirmation; its bytes were discarded and nothing was sent; rerun to prepare new bytes`,
+    );
+    expect([w.submitted, w.discarded, rows(journalPath)]).toEqual([[], [prepared.txHash], []]);
+    operator.close();
+  });
+
   it("never sends a second transaction for one anchor: bytes prepared after one is journalled are discarded", async () => {
     const { operator, wallet: w } = setup();
     const e = entry();
