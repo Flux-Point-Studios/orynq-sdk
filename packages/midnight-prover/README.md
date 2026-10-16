@@ -1,6 +1,6 @@
 # Midnight proofs
 
-As of 2026-10-12 this package generates local Compact proofs and verifies them with the native Midnight ledger. It publishes no transactions and has no deployed contract. The supported stack is Compact 0.31.1, compact-runtime 0.16.0, onchain-runtime 3.0.0, ledger-v8 8.1.3 and zkir-v2 2.1.1 ([official support matrix](https://docs.midnight.network/relnotes/support-matrix)).
+As of 2026-10-12 this package generates local Compact proofs and verifies them with the native Midnight ledger. It publishes no transactions and has no deployed contract. The supported stack is Compact 0.31.1, compact-runtime 0.16.0, onchain-runtime-v3 3.1.2, ledger-v8 8.1.3 and zkir-v2 2.1.1; the native verifier is built from the same ledger 8.1.3 and onchain-runtime 3.1.2 release ([official support matrix](https://docs.midnight.network/relnotes/support-matrix)).
 
 `RealMidnightProver` implements two statements:
 
