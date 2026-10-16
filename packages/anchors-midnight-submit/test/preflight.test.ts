@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import {
   REGISTRY_VERIFIER_KEY_SHA256,
-  authorKey,
   buildRegistryDeploy,
   createAuthorKeyFile,
   createSaltKeyFile,
@@ -22,6 +21,7 @@ import {
   type MidnightSource,
 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { chainView, openJournal } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
+import { MAINNET_AUTHOR_KEYS } from "../src/custody.js";
 import { NETWORK_IDENTITY, anchorSummary, assertChainIdentity, confirmOnTerminal, confirmationToken, deploySummary } from "../src/preflight.js";
 import type { PreparedDeploy } from "../src/deployer.js";
 import type { PreparedAnchor } from "../src/operator.js";
@@ -644,18 +644,20 @@ const REGISTRY = buildRegistryDeploy({ networkId: "mainnet", ttl: new Date(Date.
 type PlanEntry = ReturnType<typeof planEntries>[number] & { attribute?: string };
 
 // anchor-mainnet over an offline mainnet whose node holds `state` at REGISTRY, deployed before
-// the run, with throwaway author and salt keys and a plan of `entries` for `registry`.
+// the run, with throwaway author and salt keys it pins as the FPS mainnet keys and a plan of
+// `entries` for `registry`.
 function offlineAnchors({ state = registryInitialState(), entries = planEntries() as unknown[], registry = REGISTRY }: { state?: L.ContractState; entries?: unknown[]; registry?: string } = {}) {
   const m = offlineMainnet("anchor-mainnet", (root) => ["--plan", `${root}/plan.json`, "--author-key", `${root}/author.key`, "--salt-key", `${root}/salt.key`, "--results", `${root}/state/results.json`]);
-  m.update({ landed: { ["d0".repeat(32)]: { raw: "", height: 400, address: REGISTRY, state: hex(state.serialize()) } } });
-  createAuthorKeyFile(`${m.root}/author.key`);
-  createSaltKeyFile(`${m.root}/salt.key`);
+  const author = createAuthorKeyFile(`${m.root}/author.key`);
+  const saltKeyId = createSaltKeyFile(`${m.root}/salt.key`);
+  m.update({ landed: { ["d0".repeat(32)]: { raw: "", height: 400, address: REGISTRY, state: hex(state.serialize()) } }, fpsKeys: { authorKeys: [author], saltKeyIds: [saltKeyId] } });
   writeFileSync(`${m.root}/plan.json`, JSON.stringify({ registry, entries }));
   const resultsPath = `${m.root}/state/results.json`;
   return {
     ...m,
     entries: entries as PlanEntry[],
-    author: hex(authorKey(readAuthorSecret(`${m.root}/author.key`))),
+    author,
+    saltKeyId,
     saltKey: readAuthorSecret(`${m.root}/salt.key`),
     resultsPath,
     results: () => (existsSync(resultsPath) ? JSON.parse(readFileSync(resultsPath, "utf8")) : null),
@@ -824,6 +826,22 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
     expect(s.status, s.output).toBe(1);
     expect(s.output).toContain(`anchor-mainnet: the mainnet node holds no contract at ${nowhere}`);
     expect([s.tokens, s.output.includes("Syncing"), absent.closes().wallet, absent.sent()]).toEqual([[], false, 0, []]);
+  });
+
+  it("refuses an author key or a salt key that is not an FPS mainnet key as the operator loads it, before any byte", async ({ expect }) => {
+    const m = offlineAnchors();
+    m.update({ fpsKeys: { authorKeys: [...MAINNET_AUTHOR_KEYS], saltKeyIds: [m.saltKeyId] } });
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain(`anchor-mainnet: ${m.root}/author.key holds author key ${m.author}, not an FPS mainnet author key (${MAINNET_AUTHOR_KEYS[0]}); a mainnet operator writes under no other`);
+    expect([r.tokens, m.sent(), m.closes()]).toEqual([[], [], { wallet: 1, journalLeftOpen: false }]);
+
+    const otherSalt = "5a".repeat(32);
+    m.update({ fpsKeys: { authorKeys: [m.author], saltKeyIds: [otherSalt] } });
+    const s = await m.run((token) => token);
+    expect(s.status, s.output).toBe(1);
+    expect(s.output).toContain(`anchor-mainnet: ${m.root}/salt.key holds salt key ${m.saltKeyId}, not an FPS mainnet salt key (${otherSalt}); a mainnet operator derives no kind-2 salt from any other`);
+    expect([s.tokens, m.sent()]).toEqual([[], []]);
   });
 
   it("refuses a plan with a field it does not define before reading the chain or the wallet", async ({ expect }) => {

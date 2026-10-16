@@ -111,9 +111,22 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
   const { network, wallet, source, prover } = options;
   if (network === "mainnet" && agentDriven()) throw new Error("registryOperator refuses to load a mainnet author key in a process that carries Claude Code's environment");
   for (const file of [options.authorKeyFile, options.saltKeyFile]) if (file !== undefined) refuseMainnetSecretsPath(network, file);
+  // A mainnet operator writes FPS anchors, so it loads only the FPS mainnet keys, and an operator
+  // anywhere else never loads one of them: each key is told by what it is, wherever its file lives.
   const authorSecret = readAuthorSecret(options.authorKeyFile);
   const author = hex(authorKey(authorSecret));
+  if (network === "mainnet" && !MAINNET_AUTHOR_KEYS.includes(author)) {
+    throw new Error(`${options.authorKeyFile} holds author key ${author}, not an FPS mainnet author key (${MAINNET_AUTHOR_KEYS.join(", ")}); a mainnet operator writes under no other`);
+  }
   if (network !== "mainnet" && MAINNET_AUTHOR_KEYS.includes(author)) throw new Error(`${options.authorKeyFile} holds the FPS mainnet author key ${author}; a ${network} operator never loads it`);
+  const saltKey = options.saltKeyFile === undefined ? undefined : hash32(readPrivateFile(options.saltKeyFile), options.saltKeyFile);
+  if (saltKey) {
+    const id = hex(saltKeyId(saltKey));
+    if (network === "mainnet" && !MAINNET_SALT_KEY_IDS.includes(id)) {
+      throw new Error(`${options.saltKeyFile} holds salt key ${id}, not an FPS mainnet salt key (${MAINNET_SALT_KEY_IDS.join(", ")}); a mainnet operator derives no kind-2 salt from any other`);
+    }
+    if (network !== "mainnet" && MAINNET_SALT_KEY_IDS.includes(id)) throw new Error(`${options.saltKeyFile} holds the FPS mainnet salt key ${id}; a ${network} operator never uses it`);
+  }
   const journal = openJournal(options.journalPath);
   const chain = chainView(source, network);
   const ttlMillis = (options.ttlMinutes ?? 15) * 60_000;
@@ -126,11 +139,8 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
       const commitment = entryCommitment(request.entry);
       return { key: keyOf(1, hex(commitment), ZERO), call: { circuit: "anchor", args: [commitment, 1n] }, witnesses: { authorSecret } };
     }
-    if (!options.saltKeyFile) throw new Error("anchorHiding needs a salt key file");
+    if (!saltKey) throw new Error("anchorHiding needs a salt key file");
     const { entry } = request;
-    const saltKey = hash32(readPrivateFile(options.saltKeyFile), options.saltKeyFile);
-    const id = hex(saltKeyId(saltKey));
-    if (network !== "mainnet" && MAINNET_SALT_KEY_IDS.includes(id)) throw new Error(`${options.saltKeyFile} holds the FPS mainnet salt key ${id}; a ${network} operator never uses it`);
     const attr = hash32(request.attribute, "attribute");
     const digest = hiddenDigest(entry, attr);
     const salt = deriveSalt(saltKey, digest);

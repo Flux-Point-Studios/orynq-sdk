@@ -10,11 +10,13 @@
 // ledger-v8 8.1.3 once trapped on preprod), "low-dust" (the wallet holds 0.5 DUST), "unfinal"
 // (the node's finalized head stays below every landed transaction), "foreign-block" (the node's
 // block of the landed transactions carries none of them) or "fork" (the node's block at their
-// heights is another than the indexer's).
+// heights is another than the indexer's). The FPS mainnet keys an operator loads are the ones the
+// chain file pins, a test's throwaway keys, when it pins any.
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { midnightExtrinsic, midnightSource, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { ledgerNode } from "../../anchors-midnight/src/__tests__/ledger-node.js";
+import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS } from "../src/custody.js";
 import { NETWORK_IDENTITY, type OperatorWallet, type StateSave, type WalletOptions } from "../src/index.js";
 import { costParametersOf } from "../src/wallet.js";
 import { prover } from "./prover.js";
@@ -37,6 +39,9 @@ export interface OfflineChain {
   nodeLags?: boolean;
   // How many times a run closed its wallet.
   walletCloses?: number;
+  // The FPS mainnet keys this mainnet pins in the place of the real ones: its test's throwaway
+  // author key and salt key id. Without them the real ones are pinned.
+  fpsKeys?: { authorKeys: string[]; saltKeyIds: string[] };
 }
 
 const FILE = process.env.OFFLINE_CHAIN!;
@@ -58,6 +63,12 @@ let readsToLose = FAULTS.has("lose-read") ? 1 : 0;
 // already refuses.
 const hostNow = Date.now;
 Date.now = () => hostNow() + read().aheadMs;
+
+const pinned = read().fpsKeys;
+if (pinned) {
+  (MAINNET_AUTHOR_KEYS as string[]).splice(0, MAINNET_AUTHOR_KEYS.length, ...pinned.authorKeys);
+  (MAINNET_SALT_KEY_IDS as string[]).splice(0, MAINNET_SALT_KEY_IDS.length, ...pinned.saltKeyIds);
+}
 
 // The node reads its ledger in the newest block and in the block every transaction lands in.
 const ledger = ledgerNode({ blocks: [HEAD, BLOCK], contracts: (address) => Object.values(read().landed).find((t) => t.address === address)?.state });
