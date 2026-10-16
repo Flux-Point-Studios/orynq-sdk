@@ -284,13 +284,15 @@
     {
       "id": "midnight-prover",
       "name": "Midnight prover",
-      "desc": "ZK proof generation for Proof-of-Intent on the Midnight network.",
+      "desc": "Local Compact capability and exact rolling-digest proofs with pinned native cryptographic verification. Simulations are explicit and cannot authorize; no network deployment or chain inclusion is claimed.",
       "kind": "engine",
       "paths": [
         "packages/midnight-prover"
       ],
-      "consumes": [],
-      "status": "experimental"
+      "consumes": [
+        "process-trace"
+      ],
+      "status": "built"
     },
     {
       "id": "compute-meter-sdk",

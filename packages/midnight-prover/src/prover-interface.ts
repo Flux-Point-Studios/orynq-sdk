@@ -226,6 +226,7 @@ export type MidnightProverFactory = () => MidnightProver;
  * Options for creating a MidnightProver.
  */
 export interface CreateMidnightProverOptions {
+  mode?: "real" | "simulation";
   /**
    * Enable debug logging.
    */

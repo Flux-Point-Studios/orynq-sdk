@@ -1,0 +1,12 @@
+{
+  "address": "7cddc8f0456368de23d66eb1dedd3696fb2b07502814b71982fac04520cc4d28",
+  "entryPoint": "proveRoot",
+  "expectedRoot": "8b5ec42000d5ffe7b693ef2f876589f03c5399f97d06edca9dd6617d64cd3f02",
+  "verifierKeySha256": "689df77c36579e65bcd9d11d3bbec1fb76a6c37bd4aaeda37a8ae85b0eece9ba",
+  "referenceStateSha256": "e9ba4a47a272b9ce659108d6a76ff3171f455dfc4621a57a663fde9c28821b05",
+  "verificationTime": "2026-10-09T17:10:44.667Z",
+  "proofOffset": 1280,
+  "proofBytes": 4508,
+  "rootOffset": 86,
+  "proofMutationIndex": 1088
+}

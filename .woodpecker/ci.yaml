@@ -3,8 +3,10 @@ when:
   - event: push
     branch: main
 
-# The t-backend submodule is private and nothing here builds it; GitHub's
-# checkout never fetched it either.
+labels:
+  platform: linux/amd64
+
+# The private t-backend submodule is not a CI build input.
 clone:
   - name: clone
     image: woodpeckerci/plugin-git
@@ -12,20 +14,63 @@ clone:
       recursive: false
 
 steps:
-  # Tests run as an unprivileged user, as on GitHub's runners: root can read a
-  # mode-000 file, which defeats the recorder's unreadable-session-file probe.
+  # Root defeats the recorder's unreadable-session-file probe.
   - name: build-test
-    image: node:20-bookworm
+    image: node:24-bookworm
     depends_on: []
+    environment:
+      COMPACTC: /woodpecker/orynq-midnight-tools/compact-0.31.1/compactc
+      XDG_CACHE_HOME: /woodpecker/orynq-midnight-tools/cache
     commands:
       - corepack enable
-      - chown -R node:node .
-      - su node -s /bin/bash -c "pnpm install --frozen-lockfile && pnpm build && pnpm typecheck && pnpm test && pnpm vectors:verify"
+      - mkdir -p /woodpecker/orynq-midnight-tools
+      - chown -R node:node . /woodpecker/orynq-midnight-tools
+      - |
+        su node -s /bin/bash -c '
+          pnpm install --frozen-lockfile &&
+          node --test scripts/dependency-security.test.mjs &&
+          node --test packages/midnight-prover/scripts/install-compact.test.mjs &&
+          bash packages/midnight-prover/scripts/install-compact.sh /woodpecker/orynq-midnight-tools/compact-0.31.1 &&
+          pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:circuits &&
+          pnpm build &&
+          pnpm typecheck &&
+          pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover lint &&
+          pnpm exec vitest run --maxWorkers=2 &&
+          pnpm vectors:verify
+        '
+
+  - name: midnight-native
+    image: rust:1.99.0-bookworm
+    depends_on: [build-test]
+    backend_options:
+      docker:
+        user: '1000:1000'
+    environment:
+      CARGO_BUILD_JOBS: '4'
+      CARGO_HOME: /tmp/orynq-midnight-cargo
+      CARGO_TARGET_DIR: /woodpecker/orynq-midnight-tools/native-target
+    commands:
+      - test "$(id -u)" = 1000
+      - rustup component add --toolchain 1.99.0 rustfmt clippy
+      - cargo +1.99.0 fmt --manifest-path packages/midnight-prover/native/Cargo.toml -- --check
+      - cargo +1.99.0 clippy --locked --manifest-path packages/midnight-prover/native/Cargo.toml --all-targets -- -D warnings
+      - cargo +1.99.0 build --release --locked --manifest-path packages/midnight-prover/native/Cargo.toml
+      - cargo +1.99.0 test --release --locked --manifest-path packages/midnight-prover/native/Cargo.toml
+
+  - name: midnight-real-proofs
+    image: node:24-bookworm
+    depends_on: [midnight-native]
+    environment:
+      ORYNQ_MIDNIGHT_PARAMS_DIR: /woodpecker/orynq-midnight-tools/cache/midnight/zk-params
+      ORYNQ_MIDNIGHT_NATIVE_VERIFIER: /woodpecker/orynq-midnight-tools/native-target/release/orynq-midnight-verifier
+    commands:
+      - corepack enable
+      - su node -s /bin/bash -c 'pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover test:real'
 
   # The cross-language vector tests shell out to the TS harness, so this needs
   # node and the workspace build-test installed.
   - name: python-test
-    image: nikolaik/python-nodejs:python3.11-nodejs20
+    image: nikolaik/python-nodejs:python3.11-nodejs24
     depends_on: [build-test]
     commands:
       - pip install -e "python/.[dev]"
@@ -73,10 +118,8 @@ steps:
           exit 1
         fi
 
-  # Advisory only, as before: a known advisory must not block unrelated work.
-  # Blocking: with failure ignored, 78 high and critical advisories built up unnoticed.
   - name: security-audit
-    image: node:20-bookworm
+    image: node:24-bookworm
     depends_on: []
     commands:
       - corepack enable

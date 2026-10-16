@@ -1,0 +1,64 @@
+diff --git a/lib/constants.js b/lib/constants.js
+index 2bb3b8840382c56700869b3a9e1f958fcce01efd..c23709951666ff6bb0d726084d89e62948446bd7 100644
+--- a/lib/constants.js
++++ b/lib/constants.js
+@@ -1,6 +1,7 @@
+ 'use strict';
+ 
+ module.exports = {
++  MAX_DEPTH: 100,
+   MAX_LENGTH: 10000,
+ 
+   // Digits
+diff --git a/lib/parse.js b/lib/parse.js
+index 3a6988e629f52aee6609dc5ec290a5e9ff47cecb..299d083e675c27846e22a91a7ebc793caa94d1b0 100644
+--- a/lib/parse.js
++++ b/lib/parse.js
+@@ -7,6 +7,7 @@ const stringify = require('./stringify');
+  */
+ 
+ const {
++  MAX_DEPTH,
+   MAX_LENGTH,
+   CHAR_BACKSLASH, /* \ */
+   CHAR_BACKTICK, /* ` */
+@@ -38,6 +39,8 @@ const parse = (input, options = {}) => {
+   if (input.length > max) {
+     throw new SyntaxError(`Input length (${input.length}), exceeds max characters (${max})`);
+   }
++  // compile, expand and stringify recurse once per nesting level, so unbounded nesting exhausts the stack.
++  const maxDepth = Number.isSafeInteger(opts.maxDepth) ? Math.min(MAX_DEPTH, opts.maxDepth) : MAX_DEPTH;
+ 
+   const ast = { type: 'root', input, nodes: [] };
+   const stack = [ast];
+@@ -54,6 +57,12 @@ const parse = (input, options = {}) => {
+    */
+ 
+   const advance = () => input[index++];
++  const open = node => {
++    if (stack.length > maxDepth) {
++      throw new SyntaxError(`Nesting depth (${stack.length}), exceeds max depth (${maxDepth})`);
++    }
++    stack.push(node);
++  };
+   const push = node => {
+     if (node.type === 'text' && prev.type === 'dot') {
+       prev.type = 'text';
+@@ -144,7 +153,7 @@ const parse = (input, options = {}) => {
+ 
+     if (value === CHAR_LEFT_PARENTHESES) {
+       block = push({ type: 'paren', nodes: [] });
+-      stack.push(block);
++      open(block);
+       push({ type: 'text', value });
+       continue;
+     }
+@@ -210,7 +219,7 @@ const parse = (input, options = {}) => {
+       };
+ 
+       block = push(brace);
+-      stack.push(block);
++      open(block);
+       push({ type: 'open', value });
+       continue;
+     }
