@@ -448,9 +448,6 @@ importers:
       '@fluxpointstudios/orynq-sdk-anchors-materios':
         specifier: workspace:^
         version: link:../anchors-materios
-      '@fluxpointstudios/orynq-sdk-anchors-midnight':
-        specifier: workspace:*
-        version: link:../anchors-midnight
       '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
@@ -464,6 +461,9 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
+      '@fluxpointstudios/orynq-sdk-anchors-midnight':
+        specifier: workspace:*
+        version: link:../anchors-midnight
       tsup:
         specifier: ^8.0.1
         version: 8.5.1(tsx@4.21.0)(typescript@5.9.3)
@@ -667,9 +667,6 @@ importers:
       '@fluxpointstudios/orynq-sdk-anchors-materios':
         specifier: workspace:*
         version: link:../anchors-materios
-      '@fluxpointstudios/orynq-sdk-anchors-midnight':
-        specifier: workspace:*
-        version: link:../anchors-midnight
       '@fluxpointstudios/orynq-sdk-process-trace':
         specifier: workspace:*
         version: link:../process-trace
@@ -683,6 +680,9 @@ importers:
         specifier: ^13.0.0
         version: 13.5.9(@polkadot/util@13.5.9)
     devDependencies:
+      '@fluxpointstudios/orynq-sdk-anchors-midnight':
+        specifier: workspace:*
+        version: link:../anchors-midnight
       tsup:
         specifier: ^8.0.1
         version: 8.5.1(tsx@4.21.0)(typescript@5.9.3)

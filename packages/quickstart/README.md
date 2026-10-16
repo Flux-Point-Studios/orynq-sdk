@@ -27,6 +27,9 @@ orynq keys init midnight --out ~/.orynq/midnight-key.json
 orynq anchor midnight --network mainnet --key ~/.orynq/midnight-key.json --bundle bundle.json [--hidden] [--submit]
 ```
 
+The Midnight commands need `@fluxpointstudios/orynq-sdk-anchors-midnight`, an optional peer
+dependency installed beside this package; without it they exit 1 naming it.
+
 `orynq verify midnight` is read-only and needs no key and no DUST. It checks an anchor with
 `verifyMidnightAnchor` from `@fluxpointstudios/orynq-sdk-anchors-midnight` and prints its labels:
 

@@ -94,6 +94,8 @@ node packages/orynq-mcp/dist/index.js
   refuses any other argument, so a model can pass it no key, file or URL; the source comes from
   the server's environment. Its result is the anchors-midnight `verifyReport`: `valid` only at
   `consensus-verified` assurance, with every source's text made printable and cut at 300 characters.
+  It needs `@fluxpointstudios/orynq-sdk-anchors-midnight`, an optional peer dependency; without it
+  the server still starts and the tool returns an error naming that package.
 - There is no Midnight anchoring tool. Anchoring spends the user's own DUST with the user's own
   key, and an MCP server cannot tell a person's answer from a client's: a tool argument is the
   model's, and an elicitation reply is whatever the client sends. Anchor with
