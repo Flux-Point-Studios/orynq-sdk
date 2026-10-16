@@ -15,18 +15,20 @@ For broker authorization, a trusted issuer separately signs the commitment and e
 
 ## Build
 
-Use Node >=22.12.0 and Rust 1.99.0. Install the workspace dependencies with the committed pnpm lockfile. Install Compact 0.31.1 from its official release and supply its absolute executable path:
+Use Node >=22.12.0 and Rust 1.99.0. Install the workspace dependencies with the committed pnpm lockfile. `tools/compactc/install.sh` installs Compact 0.31.1 and the ZK parameters the circuits need (k=13, 14 and 16), refusing any file whose sha256 differs from its pin:
 
 ```sh
 pnpm install --frozen-lockfile
-COMPACTC=/absolute/path/to/compactc pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:circuits
+tools/compactc/install.sh ~/.cache/midnight/compactc ~/.cache/midnight/zk-params
+COMPACTC=~/.cache/midnight/compactc/compactc MIDNIGHT_PP=~/.cache/midnight/zk-params \
+  pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:circuits
 pnpm build
 pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:native
 ```
 
 Circuit compilation generates `managed/contract`, proving and verifying keys, a trusted initial ledger template, and `managed/registry.json`. Never accept a registry, circuit path, compiled JavaScript module or verifier executable selected by an untrusted proof caller. Keep these artifacts outside caller write access. The native binary must be installed alongside the built JavaScript; it is built separately rather than embedded in the npm package. Rust dependencies are pinned by `native/Cargo.lock` and an exact official ledger commit.
 
-The compiler downloads the public SRS parameters to `$XDG_CACHE_HOME/midnight/zk-params`, or the platform's default cache. Point `paramsDir` at that directory. Both proof generation and native verification run locally. The prover sees the private witness and belongs inside the trusted worker.
+With `MIDNIGHT_PP` naming the installer's parameter directory, the compiler fetches nothing. Point `paramsDir` at that directory. Both proof generation and native verification run locally. The prover sees the private witness and belongs inside the trusted worker.
 
 ## Generate and verify
 
@@ -70,7 +72,7 @@ pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover lint
 pnpm typecheck
 pnpm test
 cargo test --release --locked --manifest-path packages/midnight-prover/native/Cargo.toml
-ORYNQ_MIDNIGHT_PARAMS_DIR=/absolute/path/to/zk-params \
+ORYNQ_MIDNIGHT_PARAMS_DIR=~/.cache/midnight/zk-params \
   pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover test:real
 ```
 

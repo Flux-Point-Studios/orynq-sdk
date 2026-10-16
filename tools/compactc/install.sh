@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Installs compactc 0.31.1 into DEST, and into PARAMS_DIR the ZK public parameters the registry
-# circuits need (k=13 and k=14) and the DUST spend circuit's keys and zkir (dust/9/, k=13), whose
-# proof pays every registry transaction's fee; it refuses any file whose sha256 differs from
+# circuits need (k=13 and k=14), the one midnight-prover's rolling-digest circuit needs (k=16), and
+# the DUST spend circuit's keys and zkir (dust/9/, k=13), whose proof pays every registry
+# transaction's fee; it refuses any file whose sha256 differs from
 # compactc.sha256 beside this script. The zip pins are the digests GitHub publishes for the
 # release assets, and every file inside each zip is pinned as well; the params pins are the ones
 # midnight-ledger 8.1.3 compiles into its data provider, and the DUST pins the ones it keeps in
@@ -96,7 +97,7 @@ reported=$("$dest/compactc" --version)
 
 private_dir "$params/dust"
 private_dir "$params/dust/9"
-for name in bls_midnight_2p13 bls_midnight_2p14 dust/9/spend.prover dust/9/spend.verifier dust/9/spend.bzkir; do
+for name in bls_midnight_2p13 bls_midnight_2p14 bls_midnight_2p16 dust/9/spend.prover dust/9/spend.verifier dust/9/spend.bzkir; do
   installed "$params/$name" "$name" && continue
   fetched=$work/$(basename "$name")
   curl -sSfL -o "$fetched" "$param_source/$name"
@@ -106,4 +107,4 @@ for name in bls_midnight_2p13 bls_midnight_2p14 dust/9/spend.prover dust/9/spend
   mv "$fetched" "$params/$name"
 done
 
-echo "compactc $version ($platform) verified in $dest; bls_midnight_2p13, 2p14 and the dust/9 spend keys verified in $params"
+echo "compactc $version ($platform) verified in $dest; bls_midnight_2p13, 2p14, 2p16 and the dust/9 spend keys verified in $params"

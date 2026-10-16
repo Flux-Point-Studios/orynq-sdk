@@ -48,6 +48,7 @@ function fakeRelease(version = "0.31.1") {
   const params: Record<string, string> = {
     bls_midnight_2p13: "params for k=13",
     bls_midnight_2p14: "params for k=14",
+    bls_midnight_2p16: "params for k=16",
     "dust/9/spend.prover": "dust spend prover key",
     "dust/9/spend.verifier": "dust spend verifier key",
     "dust/9/spend.bzkir": "dust spend zkir",
@@ -79,12 +80,14 @@ const run = (script: string, args: string[], env: Record<string, string>) =>
   });
 
 describe("compactc installer", () => {
-  it("pins compactc 0.31.1 for every published platform and the k=13/14 parameters", () => {
+  it("pins compactc 0.31.1 for every published platform and the k=13, 14 and 16 parameters", () => {
     expect(pinned).toContain("e291b4bab4d4e857707008f8b1c25c2b8e0c843f6c737d0ee6c0d9ac69a6bbfb  compactc_v0.31.1_x86_64-unknown-linux-musl.zip");
     expect(pinned).toContain("3054ffa89d7a4dfe24afd31c27ef37e87a95757de0fc24485f335635e26dce57  x86_64-unknown-linux-musl/compactc.bin");
     expect(pinned).toContain("15646793d3ff7f36cd81aa63419163e29d9893538bb4a6911a21012e8735b537  x86_64-unknown-linux-musl/compactc");
     expect(pinned).toContain("d3324910969c4cc54143b8045b649e5c3a4bd5fb7b8f85fe1b770f640ce1c803  bls_midnight_2p13");
     expect(pinned).toContain("fc253016885ec830e97808c9ec920bb5cab5c21af590380a6cb5eb0538e2b244  bls_midnight_2p14");
+    // midnight-prover's rolling-digest circuit is k=16.
+    expect(pinned).toContain("09c877216d6589b370263e18af40a030a901b41a7a7c37ef58c9901db41f05c6  bls_midnight_2p16");
     // The DUST spend circuit (k=13) whose proof pays every registry transaction's fee, as
     // midnight-ledger 8.1.3 pins it in ledger/static/dust/*.sha256.
     expect(pinned).toContain("996602da7ca386284e656c78ea03e55bffdba29475e6a67965c50de05e13efc2  dust/9/spend.prover");

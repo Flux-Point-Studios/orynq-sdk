@@ -41,15 +41,27 @@
       "status": "live"
     },
     {
-      "id": "orynq-anchor-registry",
-      "name": "Orynq anchor registry (Midnight)",
-      "desc": "Compact contract (compactc 0.31.1) that records orynq anchors on Midnight with a maintenance authority of committee [], threshold 1, counter 0, so no update can ever apply. anchor(commitment, kind) refuses kind 2; anchor_hiding(attribute) computes a SHA-256 hiding commitment in-circuit from a private opening and binds the attribute to that commitment, not to the trace; neither reads state. Pure circuits author_key, entry_digest, hidden_digest, hiding_commitment and derive_salt are plain SHA-256. compile.sh --check reproduces the committed managed/ byte for byte with compactc from tools/compactc, which pins every file of the release by sha256 and installs only into directories that no one but the caller can write or swap out: every directory above them is owned by the caller or root and closed to group and others, and nothing is installed below a shared sticky directory such as /tmp. The same installer puts the DUST spend circuit's prover key, verifier key and zkir (dust/9, k=13, pinned as midnight-ledger 8.1.3 pins them) beside the k=13/14 parameters, the whole of what a registry transaction proves with.",
-      "kind": "contract",
+      "id": "compactc-toolchain",
+      "name": "Compact toolchain installer",
+      "desc": "tools/compactc/install.sh installs compactc 0.31.1 (language 0.23.0) for Linux x86_64 and aarch64 and macOS x86_64 and arm64, refusing a release zip or any file inside it whose sha256 differs from compactc.sha256, and installs beside it the ZK public parameters k=13, 14 and 16 and the DUST spend circuit's prover key, verifier key and zkir (dust/9, k=13), each pinned as midnight-ledger 8.1.3 pins it, so compactc and zkir find every parameter they need and fetch nothing. It installs only into directories that no one but the caller can write or swap out: every directory above them is owned by the caller or root and closed to group and others, and nothing is installed below a shared sticky directory such as /tmp. An existing install counts only if every file still matches its pin. The one installer for every Compact build in the repo: the registry contract's compile.sh, midnight-prover's circuits, the submitter's DUST spend proofs, CI and the release pack.",
+      "kind": "toolkit",
       "paths": [
-        "packages/anchors-midnight/contract",
         "tools/compactc"
       ],
       "consumes": [],
+      "status": "experimental"
+    },
+    {
+      "id": "orynq-anchor-registry",
+      "name": "Orynq anchor registry (Midnight)",
+      "desc": "Compact contract (compactc 0.31.1) that records orynq anchors on Midnight with a maintenance authority of committee [], threshold 1, counter 0, so no update can ever apply. anchor(commitment, kind) refuses kind 2; anchor_hiding(attribute) computes a SHA-256 hiding commitment in-circuit from a private opening and binds the attribute to that commitment, not to the trace; neither reads state. Pure circuits author_key, entry_digest, hidden_digest, hiding_commitment and derive_salt are plain SHA-256. compile.sh --check reproduces the committed managed/ byte for byte with the compactc-toolchain compiler.",
+      "kind": "contract",
+      "paths": [
+        "packages/anchors-midnight/contract"
+      ],
+      "consumes": [
+        "compactc-toolchain"
+      ],
       "status": "experimental"
     },
     {
@@ -120,7 +132,8 @@
       "consumes": [
         "anchors-midnight",
         "anchor-submission-journal",
-        "orynq-anchor-registry"
+        "orynq-anchor-registry",
+        "compactc-toolchain"
       ],
       "status": "experimental"
     },
@@ -290,9 +303,10 @@
         "packages/midnight-prover"
       ],
       "consumes": [
+        "compactc-toolchain",
         "process-trace"
       ],
-      "status": "built"
+      "status": "experimental"
     },
     {
       "id": "compute-meter-sdk",
