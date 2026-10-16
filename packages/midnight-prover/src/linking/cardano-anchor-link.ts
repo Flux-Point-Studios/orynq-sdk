@@ -27,6 +27,8 @@
  * ```
  */
 
+import { createHash } from "node:crypto";
+
 import type {
   Proof,
   AnyProof,
@@ -63,6 +65,7 @@ import { canonicalize } from "@fluxpointstudios/orynq-sdk-core/utils";
  * The link is cryptographically bound through hash commitments.
  */
 export interface CrossChainLink {
+  readonly simulation?: true;
   /**
    * Unique identifier for this link.
    */
@@ -131,12 +134,16 @@ export interface LinkVerificationResult {
   midnightVerified: boolean;
   cardanoVerified: boolean;
   commitmentVerified: boolean;
+  relationVerified: boolean;
 }
 
 /**
  * Options for the CardanoAnchorLinker.
  */
 export interface CardanoAnchorLinkerOptions {
+  mode?: "real" | "simulation";
+  /** Verifies that both chain payloads bind the declared proof inputs and anchored root. */
+  verifyRelation?: (link: CrossChainLink) => Promise<boolean>;
   /**
    * Enable debug logging.
    */
@@ -144,13 +151,13 @@ export interface CardanoAnchorLinkerOptions {
 
   /**
    * Custom verification function for Cardano anchors.
-   * If not provided, uses mock verification.
+   * Required for real verification; simulation can use fixture verification.
    */
   cardanoVerifier?: (txHash: string) => Promise<boolean>;
 
   /**
    * Custom verification function for Midnight proofs.
-   * If not provided, uses mock verification.
+   * Required for real verification; simulation can use fixture verification.
    */
   midnightVerifier?: (proofId: string, txHash: string | undefined) => Promise<boolean>;
 }
@@ -203,9 +210,11 @@ export class CardanoAnchorLinker {
    */
   constructor(options: CardanoAnchorLinkerOptions = {}) {
     this.options = {
+      mode: options.mode ?? "real",
+      verifyRelation: options.verifyRelation ?? (options.mode === "simulation" ? async () => true : async () => false),
       debug: options.debug ?? false,
-      cardanoVerifier: options.cardanoVerifier ?? this.mockCardanoVerifier,
-      midnightVerifier: options.midnightVerifier ?? this.mockMidnightVerifier,
+      cardanoVerifier: options.cardanoVerifier ?? (options.mode === "simulation" ? this.mockCardanoVerifier : async () => false),
+      midnightVerifier: options.midnightVerifier ?? (options.mode === "simulation" ? this.mockMidnightVerifier : async () => false),
     };
   }
 
@@ -261,6 +270,7 @@ export class CardanoAnchorLinker {
     );
 
     const link: CrossChainLink = {
+      ...(this.options.mode === "simulation" || proof.simulation ? { simulation: true as const } : {}),
       linkId,
       version: "1.0.0",
       midnightProofId: proof.proofId,
@@ -301,9 +311,15 @@ export class CardanoAnchorLinker {
     let midnightVerified = false;
     let cardanoVerified = false;
     let commitmentVerified = false;
+    let relationVerified = false;
 
     // Verify link structure
     const structureErrors = this.validateLinkStructure(link);
+    if (this.options.mode === "simulation") {
+      warnings.push("Simulation link; chain existence is not established");
+    } else if (link.simulation || link.midnightProofId.startsWith("simulation-") || link.midnightTxHash?.startsWith("simulation-")) {
+      structureErrors.push("Simulation links cannot be verified in real mode");
+    }
     errors.push(...structureErrors);
 
     if (structureErrors.length === 0) {
@@ -345,7 +361,15 @@ export class CardanoAnchorLinker {
       }
     }
 
-    const valid = errors.length === 0 && commitmentVerified;
+    if (commitmentVerified && midnightVerified && cardanoVerified) {
+      try {
+        relationVerified = await this.options.verifyRelation(link);
+        if (!relationVerified) errors.push("Cross-chain payload relation could not be verified");
+      } catch (_error) {
+        errors.push("Cross-chain payload relation verification failed");
+      }
+    }
+    const valid = errors.length === 0 && commitmentVerified && midnightVerified && cardanoVerified && relationVerified;
 
     const result: LinkVerificationResult = {
       valid,
@@ -356,6 +380,7 @@ export class CardanoAnchorLinker {
       midnightVerified,
       cardanoVerified,
       commitmentVerified,
+      relationVerified,
     };
 
     this.debug(`Link verification result: ${valid ? "VALID" : "INVALID"}`);
@@ -441,6 +466,9 @@ export class CardanoAnchorLinker {
    * Validate a transaction hash.
    */
   private validateTxHash(txHash: string, chainName: string): void {
+    if (chainName === "Midnight" && this.options.mode === "simulation" && /^simulation-[0-9a-f]{64}$/.test(txHash)) {
+      return;
+    }
     const normalized = normalizeHash(txHash);
     if (!/^[0-9a-f]{64}$/.test(normalized)) {
       throw new MidnightProverException(
@@ -560,10 +588,8 @@ export class CardanoAnchorLinker {
    * Generate a unique link ID.
    */
   private generateLinkId(proofId: string, cardanoTxHash: string): string {
-    // Simple hash-based link ID
     const input = LINK_DOMAIN_PREFIXES.linkId + proofId + "|" + normalizeHash(cardanoTxHash);
-    // Use synchronous generation for now (matches existing pattern)
-    return `link-${this.simpleHash(input).slice(0, 16)}`;
+    return `link-${this.sha256Hex(input).slice(0, 16)}`;
   }
 
   /**
@@ -582,7 +608,7 @@ export class CardanoAnchorLinker {
       publicInputsHash,
       anchoredRootHash,
     });
-    return this.simpleHash(input);
+    return this.sha256Hex(input);
   }
 
   /**
@@ -590,34 +616,11 @@ export class CardanoAnchorLinker {
    */
   private hashPublicInputsSync(publicInputs: Record<string, unknown>): string {
     const input = LINK_DOMAIN_PREFIXES.publicInputs + canonicalize(publicInputs);
-    return this.simpleHash(input);
+    return this.sha256Hex(input);
   }
 
-  /**
-   * Simple synchronous hash function (for use in sync contexts).
-   * Uses a deterministic algorithm suitable for identifiers.
-   */
-  private simpleHash(input: string): string {
-    // Simple hash implementation for sync contexts
-    // In production, this would use a proper hash function
-    let hash = 0x811c9dc5; // FNV offset basis
-    for (let i = 0; i < input.length; i++) {
-      hash ^= input.charCodeAt(i);
-      hash = Math.imul(hash, 0x01000193); // FNV prime
-    }
-
-    // Generate a 64-char hex string by repeating the process
-    let result = "";
-    let state = hash;
-    for (let j = 0; j < 8; j++) {
-      for (let i = 0; i < input.length; i++) {
-        state ^= input.charCodeAt((i + j * 7) % input.length);
-        state = Math.imul(state, 0x01000193);
-      }
-      result += (state >>> 0).toString(16).padStart(8, "0");
-    }
-
-    return result;
+  private sha256Hex(input: string): string {
+    return createHash("sha256").update(input).digest("hex");
   }
 
   /**

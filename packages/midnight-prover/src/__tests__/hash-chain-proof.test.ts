@@ -118,7 +118,7 @@ describe("HashChainProver", () => {
 
   beforeEach(() => {
     // Create prover with instant proving for faster tests
-    prover = new HashChainProver({
+    prover = new HashChainProver({ mode: "simulation",
       simulatedProvingTimeMs: 0,
       debug: false,
     });
@@ -126,12 +126,12 @@ describe("HashChainProver", () => {
 
   describe("constructor", () => {
     it("should create a prover with default options", () => {
-      const defaultProver = new HashChainProver();
+      const defaultProver = new HashChainProver({ mode: "simulation" });
       expect(defaultProver).toBeInstanceOf(HashChainProver);
     });
 
     it("should create a prover with custom options", () => {
-      const customProver = new HashChainProver({
+      const customProver = new HashChainProver({ mode: "simulation",
         debug: true,
         maxEvents: 1000,
         simulatedProvingTimeMs: 50,
@@ -172,7 +172,7 @@ describe("HashChainProver", () => {
 
       expect(proof).toBeDefined();
       expect(proof.proofType).toBe("hash-chain");
-      expect(proof.proofId).toMatch(/^[0-9a-f-]{36}$/); // UUID format
+      expect(proof.proofId).toMatch(/^simulation-[0-9a-f-]{36}$/); // UUID format
       expect(proof.proof).toBeInstanceOf(Uint8Array);
       expect(proof.proof.length).toBeGreaterThan(0);
       expect(proof.createdAt).toBeDefined();
@@ -257,7 +257,7 @@ describe("HashChainProver", () => {
     });
 
     it("should throw for too many events", async () => {
-      const limitedProver = new HashChainProver({
+      const limitedProver = new HashChainProver({ mode: "simulation",
         maxEvents: 10,
         simulatedProvingTimeMs: 0,
       });
@@ -435,7 +435,7 @@ describe("HashChainProver", () => {
 
 describe("buildHashChainWitness", () => {
   it("should build witness from events", async () => {
-    const prover = new HashChainProver({ simulatedProvingTimeMs: 0 });
+    const prover = new HashChainProver({ mode: "simulation", simulatedProvingTimeMs: 0 });
     const events = createMockEvents(5);
     const genesisHash = await prover.getGenesisHash();
 
@@ -448,7 +448,7 @@ describe("buildHashChainWitness", () => {
   });
 
   it("should sort events by seq", async () => {
-    const prover = new HashChainProver({ simulatedProvingTimeMs: 0 });
+    const prover = new HashChainProver({ mode: "simulation", simulatedProvingTimeMs: 0 });
     const genesisHash = await prover.getGenesisHash();
 
     // Create events out of order
@@ -466,7 +466,7 @@ describe("buildHashChainWitness", () => {
   });
 
   it("should compute consistent rolling hash", async () => {
-    const prover = new HashChainProver({ simulatedProvingTimeMs: 0 });
+    const prover = new HashChainProver({ mode: "simulation", simulatedProvingTimeMs: 0 });
     const events = createMockEvents(5);
     const genesisHash = await prover.getGenesisHash();
 
@@ -477,7 +477,7 @@ describe("buildHashChainWitness", () => {
   });
 
   it("should produce different hashes for different events", async () => {
-    const prover = new HashChainProver({ simulatedProvingTimeMs: 0 });
+    const prover = new HashChainProver({ mode: "simulation", simulatedProvingTimeMs: 0 });
     const genesisHash = await prover.getGenesisHash();
 
     const events1 = createMockEvents(3);
@@ -494,7 +494,7 @@ describe("buildHashChainWitness", () => {
 
 describe("validateWitness", () => {
   it("should return empty array for valid witness", async () => {
-    const prover = new HashChainProver({ simulatedProvingTimeMs: 0 });
+    const prover = new HashChainProver({ mode: "simulation", simulatedProvingTimeMs: 0 });
     const events = createMockEvents(5);
     const genesisHash = await prover.getGenesisHash();
 
@@ -505,7 +505,7 @@ describe("validateWitness", () => {
   });
 
   it("should detect invalid genesis hash", async () => {
-    const prover = new HashChainProver({ simulatedProvingTimeMs: 0 });
+    const prover = new HashChainProver({ mode: "simulation", simulatedProvingTimeMs: 0 });
     const events = createMockEvents(3);
     const genesisHash = await prover.getGenesisHash();
 
@@ -518,7 +518,7 @@ describe("validateWitness", () => {
   });
 
   it("should detect event count mismatch", async () => {
-    const prover = new HashChainProver({ simulatedProvingTimeMs: 0 });
+    const prover = new HashChainProver({ mode: "simulation", simulatedProvingTimeMs: 0 });
     const events = createMockEvents(3);
     const genesisHash = await prover.getGenesisHash();
 
@@ -533,7 +533,7 @@ describe("validateWitness", () => {
 
 describe("computeWitnessSize", () => {
   it("should compute witness size", async () => {
-    const prover = new HashChainProver({ simulatedProvingTimeMs: 0 });
+    const prover = new HashChainProver({ mode: "simulation", simulatedProvingTimeMs: 0 });
     const events = createMockEvents(5);
     const genesisHash = await prover.getGenesisHash();
 
@@ -546,7 +546,7 @@ describe("computeWitnessSize", () => {
   });
 
   it("should scale with event count", async () => {
-    const prover = new HashChainProver({ simulatedProvingTimeMs: 0 });
+    const prover = new HashChainProver({ mode: "simulation", simulatedProvingTimeMs: 0 });
     const genesisHash = await prover.getGenesisHash();
 
     const events5 = createMockEvents(5);
@@ -692,7 +692,7 @@ describe("createHashChainProver", () => {
 
 describe("isHashChainProof", () => {
   it("should return true for hash-chain proof", async () => {
-    const prover = new HashChainProver({ simulatedProvingTimeMs: 0 });
+    const prover = new HashChainProver({ mode: "simulation", simulatedProvingTimeMs: 0 });
     const events = createMockEvents(3);
     const genesisHash = await prover.getGenesisHash();
     const witness = await buildHashChainWitness(events, genesisHash);
@@ -705,5 +705,29 @@ describe("isHashChainProof", () => {
     });
 
     expect(isHashChainProof(proof)).toBe(true);
+  });
+});
+
+
+describe("HashChainProver production boundary", () => {
+  it("fails closed without a real backend", async () => {
+    const prover = new HashChainProver();
+    const events = createMockEvents(2);
+    const genesisHash = await prover.getGenesisHash();
+    const witness = await buildHashChainWitness(events, genesisHash);
+    await expect(prover.generateProof({ events, genesisHash, expectedRootHash: witness.computedRollingHash,
+      cardanoAnchorTxHash: createMockHash("anchor") }))
+      .rejects.toThrow("Legacy hash-chain proofs require explicit simulation mode");
+  });
+  it("rejects simulation fixtures in the real verifier", async () => {
+    const simulation = new HashChainProver({ mode: "simulation", simulatedProvingTimeMs: 0 });
+    const events = createMockEvents(2);
+    const genesisHash = await simulation.getGenesisHash();
+    const witness = await buildHashChainWitness(events, genesisHash);
+    const proof = await simulation.generateProof({ events, genesisHash, expectedRootHash: witness.computedRollingHash,
+      cardanoAnchorTxHash: createMockHash("anchor") });
+    expect(proof.simulation).toBe(true);
+    expect(proof.proofId).toMatch(/^simulation-/);
+    expect(await new HashChainProver().verifyProof(proof)).toBe(false);
   });
 });

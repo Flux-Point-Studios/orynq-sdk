@@ -18,6 +18,8 @@ import type { TraceStore } from "../store.js";
 import type { Config } from "../config.js";
 import { safeTool, toolError } from "../errors.js";
 
+const MIDNIGHT_PACKAGE = "@fluxpointstudios/orynq-sdk-anchors-midnight";
+
 // The registries and authors to verify against; the package's own by default.
 export interface MidnightVerifyDeps {
   registries?: Readonly<Record<MidnightNetwork, readonly RegistryInfo[]>>;
@@ -54,8 +56,17 @@ export function registerVerifyMidnightAnchor(server: McpServer, _store: TraceSto
       const network = requested ?? config.midnightNetwork ?? "mainnet";
       if (network !== "mainnet" && network !== "preprod") return toolError("MIDNIGHT_NETWORK must be mainnet or preprod.");
       if ([entry, commitment, attribute].filter((e) => e !== undefined).length > 1) return toolError("Give at most one of entry, commitment and attribute.");
-      // Loaded on first use, so the other tools never load the ledger WASM.
-      const midnight = await import("@fluxpointstudios/orynq-sdk-anchors-midnight");
+      // Loaded on first use, so the other tools never load the ledger WASM, and the server runs
+      // without the package, an optional peer dependency.
+      let midnight: typeof import("@fluxpointstudios/orynq-sdk-anchors-midnight");
+      try {
+        midnight = await import("@fluxpointstudios/orynq-sdk-anchors-midnight");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ERR_MODULE_NOT_FOUND" && String((error as Error).message).includes(`'${MIDNIGHT_PACKAGE}'`)) {
+          return toolError(`verify_midnight_anchor needs ${MIDNIGHT_PACKAGE}, an optional peer dependency of orynq-mcp that is not installed. Midnight is not yet published on npm; use a built orynq-sdk source checkout (see the package README).`);
+        }
+        throw error;
+      }
       const endpoints = midnight.sourceEndpoints(network, {
         blockfrostProjectIdFile: config.midnightBlockfrostProjectIdFile,
         indexer: config.midnightIndexerUrl,

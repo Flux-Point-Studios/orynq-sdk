@@ -41,15 +41,27 @@
       "status": "live"
     },
     {
-      "id": "orynq-anchor-registry",
-      "name": "Orynq anchor registry (Midnight)",
-      "desc": "Compact contract (compactc 0.31.1) that records orynq anchors on Midnight with a maintenance authority of committee [], threshold 1, counter 0, so no update can ever apply. anchor(commitment, kind) refuses kind 2; anchor_hiding(attribute) computes a SHA-256 hiding commitment in-circuit from a private opening and binds the attribute to that commitment, not to the trace; neither reads state. Pure circuits author_key, entry_digest, hidden_digest, hiding_commitment and derive_salt are plain SHA-256. compile.sh --check reproduces the committed managed/ byte for byte with compactc from tools/compactc, which pins every file of the release by sha256 and installs only into directories that no one but the caller can write or swap out: every directory above them is owned by the caller or root and closed to group and others, and nothing is installed below a shared sticky directory such as /tmp. The same installer puts the DUST spend circuit's prover key, verifier key and zkir (dust/9, k=13, pinned as midnight-ledger 8.1.3 pins them) beside the k=13/14 parameters, the whole of what a registry transaction proves with.",
-      "kind": "contract",
+      "id": "compactc-toolchain",
+      "name": "Compact toolchain installer",
+      "desc": "tools/compactc/install.sh installs compactc 0.31.1 (language 0.23.0) for Linux x86_64 and aarch64 and macOS x86_64 and arm64, refusing a release zip or any file inside it whose sha256 differs from compactc.sha256, and installs beside it the ZK public parameters k=13, 14 and 16 and the DUST spend circuit's prover key, verifier key and zkir (dust/9, k=13), each pinned as midnight-ledger 8.1.3 pins it, so compactc and zkir find every parameter they need and fetch nothing. It installs only into directories that no one but the caller can write or swap out: every directory above them is owned by the caller or root and closed to group and others, and nothing is installed below a shared sticky directory such as /tmp. An existing install counts only if every file still matches its pin. The one installer for every Compact build in the repo: the registry contract's compile.sh, midnight-prover's circuits, the submitter's DUST spend proofs, CI and the release pack. All downloads are staged and verified before installing files, so a failed download leaves a fresh destination empty.",
+      "kind": "toolkit",
       "paths": [
-        "packages/anchors-midnight/contract",
         "tools/compactc"
       ],
       "consumes": [],
+      "status": "experimental"
+    },
+    {
+      "id": "orynq-anchor-registry",
+      "name": "Orynq anchor registry (Midnight)",
+      "desc": "Compact contract (compactc 0.31.1) that records orynq anchors on Midnight with a maintenance authority of committee [], threshold 1, counter 0, so no update can ever apply. anchor(commitment, kind) refuses kind 2; anchor_hiding(attribute) computes a SHA-256 hiding commitment in-circuit from a private opening and binds the attribute to that commitment, not to the trace; neither reads state. Pure circuits author_key, entry_digest, hidden_digest, hiding_commitment and derive_salt are plain SHA-256. compile.sh --check reproduces the committed managed/ byte for byte with the compactc-toolchain compiler.",
+      "kind": "contract",
+      "paths": [
+        "packages/anchors-midnight/contract"
+      ],
+      "consumes": [
+        "compactc-toolchain"
+      ],
       "status": "experimental"
     },
     {
@@ -120,7 +132,8 @@
       "consumes": [
         "anchors-midnight",
         "anchor-submission-journal",
-        "orynq-anchor-registry"
+        "orynq-anchor-registry",
+        "compactc-toolchain"
       ],
       "status": "experimental"
     },
@@ -185,7 +198,7 @@
     {
       "id": "orynq-mcp",
       "name": "Orynq MCP server",
-      "desc": "MCP server exposing process tracing, Cardano and Materios anchoring and verification as agent tools. verify_midnight_anchor (read-only) verifies a Midnight anchor with anchors-midnight and returns its verifyReport; its schema is strict (txHash, network, one of entry, commitment or attribute, expectedAuthor), so a model can pass it no key, file or URL, and the source comes from the server's environment as a file path or URLs. There is no Midnight anchoring tool and no tool takes a Flux Point Studios key: anchoring with the user's own key goes through the quickstart CLI's terminal confirmation.",
+      "desc": "MCP server exposing process tracing, Cardano and Materios anchoring and verification as agent tools. verify_midnight_anchor (read-only) verifies a Midnight anchor with anchors-midnight, an optional peer dependency loaded on first use (without it the server starts and the tool returns an error naming the package), and returns its verifyReport; its schema is strict (txHash, network, one of entry, commitment or attribute, expectedAuthor), so a model can pass it no key, file or URL, and the source comes from the server's environment as a file path or URLs. There is no Midnight anchoring tool and no tool takes a Flux Point Studios key: anchoring with the user's own key goes through the quickstart CLI's terminal confirmation.",
       "kind": "agent",
       "paths": [
         "packages/orynq-mcp"
@@ -257,7 +270,7 @@
     {
       "id": "orynq-quickstart",
       "name": "Orynq quickstart",
-      "desc": "Solo-developer quickstart: generates an identity, faucet-drips MATRA and anchors a first trace in minutes. For Midnight: `orynq verify midnight <txHash|bundle>` verifies an anchor read-only and prints its status, assurance, author, matched fields and every check (Blockfrost project id file or any indexer and node URL); `orynq keys init midnight` writes the user's own key file; `orynq anchor midnight` plans an anchor with that key only, refusing bare service key files and every KNOWN_AUTHORS key, as a dry run unless --submit is confirmed at a TTY by typing the commitment's first 8 characters (no registry or submitter in this build, so it stops before asking).",
+      "desc": "Solo-developer quickstart: generates an identity, faucet-drips MATRA and anchors a first trace in minutes. For Midnight, with anchors-midnight installed as an optional peer dependency (without it the Midnight commands exit 1 naming it): `orynq verify midnight <txHash|bundle>` verifies an anchor read-only and prints its status, assurance, author, matched fields and every check (Blockfrost project id file or any indexer and node URL); `orynq keys init midnight` writes the user's own key file; `orynq anchor midnight` plans an anchor with that key only, refusing bare service key files and every KNOWN_AUTHORS key, as a dry run unless --submit is confirmed at a TTY by typing the commitment's first 8 characters (no registry or submitter in this build, so it stops before asking).",
       "kind": "toolkit",
       "paths": [
         "packages/quickstart"
@@ -284,12 +297,15 @@
     {
       "id": "midnight-prover",
       "name": "Midnight prover",
-      "desc": "ZK proof generation for Proof-of-Intent on the Midnight network.",
+      "desc": "Local Compact capability and exact rolling-digest proofs with pinned native cryptographic verification. Simulations are explicit and cannot authorize; no network deployment or chain inclusion is claimed.",
       "kind": "engine",
       "paths": [
         "packages/midnight-prover"
       ],
-      "consumes": [],
+      "consumes": [
+        "compactc-toolchain",
+        "process-trace"
+      ],
       "status": "experimental"
     },
     {
@@ -336,7 +352,7 @@
     {
       "id": "npm-release",
       "name": "npm release",
-      "desc": "Publishes every workspace package version npm lacks on a push to main: a token-less step installs, runs release-guard (refuses a public package with a runtime dependency on a private one, named directly, through an npm: or workspace: alias or by a workspace: path resolved through symlinks, or on a local path (link:, file: or bare) or a spec npm-package-arg cannot classify, a version npm would record differently, and a version below one npm already has by npm's semver order, prereleases included), then builds and packs them (scripts/pack-unpublished.mjs, the choice changeset publish makes); only the digest-pinned npm-publish plugin, named by the npm_token secret's image filter, holds the token; post-publish-check then installs each published version from npm, alone and together, imports it and requires one copy of each WASM singleton.",
+      "desc": "Publishes every workspace package version npm lacks on a push to main: a token-less step installs, runs release-guard (refuses a public package with a runtime dependency on a private one, named directly, through an npm: or workspace: alias or by a workspace: path resolved through symlinks, or on a local path (link:, file: or bare) or a spec npm-package-arg cannot classify, a version npm would record differently, and a version below one npm already has by npm's semver order, prereleases included), then builds and packs them (scripts/pack-unpublished.mjs, the choice changeset publish makes); only the digest-pinned npm-publish plugin, named by the npm_token secret's image filter, holds the token; post-publish-check then installs each published version from npm, alone and together, imports it and requires one copy of each WASM singleton. CI dry-runs changeset version in isolated manifest copies with a minor probe for each private package and refuses public major bumps.",
       "kind": "pipeline",
       "paths": [
         ".woodpecker/release.yaml",

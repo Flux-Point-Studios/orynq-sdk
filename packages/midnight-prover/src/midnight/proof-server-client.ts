@@ -1,31 +1,4 @@
-/**
- * @fileoverview Midnight proof server client for ZK proof generation.
- *
- * Location: packages/midnight-prover/src/midnight/proof-server-client.ts
- *
- * Summary:
- * This module implements the ProofServerClient class which handles communication
- * with the Midnight proof server for ZK proof generation. It manages connection
- * lifecycle, proof submission, and result retrieval.
- *
- * Usage:
- * - Used by the DefaultMidnightProver to generate proofs
- * - Handles connection management and request/response serialization
- * - Current implementation is a mock for testing; real Midnight integration TBD
- *
- * @example
- * ```typescript
- * import { ProofServerClient } from './proof-server-client.js';
- *
- * const client = new ProofServerClient();
- * await client.connect(config);
- *
- * const result = await client.submitProof('hash-chain', witness, publicInputs);
- * console.log('Proof generated:', result.proofId);
- *
- * await client.disconnect();
- * ```
- */
+/** Explicit proof-server simulation fixtures; no remote provider is implemented. */
 
 import type { ProofServerConfig, ProofType } from "../types.js";
 
@@ -47,6 +20,7 @@ export interface ProofResult {
   /**
    * Unique proof identifier.
    */
+  readonly simulation: true;
   proofId: string;
 
   /**
@@ -94,6 +68,7 @@ export interface CircuitInfo {
  * Options for the ProofServerClient.
  */
 export interface ProofServerClientOptions {
+  mode?: "real" | "simulation";
   /**
    * Enable debug logging.
    */
@@ -130,7 +105,7 @@ const CIRCUIT_NAMES: Record<ProofType, string> = {
  * - Circuit information queries
  *
  * Current implementation is a mock that simulates proof server behavior.
- * Real Midnight integration will be added when the Compact runtime is available.
+ * The client produces simulation fixtures and does not connect to a real server.
  *
  * @example
  * ```typescript
@@ -161,6 +136,7 @@ export class ProofServerClient {
    */
   constructor(options: ProofServerClientOptions = {}) {
     this.options = {
+      mode: options.mode ?? "real",
       debug: options.debug ?? false,
       simulatedProvingTimeMs: options.simulatedProvingTimeMs ?? 50,
     };
@@ -173,6 +149,13 @@ export class ProofServerClient {
    * @throws MidnightProverException on connection failure
    */
   async connect(config: ProofServerConfig): Promise<void> {
+    if (this.options.mode !== "simulation") {
+      throw new MidnightProverException(
+        MidnightProverError.CONNECTION_FAILED,
+        "Legacy proof-server client requires explicit simulation mode"
+      );
+    }
+
     this.debug(`Connecting to proof server at ${config.proofServerUrl}...`);
 
     try {
@@ -190,7 +173,7 @@ export class ProofServerClient {
       }
 
       // Generate a mock server ID
-      this.serverId = `server-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      this.serverId = `simulation-server-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
       this.config = config;
       this.connected = true;
@@ -296,6 +279,7 @@ export class ProofServerClient {
       const proofId = await this.generateProofId(proof);
 
       const result: ProofResult = {
+        simulation: true,
         proofId,
         proof,
         provingTimeMs,
@@ -525,7 +509,7 @@ export class ProofServerClient {
    */
   private async generateProofId(proof: Uint8Array): Promise<string> {
     const hash = await this.hashBytes(proof);
-    return `proof-${hash.slice(0, 16)}`;
+    return `simulation-proof-${hash.slice(0, 16)}`;
   }
 
   /**

@@ -10,8 +10,8 @@ evidence pack may claim.
 It lives here, not under `scripts/`, because it drives this package's own API
 (`registryDeployer`, `registryOperator`, `openWallet`, `nodeRefusal`) from `../src`, so a change
 to the submitter and to the rehearsal that proves it land in one diff. Its offline tests need
-Node 24 for `node:sqlite`, and the Woodpecker `midnight-submit` step already runs on Node 24
-with this package's dependencies installed; the repository-wide suite runs on Node 20. The
+Node 24 for `node:sqlite`, and the Woodpecker `midnight-submit` step runs them on Node 24 over
+build-test's install; the repository-wide suite also supports Node 20, so it leaves them out. The
 package publishes only `dist`, so nothing here ships.
 
 ## Files

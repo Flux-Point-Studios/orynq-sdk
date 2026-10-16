@@ -27,6 +27,7 @@
  *   1   user-facing error (printed to stderr, no stack trace)
  *   2   internal/unexpected error (full stack trace)
  */
+import { existsSync } from "node:fs";
 import { argv, env, exit, stderr, stdin, stdout, version as nodeVersion } from "node:process";
 
 // Lazy-resolve the package's own dist so the CLI works both from the
@@ -35,13 +36,18 @@ async function loadSdk() {
   return import("../dist/index.js").catch(() => import("../src/index.ts"));
 }
 
-// The Midnight commands load the ledger WASM, so only they import it. The source fallback is for
-// a monorepo checkout that has not been built; any other load failure is the user's to see.
+// The Midnight commands load the ledger WASM, so only they import it, and they need
+// @fluxpointstudios/orynq-sdk-anchors-midnight, an optional peer dependency. The source fallback
+// is for a monorepo checkout that has not been built; any other load failure is the user's to see.
+const MIDNIGHT_PACKAGE = "@fluxpointstudios/orynq-sdk-anchors-midnight";
 async function loadMidnight() {
+  const built = new URL("../dist/midnight.js", import.meta.url);
   try {
-    return await import("../dist/midnight.js");
+    return await (existsSync(built) ? import(built.href) : import("../src/midnight.ts"));
   } catch (e) {
-    if (e?.code === "ERR_MODULE_NOT_FOUND" && String(e.message).includes("dist/midnight.js")) return import("../src/midnight.ts");
+    if (e?.code === "ERR_MODULE_NOT_FOUND" && String(e.message).includes(`'${MIDNIGHT_PACKAGE}'`)) {
+      throw new Error(`the Midnight commands need ${MIDNIGHT_PACKAGE}, an optional peer dependency that is not installed. Midnight is not yet published on npm; use a built orynq-sdk source checkout (see the package README).`);
+    }
     throw e;
   }
 }

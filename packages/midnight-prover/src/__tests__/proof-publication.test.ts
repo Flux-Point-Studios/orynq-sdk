@@ -63,8 +63,9 @@ function createMockHash(seed: string): string {
 /**
  * Create a mock hash-chain proof for testing.
  */
-function createMockHashChainProof(cardanoAnchorTxHash?: string): HashChainProof {
+function createMockHashChainProof(cardanoAnchorTxHash?: string, simulation = true): HashChainProof {
   return {
+    ...(simulation ? { simulation: true as const } : {}),
     proofType: "hash-chain",
     proofId: `proof-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     proof: new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]),
@@ -84,6 +85,7 @@ function createMockHashChainProof(cardanoAnchorTxHash?: string): HashChainProof 
  */
 function createMockPolicyProof(cardanoAnchorTxHash?: string): PolicyProof {
   return {
+    simulation: true,
     proofType: "policy-compliance",
     proofId: `policy-proof-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     proof: new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]),
@@ -122,7 +124,7 @@ describe("ProofPublisher", () => {
   const config = createMockConfig();
 
   beforeEach(async () => {
-    publisher = new ProofPublisher({
+    publisher = new ProofPublisher({ mode: "simulation",
       debug: false,
       maxRetries: 2,
       retryDelayMs: 10,
@@ -137,13 +139,13 @@ describe("ProofPublisher", () => {
 
   describe("constructor", () => {
     it("should create a publisher with default options", () => {
-      const defaultPublisher = new ProofPublisher();
+      const defaultPublisher = new ProofPublisher({ mode: "simulation" });
       expect(defaultPublisher).toBeInstanceOf(ProofPublisher);
       expect(defaultPublisher.isConnected()).toBe(false);
     });
 
     it("should create a publisher with custom options", () => {
-      const customPublisher = new ProofPublisher({
+      const customPublisher = new ProofPublisher({ mode: "simulation",
         maxRetries: 5,
         retryDelayMs: 500,
         debug: true,
@@ -154,7 +156,7 @@ describe("ProofPublisher", () => {
 
   describe("connect/disconnect", () => {
     it("should connect successfully", async () => {
-      const newPublisher = new ProofPublisher();
+      const newPublisher = new ProofPublisher({ mode: "simulation" });
       expect(newPublisher.isConnected()).toBe(false);
 
       await newPublisher.connect(config);
@@ -165,7 +167,7 @@ describe("ProofPublisher", () => {
     });
 
     it("should throw for invalid config", async () => {
-      const newPublisher = new ProofPublisher();
+      const newPublisher = new ProofPublisher({ mode: "simulation" });
 
       await expect(
         newPublisher.connect({
@@ -186,11 +188,11 @@ describe("ProofPublisher", () => {
       const result = await publisher.publish(proof);
 
       expect(result).toBeDefined();
-      expect(result.midnightTxHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(result.midnightTxHash).toMatch(/^simulation-[0-9a-f]{64}$/);
       expect(result.proofId).toBe(proof.proofId);
       expect(result.cardanoAnchorTxHash).toBe(proof.publicInputs.cardanoAnchorTxHash);
       expect(result.timestamp).toBeDefined();
-      expect(result.blockNumber).toBeGreaterThan(0);
+      expect(result.blockNumber).toBeUndefined();
     });
 
     it("should publish different proof types", async () => {
@@ -314,17 +316,17 @@ describe("CardanoAnchorLinker", () => {
   let linker: CardanoAnchorLinker;
 
   beforeEach(() => {
-    linker = new CardanoAnchorLinker({ debug: false });
+    linker = new CardanoAnchorLinker({ mode: "simulation", debug: false });
   });
 
   describe("constructor", () => {
     it("should create a linker with default options", () => {
-      const defaultLinker = new CardanoAnchorLinker();
+      const defaultLinker = new CardanoAnchorLinker({ mode: "simulation" });
       expect(defaultLinker).toBeInstanceOf(CardanoAnchorLinker);
     });
 
     it("should create a linker with custom verifiers", () => {
-      const customLinker = new CardanoAnchorLinker({
+      const customLinker = new CardanoAnchorLinker({ mode: "simulation",
         cardanoVerifier: async () => true,
         midnightVerifier: async () => true,
       });
@@ -502,7 +504,7 @@ describe("ProofServerClient", () => {
   const config = createMockConfig();
 
   beforeEach(async () => {
-    client = new ProofServerClient({
+    client = new ProofServerClient({ mode: "simulation",
       debug: false,
       simulatedProvingTimeMs: 10,
     });
@@ -515,7 +517,7 @@ describe("ProofServerClient", () => {
 
   describe("constructor", () => {
     it("should create a client with default options", () => {
-      const defaultClient = new ProofServerClient();
+      const defaultClient = new ProofServerClient({ mode: "simulation" });
       expect(defaultClient).toBeInstanceOf(ProofServerClient);
       expect(defaultClient.isConnected()).toBe(false);
     });
@@ -523,7 +525,7 @@ describe("ProofServerClient", () => {
 
   describe("connect/disconnect", () => {
     it("should connect and disconnect successfully", async () => {
-      const newClient = new ProofServerClient();
+      const newClient = new ProofServerClient({ mode: "simulation" });
 
       expect(newClient.isConnected()).toBe(false);
       await newClient.connect(config);
@@ -536,7 +538,7 @@ describe("ProofServerClient", () => {
     });
 
     it("should throw for invalid config", async () => {
-      const newClient = new ProofServerClient();
+      const newClient = new ProofServerClient({ mode: "simulation" });
 
       await expect(
         newClient.connect({
@@ -558,7 +560,7 @@ describe("ProofServerClient", () => {
       const result = await client.submitProof("hash-chain", witness, publicInputs);
 
       expect(result).toBeDefined();
-      expect(result.proofId).toMatch(/^proof-[0-9a-f]+$/);
+      expect(result.proofId).toMatch(/^simulation-proof-[0-9a-f]+$/);
       expect(result.proof).toBeInstanceOf(Uint8Array);
       expect(result.proof.length).toBeGreaterThan(0);
       expect(result.provingTimeMs).toBeGreaterThanOrEqual(0);
@@ -640,5 +642,105 @@ describe("createProofServerClient", () => {
       simulatedProvingTimeMs: 100,
     });
     expect(client).toBeInstanceOf(ProofServerClient);
+  });
+});
+
+
+describe("Legacy network production boundary", () => {
+  it("cannot turn independent chain existence into verified payload binding", async () => {
+    const linker = new CardanoAnchorLinker({ midnightVerifier: async () => true, cardanoVerifier: async () => true });
+    const proof = { ...createMockHashChainProof(undefined, false),
+      publicInputs: { ...createMockHashChainProof().publicInputs, rootHash: "ff".repeat(32) } };
+    const result = await linker.verifyLink(linker.linkToAnchor(proof, proof.publicInputs.cardanoAnchorTxHash));
+    expect(result.midnightVerified).toBe(true);
+    expect(result.cardanoVerified).toBe(true);
+    expect(result.valid).toBe(false);
+    expect(result.relationVerified).toBe(false);
+  });
+  it("requires the relation predicate to accept the actual anchor payload", async () => {
+    const onChainRoot = "aa".repeat(32);
+    const linker = new CardanoAnchorLinker({ midnightVerifier: async () => true, cardanoVerifier: async () => true,
+      verifyRelation: async link => link.anchoredRootHash === onChainRoot });
+    const proof = createMockHashChainProof(undefined, false);
+    const result = await linker.verifyLink(linker.linkToAnchor(proof, proof.publicInputs.cardanoAnchorTxHash));
+    expect(result.valid).toBe(false);
+    expect(result.relationVerified).toBe(false);
+  });
+  it("fails closed when relation verification throws", async () => {
+    const linker = new CardanoAnchorLinker({ midnightVerifier: async () => true, cardanoVerifier: async () => true,
+      verifyRelation: async () => { throw new Error("provider unavailable"); } });
+    const proof = createMockHashChainProof(undefined, false);
+    const result = await linker.verifyLink(linker.linkToAnchor(proof, proof.publicInputs.cardanoAnchorTxHash));
+    expect(result.valid).toBe(false);
+    expect(result.relationVerified).toBe(false);
+    expect(result.errors).toContain("Cross-chain payload relation verification failed");
+  });
+  it("accepts only when both chains and the payload relation are verified", async () => {
+    const linker = new CardanoAnchorLinker({ midnightVerifier: async () => true, cardanoVerifier: async () => true,
+      verifyRelation: async () => true });
+    const proof = createMockHashChainProof(undefined, false);
+    const result = await linker.verifyLink(linker.linkToAnchor(proof, proof.publicInputs.cardanoAnchorTxHash));
+    expect(result.valid).toBe(true);
+    expect(result.relationVerified).toBe(true);
+  });
+  it("uses SHA-256 for public-input binding and link commitments", () => {
+    const proof = { ...createMockHashChainProof(undefined, false), proofId: "fixture-proof",
+      publicInputs: { rootHash: "11".repeat(32), eventCount: 1, cardanoAnchorTxHash: "22".repeat(32) } };
+    const link = new CardanoAnchorLinker().linkToAnchor(proof, proof.publicInputs.cardanoAnchorTxHash);
+    expect(link.publicInputsHash).toBe("d710b0457e420bd3f51ad7074e37d764ac49ef14267f9c9787cee3042f540e5e");
+    expect(link.linkId).toBe("link-bfc02295297a140b");
+    expect(link.linkCommitment).toBe("adeb85938722adb650577e9d0ed144b4a74599ea29faba2a447abdf475e48aa1");
+  });
+  it("does not accept an unmarked proof into the simulation publisher", async () => {
+    const publisher = new ProofPublisher({ mode: "simulation" });
+    await publisher.connect({ proofServerUrl: "https://unreachable.invalid", apiKey: undefined,
+      timeout: 1000, retries: 0, circuitCacheDir: undefined });
+    await expect(publisher.publish(createMockHashChainProof(undefined, false)))
+      .rejects.toThrow("Simulation publisher accepts only marked simulation fixtures");
+    await publisher.disconnect();
+  });
+  it("rejects simulation links even when real callbacks accept their IDs", async () => {
+    const linker = new CardanoAnchorLinker({ midnightVerifier: async () => true, cardanoVerifier: async () => true });
+    const proof = { ...createMockHashChainProof(), simulation: true as const };
+    const result = await linker.verifyLink(linker.linkToAnchor(proof, proof.publicInputs.cardanoAnchorTxHash));
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("Simulation links cannot be verified in real mode");
+  });
+  const config: ProofServerConfig = { proofServerUrl: "https://unreachable.invalid", apiKey: undefined,
+    timeout: 1000, retries: 0, circuitCacheDir: undefined };
+  it("does not claim unsupported proof-server connection", async () => {
+    const client = new ProofServerClient();
+    await expect(client.connect(config)).rejects.toThrow("Legacy proof-server client requires explicit simulation mode");
+    expect(client.isConnected()).toBe(false);
+  });
+  it("does not claim unsupported network connection", async () => {
+    const publisher = new ProofPublisher();
+    await expect(publisher.connect(config)).rejects.toThrow("Network publication requires a real network provider; simulation must be explicit");
+    expect(publisher.isConnected()).toBe(false);
+  });
+  it("labels simulation without inventing block or fee evidence", async () => {
+    const publisher = new ProofPublisher({ mode: "simulation" });
+    await publisher.connect(config);
+    const result = await publisher.publish({ ...createMockHashChainProof(), simulation: true });
+    expect(result.midnightTxHash).toMatch(/^simulation-/);
+    expect(result.blockNumber).toBeUndefined();
+    expect(result.fee).toBeUndefined();
+    await publisher.disconnect();
+  });
+  it("cannot infer chain existence from hashes and IDs", async () => {
+    const linker = new CardanoAnchorLinker();
+    const proof = createMockHashChainProof(undefined, false);
+    const result = await linker.verifyLink(linker.linkToAnchor(proof, proof.publicInputs.cardanoAnchorTxHash));
+    expect(result.valid).toBe(false);
+    expect(result.midnightVerified).toBe(false);
+    expect(result.cardanoVerified).toBe(false);
+  });
+  it("requires both chain verifiers to succeed", async () => {
+    const linker = new CardanoAnchorLinker({ midnightVerifier: async () => true, cardanoVerifier: async () => false });
+    const proof = createMockHashChainProof(undefined, false);
+    const result = await linker.verifyLink(linker.linkToAnchor(proof, proof.publicInputs.cardanoAnchorTxHash));
+    expect(result.valid).toBe(false);
+    expect(result.midnightVerified).toBe(true);
+    expect(result.cardanoVerified).toBe(false);
   });
 });

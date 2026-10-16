@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -313,6 +313,24 @@ describe("the orynq bin", () => {
     const verify = orynq("verify", "midnight", user.anchors.public.txHash, "--indexer", served.indexer, "--rpc", served.node);
     expect([verify.status, line(verify.stdout, "status")]).toEqual([1, "invalid"]);
     expect(verify.stdout).toContain("no registry generation is deployed on mainnet");
+  });
+
+  // The Midnight package is an optional peer: an install without it gets the bin and both
+  // builds of src/midnight.ts, whose import of it cannot resolve.
+  it("names the optional Midnight package when it is not installed", () => {
+    const pkg = mkdtempSync(join(dir, "no-midnight-"));
+    for (const sub of ["bin", "dist", "src"]) mkdirSync(join(pkg, sub));
+    writeFileSync(join(pkg, "package.json"), JSON.stringify({ type: "module" }));
+    copyFileSync(bin, join(pkg, "bin", "orynq.mjs"));
+    const reexport = 'export * from "@fluxpointstudios/orynq-sdk-anchors-midnight";\n';
+    writeFileSync(join(pkg, "dist", "midnight.js"), reexport);
+    writeFileSync(join(pkg, "src", "midnight.ts"), reexport);
+    const r = spawnSync(process.execPath, [join(pkg, "bin", "orynq.mjs"), "verify", "midnight", "00".repeat(32)], { encoding: "utf8", input: "" });
+    expect([r.status, r.stderr]).toEqual([
+      1,
+      expect.stringContaining("the Midnight commands need @fluxpointstudios/orynq-sdk-anchors-midnight, an optional peer dependency that is not installed. Midnight is not yet published on npm; use a built orynq-sdk source checkout (see the package README)."),
+    ]);
+    expect(r.stderr).not.toContain(pkg);
   });
 
   it("refuses --submit from a pipe, which is how a model runs it", () => {
