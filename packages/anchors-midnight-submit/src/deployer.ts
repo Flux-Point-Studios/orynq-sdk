@@ -9,29 +9,17 @@ import {
   type MidnightSource,
   type RegistryCircuit,
 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { chainView, openJournal, type AnchorKey, type JournalRow } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
-import { assertKnownRuntime, declaredFee, finalTransaction, finalizeChecked, journalOnce, landedRow, type FeeWallet, type Prover } from "./submission.js";
+import { chainView, openJournal, type AnchorKey } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
+import { assertConfirmedHash, assertKnownRuntime, confirmedSends, declaredFee, finalTransaction, finalizeChecked, type FeeWallet, type PreparedBytes, type Prover } from "./submission.js";
 
 // A registry deploy as it will be sent: the exact final bytes and what they do, for a human to
 // read before anything leaves.
-export interface PreparedDeploy {
-  network: MidnightNetwork;
+export interface PreparedDeploy extends PreparedBytes {
   address: string;
-  txHash: string;
-  bytes: Uint8Array;
-  ttl: Date;
   runtime: number;
   // committee size, threshold and counter of the deployed maintenance authority
   authority: { committee: number; threshold: number; counter: string };
   verifierKeys: Record<RegistryCircuit, string>;
-  // DUST (SPECK) the bytes declare as their fee, all of it burned
-  declaredFee: bigint;
-  // The unshielded address of the wallet whose DUST paid that fee; none for a journalled deploy
-  // whose journal did not record it
-  payer?: string;
-  // The deploy as the journal holds it, when these bytes come from the journal; expired once chain
-  // time is past their TTL, after which no node includes them
-  journal?: Pick<JournalRow, "state" | "broadcasts"> & { expired: boolean };
 }
 
 export interface Deployment {
@@ -91,17 +79,9 @@ export function registryDeployer(options: DeployerOptions) {
     };
   };
 
-  // Whether chain time, as the journal reads it, is past `ttl`; null while the node lacks the
-  // indexer's newest block, so that chain time is unknown.
-  const pastTtl = async (ttl: Date) => {
-    const head = await chain.indexedThrough();
-    return head && head.time.getTime() > ttl.getTime();
-  };
-  const journalling = { journal, chain, wallet, network, pollMillis: options.pollMillis ?? 3_000 };
   // A deploy row fails only when the chain has carried it past its TTL plus the margin unseen,
   // with no contract at its address.
-  const EXPIRED = "the journalled deploy expired without landing; rerun to prepare new bytes";
-  const retired = (txHash: string) => journal.history(key).some((row) => row.txHash === txHash && row.state === "failed");
+  const confirmed = confirmedSends({ journal, chain, wallet, network, pollMillis: options.pollMillis ?? 3_000 }, key, "deploy", "a registry deploy");
 
   return {
     async prepare(): Promise<PreparedDeploy> {
@@ -117,49 +97,19 @@ export function registryDeployer(options: DeployerOptions) {
     // null when none is. Submitting it resumes that deploy; submit refuses any other bytes until
     // the chain has ruled it out.
     async journalled(): Promise<PreparedDeploy | null> {
-      await journal.reconcile(chain);
-      const row = journal.live(key);
+      const row = await confirmed.held();
       if (!row) return null;
-      const expired = row.state === "pending" && (await pastTtl(row.ttl)) === true;
-      return describe(row.bytes, row.ttl, await assertKnownRuntime(source, network), row.payer, { state: row.state, broadcasts: row.broadcasts, expired });
+      return describe(row.bytes, row.ttl, await assertKnownRuntime(source, network), row.payer, { state: row.state, broadcasts: row.broadcasts, expired: row.expired });
     },
 
     async submit(prepared: PreparedDeploy): Promise<Deployment> {
       // Only bytes that deploy exactly the registry leave, and only the ones the human confirmed:
       // the confirmation token names their transaction hash, the summary their address.
       const deploys = assertRegistryDeployBytes(prepared.bytes, "final");
-      const txHash = finalTransaction(prepared.bytes).transactionHash();
-      if (txHash !== prepared.txHash) throw new Error(`the bytes hash to ${txHash}, not the confirmed ${prepared.txHash}; nothing was sent`);
+      assertConfirmedHash(prepared);
       if (deploys !== prepared.address) throw new Error(`the bytes deploy ${deploys}, not the confirmed ${prepared.address}; nothing was sent`);
       await assertKnownRuntime(source, network);
-      // Another deploy holds the registry's key: these bytes never leave, and their DUST is freed.
-      const refuse = async (other: JournalRow) => {
-        await wallet.discard(finalTransaction(prepared.bytes));
-        throw new Error(`a registry deploy is already journalled on ${network}: ${other.txHash} (${other.state}); the prepared bytes were discarded`);
-      };
-      // A deploy journalled earlier is settled from the chain first: one that the chain has
-      // carried past its TTL unseen no longer holds the registry's key, and is never sent again.
-      await journal.reconcile(chain);
-      if (retired(prepared.txHash)) throw new Error(EXPIRED);
-      const live = journal.live(key);
-      if (live && live.txHash !== prepared.txHash) await refuse(live);
-      // Journalled bytes the human confirmed as expired, or that chain time has carried past their
-      // TTL, are not sent again, since no node includes them: the chain lands or retires them.
-      // While chain time is unknown nothing is sent: bytes no send of which returned are refused.
-      const past = live?.state === "pending" ? prepared.journal?.expired || (await pastTtl(live.ttl)) : false;
-      if (past === null && live?.broadcasts === 0) {
-        throw new Error(`the ${network} node does not hold the indexer's newest block, so chain time is unknown and the journalled bytes may be past their TTL; nothing was sent`);
-      }
-      let row: JournalRow & { height: number; blockHash: string };
-      try {
-        const journalled = live && past !== false ? live : await journalOnce(journalling, key, async () => ({ bytes: prepared.bytes, ttl: prepared.ttl }), prepared.txHash);
-        // A deployer confirmed at the same moment wrote its row first, and the journal answered
-        // with it, unsent.
-        if (journalled.txHash !== prepared.txHash) await refuse(journalled);
-        row = await landedRow(journalling, key, journalled);
-      } catch (error) {
-        throw retired(prepared.txHash) ? new Error(EXPIRED) : error;
-      }
+      const row = await confirmed.submit(prepared);
       const [landed] = (await source.indexer.transactions(row.txHash)).filter((t) => t.hash === row.txHash);
       if (!landed) throw new Error(`the indexer lost deploy transaction ${row.txHash}`);
       const address = assertRegistryDeployBytes(new Uint8Array(Buffer.from(landed.raw, "hex")), "final");

@@ -17,9 +17,21 @@ import {
   type RegistryCallArgs,
   type RegistryWitnesses,
 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { chainView, openJournal, type AnchorKey, type JournalRow } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
+import { chainView, openJournal, type AnchorKey, type JournalRow, type Submission } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS, agentDriven, refuseMainnetSecretsPath } from "./custody.js";
-import { assertKnownRuntime, finalizeChecked, registryStateOnNode, submitJournalled, type FeeWallet, type Prover } from "./submission.js";
+import {
+  assertConfirmedHash,
+  assertKnownRuntime,
+  confirmedSends,
+  declaredFee,
+  finalTransaction,
+  finalizeChecked,
+  registryStateOnNode,
+  submitJournalled,
+  type FeeWallet,
+  type PreparedBytes,
+  type Prover,
+} from "./submission.js";
 
 export interface AnchorReceipt {
   network: MidnightNetwork;
@@ -39,6 +51,18 @@ export interface HiddenOpening {
   manifestHash: string;
   merkleRoot: string;
   salt: string;
+}
+
+export type AnchorRequest = { kind: 1; entry: EntryHashes } | { kind: 2; entry: EntryHashes; attribute: Hash32 };
+
+// An anchor as it will be sent: the exact final bytes and what they write, for a human to read
+// before anything leaves.
+export interface PreparedAnchor extends PreparedBytes {
+  registry: string;
+  author: string;
+  kind: 1 | 2;
+  commitment: string;
+  attribute: string;
 }
 
 export interface OperatorOptions {
@@ -61,6 +85,16 @@ export interface RegistryOperator {
   readonly authorKey: string;
   anchor(entry: EntryHashes): Promise<AnchorReceipt>;
   anchorHiding(entry: EntryHashes, attribute: Hash32): Promise<AnchorReceipt & { opening: HiddenOpening }>;
+  // The attempt the journal still holds live for `request` once settled from the chain, rebuilt
+  // from its journalled bytes and marked with how the journal holds it, or null when none is.
+  journalled(request: AnchorRequest): Promise<PreparedAnchor | null>;
+  // New final bytes for `request`, checked to carry exactly that anchor; nothing is journalled or sent.
+  prepare(request: AnchorRequest): Promise<PreparedAnchor>;
+  // Sends the bytes a human confirmed, journalled or new, through the journal at most once, and
+  // returns the anchor once it landed; bytes past their TTL are never sent again.
+  submit(prepared: PreparedAnchor): Promise<AnchorReceipt>;
+  // Releases the DUST of prepared bytes nobody confirmed.
+  discard(prepared: PreparedAnchor): Promise<void>;
   // Settles every journalled submission by its txHash, as after a restart.
   reconcile(): Promise<JournalRow[]>;
   close(): void;
@@ -71,7 +105,8 @@ const ZERO = "00".repeat(32);
 
 // Writes registry anchors under the FPS author key: every submission goes through the
 // write-ahead journal, and every transaction is checked, from its final balanced bytes, to be
-// exactly what was meant before those bytes reach the node.
+// exactly what was meant before those bytes reach the node. anchor and anchorHiding send at once;
+// prepare (or journalled) and submit let a human confirm the exact bytes in between.
 export function registryOperator(options: OperatorOptions): RegistryOperator {
   const { network, wallet, source, prover } = options;
   if (network === "mainnet" && agentDriven()) throw new Error("registryOperator refuses to load a mainnet author key in a process that carries Claude Code's environment");
@@ -82,57 +117,124 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
   const journal = openJournal(options.journalPath);
   const chain = chainView(source, network);
   const ttlMillis = (options.ttlMinutes ?? 15) * 60_000;
-  const pollMillis = options.pollMillis ?? 3_000;
+  const journalling = { journal, chain, wallet, network, pollMillis: options.pollMillis ?? 3_000 };
+  const keyOf = (kind: 1 | 2, commitment: string, attribute: string): AnchorKey => ({ network, registry: options.registry, author, kind, commitment, attribute });
 
-  const write = async (kind: 1 | 2, commitment: string, attribute: string, call: RegistryCallArgs, witnesses: RegistryWitnesses): Promise<AnchorReceipt> => {
-    await assertKnownRuntime(source, network);
-    const { registry } = options;
-    const key: AnchorKey = { network, registry, author, kind, commitment, attribute };
-    const row = await submitJournalled({ journal, chain, wallet, network, pollMillis }, key, async () => {
-      const state = await registryStateOnNode(source, registry);
-      if (!state) throw new Error(`the ${network} node holds no contract at ${registry}`);
-      const ttl = new Date(Date.now() + ttlMillis);
-      const built = unprovenRegistryCall({ networkId: network, address: registry, state, call, witnesses, ttl });
-      if (kind === 2 && hex(built.after.last_commitment) !== commitment) throw new Error("the circuit computed a different kind-2 commitment than the opening");
-      const { bytes } = await finalizeChecked(wallet, prover, built.tx, ttl, (bytes) => {
-        const { calls, touches } = decodeAnchorTransaction(bytes, [registry]);
-        const [call] = calls;
-        const exact =
-          touches.length === 0 &&
-          calls.length === 1 &&
-          call!.address === registry &&
-          call!.entryPoint === (kind === 1 ? "anchor" : "anchor_hiding") &&
-          call!.kind === kind &&
-          call!.commitment === commitment &&
-          call!.attribute === attribute &&
-          call!.author === author;
-        if (!exact) {
-          throw new Error("the final bytes do not carry exactly the intended anchor; nothing was submitted");
-        }
-      });
-      return { bytes, ttl };
-    });
-    return { network, registry, txHash: row.txHash, blockHeight: row.height, blockHash: row.blockHash, kind, commitment, attribute, author };
+  // What `request` writes and how its circuit is called; for kind 2 also what opens it.
+  const intent = (request: AnchorRequest): { key: AnchorKey; call: RegistryCallArgs; witnesses: RegistryWitnesses; opening?: HiddenOpening } => {
+    if (request.kind === 1) {
+      const commitment = entryCommitment(request.entry);
+      return { key: keyOf(1, hex(commitment), ZERO), call: { circuit: "anchor", args: [commitment, 1n] }, witnesses: { authorSecret } };
+    }
+    if (!options.saltKeyFile) throw new Error("anchorHiding needs a salt key file");
+    const { entry } = request;
+    const saltKey = hash32(readPrivateFile(options.saltKeyFile), options.saltKeyFile);
+    const id = hex(saltKeyId(saltKey));
+    if (network !== "mainnet" && MAINNET_SALT_KEY_IDS.includes(id)) throw new Error(`${options.saltKeyFile} holds the FPS mainnet salt key ${id}; a ${network} operator never uses it`);
+    const attr = hash32(request.attribute, "attribute");
+    const digest = hiddenDigest(entry, attr);
+    const salt = deriveSalt(saltKey, digest);
+    const hidden = { root_hash: hash32(entry.rootHash, "rootHash"), manifest_hash: hash32(entry.manifestHash, "manifestHash"), merkle_root: entry.merkleRoot === undefined ? new Uint8Array(32) : hash32(entry.merkleRoot, "merkleRoot"), salt };
+    return {
+      key: keyOf(2, hex(hidingCommitment(digest, salt)), hex(attr)),
+      call: { circuit: "anchor_hiding", args: [attr] },
+      witnesses: { authorSecret, hiddenEntry: hidden },
+      opening: { rootHash: hex(hidden.root_hash), manifestHash: hex(hidden.manifest_hash), merkleRoot: hex(hidden.merkle_root), salt: hex(salt) },
+    };
   };
+
+  // Refuses final bytes that carry anything but exactly the anchor `key` names.
+  const assertExact = (bytes: Uint8Array, key: AnchorKey) => {
+    const { calls, touches } = decodeAnchorTransaction(bytes, [key.registry]);
+    const [call] = calls;
+    const exact =
+      touches.length === 0 &&
+      calls.length === 1 &&
+      call!.address === key.registry &&
+      call!.entryPoint === (key.kind === 1 ? "anchor" : "anchor_hiding") &&
+      call!.kind === key.kind &&
+      call!.commitment === key.commitment &&
+      call!.attribute === key.attribute &&
+      call!.author === key.author;
+    if (!exact) throw new Error("the final bytes do not carry exactly the intended anchor; nothing was submitted");
+  };
+
+  // Builds, proves, pays and binds the call against the registry's state on the node; bytes that
+  // do not carry exactly the anchor never leave, and their DUST is released.
+  const build = async ({ key, call, witnesses }: ReturnType<typeof intent>): Promise<Submission> => {
+    const state = await registryStateOnNode(source, key.registry);
+    if (!state) throw new Error(`the ${network} node holds no contract at ${key.registry}`);
+    const ttl = new Date(Date.now() + ttlMillis);
+    const built = unprovenRegistryCall({ networkId: network, address: key.registry, state, call, witnesses, ttl });
+    if (key.kind === 2 && hex(built.after.last_commitment) !== key.commitment) throw new Error("the circuit computed a different kind-2 commitment than the opening");
+    const { bytes } = await finalizeChecked(wallet, prover, built.tx, ttl, (b) => assertExact(b, key));
+    return { bytes, ttl };
+  };
+
+  const receipt = (key: AnchorKey, row: JournalRow & { height: number; blockHash: string }): AnchorReceipt => ({
+    network,
+    registry: key.registry,
+    txHash: row.txHash,
+    blockHeight: row.height,
+    blockHash: row.blockHash,
+    kind: key.kind as 1 | 2,
+    commitment: key.commitment,
+    attribute: key.attribute,
+    author,
+  });
+
+  const write = async (request: AnchorRequest) => {
+    await assertKnownRuntime(source, network);
+    const planned = intent(request);
+    return { receipt: receipt(planned.key, await submitJournalled(journalling, planned.key, () => build(planned))), opening: planned.opening };
+  };
+
+  const describe = (key: AnchorKey, bytes: Uint8Array, ttl: Date, payer: string | undefined, held?: PreparedAnchor["journal"]): PreparedAnchor => {
+    assertExact(bytes, key);
+    const final = finalTransaction(bytes);
+    return {
+      network,
+      registry: key.registry,
+      author,
+      kind: key.kind as 1 | 2,
+      commitment: key.commitment,
+      attribute: key.attribute,
+      txHash: final.transactionHash(),
+      bytes,
+      ttl,
+      declaredFee: declaredFee(final),
+      ...(payer === undefined ? {} : { payer }),
+      ...(held ? { journal: held } : {}),
+    };
+  };
+  const confirmed = (key: AnchorKey) => confirmedSends(journalling, key, "anchor", "this anchor");
 
   return {
     authorKey: author,
-    anchor(entry) {
-      const commitment = entryCommitment(entry);
-      return write(1, hex(commitment), ZERO, { circuit: "anchor", args: [commitment, 1n] }, { authorSecret });
-    },
+    anchor: async (entry) => (await write({ kind: 1, entry })).receipt,
     async anchorHiding(entry, attribute) {
-      if (!options.saltKeyFile) throw new Error("anchorHiding needs a salt key file");
-      const saltKey = hash32(readPrivateFile(options.saltKeyFile), options.saltKeyFile);
-      const id = hex(saltKeyId(saltKey));
-      if (network !== "mainnet" && MAINNET_SALT_KEY_IDS.includes(id)) throw new Error(`${options.saltKeyFile} holds the FPS mainnet salt key ${id}; a ${network} operator never uses it`);
-      const attr = hash32(attribute, "attribute");
-      const digest = hiddenDigest(entry, attr);
-      const salt = deriveSalt(saltKey, digest);
-      const hidden = { root_hash: hash32(entry.rootHash, "rootHash"), manifest_hash: hash32(entry.manifestHash, "manifestHash"), merkle_root: entry.merkleRoot === undefined ? new Uint8Array(32) : hash32(entry.merkleRoot, "merkleRoot"), salt };
-      const receipt = await write(2, hex(hidingCommitment(digest, salt)), hex(attr), { circuit: "anchor_hiding", args: [attr] }, { authorSecret, hiddenEntry: hidden });
-      return { ...receipt, opening: { rootHash: hex(hidden.root_hash), manifestHash: hex(hidden.manifest_hash), merkleRoot: hex(hidden.merkle_root), salt: hex(salt) } };
+      const { receipt: written, opening } = await write({ kind: 2, entry, attribute });
+      return { ...written, opening: opening! };
     },
+    async journalled(request) {
+      const { key } = intent(request);
+      const row = await confirmed(key).held();
+      return row && describe(key, row.bytes, row.ttl, row.payer, { state: row.state, broadcasts: row.broadcasts, expired: row.expired });
+    },
+    async prepare(request) {
+      await assertKnownRuntime(source, network);
+      const planned = intent(request);
+      const { bytes, ttl } = await build(planned);
+      return describe(planned.key, bytes, ttl, wallet.addresses.unshielded);
+    },
+    async submit(prepared) {
+      const key = keyOf(prepared.kind, prepared.commitment, prepared.attribute);
+      assertExact(prepared.bytes, key);
+      assertConfirmedHash(prepared);
+      await assertKnownRuntime(source, network);
+      return receipt(key, await confirmed(key).submit(prepared));
+    },
+    discard: (prepared) => wallet.discard(finalTransaction(prepared.bytes)),
     reconcile: () => journal.reconcile(chain),
     close: () => journal.close(),
   };

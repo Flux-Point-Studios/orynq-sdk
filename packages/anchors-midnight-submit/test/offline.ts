@@ -7,10 +7,13 @@
 // refuses every transaction that deploys nothing with Custom error: 170, InvalidDustSpendProof),
 // "lose-read" (the first read of a landed transaction fails), "lose-sync" (the wallet stops
 // syncing once a deploy landed), "fail-save" (the shielded state does not serialize, as
-// ledger-v8 8.1.3 once trapped on preprod) or "low-dust" (the wallet holds 0.5 DUST).
-import { readFileSync, writeFileSync } from "node:fs";
+// ledger-v8 8.1.3 once trapped on preprod), "low-dust" (the wallet holds 0.5 DUST), "unfinal"
+// (the node's finalized head stays below every landed transaction), "foreign-block" (the node's
+// block of the landed transactions carries none of them) or "fork" (the node's block at their
+// heights is another than the indexer's).
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import * as L from "@midnight-ntwrk/ledger-v8";
-import { midnightSource, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { midnightExtrinsic, midnightSource, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { ledgerNode } from "../../anchors-midnight/src/__tests__/ledger-node.js";
 import { NETWORK_IDENTITY, type OperatorWallet, type StateSave, type WalletOptions } from "../src/index.js";
 import { costParametersOf } from "../src/wallet.js";
@@ -25,7 +28,8 @@ export interface OfflineChain {
   aheadMs: number;
   // Every transaction handed to the node, in order, whether or not it landed.
   sent: string[];
-  // Each landed transaction, and for a deploy the contract's address and initial state.
+  // Each landed transaction, and for a deploy the contract's address and initial state; a contract
+  // a test deployed before its run carries no bytes (raw "").
   landed: Record<string, { raw: string; height: number; address?: string; state?: string }>;
   // Every transaction whose DUST the wallet was asked to release.
   discarded: string[];
@@ -40,7 +44,12 @@ const FAULTS = new Set(process.env.OFFLINE_FAULT?.split(","));
 const HEAD = "00".repeat(32);
 const BLOCK = "ab".repeat(32);
 const read = (): OfflineChain => JSON.parse(readFileSync(FILE, "utf8"));
-const write = (chain: OfflineChain) => writeFileSync(FILE, JSON.stringify(chain));
+// Written whole under this process's own name and renamed over the file, so neither this process
+// nor the test's, which both read the file at any moment, ever reads it half written.
+const write = (chain: OfflineChain) => {
+  writeFileSync(`${FILE}.${process.pid}`, JSON.stringify(chain));
+  renameSync(`${FILE}.${process.pid}`, FILE);
+};
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 let readsToLose = FAULTS.has("lose-read") ? 1 : 0;
 
@@ -53,13 +62,26 @@ Date.now = () => hostNow() + read().aheadMs;
 // The node reads its ledger in the newest block and in the block every transaction lands in.
 const ledger = ledgerNode({ blocks: [HEAD, BLOCK], contracts: (address) => Object.values(read().landed).find((t) => t.address === address)?.state });
 
-// The node's answer to one JSON-RPC request.
+// The node's answer to one JSON-RPC request. Every landed transaction is in block BLOCK at its own
+// height, and the newest block HEAD, at height 1000, is final.
 function nodeAnswer(method: string, params: unknown[] = []) {
-  const identity = NETWORK_IDENTITY[read().network];
+  const chain = read();
+  const identity = NETWORK_IDENTITY[chain.network];
+  const landed = Object.values(chain.landed).filter((t) => t.raw !== "");
   if (method === "system_chain") return { result: identity.chain };
   if (method === "midnight_ledgerVersion") return { result: "8.1.3" };
   if (method === "state_getRuntimeVersion") return { result: { specVersion: 1000300 } };
-  if (method === "chain_getBlockHash") return { result: params[0] === 0 ? `0x${identity.genesis}` : read().nodeLags ? null : `0x${HEAD}` };
+  if (method === "chain_getBlockHash") {
+    if (params[0] === 0) return { result: `0x${identity.genesis}` };
+    if (landed.some((t) => t.height === params[0])) return { result: `0x${FAULTS.has("fork") ? HEAD : BLOCK}` };
+    return { result: chain.nodeLags ? null : `0x${HEAD}` };
+  }
+  if (method === "chain_getFinalizedHead") return { result: `0x${HEAD}` };
+  if (method === "chain_getHeader" && params[0] === `0x${HEAD}`) return { result: { number: FAULTS.has("unfinal") ? "0x0" : "0x3e8" } };
+  if (method === "chain_getBlock" && params[0] === `0x${BLOCK}`) {
+    const carried = FAULTS.has("foreign-block") ? [] : landed.map((t) => `0x${hex(midnightExtrinsic(new Uint8Array(Buffer.from(t.raw, "hex"))))}`);
+    return { result: { block: { extrinsics: carried } } };
+  }
   if (method === "state_getStorage" && params[1] === `0x${HEAD}`) {
     const now = Buffer.alloc(8);
     now.writeBigUInt64LE(BigInt(Date.now()));

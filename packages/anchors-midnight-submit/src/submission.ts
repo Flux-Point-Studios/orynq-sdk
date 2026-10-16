@@ -78,6 +78,84 @@ export async function submitJournalled(journalling: Journalling, key: AnchorKey,
   return landedRow(journalling, key, await journalOnce(journalling, key, prepare));
 }
 
+// Final bytes as a human confirms them before they leave: their transaction hash, the TTL their
+// intent carries, the DUST they declare as their fee, all of it burned, and the unshielded address
+// of the wallet whose DUST paid it (none for journalled bytes whose journal did not record it).
+// Bytes that come from the journal carry how it holds them, expired once chain time is past their
+// TTL, after which no node includes them.
+export interface PreparedBytes {
+  network: MidnightNetwork;
+  txHash: string;
+  bytes: Uint8Array;
+  ttl: Date;
+  declaredFee: bigint;
+  payer?: string;
+  journal?: Pick<JournalRow, "state" | "broadcasts"> & { expired: boolean };
+}
+
+// Refuses bytes that do not hash to the transaction the human confirmed.
+export function assertConfirmedHash(prepared: PreparedBytes): void {
+  const txHash = finalTransaction(prepared.bytes).transactionHash();
+  if (txHash !== prepared.txHash) throw new Error(`the bytes hash to ${txHash}, not the confirmed ${prepared.txHash}; nothing was sent`);
+}
+
+// Sends confirmed bytes through the write-ahead journal under `key`, at most once. `what` names
+// them in errors ("deploy"), `holder` the attempt another set of bytes holds the key as ("a
+// registry deploy"). The caller checks the bytes are the ones the human confirmed first.
+export function confirmedSends(journalling: Journalling, key: AnchorKey, what: string, holder: string) {
+  const { journal, chain, wallet, network } = journalling;
+  // Whether chain time, as the journal reads it, is past `ttl`; null while the node lacks the
+  // indexer's newest block, so that chain time is unknown.
+  const pastTtl = async (ttl: Date) => {
+    const head = await chain.indexedThrough();
+    return head && head.time.getTime() > ttl.getTime();
+  };
+  // A row fails only once the chain has carried it past its TTL plus the margin unseen.
+  const EXPIRED = `the journalled ${what} expired without landing; rerun to prepare new bytes`;
+  const retired = (txHash: string) => journal.history(key).some((row) => row.txHash === txHash && row.state === "failed");
+
+  return {
+    // The key's live attempt, with its exact bytes, once the journal is settled from the chain,
+    // marked expired when chain time is past its TTL; null when none is live.
+    async held(): Promise<(JournalRow & { bytes: Uint8Array; expired: boolean }) | null> {
+      await journal.reconcile(chain);
+      const row = journal.live(key);
+      if (!row) return null;
+      return { ...row, expired: row.state === "pending" && (await pastTtl(row.ttl)) === true };
+    },
+
+    async submit(prepared: PreparedBytes): Promise<JournalRow & { height: number; blockHash: string }> {
+      // Another attempt holds the key: these bytes never leave, and their DUST is freed.
+      const refuse = async (other: JournalRow) => {
+        await wallet.discard(finalTransaction(prepared.bytes));
+        throw new Error(`${holder} is already journalled on ${network}: ${other.txHash} (${other.state}); the prepared bytes were discarded`);
+      };
+      // An attempt journalled earlier is settled from the chain first: one that the chain has
+      // carried past its TTL unseen no longer holds the key, and is never sent again.
+      await journal.reconcile(chain);
+      if (retired(prepared.txHash)) throw new Error(EXPIRED);
+      const live = journal.live(key);
+      if (live && live.txHash !== prepared.txHash) await refuse(live);
+      // Journalled bytes the human confirmed as expired, or that chain time has carried past their
+      // TTL, are not sent again, since no node includes them: the chain lands or retires them.
+      // While chain time is unknown nothing is sent: bytes no send of which returned are refused.
+      const past = live?.state === "pending" ? prepared.journal?.expired || (await pastTtl(live.ttl)) : false;
+      if (past === null && live?.broadcasts === 0) {
+        throw new Error(`the ${network} node does not hold the indexer's newest block, so chain time is unknown and the journalled bytes may be past their TTL; nothing was sent`);
+      }
+      try {
+        const journalled = live && past !== false ? live : await journalOnce(journalling, key, async () => ({ bytes: prepared.bytes, ttl: prepared.ttl }), prepared.txHash);
+        // An attempt confirmed at the same moment wrote its row first, and the journal answered
+        // with it, unsent.
+        if (journalled.txHash !== prepared.txHash) await refuse(journalled);
+        return await landedRow(journalling, key, journalled);
+      } catch (error) {
+        throw retired(prepared.txHash) ? new Error(EXPIRED) : error;
+      }
+    },
+  };
+}
+
 // Waits, by txHash, until the journal settles `row`, sending nothing, and returns it landed with
 // its block as the indexer lists it; a transaction the chain reports failed, or that outlives its
 // TTL unseen, is an error.
