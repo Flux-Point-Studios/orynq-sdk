@@ -1,38 +1,4 @@
-/**
- * @fileoverview Default implementation of the MidnightProver interface.
- *
- * Location: packages/midnight-prover/src/prover.ts
- *
- * Summary:
- * This module implements the DefaultMidnightProver class which provides a complete
- * implementation of the MidnightProver interface. It coordinates all proof types
- * (hash-chain, policy, disclosure, attestation, inference), manages connection
- * lifecycle, and handles proof publication.
- *
- * Usage:
- * - Primary entry point for ZK proof generation in the PoI system
- * - Coordinates individual provers from src/proofs/
- * - Manages connection to the Midnight proof server
- * - Handles proof publication and verification
- *
- * @example
- * ```typescript
- * import { createMidnightProver } from './prover.js';
- *
- * const prover = createMidnightProver({ debug: true });
- *
- * await prover.connect({
- *   proofServerUrl: 'https://proof.midnight.network',
- *   timeout: 300000,
- *   retries: 3,
- * });
- *
- * const proof = await prover.proveHashChain(input);
- * const result = await prover.publish(proof);
- *
- * await prover.disconnect();
- * ```
- */
+/** Legacy prover API; unsupported real operations fail closed. */
 
 import type {
   ProofServerConfig,
@@ -72,39 +38,7 @@ import { ProofServerClient } from "./midnight/proof-server-client.js";
 // DEFAULT MIDNIGHT PROVER
 // =============================================================================
 
-/**
- * DefaultMidnightProver provides a complete implementation of the MidnightProver interface.
- *
- * This class:
- * - Coordinates all proof types (hash-chain, policy, disclosure)
- * - Manages connection lifecycle with the Midnight proof server
- * - Handles proof publication and verification
- * - Uses individual provers from src/proofs/ for specific proof types
- *
- * @example
- * ```typescript
- * const prover = new DefaultMidnightProver({ debug: true });
- *
- * await prover.connect({
- *   proofServerUrl: 'https://proof.midnight.network',
- *   apiKey: process.env.MIDNIGHT_API_KEY,
- *   timeout: 300000,
- *   retries: 3,
- * });
- *
- * try {
- *   // Generate proofs
- *   const hashChainProof = await prover.proveHashChain(input);
- *   const policyProof = await prover.provePolicyCompliance(policyInput);
- *
- *   // Publish to network
- *   const result = await prover.publish(hashChainProof);
- *   console.log('Published:', result.midnightTxHash);
- * } finally {
- *   await prover.disconnect();
- * }
- * ```
- */
+/** Coordinates explicit simulation fixtures. */
 export class DefaultMidnightProver extends AbstractMidnightProver {
   private readonly options: Required<CreateMidnightProverOptions>;
 
@@ -129,6 +63,7 @@ export class DefaultMidnightProver extends AbstractMidnightProver {
     super();
 
     this.options = {
+      mode: options.mode ?? "real",
       debug: options.debug ?? false,
       circuitsDir: options.circuitsDir ?? "./circuits",
       enableInference: options.enableInference ?? false,
@@ -136,15 +71,18 @@ export class DefaultMidnightProver extends AbstractMidnightProver {
 
     // Initialize individual provers
     this.hashChainProver = new HashChainProver({
+      mode: this.options.mode,
       debug: this.options.debug,
       simulatedProvingTimeMs: 50,
     });
 
     this.policyProver = new PolicyComplianceProver({
+      mode: this.options.mode,
       debug: this.options.debug,
     });
 
     this.disclosureProver = new SelectiveDisclosureProver({
+      mode: this.options.mode,
       debug: this.options.debug,
       includeSpanData: true,
       includeEventData: true,
@@ -152,11 +90,13 @@ export class DefaultMidnightProver extends AbstractMidnightProver {
 
     // Initialize network clients
     this.proofServerClient = new ProofServerClient({
+      mode: this.options.mode,
       debug: this.options.debug,
       simulatedProvingTimeMs: 50,
     });
 
     this.proofPublisher = new ProofPublisher({
+      mode: this.options.mode,
       debug: this.options.debug,
       maxRetries: 3,
       pollIntervalMs: 1000, // Faster polling for tests
@@ -202,17 +142,13 @@ export class DefaultMidnightProver extends AbstractMidnightProver {
   protected async doDisconnect(): Promise<void> {
     this.debug("Disconnecting...");
 
-    // Disconnect components (ignore errors during cleanup)
-    try {
-      await this.proofServerClient.disconnect();
-    } catch {
-      // Ignore disconnect errors
-    }
-
-    try {
-      await this.proofPublisher.disconnect();
-    } catch {
-      // Ignore disconnect errors
+    const results = await Promise.allSettled([
+      this.proofServerClient.disconnect(),
+      this.proofPublisher.disconnect(),
+    ]);
+    const errors = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (errors.length) {
+      throw new AggregateError(errors.map((result) => result.reason), "Failed to disconnect prover components");
     }
 
     this.debug("Disconnected");
@@ -373,6 +309,14 @@ export class DefaultMidnightProver extends AbstractMidnightProver {
 
     const errors: string[] = [];
     const warnings: string[] = [];
+    if (this.options.mode !== "simulation") {
+      return {
+        valid: false, proofType: proof.proofType, publicInputs: this.extractPublicInputs(proof),
+        errors: ["Legacy proof formats have no real cryptographic verifier"],
+        warnings, verifiedAt: new Date().toISOString(),
+      };
+    }
+    warnings.push("Simulation fixture; not a cryptographic proof");
 
     try {
       // Verify based on proof type
@@ -448,8 +392,6 @@ export class DefaultMidnightProver extends AbstractMidnightProver {
       return cached;
     }
 
-    // In a real implementation, this would query the Midnight network
-    // For now, return undefined (not found)
     this.debug("Proof not found");
     return undefined;
   }

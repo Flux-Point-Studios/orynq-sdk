@@ -75,6 +75,7 @@ export interface PolicyEvaluationResult {
  * Options for the PolicyComplianceProver.
  */
 export interface PolicyComplianceProverOptions {
+  mode?: "real" | "simulation";
   /**
    * Enable debug logging.
    */
@@ -332,6 +333,7 @@ async function evaluateClassifierRule(
  * ```
  */
 export class PolicyComplianceProver {
+  private readonly mode: "real" | "simulation";
   private readonly debug: boolean;
   private readonly evaluators: Map<string, RuleEvaluator>;
 
@@ -341,6 +343,7 @@ export class PolicyComplianceProver {
    * @param options - Configuration options
    */
   constructor(options: PolicyComplianceProverOptions = {}) {
+    this.mode = options.mode ?? "real";
     this.debug = options.debug ?? false;
 
     // Initialize with default evaluators
@@ -371,6 +374,13 @@ export class PolicyComplianceProver {
    * @throws MidnightProverException on validation or generation failure
    */
   async generateProof(input: PolicyInput): Promise<PolicyProof> {
+    if (this.mode !== "simulation") {
+      throw new MidnightProverException(
+        MidnightProverError.PROOF_GENERATION_FAILED,
+        "Legacy policy-compliance proofs require explicit simulation mode"
+      );
+    }
+
     const startTime = performance.now();
 
     // Validate input
@@ -406,6 +416,7 @@ export class PolicyComplianceProver {
     const proofId = await this.generateProofId(publicInputs);
 
     const proof: PolicyProof = {
+      simulation: true,
       proofType: "policy-compliance",
       proofId,
       proof: proofBytes,
@@ -437,6 +448,10 @@ export class PolicyComplianceProver {
    * @returns Promise resolving to true if valid
    */
   async verifyProof(proof: PolicyProof): Promise<boolean> {
+    if (this.mode !== "simulation" || proof.simulation !== true || !proof.proofId.startsWith("simulation-")) {
+      return false;
+    }
+
     try {
       // Validate proof structure
       if (proof.proofType !== "policy-compliance") {
@@ -497,6 +512,12 @@ export class PolicyComplianceProver {
     promptHash: string,
     outputHash: string
   ): Promise<PolicyEvaluationResult> {
+    if (this.mode !== "simulation") {
+      throw new MidnightProverException(
+        MidnightProverError.CIRCUIT_EXECUTION_FAILED,
+        "Legacy policy evaluation requires explicit simulation mode"
+      );
+    }
     const startTime = performance.now();
     const ruleResults: RuleEvaluationResult[] = [];
 
@@ -685,7 +706,7 @@ export class PolicyComplianceProver {
       ...publicInputs,
     });
     const hash = await sha256StringHex(data);
-    return `policy-proof-${hash.slice(0, 16)}`;
+    return `simulation-policy-proof-${hash.slice(0, 16)}`;
   }
 
   /**

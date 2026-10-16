@@ -463,17 +463,17 @@ describe("verifySpanInclusion", () => {
 
 describe("SelectiveDisclosureProver instantiation", () => {
   it("creates prover with default options", () => {
-    const prover = new SelectiveDisclosureProver();
+    const prover = new SelectiveDisclosureProver({ mode: "simulation" });
     expect(prover).toBeInstanceOf(SelectiveDisclosureProver);
   });
 
   it("creates prover with debug option", () => {
-    const prover = new SelectiveDisclosureProver({ debug: true });
+    const prover = new SelectiveDisclosureProver({ mode: "simulation", debug: true });
     expect(prover).toBeInstanceOf(SelectiveDisclosureProver);
   });
 
   it("creates prover with disclosure options", () => {
-    const prover = new SelectiveDisclosureProver({
+    const prover = new SelectiveDisclosureProver({ mode: "simulation",
       includeSpanData: false,
       includeEventData: false,
     });
@@ -494,7 +494,7 @@ describe("SelectiveDisclosureProver.generateProof", () => {
   let prover: SelectiveDisclosureProver;
 
   beforeEach(() => {
-    prover = new SelectiveDisclosureProver();
+    prover = new SelectiveDisclosureProver({ mode: "simulation" });
   });
 
   it("generates proof for single-span bundle", async () => {
@@ -510,7 +510,7 @@ describe("SelectiveDisclosureProver.generateProof", () => {
     const proof = await prover.generateProof(input);
 
     expect(proof.proofType).toBe("selective-disclosure");
-    expect(proof.proofId).toMatch(/^disclosure-proof-/);
+    expect(proof.proofId).toMatch(/^simulation-disclosure-proof-/);
     expect(proof.proof).toBeInstanceOf(Uint8Array);
     expect(proof.proof.length).toBeGreaterThan(67);
     expect(proof.publicInputs.spanHash).toHaveLength(64);
@@ -539,7 +539,7 @@ describe("SelectiveDisclosureProver.generateProof", () => {
   });
 
   it("generates proof without disclosed data when configured", async () => {
-    const prover = new SelectiveDisclosureProver({
+    const prover = new SelectiveDisclosureProver({ mode: "simulation",
       includeSpanData: false,
       includeEventData: false,
     });
@@ -598,7 +598,7 @@ describe("SelectiveDisclosureProver input validation", () => {
   let prover: SelectiveDisclosureProver;
 
   beforeEach(() => {
-    prover = new SelectiveDisclosureProver();
+    prover = new SelectiveDisclosureProver({ mode: "simulation" });
   });
 
   it("rejects missing span ID", async () => {
@@ -662,7 +662,7 @@ describe("SelectiveDisclosureProver.verifyProof", () => {
   let prover: SelectiveDisclosureProver;
 
   beforeEach(() => {
-    prover = new SelectiveDisclosureProver();
+    prover = new SelectiveDisclosureProver({ mode: "simulation" });
   });
 
   it("verifies a valid proof", async () => {
@@ -769,7 +769,7 @@ describe("SelectiveDisclosureProver.generateMembershipProof", () => {
   let prover: SelectiveDisclosureProver;
 
   beforeEach(() => {
-    prover = new SelectiveDisclosureProver();
+    prover = new SelectiveDisclosureProver({ mode: "simulation" });
   });
 
   it("generates membership-only proof (no disclosed data)", async () => {
@@ -815,7 +815,7 @@ describe("SelectiveDisclosureProver proof metrics", () => {
   let prover: SelectiveDisclosureProver;
 
   beforeEach(() => {
-    prover = new SelectiveDisclosureProver();
+    prover = new SelectiveDisclosureProver({ mode: "simulation" });
   });
 
   it("includes proving time in proof", async () => {
@@ -878,7 +878,7 @@ describe("SelectiveDisclosureProver multi-span scenarios", () => {
   let prover: SelectiveDisclosureProver;
 
   beforeEach(() => {
-    prover = new SelectiveDisclosureProver();
+    prover = new SelectiveDisclosureProver({ mode: "simulation" });
   });
 
   it("generates different proofs for different spans in same bundle", async () => {
@@ -917,5 +917,23 @@ describe("SelectiveDisclosureProver multi-span scenarios", () => {
       expect(await prover.verifyProof(proof)).toBe(true);
       expect(proof.disclosedSpan?.id).toBe(`span-${i}`);
     }
+  });
+});
+
+
+describe("SelectiveDisclosureProver production boundary", () => {
+  it("fails closed without a real circuit", async () => {
+    const { bundle, merkleRoot } = await createTestBundle();
+    await expect(new SelectiveDisclosureProver().generateProof({ bundle, spanId: "span-0", merkleRoot,
+      cardanoAnchorTxHash: mockHash("anchor") }))
+      .rejects.toThrow("Legacy selective-disclosure proofs require explicit simulation mode");
+  });
+  it("rejects simulation fixtures in the real verifier", async () => {
+    const { bundle, merkleRoot } = await createTestBundle();
+    const proof = await new SelectiveDisclosureProver({ mode: "simulation" }).generateProof({
+      bundle, spanId: "span-0", merkleRoot, cardanoAnchorTxHash: mockHash("anchor") });
+    expect(proof.simulation).toBe(true);
+    expect(proof.proofId).toMatch(/^simulation-/);
+    expect(await new SelectiveDisclosureProver().verifyProof(proof)).toBe(false);
   });
 });

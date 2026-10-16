@@ -68,3 +68,6 @@ out-mainnet-trace/
 # Claude Code hooks state
 .claude/hooks/*.lock
 .claude/settings.local.json
+
+packages/midnight-prover/managed/
+packages/midnight-prover/native/target/

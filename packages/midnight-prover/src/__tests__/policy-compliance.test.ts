@@ -118,12 +118,12 @@ function createClassifierRule(
 
 describe("PolicyComplianceProver instantiation", () => {
   it("creates prover with default options", () => {
-    const prover = new PolicyComplianceProver();
+    const prover = new PolicyComplianceProver({ mode: "simulation" });
     expect(prover).toBeInstanceOf(PolicyComplianceProver);
   });
 
   it("creates prover with debug option", () => {
-    const prover = new PolicyComplianceProver({ debug: true });
+    const prover = new PolicyComplianceProver({ mode: "simulation", debug: true });
     expect(prover).toBeInstanceOf(PolicyComplianceProver);
   });
 
@@ -137,7 +137,7 @@ describe("PolicyComplianceProver instantiation", () => {
       ["custom", async (rule, _p, _o) => ({ rule, passed: true, message: "Custom rule passed" })],
     ]);
 
-    const prover = new PolicyComplianceProver({ customEvaluators });
+    const prover = new PolicyComplianceProver({ mode: "simulation", customEvaluators });
     expect(prover).toBeInstanceOf(PolicyComplianceProver);
   });
 });
@@ -150,7 +150,7 @@ describe("PolicyComplianceProver.generateProof", () => {
   let prover: PolicyComplianceProver;
 
   beforeEach(() => {
-    prover = new PolicyComplianceProver();
+    prover = new PolicyComplianceProver({ mode: "simulation" });
   });
 
   it("generates proof for policy with no rules (compliant)", async () => {
@@ -158,7 +158,7 @@ describe("PolicyComplianceProver.generateProof", () => {
     const proof = await prover.generateProof(input);
 
     expect(proof.proofType).toBe("policy-compliance");
-    expect(proof.proofId).toMatch(/^policy-proof-/);
+    expect(proof.proofId).toMatch(/^simulation-policy-proof-/);
     expect(proof.proof).toBeInstanceOf(Uint8Array);
     expect(proof.proof.length).toBe(65);
     expect(proof.publicInputs.compliant).toBe(true);
@@ -284,7 +284,7 @@ describe("PolicyComplianceProver input validation", () => {
   let prover: PolicyComplianceProver;
 
   beforeEach(() => {
-    prover = new PolicyComplianceProver();
+    prover = new PolicyComplianceProver({ mode: "simulation" });
   });
 
   it("rejects invalid prompt hash (too short)", async () => {
@@ -336,7 +336,7 @@ describe("PolicyComplianceProver.verifyProof", () => {
   let prover: PolicyComplianceProver;
 
   beforeEach(() => {
-    prover = new PolicyComplianceProver();
+    prover = new PolicyComplianceProver({ mode: "simulation" });
   });
 
   it("verifies a valid proof", async () => {
@@ -422,7 +422,7 @@ describe("PolicyComplianceProver.evaluatePolicy", () => {
   let prover: PolicyComplianceProver;
 
   beforeEach(() => {
-    prover = new PolicyComplianceProver();
+    prover = new PolicyComplianceProver({ mode: "simulation" });
   });
 
   it("evaluates empty policy as compliant", async () => {
@@ -485,7 +485,7 @@ describe("PolicyComplianceProver.evaluatePolicy", () => {
 
 describe("PolicyComplianceProver custom evaluators", () => {
   it("uses registered custom evaluator", async () => {
-    const prover = new PolicyComplianceProver();
+    const prover = new PolicyComplianceProver({ mode: "simulation" });
 
     prover.registerEvaluator("custom-check", async (rule, _p, _o) => ({
       rule,
@@ -506,7 +506,7 @@ describe("PolicyComplianceProver custom evaluators", () => {
   });
 
   it("custom evaluator can fail compliance", async () => {
-    const prover = new PolicyComplianceProver();
+    const prover = new PolicyComplianceProver({ mode: "simulation" });
 
     prover.registerEvaluator("always-fail", async (rule, _p, _o) => ({
       rule,
@@ -535,7 +535,7 @@ describe("PolicyComplianceProver proof metrics", () => {
   let prover: PolicyComplianceProver;
 
   beforeEach(() => {
-    prover = new PolicyComplianceProver();
+    prover = new PolicyComplianceProver({ mode: "simulation" });
   });
 
   it("includes proving time in proof", async () => {
@@ -563,5 +563,24 @@ describe("PolicyComplianceProver proof metrics", () => {
     expect(proof.createdAt).toBeDefined();
     expect(proof.createdAt >= beforeTime).toBe(true);
     expect(proof.createdAt <= afterTime).toBe(true);
+  });
+});
+
+
+describe("PolicyComplianceProver production boundary", () => {
+  it("does not report synthetic classifier results as a real policy decision", async () => {
+    const input = createTestPolicyInput({ policy: { id: "classifier", version: "1", rules: [createClassifierRule("test", 0)] } });
+    await expect(new PolicyComplianceProver().evaluatePolicy(input.policy, input.promptHash, input.outputHash))
+      .rejects.toThrow("Legacy policy evaluation requires explicit simulation mode");
+  });
+  it("fails closed without a real circuit", async () => {
+    await expect(new PolicyComplianceProver().generateProof(createTestPolicyInput()))
+      .rejects.toThrow("Legacy policy-compliance proofs require explicit simulation mode");
+  });
+  it("rejects simulation fixtures in the real verifier", async () => {
+    const proof = await new PolicyComplianceProver({ mode: "simulation" }).generateProof(createTestPolicyInput());
+    expect(proof.simulation).toBe(true);
+    expect(proof.proofId).toMatch(/^simulation-/);
+    expect(await new PolicyComplianceProver().verifyProof(proof)).toBe(false);
   });
 });

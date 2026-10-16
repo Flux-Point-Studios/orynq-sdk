@@ -4,6 +4,7 @@
 !pnpm-workspace.yaml
 !.npmrc
 !tsconfig.base.json
+!patches
 !packages/core
 !packages/process-trace
 !packages/anchors-cardano
