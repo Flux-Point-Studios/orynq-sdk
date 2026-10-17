@@ -261,6 +261,14 @@ function runMainnet(script: string, env: NodeJS.ProcessEnv, terminal: "pipe" | "
 const deployMainnet = (env: NodeJS.ProcessEnv, terminal: "pipe" | "pty") => runMainnet("deploy-mainnet", env, terminal, NOWHERE);
 
 describe("scripts/deploy-mainnet.ts", () => {
+  it.each(["deploy-mainnet", "anchor-mainnet"])("--pre-authorize preserves agent and pipe refusals in %s", async (script) => {
+    const flags = [...NOWHERE, "--pre-authorize"];
+    const agent = await runMainnet(script, { ...humanEnvironment(), CODEX_SESSION_ID: "" }, "pty", flags);
+    expect(agent.out).toContain("Claude Code or Codex environment");
+    const pipe = await runMainnet(script, humanEnvironment(), "pipe", flags);
+    expect(pipe.out).toContain("interactive terminal");
+    expect(agent.out + pipe.out).not.toContain("nonexistent");
+  });
   it.each(["deploy-mainnet", "anchor-mainnet"])("refuses Codex before any file read in %s", async (script) => {
     for (const name of ["CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_CI", "CODEX_MANAGED_BY_NPM", "CODEX_MANAGED_BY_OTHER"]) {
       const r = await runMainnet(script, { ...humanEnvironment(), [name]: "" }, "pty", NOWHERE);
@@ -292,7 +300,7 @@ describe("scripts/deploy-mainnet.ts", () => {
 });
 
 const MINUTE = 60_000;
-const PROMPT = /Type exactly "((?:DEPLOY|ANCHOR) [0-9a-f]{16})"/g;
+const PROMPT = /Type exactly "((?:PREAUTHORIZE (?:DEPLOY|ANCHORS)|DEPLOY|ANCHOR) [0-9a-f]{16})"/g;
 const PACKAGE = new URL("..", import.meta.url).pathname;
 
 // `script` itself (deploy-mainnet unless named), copied with the module it shares beside a
@@ -379,6 +387,51 @@ const preprodView = (aheadMs: number) => {
 
 // Each test runs its own script in its own directory, so they run side by side.
 describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
+  it("a wallet record changed after authorization sends nothing", async () => {
+    const m = offlineMainnet("deploy-mainnet", () => ["--pre-authorize"]);
+    const r = await m.run((token) => { m.walletRecord("changed"); return token; });
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("payer mismatch");
+    expect(m.chain().sent).toEqual([]);
+    expect(m.chain().discarded).toHaveLength(1);
+  });
+
+  it("pre-authorization rejects surrounding whitespace", async () => {
+    const m = offlineMainnet("deploy-mainnet", () => ["--pre-authorize"]);
+    const r = await m.run((token) => ` ${token} `);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("not pre-authorized");
+    expect(m.chain().sent).toEqual([]);
+  });
+  it("never reports deployment inclusion from an indexer without the exact block bytes", async () => {
+    const m = offlineMainnet("deploy-mainnet", () => ["--pre-authorize"]);
+    const r = await m.run((token) => token, "foreign-block");
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("does not carry the deploy's bytes");
+    expect(r.output).not.toContain("deployed and read back");
+  });
+  it("pre-authorizes before sync and sends without a second prompt", async () => {
+    const m = offlineMainnet("deploy-mainnet", () => ["--pre-authorize"]);
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(0);
+    expect(r.tokens).toHaveLength(1);
+    expect(r.token).toMatch(/^PREAUTHORIZE DEPLOY [0-9a-f]{16}$/);
+    expect(r.output.indexOf("PREAUTHORIZE")).toBeLessThan(r.output.indexOf("Syncing the wallet"));
+    expect(r.output).toContain("pre-authorized at");
+    expect(m.chain().sent).toHaveLength(1);
+    const resumed = await m.run((token) => token);
+    expect(resumed.status, resumed.output).toBe(0);
+    expect(resumed.tokens).toHaveLength(1);
+    expect(m.chain().sent).toHaveLength(1);
+  });
+
+  it("a wrong pre-authorization phrase sends nothing and never syncs", async () => {
+    const m = offlineMainnet("deploy-mainnet", () => ["--pre-authorize"]);
+    const r = await m.run(() => "no");
+    expect(r.output).toContain("not pre-authorized");
+    expect(r.output).not.toContain("Syncing the wallet");
+    expect(m.chain().sent).toEqual([]);
+  });
   it("sends the bytes it summarized once their token is typed, and reads the registry back from the node", async ({ expect }) => {
     const m = offlineMainnet();
     const r = await m.run((token) => token);
@@ -707,7 +760,7 @@ type PlanEntry = ReturnType<typeof planEntries>[number] & { attribute?: string }
 // anchor-mainnet over an offline mainnet whose node holds `state` at REGISTRY (none when null),
 // deployed before the run as FPS's deploy journal records, with throwaway author and salt keys it
 // pins as the FPS mainnet keys and a plan of `entries` for `registry`.
-function offlineAnchors({ state = registryInitialState(), entries = planEntries() as unknown[], registry = REGISTRY }: { state?: L.ContractState | null; entries?: unknown[]; registry?: string } = {}) {
+function offlineAnchors({ state = registryInitialState(), entries = planEntries() as unknown[], registry = REGISTRY, preauthorize = false }: { state?: L.ContractState | null; entries?: unknown[]; registry?: string; preauthorize?: boolean } = {}) {
   const m = offlineMainnet("anchor-mainnet", (root) => [
     "--plan",
     `${root}/plan.json`,
@@ -719,6 +772,7 @@ function offlineAnchors({ state = registryInitialState(), entries = planEntries(
     `${root}/salt.key`,
     "--results",
     `${root}/state/results.json`,
+    ...(preauthorize ? ["--pre-authorize"] : []),
   ]);
   const deployJournal = `${m.root}/state/deploy.sqlite`;
   mkdirSync(`${m.root}/state`, { mode: 0o700 });
@@ -750,6 +804,28 @@ const kind2Commitment = (e: PlanEntry, saltKey: Uint8Array) => {
 };
 
 describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
+  it("pre-authorizes all plan entries once before syncing", async () => {
+    const m = offlineAnchors({ preauthorize: true });
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(0);
+    expect(r.tokens).toHaveLength(1);
+    expect(r.token).toMatch(/^PREAUTHORIZE ANCHORS [0-9a-f]{16}$/);
+    expect(m.sent()).toHaveLength(m.entries.length);
+    expect(m.results()).toHaveLength(m.entries.length);
+    const resumed = await m.run((token) => token);
+    expect(resumed.status, resumed.output).toBe(0);
+    expect(m.sent()).toHaveLength(m.entries.length);
+  });
+
+  it("a plan changed after authorization sends nothing", async () => {
+    const m = offlineAnchors({ preauthorize: true });
+    const r = await m.run((token) => {
+      writeFileSync(`${m.root}/plan.json`, JSON.stringify({ registry: REGISTRY, entries: m.entries }, null, 2));
+      return token;
+    });
+    expect(r.status, r.output).toBe(1);
+    expect(m.sent()).toEqual([]);
+  });
   it("rejects a token naming other bytes and discards the unconfirmed anchor", async ({ expect }) => {
     const m = offlineAnchors();
     const r = await m.run((token) => token.slice(0, -1) + (token.endsWith("0") ? "1" : "0"));

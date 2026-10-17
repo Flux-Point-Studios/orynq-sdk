@@ -137,18 +137,20 @@ export async function confirmOnTerminal({
   token,
   env = process.env,
   what = "a mainnet deploy",
+  exact = false,
 }: {
   input: NodeJS.ReadableStream & { isTTY?: boolean };
   output: NodeJS.WritableStream & { isTTY?: boolean };
   token: string;
   env?: NodeJS.ProcessEnv;
   what?: string;
+  exact?: boolean;
 }): Promise<boolean> {
   assertHumanTerminal({ input, output, env, does: `confirms ${what}`, what });
   const lines = createInterface({ input, output, terminal: false });
-  output.write(`\nType exactly "${token}" to confirm these bytes for mainnet, anything else to send nothing: `);
+  output.write(`\nType exactly "${token}" to ${exact ? "authorize this intent" : "confirm these bytes"} for mainnet, anything else to send nothing: `);
   try {
-    for await (const line of lines) return line.trim() === token;
+    for await (const line of lines) return (exact ? line : line.trim()) === token;
     return false;
   } finally {
     lines.close();

@@ -69,6 +69,25 @@ const prepared = (name: Recorded, count: { n: number }) => async (): Promise<Sub
 };
 
 describe("the write-ahead journal", () => {
+  it("rebroadcasts only the named pending bytes, counts sends, and stops at inclusion or TTL", async () => {
+    const journal = openJournal(file());
+    const net = network();
+    const row = await journal.submitOnce(key, { prepare: prepared("anchor", { n: 0 }), broadcast: net.send("anchor"), chain: net.chain });
+    const retry = () => journal.rebroadcast(row.txHash, net.chain, net.send("anchor"));
+    await retry();
+    expect(journal.live(key)?.broadcasts).toBe(2);
+    net.advance(TTL);
+    await retry();
+    expect(net.arrived).toHaveLength(2);
+    net.advance(new Date(TTL.getTime() - 1000));
+    await expect(journal.rebroadcast(row.txHash, network("mainnet").chain, net.send("anchor"))).rejects.toThrow("network");
+    expect(net.arrived).toHaveLength(2);
+    net.index();
+    await retry();
+    expect(journal.live(key)?.state).toBe("landed");
+    expect(net.arrived).toHaveLength(2);
+    journal.close();
+  });
   it("writes the pending row, with the hash it computes from the final bytes, before anything is broadcast", async () => {
     const path = file();
     const journal = openJournal(path);

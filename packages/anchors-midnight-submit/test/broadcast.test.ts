@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { midnightExtrinsic, midnightTransactionIn, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { broadcast, nodeRefusal } from "../src/broadcast.js";
+import { broadcast, nodeRefusal, broadcastPaths } from "../src/broadcast.js";
 
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 
@@ -25,6 +25,36 @@ function node(answer: (method: string, params: unknown[]) => unknown) {
 const tx = new Uint8Array([0x6d, 0x69, 0x64, 0x6e, 0x69, 0x67, 0x68, 0x74, 1, 2, 3]);
 
 describe("broadcast", () => {
+  it("stops between paths if the TTL is reached", async () => {
+    let clock = 0;
+    const original = Date.now;
+    Date.now = () => clock;
+    const sent: string[] = [];
+    try {
+      await broadcastPaths(tx, [
+        { name: "primary", send: async () => { sent.push("primary"); clock = 1000; } },
+        { name: "extra", send: async () => { sent.push("extra"); } },
+      ], () => undefined, 1000);
+      expect(sent).toEqual(["primary"]);
+    } finally { Date.now = original; }
+  });
+  it("extra path failures are non-fatal and every path gets identical bytes", async () => {
+    const seen: Uint8Array[] = [];
+    const logs: string[] = [];
+    await broadcastPaths(tx, [
+      { name: "primary", send: async (bytes) => { seen.push(bytes); } },
+      { name: "extra", send: async (bytes) => { seen.push(bytes); throw new Error("private upstream details"); } },
+      { name: "other", send: async (bytes) => { seen.push(bytes); } },
+    ], (line) => logs.push(line));
+    expect(seen).toEqual([tx, tx, tx]);
+    expect(logs.join(" ")).toContain("extra: broadcast failed");
+    expect(logs.join(" ")).not.toContain("private upstream details");
+  });
+
+  it.each([1012, 1013])("accepts duplicate refusal %s", async (code) => {
+    const { source } = node(() => { throw new Error(`test node: author_submitExtrinsic failed: {"code":${code},"message":"duplicate"}`); });
+    await expect(broadcast(source, tx)).resolves.toBeUndefined();
+  });
   it("submits exactly the bare Midnight.send_mn_transaction of the bytes, once", async () => {
     const { source, calls } = node(() => "0xextrinsichash");
     await broadcast(source, tx);

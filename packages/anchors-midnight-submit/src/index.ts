@@ -1,8 +1,9 @@
 export { readJsonFile } from "./json-file.js";
+export { authorizationIntent, intentDigest, planHash, assertPreauthorizedBytes } from "./preauthorization.js";
 export { readAnchorPlan } from "./anchor-plan.js";
 export type { AnchorPlan, PlannedAnchor } from "./anchor-plan.js";
 export { agentDriven } from "./custody.js";
-export { broadcast, nodeRefusal } from "./broadcast.js";
+export { broadcast, nodeRefusal, mainnetBroadcast } from "./broadcast.js";
 export type { NodeRefusal } from "./broadcast.js";
 export { assertFpsRegistry, registryDeployer } from "./deployer.js";
 export { networkEndpoints } from "./endpoints.js";

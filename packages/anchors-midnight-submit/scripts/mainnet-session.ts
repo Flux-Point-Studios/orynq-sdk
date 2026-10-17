@@ -1,13 +1,13 @@
-// What deploy-mainnet and anchor-mainnet share. Before anything is read, the process must carry no
-// Claude Code or Codex environment and its input and output must be a terminal; then the flags, every one
-// of them known; then a node that is Midnight Mainnet, the wallet the mnemonic derives only if it
-// is the recorded one, and the DUST floor whenever confirming may send bytes. Each set of final
-// bytes is sent only after the token naming its transaction hash is typed at that terminal, and
-// every way out closes the wallet before the process exits.
+// Shared terminal, chain, wallet and authorization gates for the mainnet tools.
 import { homedir } from "node:os";
 import { midnightSource, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import {
   assertChainIdentity,
+  authorizationIntent,
+  intentDigest,
+  assertPreauthorizedBytes,
+  mainnetBroadcast,
+  broadcast,
   assertHumanTerminal,
   confirmOnTerminal,
   confirmationToken,
@@ -19,6 +19,7 @@ import {
   type OperatorWallet,
   type PreparedAnchor,
   type PreparedDeploy,
+  type AnchorPlan,
 } from "../src/index.js";
 
 export const home = homedir();
@@ -54,21 +55,29 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
     fail((error as Error).message);
   }
 
-  type Flag = F | "mnemonic" | "wallet-record" | "blockfrost" | "zk" | "dust-floor";
+  type Flag = F | "mnemonic" | "wallet-record" | "blockfrost" | "zk" | "dust-floor" | "max-fee-dust";
   const defaults: Record<string, string | undefined> = {
     mnemonic: `${SECRETS}/mnemonic.txt`,
     "wallet-record": `${home}/work/orynq-midnight-mainnet-wallet.json`,
     blockfrost: `${home}/.secrets/blockfrost-midnight-mainnet.project_id`,
     zk: process.env.MIDNIGHT_PP ?? `${home}/.cache/orynq-midnight/zk`,
     "dust-floor": "20",
+    "max-fee-dust": "1",
     ...flags,
   };
   const given = new Map<string, string>();
   const argv = process.argv.slice(2);
+  let preauthorize = false;
   for (let i = 0; i < argv.length; i += 2) {
     const [flag, value] = [argv[i]!, argv[i + 1]];
     if (!flag.startsWith("--")) fail(`unexpected argument ${flag}`);
     const name = flag.slice(2);
+    if (name === "pre-authorize") {
+      if (preauthorize) fail("--pre-authorize is given twice");
+      preauthorize = true;
+      i--;
+      continue;
+    }
     if (!Object.hasOwn(defaults, name)) fail(`unknown flag ${flag}`);
     if (value === undefined) fail(`${flag} needs a value`);
     if (value!.startsWith("--")) fail(`${flag} needs a value, not the flag ${value}`);
@@ -80,9 +89,25 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
   const floorText = DUST.exec(option("dust-floor"));
   if (!floorText) fail(`--dust-floor takes DUST as a decimal number with at most 15 places, not ${option("dust-floor")}`);
   const floor = BigInt(floorText![1]!) * 10n ** 15n + BigInt((floorText![2] ?? "").padEnd(15, "0"));
+  const capText = DUST.exec(option("max-fee-dust"));
+  if (!capText) fail("--max-fee-dust takes DUST as a decimal number with at most 15 places");
+  const cap = BigInt(capText![1]!) * 10n ** 15n + BigInt((capText![2] ?? "").padEnd(15, "0"));
+  let authorization: { digest: string; at: string; payer: string; plan?: { path: string; value: AnchorPlan } } | undefined;
+  let active: Mainnet | undefined;
 
   return {
     option,
+    async authorize(plan?: { path: string; value: AnchorPlan }) {
+      if (!preauthorize) return;
+      const payer = (readJsonFile(option("wallet-record")) as { addresses: { unshielded: string } }).addresses.unshielded;
+      if (typeof payer !== "string" || !/^mn_addr1[a-z0-9]+$/.test(payer)) throw new Error("invalid recorded unshielded payer");
+      const intent = authorizationIntent(payer, cap, plan);
+      const digest = intentDigest(intent);
+      process.stdout.write(`\nMainnet intent (fee cap ${formatDust(cap)} DUST per transaction):\n${JSON.stringify(intent, null, 2)}\nintent sha256 ${digest}\n`);
+      const token = `PREAUTHORIZE ${noun === "deploy" ? "DEPLOY" : "ANCHORS"} ${digest.slice(0, 16)}`;
+      if (!(await confirmOnTerminal({ input: process.stdin, output: process.stdout, token, what: `the mainnet ${noun} intent`, exact: true }))) throw new Error("not pre-authorized; nothing was sent");
+      authorization = { digest, at: new Date().toISOString(), payer, ...(plan ? { plan } : {}) };
+    },
 
     // Runs `body`, which connects to mainnet when it is ready to, closes whatever wallet it synced
     // on every way out, and exits: 0 once `body` returned and every wallet closed, 1 with `body`'s
@@ -96,18 +121,22 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
           const endpoints = networkEndpoints("mainnet", { blockfrostProjectIdFile: option("blockfrost") });
           const source = midnightSource(endpoints);
           const chain = await assertChainIdentity(source, "mainnet");
-          return {
+          active = {
             source,
             chain,
             async syncWallet() {
               const expectedAddresses = (readJsonFile(option("wallet-record")) as { addresses: { unshielded: string; shielded: string; dust: string } }).addresses;
               process.stdout.write(`${chain.chain}, runtime ${chain.specVersion}, ledger ${chain.ledgerVersion}. Syncing the wallet...\n`);
-              const wallet = await openWallet({ network: "mainnet", mnemonicFile: option("mnemonic"), endpoints, source, zkDir: option("zk"), expectedAddresses });
+              const wallet = await openWallet({
+                network: "mainnet", mnemonicFile: option("mnemonic"), endpoints, source, zkDir: option("zk"), expectedAddresses,
+                broadcast: (tx) => mainnetBroadcast(tx.serialize(), (bytes) => broadcast(source, bytes), Math.min(...[...(tx.intents?.values() ?? [])].map((intent) => intent.ttl.getTime()))),
+              });
               opened.push(wallet);
               await wallet.waitForSync(3_600_000);
               return wallet;
             },
           };
+          return active;
         });
       } catch (error) {
         failures.push((error as Error).message);
@@ -135,6 +164,20 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
     // since they may already be with the node.
     async confirm(prepared: PreparedDeploy | PreparedAnchor, summary: string, discard: () => Promise<void>) {
       process.stdout.write(`\n${summary}\n`);
+      if (preauthorize) {
+        try {
+          if (!authorization || !active) throw new Error("missing pre-authorization; nothing was sent");
+          const { payer, plan, digest, at } = authorization;
+          if (intentDigest(authorizationIntent(payer, cap, plan)) !== digest) throw new Error("pre-authorized intent changed; nothing was sent");
+          assertPreauthorizedBytes(prepared, payer, cap, noun === "deploy");
+          await assertChainIdentity(active.source, "mainnet");
+          process.stdout.write(`pre-authorized at ${at} for intent ${digest}\n`);
+          return;
+        } catch (error) {
+          if (!prepared.journal) await discard();
+          throw error;
+        }
+      }
       if (await confirmOnTerminal({ input: process.stdin, output: process.stdout, token: confirmationToken(prepared), what })) return;
       if (prepared.journal) throw new Error(`not confirmed; nothing was sent, and the journalled ${noun} stays in the journal`);
       await discard();
