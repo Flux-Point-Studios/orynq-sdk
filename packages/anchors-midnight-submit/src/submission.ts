@@ -156,7 +156,7 @@ export function confirmedSends(journalling: Journalling, key: AnchorKey, what: s
         // An attempt confirmed at the same moment wrote its row first, and the journal answered
         // with it, unsent.
         if (journalled.txHash !== prepared.txHash) await refuse(journalled);
-        return await landedRow(past !== false ? { ...journalling, rebroadcastMillis: undefined } : journalling, key, journalled);
+        return await landedRow(past === true ? { ...journalling, rebroadcastMillis: undefined } : journalling, key, journalled);
       } catch (error) {
         throw retired(prepared.txHash) ? new Error(EXPIRED) : error;
       }
