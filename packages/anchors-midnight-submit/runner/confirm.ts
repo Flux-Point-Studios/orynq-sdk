@@ -1,7 +1,7 @@
 // What an unattended confirmation of a mainnet tool's prompt rests on: the intent deci approved,
 // in the shape the terminal wrappers have shown him since 2026-10-16, checked fact by fact against
 // the summary deploy-mainnet or anchor-mainnet prints for the final bytes, and the pseudo-terminal
-// that runs the unchanged tool and types its token only when every fact matches. The runner
+// that runs the reviewed tool and types its token only when every fact matches. The runner
 // confirms through this module, and the terminal wrappers can call it in place of their own
 // checks (README.md).
 import { spawn } from "node:child_process";
@@ -90,6 +90,7 @@ export interface Decision {
   problems: string[];
   txHash?: string;
   fee?: bigint;
+  validUntil?: string;
 }
 
 // The value of the summary row `label`: the text after its column, from the row's last occurrence.
@@ -112,9 +113,11 @@ function paymentProblems(row: ReturnType<typeof rows>, payer: string, maxFeeDust
   if (row("paid from") !== payer) problems.push(`payer is ${shown(row("paid from"))}`);
   const fee = parseDust(/^(\S+) DUST/.exec(row("fee (declared)") ?? "")?.[1] ?? "");
   if (fee === null || fee > parseDust(maxFeeDust)!) problems.push(`fee is ${shown(row("fee (declared)"))}, cap ${maxFeeDust} DUST`);
+  const validUntil = row("valid until");
+  if (!validUntil || !Number.isFinite(Date.parse(validUntil))) problems.push(`valid until is ${shown(validUntil)}`);
   const txHash = row(txRow);
   if (!txHash || !/^[0-9a-f]{64}$/.test(txHash) || !txHash.startsWith(token)) problems.push(`the token ${token} does not name the summarized transaction ${txHash ?? "(none)"}`);
-  return { problems, ...(txHash ? { txHash } : {}), ...(fee === null ? {} : { fee }) };
+  return { problems, ...(txHash ? { txHash } : {}), ...(fee === null ? {} : { fee }), ...(validUntil ? { validUntil } : {}) };
 }
 
 // Checks the summary deploy-mainnet printed before asking for the DEPLOY token `token` (its 16 hex

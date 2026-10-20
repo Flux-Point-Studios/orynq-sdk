@@ -5,14 +5,17 @@
 // rerun shows the bytes a journal still holds, which the runner confirms again as the same
 // transaction, and the runner confirms other bytes for a transaction only once the journal holds
 // every earlier one failed or never held it (so never sent it).
-import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { readAnchorPlan } from "../src/anchor-plan.js";
 import { formatDust, parseDust } from "../src/preflight.js";
-import { checkAnchorSummary, checkDeploySummary, driveTool, type AnchorsIntent, type Decision, type DeployIntent } from "./confirm.js";
+import { checkAnchorSummary, checkDeploySummary, driveTool, intentEntries, type AnchorsIntent, type Decision, type DeployIntent } from "./confirm.js";
 import { admit, confirmedDust, type Admitted } from "./gate.js";
 import { LIMITS } from "./limits.js";
 import { fillPlan, landedDeploy } from "./plan.js";
-import { audit, ensureRunnerRoot, readStatus, runnerFiles, writeStatus, type RunnerPaths, type Status } from "./state.js";
+import { audit, ensureRunnerRoot, flushDirectory, readAudit, readStatus, runnerFiles, writeStatus, type RunnerPaths, type Status } from "./state.js";
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
@@ -26,7 +29,7 @@ export interface RunOptions {
   id: string;
   // The reviewed tool's command for the intent's action, given the plan anchors are written from;
   // it runs in `cwd` with `env`.
-  tool: (action: Admitted["action"], plan?: string) => string[];
+  tool: (action: Admitted["action"], plan?: string, planSha256?: string) => string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
   backoffMs?: readonly number[];
@@ -56,7 +59,10 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
   // answering NO, spends the approval.
   const finish = (state: "done" | "refused" | "expired", reason?: string, spent = false): Status => {
     const at = iso(Date.now());
-    if (spent) writeFileSync(files.used(id), JSON.stringify({ at, outcome: state, ...(reason ? { reason } : {}) }), { mode: 0o600, flag: "wx" });
+    if (spent) {
+      writeFileSync(files.used(id), JSON.stringify({ at, outcome: state, ...(reason ? { reason } : {}) }), { mode: 0o600, flag: "wx", flush: true });
+      flushDirectory(dirname(files.used(id)));
+    }
     save({ state, next_attempt_at: undefined, ...(reason ? { refusals: [...status.refusals, { at, reason }] } : {}) });
     audit(root, { intent: id, event: state, ...(reason ? { reason } : {}) });
     return status;
@@ -68,11 +74,21 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
     if (verdict.approvalSha256) save({ approval_sha256: verdict.approvalSha256 });
     return finish(verdict.expired ? "expired" : "refused", verdict.reason);
   }
-  const { action, intent } = verdict;
+  const { action, intent, intentSha256, approvalSha256: originalApproval } = verdict;
+  const recovered = new Map(status.transactions.map((t) => [t.tx_hash, t]));
+  for (const event of readAudit(root)) {
+    if (event.event !== "confirm" || event.intent !== id || recovered.has(String(event.tx_hash))) continue;
+    if (typeof event.approval_sha256 !== "string" || typeof event.item !== "string" || typeof event.tx_hash !== "string" || typeof event.fee_dust !== "string") {
+      return finish("refused", "a confirmation record lacks its approval identity or transaction facts");
+    }
+    recovered.set(event.tx_hash, { item: event.item, tx_hash: event.tx_hash, fee_dust: event.fee_dust, confirmed_at: event.at, approval_sha256: event.approval_sha256, ...(typeof event.valid_until === "string" ? { valid_until: event.valid_until } : {}) });
+  }
+  status.transactions = [...recovered.values()];
   save({ action, state: "admitted", approval_sha256: verdict.approvalSha256, expires_at: verdict.approval.expires_at });
 
   // Anchors go to the registry deploy-mainnet's journal holds landed, once it does.
   let plan: string | undefined;
+  let planSha256: string | undefined;
   let registry = "";
   if (action === "anchors") {
     const anchors = intent as AnchorsIntent;
@@ -92,12 +108,17 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
     } else {
       let written: boolean;
       try {
-        written = fillPlan(anchors.plan, registry, paths.planOut);
+        written = fillPlan(anchors.plan, registry, paths.planOut, anchors.planSha256);
       } catch (error) {
         return finish("refused", (error as Error).message);
       }
       plan = paths.planOut;
       audit(root, { intent: id, event: "plan", plan, registry, written });
+    }
+    planSha256 = createHash("sha256").update(readFileSync(plan)).digest("hex");
+    const parsed = readAnchorPlan(plan, planSha256);
+    if (parsed.registry !== registry || JSON.stringify(intentEntries(parsed)) !== JSON.stringify(anchors.entries)) {
+      return finish("refused", "the execution plan differs from the approved entries or landed registry");
     }
   }
 
@@ -106,6 +127,7 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
   for (;;) {
     verdict = admit(paths, id, Date.now());
     if (!verdict.ok) return finish(verdict.expired ? "expired" : "refused", verdict.reason);
+    if (verdict.intentSha256 !== intentSha256 || verdict.approvalSha256 !== originalApproval) return finish("refused", "the intent or approval changed during the run");
     const { approvalSha256, expiresAt, approval } = verdict;
     const attempt = status.attempt + 1;
     save({ state: "running", attempt, next_attempt_at: undefined });
@@ -116,6 +138,7 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
     let refusal: string | undefined;
     let expired = false;
     let lastLine = "";
+    const confirmedItems = new Set<string>();
     // The runner's answer at a prompt: the summary matches the intent, the approval still holds,
     // and other bytes for a transaction confirmed before come only after the journal let go of
     // those, within the confirmations per transaction and the daily cap.
@@ -127,8 +150,11 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
       if (!current.ok) {
         problems.push(`the approval no longer holds: ${current.reason}`);
         expired ||= current.expired === true;
+      } else if (current.intentSha256 !== intentSha256 || current.approvalSha256 !== originalApproval) {
+        problems.push("the intent or approval changed during the run");
       }
       const item = check.item ?? "an unnamed transaction";
+      if (confirmedItems.has(item)) problems.push("already confirmed in this attempt");
       const earlier = status.transactions.filter((t) => t.item === item);
       const resumed = earlier.some((t) => t.tx_hash === check.txHash);
       if (problems.length === 0 && !resumed) {
@@ -138,17 +164,27 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
           const held = journalState(journal, t.tx_hash);
           if (held !== null && held !== "failed") problems.push(`the journal holds ${t.tx_hash}, confirmed for it earlier, ${held}; other bytes could land it twice`);
         }
-        const spent = confirmedDust(root, at - DAY);
-        if (spent + check.fee! > dailyCap) problems.push(`${formatDust(spent)} DUST confirmed in the last 24 h and this transaction's ${formatDust(check.fee!)} DUST come to more than the ${LIMITS.maxDustPer24Hours} DUST daily cap`);
+      }
+      if (problems.length === 0) {
+        const spent = confirmedDust(root, at - DAY, undefined, check.txHash);
+        if (spent + check.fee! > dailyCap) problems.push(`${formatDust(spent)} DUST reserved for the rolling 24 h window and this transaction's ${formatDust(check.fee!)} DUST come to more than the ${LIMITS.maxDustPer24Hours} DUST daily cap`);
       }
       if (problems.length > 0) {
         refusal ??= `${item}: ${problems.join("; ")}`;
         audit(root, { intent: id, event: "no", item, tx_hash: check.txHash ?? null, problems });
         return { ...check, problems };
       }
+      confirmedItems.add(item);
+      audit(root, { intent: id, event: "confirm", item, tx_hash: check.txHash, fee_dust: formatDust(check.fee!), valid_until: check.validUntil, resumed, approval_sha256: approvalSha256 });
+      if (!resumed) save({ transactions: [...status.transactions, { item, tx_hash: check.txHash!, fee_dust: formatDust(check.fee!), confirmed_at: iso(at), approval_sha256: approvalSha256, valid_until: check.validUntil! }] });
+      if (Date.now() >= expiresAt) {
+        expired = true;
+        refusal = `${item}: the approval expired before confirmation was recorded`;
+        const problems = [refusal];
+        audit(root, { intent: id, event: "no", item, tx_hash: check.txHash, problems });
+        return { ...check, problems };
+      }
       confirmed = true;
-      audit(root, { intent: id, event: "confirm", item, tx_hash: check.txHash, fee_dust: formatDust(check.fee!), resumed });
-      if (!resumed) save({ transactions: [...status.transactions, { item, tx_hash: check.txHash!, fee_dust: formatDust(check.fee!), confirmed_at: iso(at), approval_sha256: approvalSha256 }] });
       return check;
     };
     const onText = (text: string) => {
@@ -157,7 +193,10 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
       if (line) save({ last_progress: (lastLine = line) });
     };
 
-    const run = driveTool({ command: tool(action, plan), cwd, env, verb: action === "deploy" ? "DEPLOY" : "ANCHOR", decide, onText });
+    // Keep wallet access and confirmation accounting serialized until the tool exits.
+    appendFileSync(files.executionLock, "", { mode: 0o600 });
+    const command = ["flock", "--exclusive", files.executionLock, ...tool(action, plan, planSha256)];
+    const run = driveTool({ command, cwd, env, verb: action === "deploy" ? "DEPLOY" : "ANCHOR", decide, onText });
     // At expiry a tool that has confirmed nothing is stopped; one that has goes on to finish what it sends.
     let stopped = false;
     const timer = setTimeout(() => {
@@ -165,10 +204,16 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
       stopped = true;
       run.stop();
     }, Math.max(0, expiresAt - Date.now()));
-    const { code } = await run.exited;
+    const { code, answers } = await run.exited;
     clearTimeout(timer);
     audit(root, { intent: id, event: "run-end", attempt, code });
 
+    if (!refusal) {
+      for (const answer of answers.filter((a) => !a.confirmed)) {
+        refusal ??= answer.problems.join("; ");
+        audit(root, { intent: id, event: "no", problems: answer.problems });
+      }
+    }
     if (refusal) return finish(expired ? "expired" : "refused", refusal, !expired);
     if (stopped) return finish("expired", `the approval expired at ${approval.expires_at} before attempt ${attempt} confirmed anything; the tool was stopped`);
     if (code === 0) return finish("done", undefined, true);

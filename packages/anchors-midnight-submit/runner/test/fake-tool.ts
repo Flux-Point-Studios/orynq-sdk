@@ -20,6 +20,7 @@ export interface FakeTool {
   failsAfterConfirm?: number;
   syncMs?: number;
   afterConfirmMs?: number;
+  repeatPrompt?: boolean;
   // Facts every summary shows.
   chain?: Partial<ChainFacts>;
   payer?: string;
@@ -92,12 +93,14 @@ if (fake.kind === "deploy") {
     process.stderr.write(`${name}: not confirmed; the prepared bytes were discarded and nothing was sent\n`);
     process.exit(1);
   }
+  if (fake.repeatPrompt && !(await prompt("deploy", prepared, deploySummary({ chain, wallet, dust, prepared })))) process.exit(1);
   await afterConfirm();
   process.stdout.write(`\ndeployed and read back from the node: ${JSON.stringify({ network: "mainnet", address: prepared.address, txHash: prepared.txHash })}\n`);
   process.exit(0);
 }
 
-const plan = readAnchorPlan(process.argv[process.argv.indexOf("--plan") + 1]!);
+const pin = process.argv.indexOf("--plan-sha256");
+const plan = readAnchorPlan(process.argv[process.argv.indexOf("--plan") + 1]!, pin < 0 ? undefined : process.argv[pin + 1]);
 let n = 0;
 for (const planned of plan.entries) {
   const change = fake.anchors?.[planned.label] ?? {};

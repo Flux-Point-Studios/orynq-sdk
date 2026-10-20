@@ -81,7 +81,7 @@ describe("checkDeploySummary", () => {
   const check = (change: Record<string, unknown> = {}, facts = chain, token = TX.slice(0, 16)) => checkDeploySummary(intent, deploySummary({ chain: facts, wallet, dust, prepared: { ...prepared, ...change } as PreparedDeploy }), token);
 
   it("finds nothing wrong with the summary of exactly the authorized deploy, and reads its transaction and fee", () => {
-    expect(check()).toEqual({ item: "deploy", problems: [], txHash: TX, fee: 2n });
+    expect(check()).toEqual({ item: "deploy", problems: [], txHash: TX, fee: 2n, validUntil: prepared.ttl.toISOString() });
   });
 
   it("accepts a deploy the journal resumed and a fee at the cap", () => {
@@ -109,6 +109,13 @@ describe("checkDeploySummary", () => {
     expect(check({}, chain, "ab".repeat(7) + "ac").problems).toEqual([`the token abababababababac does not name the summarized transaction ${TX}`]);
   });
 
+  it("refuses a summary without a valid transaction deadline", () => {
+    const summary = deploySummary({ chain, wallet, dust, prepared });
+    for (const text of [summary.replace(/^valid until .*\n/m, ""), summary.replace(prepared.ttl.toISOString(), "not-a-time")]) {
+      expect(checkDeploySummary(intent, text, TX.slice(0, 16)).problems).toEqual([expect.stringContaining("valid until")]);
+    }
+  });
+
   it("names every fact a summary lacks", () => {
     expect(checkDeploySummary(intent, "Midnight Mainnet, runtime 1000300, ledger 8.1.1. Syncing the wallet...", TX.slice(0, 16)).problems).toEqual([
       'network is "(none)"',
@@ -117,6 +124,7 @@ describe("checkDeploySummary", () => {
       'anchor_hiding verifier key is "(none)"',
       'payer is "(none)"',
       'fee is "(none)", cap 0.01 DUST',
+      'valid until is "(none)"',
       "the token abababababababab does not name the summarized transaction (none)",
     ]);
   });
@@ -150,9 +158,9 @@ describe("checkAnchorSummary", () => {
   const summary = (change: Partial<PreparedAnchor> = {}, label = "proof-run-1", entry: EntryHashes = public1!) => anchorSummary({ entry, chain, wallet, dust, label, prepared: { ...base, ...change } });
 
   it("finds nothing wrong with each summary of exactly a planned anchor, and reads its label, transaction and fee", () => {
-    expect(checkAnchorSummary(intent, REGISTRY, summary(), TX.slice(0, 16))).toEqual({ item: "proof-run-1", problems: [], txHash: TX, fee: 2n });
+    expect(checkAnchorSummary(intent, REGISTRY, summary(), TX.slice(0, 16))).toEqual({ item: "proof-run-1", problems: [], txHash: TX, fee: 2n, validUntil: base.ttl.toISOString() });
     const hidden = summary({ kind: 2, commitment: "99".repeat(32), attribute: "44".repeat(32) }, "proof-run-1-hidden", ENTRIES[1]);
-    expect(checkAnchorSummary(intent, REGISTRY, hidden, TX.slice(0, 16))).toEqual({ item: "proof-run-1-hidden", problems: [], txHash: TX, fee: 2n });
+    expect(checkAnchorSummary(intent, REGISTRY, hidden, TX.slice(0, 16))).toEqual({ item: "proof-run-1-hidden", problems: [], txHash: TX, fee: 2n, validUntil: base.ttl.toISOString() });
   });
 
   it.each<[string, Partial<PreparedAnchor>, EntryHashes | undefined, RegExp]>([

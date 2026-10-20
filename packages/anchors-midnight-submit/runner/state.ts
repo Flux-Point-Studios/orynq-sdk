@@ -1,5 +1,5 @@
-import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { ensurePrivateDir } from "../src/keys.js";
 import { ANCHORS_JOURNAL, DEPLOY_JOURNAL, STATE, home } from "../scripts/mainnet-session.js";
 
@@ -26,11 +26,23 @@ export const runnerFiles = (root: string) => ({
   approvals: join(root, "approvals"),
   statuses: join(root, "status"),
   audit: join(root, "audit.jsonl"),
+  executionLock: join(root, "execution.lock"),
 });
 
 // Creates the state root and its directories owner-only, refusing any that group or others can enter.
 export function ensureRunnerRoot(root: string): void {
   for (const dir of [root, ...["intents", "approvals", "used", "status", "logs"].map((d) => join(root, d))]) ensurePrivateDir(dir);
+  flushDirectory(root);
+  flushDirectory(dirname(root));
+}
+
+export function flushDirectory(path: string): void {
+  const fd = openSync(path, "r");
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 export type State = "admitted" | "waiting-for-deploy" | "running" | "retrying" | "done" | "refused" | "expired";
@@ -46,7 +58,7 @@ export interface Status {
   next_attempt_at?: string | undefined;
   last_progress?: string;
   // Every transaction the runner confirmed for this intent, under the approval named.
-  transactions: { item: string; tx_hash: string; fee_dust: string; confirmed_at: string; approval_sha256: string }[];
+  transactions: { item: string; tx_hash: string; fee_dust: string; confirmed_at: string; approval_sha256: string; valid_until?: string }[];
   refusals: { at: string; reason: string }[];
   updated_at: string;
 }
@@ -60,8 +72,9 @@ export function readStatus(root: string, id: string): Status | null {
 export function writeStatus(root: string, status: Status): Status {
   const file = runnerFiles(root).status(status.intent_id);
   const written = JSON.parse(JSON.stringify({ ...status, updated_at: new Date().toISOString() })) as Status;
-  writeFileSync(`${file}.${process.pid}.next`, `${JSON.stringify(written, null, 1)}\n`, { mode: 0o600 });
+  writeFileSync(`${file}.${process.pid}.next`, `${JSON.stringify(written, null, 1)}\n`, { mode: 0o600, flush: true });
   renameSync(`${file}.${process.pid}.next`, file);
+  flushDirectory(dirname(file));
   return written;
 }
 
@@ -73,7 +86,8 @@ export interface AuditEvent {
 
 // Appends one line to the audit log, which is only ever appended to.
 export function audit(root: string, event: AuditEvent): void {
-  appendFileSync(runnerFiles(root).audit, `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`, { mode: 0o600 });
+  appendFileSync(runnerFiles(root).audit, `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`, { mode: 0o600, flush: true });
+  flushDirectory(root);
 }
 
 // Every line of the audit log; a line that does not read back is an error, never skipped.

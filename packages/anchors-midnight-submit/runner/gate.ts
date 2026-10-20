@@ -47,12 +47,16 @@ const refuse = (reason: string): never => {
   throw new Error(reason);
 };
 
-// The DUST, in SPECK, the audit log records as confirmed after `after` (ms), each transaction
-// counted once, leaving out intent `except`'s own.
-export function confirmedDust(root: string, after: number, except?: string): bigint {
+// A reservation lasts through the later of confirmation and transaction expiry, plus the window.
+export function confirmedDust(root: string, after: number, except?: string, exceptTransaction?: string): bigint {
   const fees = new Map<string, bigint>();
   for (const e of readAudit(root)) {
-    if (e.event === "confirm" && e.intent !== except && Date.parse(e.at) > after) fees.set(String(e.tx_hash), parseDust(String(e.fee_dust))!);
+    if (e.event !== "confirm" || e.intent === except || e.tx_hash === exceptTransaction) continue;
+    const confirmedAt = Date.parse(e.at);
+    const validUntil = Date.parse(String(e.valid_until ?? e.at));
+    const fee = parseDust(String(e.fee_dust));
+    if (!Number.isFinite(confirmedAt) || !Number.isFinite(validUntil) || fee === null) throw new Error("the confirmation audit holds an invalid time or fee");
+    if (Math.max(confirmedAt, validUntil) > after) fees.set(String(e.tx_hash), fee);
   }
   return [...fees.values()].reduce((sum, fee) => sum + fee, 0n);
 }
@@ -71,7 +75,7 @@ function plannedAnchors(paths: RunnerPaths, intent: AnchorsIntent) {
   if (!existsSync(intent.plan)) refuse(`no plan ${intent.plan}`);
   const planSha256 = sha256(readFileSync(intent.plan));
   if (planSha256 !== intent.planSha256) refuse(`${intent.plan} hashes to ${planSha256}, not the intent's planSha256 ${intent.planSha256}`);
-  const plan = readAnchorPlan(intent.plan);
+  const plan = readAnchorPlan(intent.plan, intent.planSha256);
   if (!same(intentEntries(plan), intent.entries)) refuse(`the intent's entries are not exactly those of ${intent.plan}`);
   if (/^[0-9a-f]{64}$/.test(intent.registry)) {
     if (plan.registry !== intent.registry) refuse(`the anchors' registry ${intent.registry} is not the registry ${intent.plan} names, ${plan.registry}`);
@@ -87,7 +91,7 @@ function approvalOf(paths: RunnerPaths, id: string, sha: string, now: number) {
   if (!existsSync(file)) refuse(`no approval ${file}`);
   const text = readFileSync(file);
   const approvalSha256 = sha256(text);
-  const approval = readJsonFile(file) as Approval;
+  const approval = readJsonFile(file, approvalSha256) as Approval;
   if (typeof approval !== "object" || approval === null || Array.isArray(approval)) refuse("the approval is not a JSON object");
   const unknown = Object.keys(approval).find((field) => !APPROVAL_FIELDS.includes(field));
   if (unknown !== undefined) refuse(`the approval has field ${JSON.stringify(unknown)}; it takes ${APPROVAL_FIELDS.slice(0, -1).join(", ")} and ${APPROVAL_FIELDS.at(-1)}`);
@@ -139,7 +143,7 @@ export function admit(paths: RunnerPaths, id: string, now: number): Admitted | R
     const others = confirmedDust(paths.root, now - 24 * HOUR, id);
     const most = maxFee * BigInt(admitted.transactions);
     if (others + most > parseDust(LIMITS.maxDustPer24Hours)!) {
-      refuse(`${formatDust(others)} DUST confirmed in the last 24 h by other intents and this intent's maximum ${formatDust(most)} DUST come to more than the ${LIMITS.maxDustPer24Hours} DUST daily cap`);
+      refuse(`${formatDust(others)} DUST reserved by other intents for the rolling 24 h window and this intent's maximum ${formatDust(most)} DUST come to more than the ${LIMITS.maxDustPer24Hours} DUST daily cap`);
     }
     return { ok: true, id, intent, approval: approved.approval, intentSha256: sha, approvalSha256, expiresAt: approved.expiresAt, action: admitted.action, transactions: admitted.transactions, maxFee };
   } catch (error) {

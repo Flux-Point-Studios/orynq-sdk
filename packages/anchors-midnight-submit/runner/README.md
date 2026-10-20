@@ -2,7 +2,7 @@
 
 Runs the orynq-anchor-registry deploy, and then the anchors into that registry, on Midnight
 mainnet without anyone at a terminal, once deci has approved the exact intent in chat. It runs the
-reviewed tools, `scripts/deploy-mainnet.ts` and `scripts/anchor-mainnet.ts`, unchanged in a
+reviewed tools, `scripts/deploy-mainnet.ts` and `scripts/anchor-mainnet.ts`, in a
 pseudo-terminal, the way the terminal wrappers in `~/orynq-midnight-mainnet-proof` have since
 2026-10-16. At each confirmation prompt it types the token only when the tool's summary matches
 the approved intent fact by fact and every hard limit below still holds. Otherwise it answers
@@ -39,6 +39,7 @@ in it):
 | `status/<id>.json` | the runner | `state`, `attempt`, `next_attempt_at`, `last_progress` (the tool's last output line), `transactions` (each confirmed transaction hash, its declared fee and the approval it was confirmed under), `refusals` (each with its reason) |
 | `audit.jsonl` | the runner | Append-only; see below |
 | `logs/<id>.log` | the runner | The tool's output, attempt by attempt |
+| `execution.lock` | `flock` | Serializes tool attempts across intents, including wallet access and confirmation accounting. Never remove this file while a runner is active. |
 
 The runner executes an intent only while all of these hold (`gate.ts`). It checks them before
 every attempt and again at every prompt, and names the first that fails:
@@ -51,11 +52,18 @@ every attempt and again at every prompt, and names the first that fails:
 5. `used/<id>` does not exist.
 6. The action is allowlisted, and every fact `limits.json` pins matches, with no other field.
 7. The intent's fee cap is at or below the per-transaction cap.
-8. The DUST other intents confirmed in the last 24 hours, plus this intent's maximum, stays at or
+8. Other intents' DUST reservations for the rolling 24-hour window, plus this intent's maximum, stay at or
    below the daily cap. The maximum is its fee cap times its transactions.
 
 A refusal at the gate runs nothing and leaves the approval unused. Dispatch does not restart an
 intent that finished under the same approval file, so a corrected approval runs again.
+
+The full intent and approval digests are pinned for the run. A replacement stops that run;
+an approval's digest and parsed contents must come from identical bytes. The source plan is
+checked against its digest while parsing. The execution plan is checked against the approved
+entries, and its digest is passed as `--plan-sha256`; the anchor tool checks and parses those
+same bytes before connecting or opening a wallet. This also binds the private inputs of kind-2
+anchors, which their public summaries do not reveal.
 
 ## Hard limits
 
@@ -67,9 +75,9 @@ intent that finished under the same approval file, so a corrected approval runs 
 | `network` | Midnight Mainnet, genesis `1941ca8e…2854` | Every intent's network, and the network row of every summary |
 | `payer` | `mn_addr1hdg7…sq` | The wallet every intent and every summary's `paid from` names |
 | `maxFeeDustPerTransaction` | 0.01 | Each intent's fee cap, the wrappers' `--max-fee-dust` default. The deploy declared 2 SPECK on 2026-10-16. |
-| `maxDustPer24Hours` | 0.1 | Ten per-transaction caps. It counts every transaction the runner confirmed in the last 24 hours, at its declared fee, once per transaction hash, whether or not it landed. |
+| `maxDustPer24Hours` | 0.1 | Ten per-transaction caps. Each confirmation reserves its declared fee until 24 hours after the later of confirmation and the transaction's validity deadline, once per transaction hash, whether or not it landed. This covers a transaction that lands after confirmation. |
 | `maxApprovalHours` | 24 | How long one approval may last |
-| `maxConfirmationsPerTransaction` | 3 | How many sets of bytes the runner confirms for one transaction under one approval. A second set comes only after the journal retired the first: chain time passed its TTL plus five minutes and it never landed. Mainnet's block producers have been refusing contract deploys into their pools (midnightntwrk/servicedesk#257), so a deploy can expire unlanded; after three, the runner stops and reports. |
+| `maxConfirmationsPerTransaction` | 3 | How many sets of bytes the runner confirms for one transaction under one approval. A second set comes only after the journal retired the first: chain time passed its TTL plus five minutes and it never landed. After three sets, the runner stops and reports. |
 | `deploy` | `action`, `authority` (`committee [] (0 members), threshold 1, counter 0`), `verifierKeys` (`anchor`, `anchor_hiding`) | Allowlist (a): exactly the registry deploy of intent bf35fa0c |
 | `anchors` | `action`, `authorKeys` (the FPS relay author key), `maxEntriesPerApproval` 8 | Allowlist (b): anchors into the registry deploy-mainnet's journal holds landed, through `anchor` (kind 1) and `anchor_hiding` (kind 2), with the commitments the plan's entries derive. One deploy and eight anchors at the cap fit in the daily cap. |
 
@@ -89,7 +97,7 @@ under a salt only the salt key derives, so the runner cannot recompute it.
 | `orynq-midnight-runner@<id>.service` | Runs intent `<id>`. Never enabled; dispatch starts it. |
 | `orynq-midnight-runner-dispatch.path` | Starts dispatch whenever a file in `approvals/` changes |
 | `orynq-midnight-runner-dispatch.timer` | Starts dispatch two minutes after it starts (at boot, once enabled) and every 15 minutes after, so a run that a reboot or a crash ended resumes while its approval holds |
-| `orynq-midnight-runner-dispatch.service` | `orynq-midnight-runner dispatch`: starts the unit of every approval that is not used, finished under the same approval file, or expired, and is not already running |
+| `orynq-midnight-runner-dispatch.service` | `orynq-midnight-runner dispatch`: starts the unit of every approval that is not used or finished under the same approval file, and is not already running. The run records an expired approval's refusal. |
 
 The units run `runner/orynq-midnight-runner` from
 `~/.local/lib/orynq-midnight-runner/checkout`, a symlink to the reviewed checkout, with
@@ -105,8 +113,9 @@ The units run `runner/orynq-midnight-runner` from
    runner then writes `~/orynq-midnight-mainnet-plan.json` from the template with that registry,
    with the checks `fill-registry.mjs` made. The template's registry must be the placeholder,
    anchor-mainnet's parser must accept the plan, and an existing plan must be identical.
-3. The tool runs under util-linux `script`, with the runner's environment, from this package's
-   directory, with its default paths.
+3. The tool waits for the shared util-linux `flock` execution lock, then runs under `script`,
+   with the runner's environment and the package's default paths. Anchors wait for a landed
+   deploy before joining this lock queue. A queued tool remains subject to approval expiry.
 4. At each prompt, the runner checks the summary (`confirm.ts`), the approval, the journal and the
    daily cap, then types the token or `NO`.
 5. A tool that exits 0 finishes the run (`done`), and the approval is used. A `NO` ends it
@@ -125,6 +134,14 @@ only when the journal holds each earlier set `failed`, or holds none of them, wh
 never sent. `test/mainnet.test.ts` shows this with the real `deploy-mainnet` over the offline
 mainnet: a run whose readback fails after the broadcast is retried, and the node is handed the
 deploy exactly once.
+
+Each attempt confirms an item at most once. Every `NO`, including a prompt for the wrong action,
+ends the run. Confirmation records include the approval digest and are flushed before the
+token is written. Status and used markers are flushed too, including their directory entries;
+a missing status snapshot is rebuilt from the audit's confirmation history. The shared execution
+lock prevents two tools from passing the daily-cap check concurrently. Resumed bytes need fresh
+headroom when their earlier reservation has aged out. A missing or invalid validity deadline
+gets `NO` rather than an unbounded or shortened reservation.
 
 **Expiry.** No attempt starts after the approval expires. A tool that has confirmed nothing is
 stopped at expiry. Every prompt after expiry gets `NO`. A tool that already confirmed a
@@ -175,7 +192,7 @@ git -C ~/work/orynq-sdk fetch origin
 git -C ~/work/orynq-sdk worktree add --detach ~/work/orynq-midnight-runner-live "$REVIEWED"
 cd ~/work/orynq-midnight-runner-live
 pnpm install --frozen-lockfile --filter "@fluxpointstudios/orynq-sdk-anchors-midnight-submit..."
-pnpm --filter "@fluxpointstudios/orynq-sdk-anchors-midnight-submit^..." build
+nice -n 10 pnpm --filter "@fluxpointstudios/orynq-sdk-anchors-midnight-submit^..." build
 packages/anchors-midnight-submit/runner/systemd/verify.sh
 
 install -d -m 700 ~/.local/lib/orynq-midnight-runner ~/.local/lib/orynq-midnight-runner/bin
@@ -214,6 +231,34 @@ mv "approvals/.$id.tmp" "approvals/$id.json"
 `checkAnchorSummary` check a summary against an intent. `driveTool` runs a tool under `script` and
 answers its prompts. A wrapper that keeps its own terminal pre-authorization calls `driveTool` with
 `decide` set to the matching check, and keeps a set of confirmed labels.
+During installation, replace each proof-directory wrapper's local `checks` function and PTY loop
+with imports of these functions from the reviewed checkout. Keep its initial terminal and
+agent-environment guards, its `PREAUTHORIZE` prompt, its log, and its after-deploy wait. For
+`auto-anchor`, keep the confirmed-label set in the `decide` callback. This migration is performed
+by the CTO session; the review does not modify the proof-directory copies.
+
+## First intents
+
+The fixtures' compact intent JSON matches the intent objects on the first `authorized` lines of
+the two 2026-10-20 wrapper logs. Installation copies only the intent objects; those historical terminal
+authorizations do not create chat approvals.
+
+| Intent | SHA-256 of compact JSON |
+|---|---|
+| `bf35fa0c` | `bf35fa0c0d16371a78ad26743e9d2691f6fca549571e3fa63816f0010b66a715` |
+| `34941c71` | `34941c719ec6bd536b0d5a45fa249ca4135e92bd0ee7fecaa6bbd36ca72604c0` |
+
+From the installed checkout, after review:
+
+```sh
+for id in bf35fa0c 34941c71; do
+  install -m 600 "packages/anchors-midnight-submit/runner/test/fixtures/$id.json" \
+    "$HOME/.local/state/orynq-midnight/runner/intents/$id.json"
+done
+```
+
+The anchors fixture still refers to `/home/deci/orynq-midnight-mainnet-plan.template.json` and
+its existing digest. A changed template requires a new intent and a new chat approval.
 
 ## Tests
 

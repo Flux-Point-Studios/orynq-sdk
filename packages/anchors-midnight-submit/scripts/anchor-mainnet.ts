@@ -49,6 +49,7 @@ const { option, run, requireDustFloor, confirm } = mainnetScript({
   does: "writes mainnet anchors",
   flags: {
     plan: undefined,
+    "plan-sha256": "",
     "deploy-journal": DEPLOY_JOURNAL,
     journal: ANCHORS_JOURNAL,
     "author-key": `${SECRETS}/author-relay.key`,
@@ -117,7 +118,7 @@ async function finalOnNode(source: MidnightSource, operator: RegistryOperator, l
 }
 
 await run(async (connect) => {
-  const plan = readAnchorPlan(option("plan"));
+  const plan = readAnchorPlan(option("plan"), option("plan-sha256") || undefined);
   assertFpsRegistry("mainnet", plan.registry, option("deploy-journal"));
   const resultsPath = option("results");
   // The results file as it stands now: another run may have added to it since this one started.

@@ -19,11 +19,11 @@ export function landedDeploy(deployJournal: string): { address: string; txHash: 
 // Writes `template`'s plan for `registry` to `out`, owner-only, once anchor-mainnet's own parser
 // accepts it; true when written, false when `out` already holds exactly that plan. A template
 // whose registry is not the placeholder, and an `out` holding anything else, are refused.
-export function fillPlan(template: string, registry: string, out: string): boolean {
+export function fillPlan(template: string, registry: string, out: string, expectedSha256?: string): boolean {
   const refuse = (reason: string): never => {
     throw new Error(`${reason}; nothing was written`);
   };
-  const json = readJsonFile(template) as { registry?: unknown };
+  const json = readJsonFile(template, expectedSha256) as { registry?: unknown };
   if (json.registry !== PLACEHOLDER) refuse(`${template} names registry ${String(json.registry)}, not the placeholder ${PLACEHOLDER}`);
   const plan = JSON.stringify({ ...json, registry }, null, 2);
   if (existsSync(out)) {

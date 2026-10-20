@@ -101,7 +101,7 @@ if (command === "status") {
     id: id!,
     cwd: PACKAGE,
     env: process.env,
-    tool: (action, plan) => [process.execPath, "--import", "tsx", ...(action === "deploy" ? ["scripts/deploy-mainnet.ts"] : ["scripts/anchor-mainnet.ts", "--plan", plan!])],
+    tool: (action, plan, planSha256) => [process.execPath, "--import", "tsx", ...(action === "deploy" ? ["scripts/deploy-mainnet.ts"] : ["scripts/anchor-mainnet.ts", "--plan", plan!, "--plan-sha256", planSha256!])],
   }).catch((error: Error) => stop(id!, "failed", `the run broke off: ${error.message}`));
   process.stdout.write(`${line(status)}\n`);
 }

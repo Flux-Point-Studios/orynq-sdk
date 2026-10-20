@@ -148,7 +148,7 @@ describe("admit: the approval gate", () => {
     r.confirmed("34941c71", "a2".repeat(32), "0.04");
     expect(admit(r.paths, id, NOW)).toMatchObject({ ok: true });
     r.confirmed("34941c71", "a3".repeat(32), "0.000000000000001");
-    expect(refused(r, id)).toBe("0.090000000000001 DUST confirmed in the last 24 h by other intents and this intent's maximum 0.01 DUST come to more than the 0.1 DUST daily cap");
+    expect(refused(r, id)).toBe("0.090000000000001 DUST reserved by other intents for the rolling 24 h window and this intent's maximum 0.01 DUST come to more than the 0.1 DUST daily cap");
   });
 
   it("counts toward the daily cap each other intent's transaction once, and only within the last 24 hours", () => {

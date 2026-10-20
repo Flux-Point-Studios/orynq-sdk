@@ -30,8 +30,8 @@ const hashField = (value: Record<string, unknown>, name: string, at: string): st
 // Reads a plan, refusing anything it does not define exactly: unknown fields, a kind the registry
 // does not write, an attribute on kind 1 or none on kind 2, a hash that is not 32 bytes, and a
 // label or an anchor that repeats, so each label names one transaction.
-export function readAnchorPlan(path: string): AnchorPlan {
-  const json = readJsonFile(path);
+export function readAnchorPlan(path: string, expectedSha256?: string): AnchorPlan {
+  const json = readJsonFile(path, expectedSha256);
   if (!isObject(json)) throw new Error(`${path}: the plan must be an object`);
   onlyFields(json, ["registry", "entries"], `${path}: `);
   if (typeof json.registry !== "string" || !HEX64.test(json.registry)) throw new Error(`${path}: registry must be 64 lowercase hex characters`);

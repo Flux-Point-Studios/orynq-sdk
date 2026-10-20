@@ -143,7 +143,7 @@ describe("runIntent over the fake tool", () => {
     journalled(r.paths.deployJournal, TX(0xa1), "failed");
     const status = await r.run(id);
     expect(status).toMatchObject({ state: "refused", attempt: 2, transactions: [{ tx_hash: TX(0xa1), fee_dust: "0.01" }] });
-    expect(status.refusals[0]!.reason).toBe("deploy: 0.1 DUST confirmed in the last 24 h and this transaction's 0.01 DUST come to more than the 0.1 DUST daily cap");
+    expect(status.refusals[0]!.reason).toBe("deploy: 0.1 DUST reserved for the rolling 24 h window and this transaction's 0.01 DUST come to more than the 0.1 DUST daily cap");
   });
 
   it("stops once the approval expires between attempts, and does not start another", async () => {
