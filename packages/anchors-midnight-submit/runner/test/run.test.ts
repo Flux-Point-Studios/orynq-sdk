@@ -147,17 +147,29 @@ describe("runIntent over the fake tool", () => {
   });
 
   it("stops once the approval expires between attempts, and does not start another", async () => {
-    const r = runner({ kind: "deploy", syncFailures: 100 }, { backoffMs: [400] });
-    const id = r.approve(DEPLOY, { approved_at: iso(Date.now() - 1000), expires_at: iso(Date.now() + 1500) });
-    const status = await r.run(id);
-    expect(status.state).toBe("expired");
-    expect(status.refusals.at(-1)!.reason).toMatch(/^the approval expire[sd] at \S+/);
-    const runs = r.runs();
-    expect(runs).toBeGreaterThanOrEqual(1);
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    expect(r.runs()).toBe(runs);
+    const r = runner({ kind: "deploy", syncFailures: 100 }, { backoffMs: [2000] });
+    const id = r.approve(DEPLOY);
+    const running = r.run(id);
+    // The approval's expiry passes while the runner waits to retry.
+    while (!r.events(id).includes("retry")) await new Promise((resolve) => setTimeout(resolve, 50));
+    const expiresAt = iso(Date.now());
+    r.approve(DEPLOY, { approved_at: iso(Date.now() - 1000), expires_at: expiresAt });
+    const status = await running;
+    expect(status).toMatchObject({ state: "expired", attempt: 1 });
+    expect(status.refusals.at(-1)!.reason).toBe(`the approval expired at ${expiresAt}`);
+    expect([r.runs(), r.events(id)]).toEqual([1, ["approval-seen", "run-start", "run-end", "retry", "expired"]]);
     expect(r.typed()).toEqual([]);
     expect(existsSync(r.files.used(id))).toBe(false);
+  });
+
+  it("ends at once when the next attempt would start after the approval expires, rather than wait out the backoff", async () => {
+    const r = runner({ kind: "deploy", syncFailures: 100 }, { backoffMs: [60_000] });
+    const id = r.approve(DEPLOY, { approved_at: iso(Date.now() - 1000), expires_at: iso(Date.now() + 30_000) });
+    const started = Date.now();
+    const status = await r.run(id);
+    expect(Date.now() - started).toBeLessThan(30_000);
+    expect(status).toMatchObject({ state: "expired", attempt: 1 });
+    expect(status.refusals.at(-1)!.reason).toMatch(/^the approval expires at \S+, before the next attempt at \S+$/);
   });
 
   it("stops the tool when the approval expires before it confirmed anything", async () => {
@@ -183,8 +195,8 @@ describe("runIntent over the fake tool", () => {
   });
 
   it("leaves a tool that confirmed before the approval expired to finish", async () => {
-    const r = runner({ kind: "deploy", afterConfirmMs: 12_000 });
-    const id = r.approve(DEPLOY, { approved_at: iso(Date.now() - 1000), expires_at: iso(Date.now() + 8000) });
+    const r = runner({ kind: "deploy", afterConfirmMs: 22_000 });
+    const id = r.approve(DEPLOY, { approved_at: iso(Date.now() - 1000), expires_at: iso(Date.now() + 20_000) });
     const status = await r.run(id);
     expect(Date.parse(status.updated_at)).toBeGreaterThan(Date.parse(status.expires_at!));
     expect(status).toMatchObject({ state: "done", attempt: 1, transactions: [{ tx_hash: TX(0xaa) }] });

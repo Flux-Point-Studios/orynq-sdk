@@ -157,6 +157,7 @@ The audit log records:
 - `approval-seen`: every approval a run reads, with its sha256 and the gate's verdict
 - `dispatch`: every unit dispatch starts
 - `refused-start`: every start refused for an agent environment or outside systemd
+- `failed`: every run that broke off on an error; dispatch starts it again while its approval holds
 - `deploy-landed` and `plan`: the anchors' registry, and the plan written for it
 - `run-start` and `run-end`: every attempt, with the tool's exit code
 - `confirm` and `no`: every confirmation, with its transaction hash and declared fee, and every
@@ -225,10 +226,13 @@ answers its prompts. A wrapper that keeps its own terminal pre-authorization cal
 - `gate.test.ts` refuses each failing condition at its boundary.
 - `plan.test.ts` ports `fill-registry.mjs`'s tests.
 - `run.test.ts` covers the run over the fake tool: a match, every mismatch, sync retries, a
-  resumed transaction, the journal guard, three confirmations at most, the daily cap, expiry
-  between and during attempts, a gate refusal, anchors waiting for the deploy, and a mismatched
-  anchor after a confirmed one.
+  resumed transaction, the journal guard (bytes it still holds, bytes it retired, bytes it never
+  held), three confirmations at most, the daily cap, an approval withdrawn during the sync,
+  expiry between attempts, before the next backoff ends and during an attempt, a tool that
+  confirmed before expiry left to finish, a gate refusal, anchors waiting for the deploy, and a
+  mismatched anchor after a confirmed one.
+- `cli.test.ts` covers the agent-environment and systemd refusals, a run that broke off,
+  dispatch, status, check and argument errors.
 - `mainnet.test.ts` runs the real `deploy-mainnet` and `anchor-mainnet` over the offline mainnet:
   a stalled sync retried, a failed readback resumed with one send, a `NO` that sends nothing, and
   anchors written once the deploy journal lands the registry.
-- `cli.test.ts` covers the agent-environment and systemd refusals, dispatch, status and check.
