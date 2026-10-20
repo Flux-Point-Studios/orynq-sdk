@@ -1,10 +1,20 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 
 const require = createRequire(import.meta.url);
 const braces = require('braces');
 const nested = depth => '{'.repeat(depth) + 'a,b' + '}'.repeat(depth);
+
+test('every locked Vite release includes the launch-editor security fix', () => {
+  const lock = readFileSync(new URL('../pnpm-lock.yaml', import.meta.url), 'utf8');
+  const versions = [...lock.matchAll(/^  \/vite@(\d+)\.(\d+)\.(\d+)[(:]/gm)];
+  assert.ok(versions.length > 0, 'the lockfile must resolve Vite');
+  for (const [, major, minor, patch] of versions) {
+    assert.ok(Number(major) > 8 || (Number(major) === 8 && (Number(minor) > 3 || (Number(minor) === 3 && Number(patch) >= 3))), `Vite ${major}.${minor}.${patch} is below the patched 8.3.3 floor (GHSA-587h-7wmj-h5pm)`);
+  }
+});
 
 test('brace parsing rejects nesting beyond the default bound', () => {
   assert.throws(() => braces.parse(nested(101)), /depth/i);
