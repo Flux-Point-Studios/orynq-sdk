@@ -1,20 +1,26 @@
 // What deploy-mainnet and anchor-mainnet share. Before anything is read, the process must carry no
 // Claude Code or Codex environment and its input and output must be a terminal; then the flags, every one
 // of them known; then a node that is Midnight Mainnet, the wallet the mnemonic derives only if it
-// is the recorded one, and the DUST floor whenever confirming may send bytes. Each set of final
-// bytes is sent only after the token naming its transaction hash is typed at that terminal, and
-// every way out closes the wallet before the process exits.
+// is the recorded one, and the DUST floor whenever confirming may send bytes. The wallet syncs from
+// the state file both scripts share, saving it as it goes, so a sync that fails or runs out of time
+// is resumed by the next run. Each set of final bytes is sent only after the token naming its
+// transaction hash is typed at that terminal, and every way out closes the wallet before the
+// process exits.
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
+import { dirname } from "node:path";
 import { midnightSource, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import {
   assertChainIdentity,
   assertHumanTerminal,
   confirmOnTerminal,
   confirmationToken,
+  ensurePrivateDir,
   formatDust,
   readJsonFile,
   networkEndpoints,
   openWallet,
+  syncWithCheckpoints,
   type ChainFacts,
   type OperatorWallet,
   type PreparedAnchor,
@@ -24,16 +30,20 @@ import {
 export const home = homedir();
 // Where the FPS mainnet keys and the deploy wallet's mnemonic live.
 export const SECRETS = `${home}/.secrets/orynq-midnight-mainnet`;
-// Where the mainnet scripts keep their journals and results: deploy-mainnet journals the deploy at
-// DEPLOY_JOURNAL, where anchor-mainnet reads which registry FPS deployed.
+// Where the mainnet scripts keep their journals, results and wallet state: deploy-mainnet journals
+// the deploy at DEPLOY_JOURNAL, where anchor-mainnet reads which registry FPS deployed.
 export const STATE = `${home}/.local/state/orynq-midnight`;
 export const DEPLOY_JOURNAL = `${STATE}/mainnet-deploy.sqlite`;
+
+const MINUTE = 60_000;
+// A from-genesis sync of the mainnet wallet can take more than an hour.
+const SYNC_TIMEOUT_MS = 180 * MINUTE;
 
 export interface Mainnet {
   source: MidnightSource;
   chain: ChainFacts;
   // Opens the wallet the mnemonic derives, refusing one that is not the recorded wallet, and
-  // waits until it has synced.
+  // waits until it has synced, resuming from and saving to the shared wallet state file.
   syncWallet(): Promise<OperatorWallet>;
 }
 
@@ -54,10 +64,11 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
     fail((error as Error).message);
   }
 
-  type Flag = F | "mnemonic" | "wallet-record" | "blockfrost" | "zk" | "dust-floor";
+  type Flag = F | "mnemonic" | "wallet-record" | "wallet-state" | "blockfrost" | "zk" | "dust-floor";
   const defaults: Record<string, string | undefined> = {
     mnemonic: `${SECRETS}/mnemonic.txt`,
     "wallet-record": `${home}/work/orynq-midnight-mainnet-wallet.json`,
+    "wallet-state": `${STATE}/mainnet-wallet.state.json`,
     blockfrost: `${home}/.secrets/blockfrost-midnight-mainnet.project_id`,
     zk: process.env.MIDNIGHT_PP ?? `${home}/.cache/orynq-midnight/zk`,
     "dust-floor": "20",
@@ -101,10 +112,13 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
             chain,
             async syncWallet() {
               const expectedAddresses = (readJsonFile(option("wallet-record")) as { addresses: { unshielded: string; shielded: string; dust: string } }).addresses;
+              const stateFile = option("wallet-state");
+              mkdirSync(dirname(stateFile), { recursive: true, mode: 0o700 });
+              ensurePrivateDir(dirname(stateFile));
               process.stdout.write(`${chain.chain}, runtime ${chain.specVersion}, ledger ${chain.ledgerVersion}. Syncing the wallet...\n`);
-              const wallet = await openWallet({ network: "mainnet", mnemonicFile: option("mnemonic"), endpoints, source, zkDir: option("zk"), expectedAddresses });
+              const wallet = await openWallet({ network: "mainnet", mnemonicFile: option("mnemonic"), endpoints, source, zkDir: option("zk"), expectedAddresses, stateFile });
               opened.push(wallet);
-              await wallet.waitForSync(3_600_000);
+              await syncWithCheckpoints(wallet, { timeoutMs: SYNC_TIMEOUT_MS, progressMs: MINUTE, checkpointMs: 5 * MINUTE, write: (line) => process.stdout.write(`${line}\n`) });
               return wallet;
             },
           };

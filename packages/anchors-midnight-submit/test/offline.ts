@@ -8,7 +8,7 @@
 // "lose-read" (the first read of a landed transaction fails), "lose-sync" (the wallet stops
 // syncing once a deploy landed), "fail-save" (the shielded state does not serialize, as
 // ledger-v8 8.1.3 once trapped on preprod), "fail-close" (closing the wallet throws), "low-dust"
-// (the wallet holds 0.5 DUST), "unfinal"
+// (the wallet holds 0.5 DUST), "stall-sync" (the wallet's sync does not finish in time), "unfinal"
 // (the node's finalized head stays below every landed transaction), "foreign-block" (the node's
 // block of the landed transactions carries none of them), "lose-body" (the node answers for no
 // block's body) or "fork" (the node's block at their heights is another than the indexer's). A
@@ -41,8 +41,12 @@ export interface OfflineChain {
   discarded: string[];
   // Set while the node lacks the indexer's newest block, as a node behind the indexer does.
   nodeLags?: boolean;
-  // How many times a run closed its wallet.
+  // How many times a run closed its wallet, and saved its sync state.
   walletCloses?: number;
+  walletSaves?: number;
+  // The state file each run opened its wallet with, and how long each waited for its sync.
+  walletOpens?: { stateFile: string | null }[];
+  syncWaits?: number[];
   // The FPS mainnet keys this mainnet pins in the place of the real ones: its test's throwaway
   // author key and salt key id. Without them the real ones are pinned.
   fpsKeys?: { authorKeys: string[]; saltKeyIds: string[] };
@@ -168,17 +172,28 @@ globalThis.fetch = async (url, init) => {
 export const provingService = () => prover;
 
 // A synced wallet with DUST to spare that binds without adding a fee and lands what it submits.
-// It takes only the fee parameters the real wallet takes.
+// It takes only the fee parameters the real wallet takes, and like it saves on close only once synced.
 export async function openWallet(options: WalletOptions): Promise<OperatorWallet> {
   costParametersOf(options.costParameters);
-  const saveState = async (): Promise<StateSave> =>
-    FAULTS.has("fail-save") ? { saved: false, failures: [{ part: "shielded", error: "ParseError: Could not serialize local state: RuntimeError: unreachable" }] } : { saved: true };
+  const opened = read();
+  write({ ...opened, walletOpens: [...(opened.walletOpens ?? []), { stateFile: options.stateFile ?? null }] });
+  const stalls = FAULTS.has("stall-sync");
+  const saveState = async (): Promise<StateSave> => {
+    const chain = read();
+    write({ ...chain, walletSaves: (chain.walletSaves ?? 0) + 1 });
+    return FAULTS.has("fail-save") ? { saved: false, failures: [{ part: "shielded", error: "ParseError: Could not serialize local state: RuntimeError: unreachable" }] } : { saved: true };
+  };
+  const at = (applied: bigint) => ({ applied, highest: 9n, connected: true });
   return {
     network: options.network,
     addresses: options.expectedAddresses!,
-    async waitForSync() {},
+    async waitForSync(timeoutMs = 600_000) {
+      const chain = read();
+      write({ ...chain, syncWaits: [...(chain.syncWaits ?? []), timeoutMs] });
+      if (stalls) throw new Error(`the ${options.network} wallet did not sync within ${timeoutMs / 1000} s`);
+    },
     async progress() {
-      throw new Error("offline wallet: unexpected progress");
+      return { shielded: at(stalls ? 5n : 9n), unshielded: at(9n), dust: at(9n), synced: !stalls };
     },
     saveState,
     async balances() {
@@ -219,7 +234,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       const chain = read();
       write({ ...chain, walletCloses: (chain.walletCloses ?? 0) + 1 });
       if (FAULTS.has("fail-close")) throw new Error("offline wallet: the facade did not stop");
-      return saveState();
+      return stalls ? null : saveState();
     },
   };
 }

@@ -23,7 +23,7 @@
 // resumes a deploy, and an entry the results file records is not sent again. The gates stop
 // accidents, not code running as deci; see deploy-mainnet.
 //   node --import tsx scripts/anchor-mainnet.ts --plan PLAN.json [--deploy-journal F] [--mnemonic F]
-//        [--wallet-record F] [--blockfrost F] [--zk DIR] [--journal F] [--dust-floor DUST]
+//        [--wallet-record F] [--wallet-state F] [--blockfrost F] [--zk DIR] [--journal F] [--dust-floor DUST]
 //        [--author-key F] [--salt-key F] [--results F]
 import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";

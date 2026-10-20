@@ -18,7 +18,7 @@
 // the token it reads. Under the "ship now, harden after" decision the protection is procedural,
 // deci running this himself; the custody boundary is the planned separate-uid or FIDO2 signer.
 //   node --import tsx scripts/deploy-mainnet.ts [--mnemonic F] [--wallet-record F] [--blockfrost F]
-//        [--zk DIR] [--journal F] [--dust-floor DUST]
+//        [--wallet-state F] [--zk DIR] [--journal F] [--dust-floor DUST]
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { deploySummary, provingService, registryDeployer, registryStateOnNode } from "../src/index.js";
