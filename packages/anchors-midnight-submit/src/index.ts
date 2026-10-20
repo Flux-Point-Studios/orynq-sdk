@@ -17,6 +17,8 @@ export { credentialRelay } from "./relay.js";
 export type { WalletTransport } from "./relay.js";
 export { assertKnownRuntime, declaredFee, finalizeChecked, registryStateOnNode, submitJournalled } from "./submission.js";
 export type { FeeWallet, PreparedBytes, Prover } from "./submission.js";
+export { syncWithCheckpoints } from "./sync.js";
+export type { SyncWatch } from "./sync.js";
 export { DEFAULT_COST_PARAMETERS, openWallet } from "./wallet.js";
 export type { CostParameters, OperatorWallet, StateSave, StateSaveFailure, SyncProgress, WalletBalances, WalletOptions } from "./wallet.js";
 export { ZK_PINS, keyMaterial, provingService } from "./zk.js";

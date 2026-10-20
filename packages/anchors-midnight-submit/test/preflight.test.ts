@@ -3,6 +3,7 @@ import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -297,7 +298,8 @@ const PACKAGE = new URL("..", import.meta.url).pathname;
 
 // `script` itself (deploy-mainnet unless named), copied with the module it shares beside a
 // src/index.ts that is test/offline.ts, so it runs every gate in a pseudo-terminal and sends
-// through the submit package over an offline mainnet, with the flags `flags` names beside it. At
+// through the submit package over an offline mainnet, with the flags `flags` names beside it and
+// a HOME of its own (`root`/home), where the paths no flag names default to. At
 // each confirmation prompt, `answer` types its reply to the token the script asks for, and
 // `watch` sees the output so far whenever more arrives.
 function offlineMainnet(script = "deploy-mainnet", flags: (root: string) => string[] = () => []) {
@@ -325,7 +327,7 @@ function offlineMainnet(script = "deploy-mainnet", flags: (root: string) => stri
   };
   return {
     async run(answer: (token: string) => string | Promise<string>, fault = "", watch: (output: string) => void = () => undefined) {
-      const child = spawn("script", ["-qec", command.map(quoted).join(" "), "/dev/null"], { cwd: root, env: { ...humanEnvironment(), OFFLINE_CHAIN: chainFile, OFFLINE_FAULT: fault }, timeout: 120_000 });
+      const child = spawn("script", ["-qec", command.map(quoted).join(" "), "/dev/null"], { cwd: root, env: { ...humanEnvironment(), HOME: `${root}/home`, OFFLINE_CHAIN: chainFile, OFFLINE_FAULT: fault }, timeout: 120_000 });
       let output = "";
       const tokens: string[] = [];
       child.stdout.on("data", (chunk) => {
@@ -1159,5 +1161,55 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
     await run(() => "no", "", "anchor-mainnet: not confirmed; nothing was sent, and the journalled anchor stays in the journal");
     await run((token) => token, "", "1 anchor is recorded in");
     expect(exits).toEqual([1, 1, 1, 1, 0]);
+  });
+});
+
+// The wallet state file deploy-mainnet and anchor-mainnet share by default, under the run's HOME.
+const defaultWalletState = (root: string) => `${root}/home/.local/state/orynq-midnight/mainnet-wallet.state.json`;
+const SYNCED_LINE = "shielded applied 9 of 9, connected; unshielded applied 9 of 9, connected; dust applied 9 of 9, connected; synced";
+
+describe.concurrent("the wallet sync deploy-mainnet and anchor-mainnet share", () => {
+  const scripts = {
+    "deploy-mainnet": () => offlineMainnet(),
+    "anchor-mainnet": () => offlineAnchors({ entries: planEntries().slice(0, 1) }),
+  };
+
+  it.for(Object.keys(scripts) as (keyof typeof scripts)[])("%s resumes from the shared state file in a directory only deci can enter, writes the sync's progress, and saves it once synced", async (script, { expect }) => {
+    const m = scripts[script]();
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(0);
+    expect(m.chain().walletOpens).toEqual([{ stateFile: defaultWalletState(m.root) }]);
+    expect(statSync(dirname(defaultWalletState(m.root))).mode & 0o777).toBe(0o700);
+    expect(m.chain().syncWaits).toEqual([3 * 60 * MINUTE]);
+    expect(r.output).toMatch(new RegExp(`\\nwallet sync at \\S+Z, 0 s in: ${SYNCED_LINE}\\n`));
+    expect(r.output).toMatch(/\nwallet sync state saved at \S+Z; a rerun resumes from it\n/);
+    expect(m.chain().walletSaves).toBe(2);
+  });
+
+  it("opens the wallet with the state file --wallet-state names instead", async ({ expect }) => {
+    const m = offlineMainnet("deploy-mainnet", (root) => ["--wallet-state", `${root}/elsewhere/wallet.state.json`]);
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(0);
+    expect(m.chain().walletOpens).toEqual([{ stateFile: `${m.root}/elsewhere/wallet.state.json` }]);
+    expect(statSync(`${m.root}/elsewhere`).mode & 0o777).toBe(0o700);
+  });
+
+  it("refuses a state directory group or others can enter before opening the wallet", async ({ expect }) => {
+    const m = offlineMainnet();
+    mkdirSync(dirname(defaultWalletState(m.root)), { recursive: true });
+    chmodSync(dirname(defaultWalletState(m.root)), 0o750);
+    const r = await m.run((token) => token);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain(`deploy-mainnet: ${dirname(defaultWalletState(m.root))} can be entered by group or others`);
+    expect([r.tokens, m.chain().walletOpens, m.chain().sent]).toEqual([[], undefined, []]);
+  });
+
+  it("when the sync times out, saves its state once more, closes the wallet, sends nothing and says a rerun resumes from that save", async ({ expect }) => {
+    const m = offlineMainnet();
+    const r = await m.run((token) => token, "stall-sync");
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("deploy-mainnet: the mainnet wallet did not sync within 10800 s; its sync state is saved, and a rerun resumes from it");
+    expect(r.output).toMatch(/\nwallet sync at \S+Z, 0 s in: shielded applied 5 of 9, connected; .*; not synced\n/);
+    expect([r.tokens, m.chain().walletSaves, m.closes().wallet, m.chain().sent]).toEqual([[], 1, 1, []]);
   });
 });

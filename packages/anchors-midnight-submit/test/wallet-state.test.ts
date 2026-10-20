@@ -148,7 +148,9 @@ describe("the wallet's saved sync state", () => {
   it("is refused for another wallet or another network, so two wallets never share one", () => {
     const file = join(dir, "b.state.json");
     writeWalletState(file, "preprod", addresses, HOSTED, snapshot);
-    expect(() => readWalletState(file, "preprod", { ...addresses, dust: "mn_dust_preprod1b" }, HOSTED)).toThrow(/b\.state\.json was saved by another wallet/);
+    for (const role of ["unshielded", "shielded", "dust"] as const) {
+      expect(() => readWalletState(file, "preprod", { ...addresses, [role]: `${addresses[role]}b` }, HOSTED)).toThrow(/b\.state\.json was saved by another wallet/);
+    }
     expect(() => readWalletState(file, "mainnet", addresses, HOSTED)).toThrow(/b\.state\.json was saved on preprod, not mainnet/);
   });
 
@@ -230,6 +232,69 @@ describe("saving a wallet's sync state", () => {
     }
     expect(readFileSync(stateFile).equals(good)).toBe(true);
     expect(leftovers(stateFile)).toEqual([]);
+  });
+
+  // A checkpoint and close() can save at once: each save serializes only once the one before it is
+  // in place, so a state serialized earlier never replaces one serialized later.
+  it("runs one wallet's saves one at a time", async () => {
+    const { wallet } = await open("serial");
+    const order: string[] = [];
+    const real = L.ZswapLocalState.prototype.serialize;
+    const serialize = vi.spyOn(L.ZswapLocalState.prototype, "serialize").mockImplementation(function (this: L.ZswapLocalState) {
+      order.push("serialize");
+      return real.call(this);
+    });
+    const restoreRename = intercept("renameSync", (realRename) => (from, to) => {
+      order.push("rename");
+      realRename(from, to);
+    });
+    try {
+      expect(await Promise.all([wallet.saveState(), wallet.saveState()])).toEqual([{ saved: true }, { saved: true }]);
+    } finally {
+      restoreRename();
+      serialize.mockRestore();
+      await wallet.close();
+    }
+    expect(order).toEqual(["serialize", "rename", "serialize", "rename"]);
+  });
+
+  // Bytes a sub-wallet serialized but cannot read back would fail every later open.
+  it.each([
+    ["shielded", L.ZswapLocalState],
+    ["dust", L.DustLocalState],
+  ] as const)("installs only a state the %s wallet restores from, leaving the last good save byte for byte otherwise", async (part, State) => {
+    const { wallet, stateFile } = await open(`unreadable-${part}`);
+    try {
+      expect(await wallet.saveState()).toEqual({ saved: true });
+      const good = readFileSync(stateFile);
+      const loud = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const garbled = vi.spyOn(State.prototype as { serialize(): Uint8Array }, "serialize").mockReturnValue(new Uint8Array([1, 2, 3]));
+      try {
+        expect(await wallet.saveState()).toEqual({ saved: false, failures: [{ part, error: expect.stringMatching(/deserialize/) }] });
+        expect(loud).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`sync state was not saved \\(${part}: .*deserialize.*\\); the file keeps its last good save`)));
+      } finally {
+        garbled.mockRestore();
+        loud.mockRestore();
+      }
+      expect(readFileSync(stateFile).equals(good)).toBe(true);
+      expect(leftovers(stateFile)).toEqual([]);
+    } finally {
+      await wallet.close();
+    }
+  });
+
+  it("refuses at open a state file a sub-wallet does not restore from, naming the file and never quoting the state", async () => {
+    const { wallet, stateFile } = await open("unrestorable");
+    expect(await wallet.saveState()).toEqual({ saved: true });
+    await wallet.close();
+    const saved = readWalletState(stateFile, "preprod", wallet.addresses, OFFLINE.indexer)!;
+    writeWalletState(stateFile, "preprod", wallet.addresses, OFFLINE.indexer, { ...saved, shielded: '{"publicKeys":"c01dc0ffee"}' });
+    const refused = await open("unrestorable").then(
+      () => null,
+      (error: Error) => error.message,
+    );
+    expect(refused).toMatch(new RegExp(`^${stateFile.replaceAll(".", "\\.")} does not restore \\(shielded: .+\\); move it aside to sync from genesis$`));
+    expect(refused).not.toContain("c01dc0ffee");
   });
 
   // A directory at the state file's path fails the rename as root too, which CI runs as.
@@ -316,6 +381,49 @@ describe("saving a wallet's sync state", () => {
         (error, stdout, stderr) => resolve({ status: error ? Number(error.code) : 0, stdout, stderr }),
       ),
     );
+
+  // deploy-mainnet and anchor-mainnet open one wallet over one state file, and may run at once.
+  it("is shared by two processes of one wallet saving it at once: every read finds one whole save, and the last restores", async () => {
+    const { wallet, stateFile } = await open("two-runs");
+    expect(await wallet.saveState()).toEqual({ saved: true });
+    await wallet.close();
+    const savesOf = () =>
+      new Promise<{ status: number; stdout: string; stderr: string }>((resolve) =>
+        execFile(
+          process.execPath,
+          [
+            "--import",
+            "tsx",
+            "--input-type=module",
+            "-e",
+            `import { openWallet } from ${JSON.stringify(walletModule)};
+             const [mnemonicFile, stateFile] = process.argv.slice(1);
+             const wallet = await openWallet({ network: "preprod", mnemonicFile, endpoints: ${JSON.stringify(OFFLINE)}, zkDir: "/nonexistent", stateFile });
+             const saved = [];
+             for (let i = 0; i < 10; i++) saved.push((await wallet.saveState()).saved);
+             await wallet.close();
+             console.log(JSON.stringify(saved));`,
+            join(dir, "two-runs.mnemonic"),
+            stateFile,
+          ],
+          { encoding: "utf8", env: { ...process.env, TSX_DISABLE_CACHE: "1" } },
+          (error, stdout, stderr) => resolve({ status: error ? Number(error.code) : 0, stdout, stderr }),
+        ),
+      );
+    let running = true;
+    const runs = Promise.all([savesOf(), savesOf()]).finally(() => (running = false));
+    let reads = 0;
+    while (running) {
+      expect(readWalletState(stateFile, "preprod", wallet.addresses, OFFLINE.indexer)).not.toBeNull();
+      reads++;
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    const allSaved = `${JSON.stringify(Array(10).fill(true))}\n`;
+    expect(await runs).toEqual([expect.objectContaining({ status: 0, stdout: allSaved }), expect.objectContaining({ status: 0, stdout: allSaved })]);
+    expect(reads).toBeGreaterThan(0);
+    expect(leftovers(stateFile)).toEqual([]);
+    await (await open("two-runs")).wallet.close();
+  });
 
   it("returns a write the file system cuts short as a failure, leaving the last good save byte for byte", async () => {
     const mnemonicFile = join(dir, "cut.mnemonic");
