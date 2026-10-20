@@ -283,6 +283,20 @@ describe("saving a wallet's sync state", () => {
     }
   });
 
+  // Reading a DUST state of megabytes back takes tens of seconds.
+  it("reads each saved part back once at open", async () => {
+    const { wallet } = await open("read-once");
+    expect(await wallet.saveState()).toEqual({ saved: true });
+    await wallet.close();
+    const reads = [vi.spyOn(L.ZswapLocalState, "deserialize"), vi.spyOn(L.DustLocalState, "deserialize")];
+    try {
+      await (await open("read-once")).wallet.close();
+      expect(reads.map((read) => read.mock.calls.length)).toEqual([1, 1]);
+    } finally {
+      for (const read of reads) read.mockRestore();
+    }
+  });
+
   it("refuses at open a state file a sub-wallet does not restore from, naming the file and never quoting the state", async () => {
     const { wallet, stateFile } = await open("unrestorable");
     expect(await wallet.saveState()).toEqual({ saved: true });

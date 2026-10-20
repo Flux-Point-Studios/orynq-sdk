@@ -21,7 +21,9 @@ function progressLine({ shielded, unshielded, dust, synced }: SyncProgress): str
 // Waits until `wallet` has synced. It writes the wallet's progress as the wait starts, every
 // `progressMs` and once synced, and saves the sync state every `checkpointMs`, once synced, and
 // once more when the wait times out or fails, so a rerun resumes from the newest save instead of
-// replaying every event from genesis.
+// replaying every event from genesis. A save reads the DUST state back, which holds the event loop
+// for tens of seconds once that state runs to megabytes, so saves are spaced to take at most a
+// tenth of the wait.
 export async function syncWithCheckpoints(wallet: OperatorWallet, { timeoutMs, progressMs, checkpointMs, write }: SyncWatch): Promise<void> {
   const started = Date.now();
   const report = async () => write(`wallet sync at ${toTheSecond(Date.now())}, ${Math.round((Date.now() - started) / 1000)} s in: ${progressLine(await wallet.progress())}`);
@@ -40,7 +42,7 @@ export async function syncWithCheckpoints(wallet: OperatorWallet, { timeoutMs, p
   let outcome: { failure: unknown } | null;
   try {
     await report();
-    let checkpointed = Date.now();
+    let nextCheckpoint = Date.now() + checkpointMs;
     for (;;) {
       const next = await Promise.race([ended, tick()]);
       clearTimeout(timer);
@@ -49,9 +51,10 @@ export async function syncWithCheckpoints(wallet: OperatorWallet, { timeoutMs, p
         break;
       }
       await report();
-      if (Date.now() - checkpointed >= checkpointMs) {
+      if (Date.now() >= nextCheckpoint) {
+        const saving = Date.now();
         await checkpoint();
-        checkpointed = Date.now();
+        nextCheckpoint = Date.now() + Math.max(checkpointMs, 9 * (Date.now() - saving));
       }
     }
   } catch (failure) {

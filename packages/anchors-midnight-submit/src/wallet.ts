@@ -124,13 +124,12 @@ function describeFailure(error: unknown): string {
   return `${e?.name ?? "Error"}: ${e?.message ?? String(error)}`;
 }
 
-// A sub-wallet's class, as far as it reads a serialized state back.
-type StateReader = { allVariants(): readonly [{ variant: { deserializeState(serialized: string): Either.Either<unknown, unknown> } }] };
+// A sub-wallet's class, as far as it reads a serialized state back, as its restore() does.
+type StateReader<S = unknown> = { allVariants(): readonly [{ variant: { deserializeState(serialized: string): Either.Either<S, unknown> } }] };
 
-// What the SDK says of a state `Wallet` does not read back, or null when it does.
-function unreadable(Wallet: StateReader, serialized: string): string | null {
-  const read = Wallet.allVariants()[0].variant.deserializeState(serialized);
-  return Either.isLeft(read) ? describeFailure(read.left) : null;
+// The state `Wallet` reads back from `serialized`, or what the SDK said of it.
+function readBack<S>(Wallet: StateReader<S>, serialized: string): Either.Either<S, string> {
+  return Either.mapLeft(Wallet.allVariants()[0].variant.deserializeState(serialized), describeFailure);
 }
 
 // The wallet's saved state, or null before it first saves one. A state saved by another wallet,
@@ -217,14 +216,15 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
   const saved = options.stateFile ? readWalletState(options.stateFile, network, addresses, endpoints.indexer) : null;
   // Each sub-wallet's class, which reads back the states that sub-wallet serializes.
   const readers = {} as Record<keyof WalletSnapshot, StateReader>;
-  // The sub-wallet `part`, of class `Wallet`: restored from the saved state, refusing a state it
-  // does not read back with what the SDK said of it, never the state; started afresh without one.
-  const subWallet = <W extends StateReader & { restore(serialized: string): R }, R>(part: keyof WalletSnapshot, Wallet: W, start: (Wallet: W) => R): R => {
+  // The sub-wallet `part`, of class `Wallet`: restored from the saved state, read back once, as
+  // restore() reads it, refusing a state it does not read back with what the SDK said of it,
+  // never the state; started afresh without one.
+  const subWallet = <S, R>(part: keyof WalletSnapshot, Wallet: StateReader<S>, restore: (state: S) => R, start: () => R): R => {
     readers[part] = Wallet;
-    if (!saved) return start(Wallet);
-    const unread = unreadable(Wallet, saved[part]);
-    if (unread !== null) throw new Error(`${options.stateFile} does not restore (${part}: ${unread}); move it aside to sync from genesis`);
-    return Wallet.restore(saved[part]);
+    if (!saved) return start();
+    const read = readBack(Wallet, saved[part]);
+    if (Either.isLeft(read)) throw new Error(`${options.stateFile} does not restore (${part}: ${read.left}); move it aside to sync from genesis`);
+    return restore(read.right);
   };
   const transport = await credentialRelay(endpoints);
   const submitTo = (tx: L.FinalizedTransaction) => broadcast(source, tx.serialize());
@@ -248,9 +248,20 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
         }) as never,
         close: async () => undefined,
       }),
-      shielded: (c) => subWallet("shielded", ShieldedWallet(c), (Shielded) => Shielded.startWithSecretKeys(secrets.zswap)),
-      unshielded: (c) => subWallet("unshielded", UnshieldedWallet(c), (Unshielded) => Unshielded.startWithPublicKey(PublicKey.fromKeyStore(secrets.night))),
-      dust: (c) => subWallet("dust", CustomDustWallet(c, payingFees(new V1Builder().withDefaults(), secrets.dust)), (Dust) => Dust.startWithSecretKey(secrets.dust, L.LedgerParameters.initialParameters().dust)),
+      // startFirst is what each class's restore() runs on the state it read back; the SDK types
+      // its result as a bare WalletLike, and restore()'s result as the wallet.
+      shielded: (c) => {
+        const Shielded = ShieldedWallet(c);
+        return subWallet("shielded", Shielded, (state) => Shielded.startFirst(Shielded, state) as ReturnType<typeof Shielded.restore>, () => Shielded.startWithSecretKeys(secrets.zswap));
+      },
+      unshielded: (c) => {
+        const Unshielded = UnshieldedWallet(c);
+        return subWallet("unshielded", Unshielded, (state) => Unshielded.startFirst(Unshielded, state) as ReturnType<typeof Unshielded.restore>, () => Unshielded.startWithPublicKey(PublicKey.fromKeyStore(secrets.night)));
+      },
+      dust: (c) => {
+        const Dust = CustomDustWallet(c, payingFees(new V1Builder().withDefaults(), secrets.dust));
+        return subWallet("dust", Dust, (state) => Dust.startFirst(Dust, state) as ReturnType<typeof Dust.restore>, () => Dust.startWithSecretKey(secrets.dust, L.LedgerParameters.initialParameters().dust));
+      },
       // The default service reverts bytes once their TTL has passed by this machine's clock while
       // the indexer does not list them, which an indexer behind the chain makes true of bytes
       // already in a block. DUST is freed here only for bytes no node holds.
@@ -320,8 +331,9 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     const serialized = await Promise.allSettled(parts.map((part) => facade[part].serializeState()));
     const failures: StateSaveFailure[] = serialized.flatMap((s, i) => {
       const part = parts[i]!;
-      const error = s.status === "rejected" ? describeFailure(s.reason) : unreadable(readers[part], s.value);
-      return error === null ? [] : [{ part, error }];
+      if (s.status === "rejected") return [{ part, error: describeFailure(s.reason) }];
+      const read = readBack(readers[part], s.value);
+      return Either.isLeft(read) ? [{ part, error: read.left }] : [];
     });
     if (failures.length === 0) {
       const [shielded, unshielded, dust] = serialized.map((s) => (s as PromiseFulfilledResult<string>).value) as [string, string, string];

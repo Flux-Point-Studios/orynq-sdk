@@ -94,6 +94,22 @@ describe("syncWithCheckpoints", () => {
     expect(w.waits).toEqual([HOURS_3]);
   });
 
+  // Reading a large DUST state back takes the event loop for tens of seconds.
+  it("spaces its saves so that saving takes at most a tenth of the wait", async () => {
+    const w = syncingWallet();
+    w.saveState.mockImplementation(() => new Promise((resolve) => setTimeout(resolve, MINUTE, SAVED)));
+    const { lines } = watch(w);
+    await vi.advanceTimersByTimeAsync(15 * MINUTE - 1);
+    expect(w.saveState).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(w.saveState).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(lines.filter((line) => line.startsWith("wallet sync state saved"))).toEqual([
+      "wallet sync state saved at 2026-10-20T14:06:00Z; a rerun resumes from it",
+      "wallet sync state saved at 2026-10-20T14:16:00Z; a rerun resumes from it",
+    ]);
+  });
+
   it("once synced, writes the synced progress and saves the synced state, then stops writing", async () => {
     const w = syncingWallet();
     const { lines, done } = watch(w);
