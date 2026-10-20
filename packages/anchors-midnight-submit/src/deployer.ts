@@ -11,7 +11,7 @@ import {
   type MidnightSource,
   type RegistryCircuit,
 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { chainView, openJournal, type AnchorKey } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
+import { chainView, openJournal, type AnchorKey, type JournalRow } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { assertConfirmedHash, assertKnownRuntime, confirmedSends, declaredFee, finalTransaction, finalizeChecked, type FeeWallet, type PreparedBytes, type Prover } from "./submission.js";
 
 // A registry deploy as it will be sent: the exact final bytes and what they do, for a human to
@@ -47,22 +47,28 @@ const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest(
 // The journal key of `network`'s registry deploy: one live deploy per network and registry state.
 const deployKey = (network: MidnightNetwork): AnchorKey => ({ network, registry: "registry-deploy", author: "", kind: 0, commitment: sha256(registryInitialState().serialize()), attribute: "" });
 
+// The registry deploy the journal at `deployJournal` holds landed on `network`, with the address
+// read from its journalled bytes, which must deploy exactly the registry; null when it holds none.
+// The journal is only read: where none is, none is created.
+export function landedRegistryDeploy(network: MidnightNetwork, deployJournal: string): (JournalRow & { address: string }) | null {
+  if (!existsSync(deployJournal)) return null;
+  const journal = openJournal(deployJournal);
+  try {
+    const row = journal.live(deployKey(network));
+    if (row?.state !== "landed") return null;
+    const { bytes, ...landed } = row;
+    return { ...landed, address: assertRegistryDeployBytes(bytes, "final") };
+  } finally {
+    journal.close();
+  }
+}
+
 // Refuses a registry that is not FPS's on `network`: one MIDNIGHT_REGISTRIES pins, or the one
-// whose deploy the journal at `deployJournal` holds landed, read from the journalled bytes, which
-// must deploy exactly the registry. The same immutable registry deployed by anyone else is
-// refused. The journal is only read: where none is, none is created.
+// whose deploy the journal at `deployJournal` holds landed (landedRegistryDeploy). The same
+// immutable registry deployed by anyone else is refused.
 export function assertFpsRegistry(network: MidnightNetwork, address: string, deployJournal: string): void {
   if (MIDNIGHT_REGISTRIES[network].some((generation) => generation.address === address)) return;
-  let deployed: string | null = null;
-  if (existsSync(deployJournal)) {
-    const journal = openJournal(deployJournal);
-    try {
-      const row = journal.live(deployKey(network));
-      if (row?.state === "landed") deployed = assertRegistryDeployBytes(row.bytes, "final");
-    } finally {
-      journal.close();
-    }
-  }
+  const deployed = landedRegistryDeploy(network, deployJournal)?.address ?? null;
   if (deployed === address) return;
   const journalled = deployed === null ? `holds no landed ${network} registry deploy` : `holds the landed deploy of ${deployed}`;
   throw new Error(`registry ${address} is not the FPS ${network} registry: MIDNIGHT_REGISTRIES pins no generation there, and ${deployJournal} ${journalled}`);

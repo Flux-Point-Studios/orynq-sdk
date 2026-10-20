@@ -41,7 +41,7 @@ import {
   type PreparedAnchor,
   type RegistryOperator,
 } from "../src/index.js";
-import { DEPLOY_JOURNAL, SECRETS, STATE, mainnetScript } from "./mainnet-session.js";
+import { ANCHORS_JOURNAL, DEPLOY_JOURNAL, SECRETS, STATE, mainnetScript } from "./mainnet-session.js";
 
 const { option, run, requireDustFloor, confirm } = mainnetScript({
   name: "anchor-mainnet",
@@ -50,7 +50,7 @@ const { option, run, requireDustFloor, confirm } = mainnetScript({
   flags: {
     plan: undefined,
     "deploy-journal": DEPLOY_JOURNAL,
-    journal: `${STATE}/mainnet-anchors.sqlite`,
+    journal: ANCHORS_JOURNAL,
     "author-key": `${SECRETS}/author-relay.key`,
     "salt-key": `${SECRETS}/salt.key`,
     results: `${STATE}/mainnet-anchors.json`,

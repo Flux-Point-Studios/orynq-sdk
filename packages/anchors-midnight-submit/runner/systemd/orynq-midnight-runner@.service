@@ -1,0 +1,14 @@
+# Runs approved intent %i (8 hex characters) on Midnight mainnet: the gate, the reviewed tool in a
+# pseudo-terminal, retries until the approval expires. Started by orynq-midnight-runner-dispatch,
+# never enabled. ~/.local/lib/orynq-midnight-runner holds bin/node (the pinned node) and checkout
+# (the reviewed orynq-sdk checkout); see runner/README.md.
+[Unit]
+Description=orynq Midnight mainnet runner for approved intent %i
+Documentation=https://github.com/Flux-Point-Studios/orynq-sdk/blob/main/packages/anchors-midnight-submit/runner/README.md
+
+[Service]
+Type=exec
+Environment=PATH=%h/.local/lib/orynq-midnight-runner/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/.local/lib/orynq-midnight-runner/checkout/packages/anchors-midnight-submit
+ExecStart=%h/.local/lib/orynq-midnight-runner/checkout/packages/anchors-midnight-submit/runner/orynq-midnight-runner run %i
+UMask=0077

@@ -63,6 +63,16 @@ steps:
       - pnpm --filter "@fluxpointstudios/orynq-sdk-anchors-midnight-submit^..." build
       - cd packages/anchors-midnight-submit && pnpm typecheck && MIDNIGHT_PP=~/.cache/midnight/zk-params pnpm test && MIDNIGHT_PP=~/.cache/midnight/zk-params nice -n 19 pnpm test:slow
 
+  # The Midnight mainnet runner's systemd user units, as systemd-analyze --user verify reads them
+  # laid out as the install lays them out, verified by an unprivileged user.
+  - name: midnight-runner-units
+    image: debian:bookworm-slim
+    depends_on: []
+    commands:
+      - apt-get update -qq && apt-get install -y -qq --no-install-recommends systemd
+      - useradd -m runner
+      - su runner -s /bin/sh -c "$CI_WORKSPACE/packages/anchors-midnight-submit/runner/systemd/verify.sh"
+
   - name: path-check
     image: alpine:3.20
     depends_on: []
