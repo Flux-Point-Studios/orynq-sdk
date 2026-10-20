@@ -18,8 +18,12 @@ when:
   - event: push
     branch: main
 
-# The t-backend submodule is private and nothing here builds it; GitHub's
-# checkout never fetched it either.
+depends_on: [ci]
+
+labels:
+  platform: linux/amd64
+
+# The private t-backend submodule is not a CI build input.
 clone:
   - name: clone
     image: woodpeckerci/plugin-git
@@ -28,11 +32,13 @@ clone:
 
 steps:
   - name: pack
-    image: node:20-bookworm
+    image: node:24-bookworm
     commands:
       - corepack enable
       - pnpm install --frozen-lockfile
       - node tools/release-guard/release-guard.mjs
+      - tools/compactc/install.sh "$$HOME/.cache/midnight/compactc" "$$HOME/.cache/midnight/zk-params"
+      - COMPACTC="$$HOME/.cache/midnight/compactc/compactc" MIDNIGHT_PP="$$HOME/.cache/midnight/zk-params" pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:circuits
       - pnpm build
       - node scripts/pack-unpublished.mjs /woodpecker/npm-publish
 
@@ -47,7 +53,7 @@ steps:
         branch: main
 
   - name: post-publish-check
-    image: node:20-bookworm
+    image: node:24-bookworm
     commands:
       - node tools/release-guard/post-publish-check.mjs /woodpecker/npm-publish
     when:

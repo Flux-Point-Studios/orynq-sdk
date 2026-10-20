@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8");
 const MIDNIGHT_PINS = {
@@ -37,6 +37,33 @@ describe("toolchain and dependency pins", () => {
       ([, name, version]) => `${name}@${version}`,
     );
     expect(resolved.sort()).toEqual(Object.entries({ ...MIDNIGHT_PINS, ...WALLET_SDK }).map(([n, v]) => `${n}@${v}`).sort());
+  });
+
+  it("every workspace package names each Midnight package at exactly its pinned version", () => {
+    const pinned: Record<string, string> = { ...MIDNIGHT_PINS, ...WALLET_SDK };
+    const named: string[] = [];
+    for (const group of ["packages", "services"]) {
+      for (const dir of readdirSync(new URL(`../../../../${group}/`, import.meta.url))) {
+        const path = `../../../../${group}/${dir}/package.json`;
+        if (!existsSync(new URL(path, import.meta.url))) continue;
+        const manifest: Record<string, Record<string, string> | undefined> = JSON.parse(read(path));
+        for (const field of ["dependencies", "devDependencies", "peerDependencies"]) {
+          for (const [name, spec] of Object.entries(manifest[field] ?? {})) {
+            if (!name.startsWith("@midnight-ntwrk/")) continue;
+            named.push(name);
+            expect(spec, `${group}/${dir} ${field} ${name}`).toBe(pinned[name]);
+          }
+        }
+      }
+    }
+    expect(named).toContain("@midnight-ntwrk/onchain-runtime-v3");
+  });
+
+  it("every Compact build requires the compactc version the installer pins", () => {
+    const version = /^version=(\S+)$/m.exec(read("../../../../tools/compactc/install.sh"))?.[1];
+    expect(version).toBe("0.31.1");
+    expect(read("../../contract/compile.sh")).toContain(`[ "$version" = ${version} ]`);
+    expect(read("../../../midnight-prover/scripts/compile-circuits.mjs")).toContain(`version !== "${version}"`);
   });
 
   it("the committed contract was compiled by compactc 0.31.1 for language 0.23.0 and runtime 0.16.0", () => {

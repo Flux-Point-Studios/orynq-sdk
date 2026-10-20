@@ -3,8 +3,10 @@ when:
   - event: push
     branch: main
 
-# The t-backend submodule is private and nothing here builds it; GitHub's
-# checkout never fetched it either.
+labels:
+  platform: linux/amd64
+
+# The private t-backend submodule is not a CI build input.
 clone:
   - name: clone
     image: woodpeckerci/plugin-git
@@ -12,20 +14,65 @@ clone:
       recursive: false
 
 steps:
-  # Tests run as an unprivileged user, as on GitHub's runners: root can read a
-  # mode-000 file, which defeats the recorder's unreadable-session-file probe.
+  # Root defeats the recorder's unreadable-session-file probe, so everything runs as node. The
+  # one pnpm install and the one Compact install here serve every step that depends on this one;
+  # installing again in a parallel step would race this install in the shared workspace.
   - name: build-test
-    image: node:20-bookworm
+    image: node:24-bookworm
     depends_on: []
+    environment:
+      COMPACTC: /woodpecker/orynq-midnight-tools/compactc/compactc
+      MIDNIGHT_PP: /woodpecker/orynq-midnight-tools/zk-params
     commands:
       - corepack enable
-      - chown -R node:node .
-      - su node -s /bin/bash -c "pnpm install --frozen-lockfile && pnpm build && pnpm typecheck && pnpm test && pnpm vectors:verify"
+      - mkdir -p /woodpecker/orynq-midnight-tools
+      - chown -R node:node . /woodpecker/orynq-midnight-tools
+      - |
+        su node -s /bin/bash -c '
+          set -e
+          tools/compactc/install.sh /woodpecker/orynq-midnight-tools/compactc /woodpecker/orynq-midnight-tools/zk-params
+          pnpm install --frozen-lockfile
+          node --test scripts/dependency-security.test.mjs
+          pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:circuits
+          pnpm build
+          pnpm typecheck
+          pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover lint
+          pnpm exec vitest run --maxWorkers=2
+          pnpm vectors:verify
+        '
+
+  - name: midnight-native
+    image: rust:1.99.0-bookworm
+    depends_on: [build-test]
+    backend_options:
+      docker:
+        user: '1000:1000'
+    environment:
+      CARGO_BUILD_JOBS: '4'
+      CARGO_HOME: /tmp/orynq-midnight-cargo
+      CARGO_TARGET_DIR: /woodpecker/orynq-midnight-tools/native-target
+    commands:
+      - test "$(id -u)" = 1000
+      - rustup component add --toolchain 1.99.0 rustfmt clippy
+      - cargo +1.99.0 fmt --manifest-path packages/midnight-prover/native/Cargo.toml -- --check
+      - cargo +1.99.0 clippy --locked --manifest-path packages/midnight-prover/native/Cargo.toml --all-targets -- -D warnings
+      - cargo +1.99.0 build --release --locked --manifest-path packages/midnight-prover/native/Cargo.toml
+      - cargo +1.99.0 test --release --locked --manifest-path packages/midnight-prover/native/Cargo.toml
+
+  - name: midnight-real-proofs
+    image: node:24-bookworm
+    depends_on: [midnight-native]
+    environment:
+      ORYNQ_MIDNIGHT_PARAMS_DIR: /woodpecker/orynq-midnight-tools/zk-params
+      ORYNQ_MIDNIGHT_NATIVE_VERIFIER: /woodpecker/orynq-midnight-tools/native-target/release/orynq-midnight-verifier
+    commands:
+      - corepack enable
+      - su node -s /bin/bash -c 'pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover test:real'
 
   # The cross-language vector tests shell out to the TS harness, so this needs
   # node and the workspace build-test installed.
   - name: python-test
-    image: nikolaik/python-nodejs:python3.11-nodejs20
+    image: nikolaik/python-nodejs:python3.11-nodejs24
     depends_on: [build-test]
     commands:
       - pip install -e "python/.[dev]"
@@ -35,33 +82,41 @@ steps:
   # The registry contract is immutable once deployed: its committed build must be exactly what
   # the sha256-pinned compiler produces, and proving must keep every secret out of the bytes a
   # submitter sends. Proving takes about a minute on one core, so it runs at the lowest priority.
-  # The submission journal needs node:sqlite, hence Node 24 here.
   - name: midnight-contract
     image: node:24-bookworm
-    depends_on: []
+    depends_on: [build-test]
+    environment:
+      COMPACTC: /woodpecker/orynq-midnight-tools/compactc/compactc
+      MIDNIGHT_PP: /woodpecker/orynq-midnight-tools/zk-params
     commands:
       - corepack enable
-      - tools/compactc/install.sh ~/.cache/midnight/compactc ~/.cache/midnight/zk-params
-      - COMPACTC=~/.cache/midnight/compactc/compactc MIDNIGHT_PP=~/.cache/midnight/zk-params nice -n 19 packages/anchors-midnight/contract/compile.sh --check
-      - pnpm install --frozen-lockfile --filter @fluxpointstudios/orynq-sdk-anchors-midnight...
-      - cd packages/anchors-midnight && pnpm test:journal && MIDNIGHT_PP=~/.cache/midnight/zk-params nice -n 19 pnpm test:slow
+      - |
+        su node -s /bin/bash -c '
+          set -e
+          nice -n 19 packages/anchors-midnight/contract/compile.sh --check
+          cd packages/anchors-midnight
+          pnpm test:journal
+          nice -n 19 pnpm test:slow
+        '
 
-  # The submitter proves with the installer's pinned DUST spend keys and parameters and journals
-  # in node:sqlite, hence Node 24 and the installed ZK directory. pnpm test also runs the preprod
-  # rehearsal's offline suite (the evidence gate, verify-all, compose and finish.sh over a
-  # synthetic rehearsal); nothing in this step talks to a Midnight node or indexer.
+  # The submitter proves with the installer's pinned DUST spend keys and parameters. pnpm test
+  # also runs the preprod rehearsal's offline suite (the evidence gate, verify-all, compose and
+  # finish.sh over a synthetic rehearsal), which runs git as the workspace's owner; nothing in
+  # this step talks to a Midnight node or indexer.
   - name: midnight-submit
     image: node:24-bookworm
-    depends_on: []
+    depends_on: [build-test]
+    environment:
+      MIDNIGHT_PP: /woodpecker/orynq-midnight-tools/zk-params
     commands:
-      # The rehearsal tests run git as root, and build-test re-owns the shared workspace to node
-      # in parallel; without this, git refuses the checkout as having dubious ownership.
-      - git config --global --add safe.directory "$CI_WORKSPACE"
       - corepack enable
-      - tools/compactc/install.sh ~/.cache/midnight/compactc ~/.cache/midnight/zk-params
-      - pnpm install --frozen-lockfile --filter @fluxpointstudios/orynq-sdk-anchors-midnight-submit...
-      - pnpm --filter "@fluxpointstudios/orynq-sdk-anchors-midnight-submit^..." build
-      - cd packages/anchors-midnight-submit && pnpm typecheck && MIDNIGHT_PP=~/.cache/midnight/zk-params pnpm test && MIDNIGHT_PP=~/.cache/midnight/zk-params nice -n 19 pnpm test:slow
+      - |
+        su node -s /bin/bash -c '
+          set -e
+          cd packages/anchors-midnight-submit
+          pnpm test
+          nice -n 19 pnpm test:slow
+        '
 
   # The Midnight mainnet runner's systemd user units, as systemd-analyze --user verify reads them
   # laid out as the install lays them out, verified by an unprivileged user.
@@ -83,10 +138,8 @@ steps:
           exit 1
         fi
 
-  # Advisory only, as before: a known advisory must not block unrelated work.
-  # Blocking: with failure ignored, 78 high and critical advisories built up unnoticed.
   - name: security-audit
-    image: node:20-bookworm
+    image: node:24-bookworm
     depends_on: []
     commands:
       - corepack enable

@@ -27,6 +27,22 @@ orynq keys init midnight --out ~/.orynq/midnight-key.json
 orynq anchor midnight --network mainnet --key ~/.orynq/midnight-key.json --bundle bundle.json [--hidden] [--submit]
 ```
 
+The Midnight commands need `@fluxpointstudios/orynq-sdk-anchors-midnight`, an optional peer
+dependency installed beside this package; without it they exit 1 naming it.
+
+Midnight support is prerelease: `@fluxpointstudios/orynq-sdk-anchors-midnight` and
+`@fluxpointstudios/orynq-sdk-anchors-midnight-submit` remain private and are not on npm.
+An npm install of this package does not enable the Midnight commands. Until the D-10
+release gate opens, run them from a built source checkout, where pnpm links the private peer:
+
+```bash
+git clone https://github.com/Flux-Point-Studios/orynq-sdk.git
+cd orynq-sdk
+pnpm install --frozen-lockfile
+pnpm --filter @fluxpointstudios/orynq-sdk-quickstart... build
+node packages/quickstart/bin/orynq.mjs verify midnight <txHash>
+```
+
 `orynq verify midnight` is read-only and needs no key and no DUST. It checks an anchor with
 `verifyMidnightAnchor` from `@fluxpointstudios/orynq-sdk-anchors-midnight` and prints its labels:
 

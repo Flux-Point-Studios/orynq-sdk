@@ -1,8 +1,10 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createUserKeyFile, midnightSource, readUserKey, sourceEndpoints, verifyMidnightAnchor, verifyReport, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
@@ -14,6 +16,8 @@ import { registerVerifyMidnightAnchor, type MidnightVerifyDeps } from "../tools/
 import { serveSource, traceBundle, userChain } from "../../../anchors-midnight/src/__tests__/surface-chain.js";
 
 type Served = Awaited<ReturnType<typeof serveSource>>;
+
+const MIDNIGHT_PACKAGE = "@fluxpointstudios/orynq-sdk-anchors-midnight";
 
 const ENV = ["MIDNIGHT_NETWORK", "MIDNIGHT_BLOCKFROST_PROJECT_ID_FILE", "MIDNIGHT_INDEXER_URL", "MIDNIGHT_RPC_URL"] as const;
 const saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
@@ -107,6 +111,33 @@ describe("orynq-mcp's tools", () => {
 });
 
 describe("verify_midnight_anchor", () => {
+  // The Midnight package is an optional peer: the built server, with every runtime dependency
+  // but that one, as npm installs it without the peer.
+  it("names the optional Midnight package when it is not installed, and the server still starts", async () => {
+    const mcp = fileURLToPath(new URL("../..", import.meta.url));
+    const manifest = JSON.parse(readFileSync(join(mcp, "package.json"), "utf8")) as { dependencies: Record<string, string> };
+    const pkg = mkdtempSync(join(dir, "no-midnight-"));
+    mkdirSync(join(pkg, "dist"));
+    writeFileSync(join(pkg, "package.json"), JSON.stringify({ type: "module" }));
+    copyFileSync(join(mcp, "dist", "index.js"), join(pkg, "dist", "index.js"));
+    expect(Object.keys(manifest.dependencies)).not.toContain(MIDNIGHT_PACKAGE);
+    for (const name of Object.keys(manifest.dependencies)) {
+      mkdirSync(dirname(join(pkg, "node_modules", name)), { recursive: true });
+      symlinkSync(realpathSync(join(mcp, "node_modules", name)), join(pkg, "node_modules", name));
+    }
+    const client = new Client({ name: "test", version: "1" });
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(pkg, "dist", "index.js")], stderr: "ignore" }));
+    try {
+      expect((await client.listTools()).tools.map((t) => t.name)).toContain("verify_midnight_anchor");
+      expect(await call(client, { txHash: "00".repeat(32) })).toEqual({
+        isError: true,
+        text: `verify_midnight_anchor needs ${MIDNIGHT_PACKAGE}, an optional peer dependency of orynq-mcp that is not installed. Midnight is not yet published on npm; use a built orynq-sdk source checkout (see the package README).`,
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
   it("is read-only, takes exactly these fields, and refuses any other before a source is asked", async () => {
     const client = await midnightOnly();
     const tool = (await client.listTools()).tools.find((t) => t.name === "verify_midnight_anchor")!;

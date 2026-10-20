@@ -62,6 +62,7 @@ import {
  * Options for the SelectiveDisclosureProver.
  */
 export interface SelectiveDisclosureProverOptions {
+  mode?: "real" | "simulation";
   /**
    * Enable debug logging.
    */
@@ -446,6 +447,7 @@ export async function verifySpanInclusion(
  * ```
  */
 export class SelectiveDisclosureProver {
+  private readonly mode: "real" | "simulation";
   private readonly debug: boolean;
   private readonly includeSpanData: boolean;
   private readonly includeEventData: boolean;
@@ -456,6 +458,7 @@ export class SelectiveDisclosureProver {
    * @param options - Configuration options
    */
   constructor(options: SelectiveDisclosureProverOptions = {}) {
+    this.mode = options.mode ?? "real";
     this.debug = options.debug ?? false;
     this.includeSpanData = options.includeSpanData ?? true;
     this.includeEventData = options.includeEventData ?? true;
@@ -473,6 +476,13 @@ export class SelectiveDisclosureProver {
    * @throws MidnightProverException on validation or generation failure
    */
   async generateProof(input: DisclosureInput): Promise<DisclosureProof> {
+    if (this.mode !== "simulation") {
+      throw new MidnightProverException(
+        MidnightProverError.PROOF_GENERATION_FAILED,
+        "Legacy selective-disclosure proofs require explicit simulation mode"
+      );
+    }
+
     const startTime = performance.now();
 
     // Validate input
@@ -510,6 +520,7 @@ export class SelectiveDisclosureProver {
     const proofId = await this.generateProofId(publicInputs);
 
     const proof: DisclosureProof = {
+      simulation: true,
       proofType: "selective-disclosure",
       proofId,
       proof: proofBytes,
@@ -544,6 +555,10 @@ export class SelectiveDisclosureProver {
    * @returns Promise resolving to true if valid
    */
   async verifyProof(proof: DisclosureProof): Promise<boolean> {
+    if (this.mode !== "simulation" || proof.simulation !== true || !proof.proofId.startsWith("simulation-")) {
+      return false;
+    }
+
     try {
       // Validate proof structure
       if (proof.proofType !== "selective-disclosure") {
@@ -612,6 +627,7 @@ export class SelectiveDisclosureProver {
   async generateMembershipProof(input: DisclosureInput): Promise<DisclosureProof> {
     // Create a new prover instance with disclosure disabled
     const membershipProver = new SelectiveDisclosureProver({
+      mode: this.mode,
       debug: this.debug,
       includeSpanData: false,
       includeEventData: false,
@@ -783,8 +799,8 @@ export class SelectiveDisclosureProver {
         };
 
         return verifyMerkleProof(merkleProof);
-      } catch {
-        // JSON parse error or other issue
+      } catch (error) {
+        if (this.debug) console.error("[SelectiveDisclosureProver] Invalid simulation fixture:", error);
         return false;
       }
     }
@@ -807,7 +823,7 @@ export class SelectiveDisclosureProver {
       ...publicInputs,
     });
     const hash = await sha256StringHex(data);
-    return `disclosure-proof-${hash.slice(0, 16)}`;
+    return `simulation-disclosure-proof-${hash.slice(0, 16)}`;
   }
 
   /**
