@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { ed25519PublicKey, ed25519Verify } from "../ed25519.js";
-import { compactAt, fromHex, toHex, u32le } from "../scale.js";
+import { compactAt, concatBytes, fromHex, toHex, u32le } from "../scale.js";
 import { encodeHeader, headerHash, type BlockHeader } from "../substrate.js";
 import {
   DEFAULT_MAX_SET_CHANGES,
@@ -17,7 +17,7 @@ import {
 } from "../grandpa.js";
 import { finalityRpc } from "../source.js";
 import { replaySource } from "./recorded-source.js";
-import { signedPrecommit, syntheticChain, testKeys, withUnknownHeaders } from "./grandpa-chain.js";
+import { encodeJustification, signedPrecommit, syntheticChain, testKeys, withUnknownHeaders } from "./grandpa-chain.js";
 
 // Every Ed25519 verification is still performed, and counted.
 vi.mock("../ed25519.js", async (importOriginal) => {
@@ -48,7 +48,7 @@ function work(j: GrandpaJustification, set: AuthoritySet) {
   return { result, verifications: vi.mocked(ed25519Verify).mock.calls.length, links: tally.links, millis, bytes };
 }
 const report = (label: string, w: ReturnType<typeof work>) =>
-  process.stdout.write(`\n#98 L3 ${label}: ${(w.bytes / 1e6).toFixed(2)} MB, ${w.verifications} Ed25519, ${w.links} parent links, ${w.millis.toFixed(1)} ms\n`);
+  process.stdout.write(`\njustification work, ${label}: ${(w.bytes / 1e6).toFixed(2)} MB, ${w.verifications} Ed25519, ${w.links} parent links, ${w.millis.toFixed(1)} ms\n`);
 
 const uniform = (setCount: number, extra: Partial<Parameters<typeof syntheticChain>[0]> = {}) =>
   syntheticChain({ firstSetId: 100n, genesisEnd: 1000, setLengths: () => 300, setCount, ...extra });
@@ -56,7 +56,7 @@ const keys = testKeys("authority", 4);
 
 // A precommit in the synthetic chain's round 7 of set 100, and a justification of that round for
 // `target`, or for its number under `hash`.
-const vote = (sk: Uint8Array, header: BlockHeader) => signedPrecommit(sk, header, 7n, 100n);
+const vote = (sk: Uint8Array, header: BlockHeader) => signedPrecommit(sk, { hash: headerHash(header), number: header.number }, 7n, 100n);
 const justificationOf = (target: BlockHeader, precommits: GrandpaJustification["precommits"], ancestries: BlockHeader[], hash = headerHash(target)): GrandpaJustification => ({
   round: 7n,
   target: { hash, number: target.number },
@@ -168,72 +168,93 @@ describe("justifiedTarget: a supermajority of the set's weight signed for this s
     expect(justifiedTarget(toInner(equivocated), set)).toEqual({ hash: headerHash(inner), number: inner.number });
   });
 
-  it("refuses more precommits than two for each voter, which no GRANDPA commit carries", () => {
-    const padded = j();
-    padded.precommits = [...padded.precommits, ...padded.precommits, ...padded.precommits];
-    expect(justifiedTarget(padded, set)).toEqual({ error: `the justification for block ${target.number} carries 9 precommits, more than two for each of set 100's 4 voters` });
+  it("counts a non-voter's precommits and repeated precommits as no weight, however many there are", () => {
+    const strangers = testKeys("stranger", 9).map((sk) => vote(sk, target));
+    const padded = (precommits: GrandpaJustification["precommits"]) => ({ ...j(), precommits: [...precommits, ...strangers, ...precommits, ...precommits] });
+    expect(justifiedTarget(padded(j().precommits), set)).toEqual({ hash: headerHash(target), number: target.number });
+    expect(justifiedTarget(padded(j().precommits.slice(1)), set)).toEqual({ error: expect.stringMatching(/carries 2 of 4 weight/) });
   });
 
-  it("tries each voter once: a precommit that fails is not retried with the same voter's next one", () => {
-    const astray = vote(keys[0]!, chain.header(target.number - 1));
-    for (const first of [forged(j().precommits[0]!), astray]) {
-      const retried = j();
-      retried.precommits.unshift(first);
-      expect(justifiedTarget(retried, set)).toEqual({ error: expect.stringMatching(/carries 2 of 4 weight/) });
-    }
-  });
-
-  it("refuses more ancestry headers than twice Midnight's 300-block set, and follows a route that long", () => {
-    const long = syntheticChain({ firstSetId: 100n, genesisEnd: 1000, setLengths: () => 700, setCount: 1 });
+  it("follows ancestry headers however many there are, repeated or not", () => {
+    const long = syntheticChain({ firstSetId: 100n, genesisEnd: 1000, setLengths: () => 1000, setCount: 1 });
     const base = long.header(1001);
-    const routeOf = (length: number) =>
-      justificationOf(
-        base,
-        keys.slice(0, 3).map((sk) => vote(sk, long.header(base.number + length))),
-        Array.from({ length }, (_, i) => long.header(base.number + 1 + i)),
-      );
-    expect(justifiedTarget(routeOf(600), set)).toEqual({ hash: headerHash(base), number: base.number });
-    expect(justifiedTarget(routeOf(601), set)).toEqual({ error: "the justification for block 1001 carries 601 ancestry headers, more than 600" });
+    const route = Array.from({ length: 700 }, (_, i) => long.header(base.number + 1 + i));
+    const withVoter2 = (at: BlockHeader, ancestries: BlockHeader[]) => justificationOf(base, [...keys.slice(0, 2).map((sk) => vote(sk, base)), vote(keys[2]!, at)], ancestries);
+    expect(justifiedTarget(withVoter2(route.at(-1)!, route), set)).toEqual({ hash: headerHash(base), number: base.number });
+    expect(justifiedTarget(withVoter2(route[0]!, Array(601).fill(route[0]!)), set)).toEqual({ hash: headerHash(base), number: base.number });
+  });
+
+  // finality-grandpa counts the weight of a voter that signed two different precommits in the
+  // round for every block, and a node's commit lists both, in the order they reached it.
+  describe("an equivocator", () => {
+    const below = (n: number) => chain.header(target.number - n);
+    const withVoter2 = (...precommits: GrandpaJustification["precommits"]) => ({ ...j(), precommits: [...j().precommits.slice(0, 2), ...precommits] });
+    const final = { hash: headerHash(target), number: target.number };
+    const short = { error: expect.stringMatching(/carries 2 of 4 weight/) };
+
+    it("counts when its precommit for an ancestor of the target comes before its precommit for the target", () => {
+      expect(justifiedTarget({ ...withVoter2(vote(keys[2]!, below(1)), vote(keys[2]!, target)), ancestries: [target] }, set)).toEqual(final);
+    });
+
+    it("counts when neither of its precommits is in the target's subtree, as in Substrate's justification_with_equivocation", () => {
+      expect(justifiedTarget({ ...withVoter2(vote(keys[2]!, below(2)), vote(keys[2]!, below(1))), ancestries: [target, below(1)] }, set)).toEqual(final);
+    });
+
+    it("is not made by one precommit off the target's subtree, listed once or twice", () => {
+      expect(justifiedTarget(withVoter2(vote(keys[2]!, below(1))), set)).toEqual(short);
+      expect(justifiedTarget(withVoter2(vote(keys[2]!, below(1)), vote(keys[2]!, below(1))), set)).toEqual(short);
+    });
+
+    it("is not made by two precommits when either is forged, or signed for another set id or round", () => {
+      for (const pair of [
+        [vote(keys[2]!, below(1)), forged(vote(keys[2]!, below(2)))],
+        [forged(vote(keys[2]!, below(1))), vote(keys[2]!, below(2))],
+        [vote(keys[2]!, below(1)), signedPrecommit(keys[2]!, { hash: headerHash(below(2)), number: below(2).number }, 7n, 101n)],
+        [vote(keys[2]!, below(1)), signedPrecommit(keys[2]!, { hash: headerHash(below(2)), number: below(2).number }, 8n, 100n)],
+      ]) {
+        expect(justifiedTarget(withVoter2(...pair), set)).toEqual(short);
+      }
+    });
+
+    it("adds no weight when it is not a voter", () => {
+      const [stranger] = testKeys("stranger", 1);
+      expect(justifiedTarget(withVoter2(vote(stranger!, below(1)), vote(stranger!, below(2))), set)).toEqual(short);
+    });
   });
 });
 
-// Issue #98 L3: a voter whose precommit failed was tried again for each copy, and each copy
-// walked the whole ancestry, so P copies over K headers cost P Ed25519 checks and P·K steps.
-// The work is counted, not timed; the times are reported.
+// The work is counted, not timed (the times are only reported): at most two Ed25519
+// verifications for each voter, and at most two reads of each ancestry header's parent link, one
+// to hash the header and one to walk from it, however the source repeats or arranges what it sends.
 describe("justifiedTarget's work is linear in the justification, whatever the source sends", () => {
   const chain = syntheticChain({ firstSetId: 100n, genesisEnd: 1000, setLengths: () => 700, setCount: 1 });
   const set = { setId: 100n, authorities: chain.authorities(0) };
   const base = chain.header(1001);
   const route = Array.from({ length: 600 }, (_, i) => chain.header(base.number + 1 + i));
   const tip = route.at(-1)!;
-  const toBase = (precommits: GrandpaJustification["precommits"], hash?: Uint8Array) => justificationOf(base, precommits, route, hash);
+  const quorum = keys.slice(0, 3).map((sk) => vote(sk, base));
+  const final = { hash: headerHash(base), number: base.number };
+  const refused = { error: "the justification for block 1001 carries 0 of 4 weight under set 100; finality needs 3" };
+  // A voter's signature for the tip, moved onto every block of the route.
+  const moved = (sk: Uint8Array) => {
+    const p = vote(sk, tip);
+    return route.map((h) => ({ ...p, target: { hash: headerHash(h), number: h.number } }));
+  };
+  const stranger = (i: number) => ({ ...quorum[0]!, id: concatBytes(u32le(i), new Uint8Array(28)) });
 
-  it("the issue's input, one genuine precommit repeated 3000 times over 600 headers, is refused before any Ed25519 check or step", () => {
-    const w = work(toBase(Array(3000).fill(vote(keys[0]!, tip)), new Uint8Array(32)), set);
-    report("synthetic, one precommit x 3000 over 600 headers", w);
-    expect(w.result).toEqual({ error: "the justification for block 1001 carries 3000 precommits, more than two for each of set 100's 4 voters" });
-    expect([w.verifications, w.links]).toEqual([0, 0]);
-  });
-
-  it("more ancestry headers than the bound are refused before any is hashed", () => {
-    const w = work({ ...decodeJustification(chain.justification(0, base)), ancestries: Array(20_000).fill(route[0]!) }, set);
-    report("synthetic, 20000 ancestry headers", w);
-    expect(w.result).toEqual({ error: "the justification for block 1001 carries 20000 ancestry headers, more than 600" });
-    expect([w.verifications, w.links]).toEqual([0, 0]);
-  });
-
-  // Eight precommits, two for each voter, is the most the voter cap admits.
   it.each([
-    ["one voter's forged precommit, tried once", () => toBase(Array(8).fill(forged(vote(keys[0]!, tip)))), { verifications: 1, finalized: false }],
-    ["one voter's genuine precommit off the target, refused by its walk before Ed25519", () => toBase(Array(8).fill(vote(keys[0]!, tip)), new Uint8Array(32)), { verifications: 0, finalized: false }],
-    ["a stranger's precommits, refused by membership before Ed25519", () => toBase(Array(8).fill(vote(testKeys("stranger", 1)[0]!, tip))), { verifications: 0, finalized: false }],
-    ["every voter equivocating along the route, each header walked once", () => toBase(keys.flatMap((sk) => [vote(sk, tip), vote(sk, route[299]!)])), { verifications: 4, finalized: true }],
-  ] as const)("within the caps: %s", (label, justification, expected) => {
-    const w = work(justification(), set);
+    ["one genuine precommit repeated 3000 times over 600 headers, under a target its route never reaches", () => justificationOf(base, Array(3000).fill(vote(keys[0]!, tip)), route, new Uint8Array(32)), refused, 1],
+    ["each voter's signature moved onto all 600 blocks of the route", () => justificationOf(base, keys.flatMap(moved), route), refused, 8],
+    ["3000 non-voters' precommits ahead of the quorum's", () => justificationOf(base, [...Array.from({ length: 3000 }, (_, i) => stranger(i)), ...quorum], route), final, 3],
+    ["the quorum's precommits with 20,000 ancestry headers", () => justificationOf(base, quorum, Array(20_000).fill(route[0]!)), final, 3],
+    ["every voter equivocating along the route", () => justificationOf(base, keys.flatMap((sk) => [vote(sk, tip), vote(sk, route[299]!)]), route), final, 4],
+  ] as const)("%s", (label, justification, result, verifications) => {
+    const j = justification();
+    const w = work(j, set);
     report(`synthetic, ${label}`, w);
-    expect({ verifications: w.verifications, finalized: !("error" in w.result) }).toEqual(expected);
-    // Hashing reads each of the 600 headers' parent link once, and walks read it at most once more.
-    expect(w.links).toBeLessThanOrEqual(2 * route.length);
+    expect(w.result).toEqual(result);
+    expect(w.verifications).toBe(verifications);
+    expect(w.links).toBeLessThanOrEqual(2 * j.ancestries.length);
   });
 });
 
@@ -266,6 +287,26 @@ describe("verifyFinality on a synthetic chain", () => {
     const chain = syntheticChain({ firstSetId: 9n, genesisEnd: 50, setLengths: (k) => lengths[k]!, setCount: lengths.length });
     const block = chain.block(chain.endOf(4) + 3);
     expect(await verifyFinality({ rpc: chain.rpc, block, checkpoints: [chain.checkpoint(0)] })).toMatchObject({ finalized: true, setChanges: 5 });
+  });
+
+  it("walks through a set end whose justification lists an equivocator's ancestor precommit first, or carries repeats and non-voters' precommits", async () => {
+    const chain = uniform(4);
+    const end = chain.header(chain.endOf(0));
+    const signedEnd = { hash: headerHash(end), number: end.number };
+    const reshaped = (change: (j: GrandpaJustification) => GrandpaJustification): FinalityRpc => ({
+      proveFinality: async (heights) =>
+        (await chain.rpc.proveFinality(heights)).map((raw) => {
+          const proof = raw && decodeFinalityProof(raw);
+          return proof && proof.justification.target.number === end.number ? chain.proof(end, encodeJustification(change(proof.justification)), proof.unknownHeaders) : raw;
+        }),
+      headers: chain.rpc.headers,
+    });
+    const equivocated = reshaped((j) => ({ ...j, precommits: [...j.precommits.slice(0, 2), vote(keys[2]!, chain.header(end.number - 1)), j.precommits[2]!], ancestries: [end] }));
+    const strangers = testKeys("stranger", 9).map((sk) => signedPrecommit(sk, signedEnd, 7n, 100n));
+    const padded = reshaped((j) => ({ ...j, precommits: [...j.precommits, ...strangers, ...j.precommits, ...j.precommits] }));
+    for (const rpc of [equivocated, padded]) {
+      expect(await verifyFinality({ rpc, block: chain.block(chain.endOf(1) + 9), checkpoints: [chain.checkpoint(0)] })).toMatchObject({ finalized: true, setChanges: 2 });
+    }
   });
 
   it("follows a change of authorities, and refuses a set signed by the authorities it replaced", async () => {
@@ -500,7 +541,7 @@ describe.each(["mainnet", "preprod"])("golden: real %s finality, replayed", (net
     expect(w.links).toBeLessThanOrEqual(2 * headers.length);
   });
 
-  it("the issue's real input, the genuine precommits repeated to 0.6 MB over those headers under a target they never reach, is refused at once", async () => {
+  it("the real precommits repeated to 0.6 MB over those headers, under a target they never reach, cost one Ed25519 check for each voter", async () => {
     const [raw] = await rpc().proveFinality([f.block.height]);
     const proof = decodeFinalityProof(raw!);
     const { precommits } = proof.justification;
@@ -509,8 +550,16 @@ describe.each(["mainnet", "preprod"])("golden: real %s finality, replayed", (net
     const repeated = Array.from({ length: Math.floor(room / 132) }, (_, i) => precommits[i % precommits.length]!);
     const w = work({ ...proof.justification, target: { hash: new Uint8Array(32), number: f.block.height }, precommits: repeated, ancestries: headers }, own);
     report(`${network}, real precommits x ${repeated.length} over ${headers.length} real headers`, w);
-    expect(w.result).toEqual({ error: `the justification for block ${f.block.height} carries ${repeated.length} precommits, more than two for each of set ${own.setId}'s 13 voters` });
-    expect([w.verifications, w.links]).toEqual([0, 0]);
+    expect(w.result).toEqual({ error: `the justification for block ${f.block.height} carries 0 of 130 weight under set ${own.setId}; finality needs 87` });
+    expect(w.verifications).toBe(precommits.length);
+    expect(w.links).toBeLessThanOrEqual(2 * headers.length);
+  });
+
+  it("the real justification still finalizes with its precommits repeated and non-voters' precommits added", async () => {
+    const [raw] = await rpc().proveFinality([f.block.height]);
+    const j = decodeFinalityProof(raw!).justification;
+    const strangers = testKeys("stranger", 18).map((sk) => signedPrecommit(sk, j.target, j.round, own.setId));
+    expect(justifiedTarget({ ...j, precommits: [...j.precommits, ...strangers, ...j.precommits, ...j.precommits] }, own)).toEqual(j.target);
   });
 
   it("refuses a block hash the finalized chain does not hold at that height", async () => {

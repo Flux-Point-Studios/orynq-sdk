@@ -226,7 +226,9 @@ forced or delayed change stops the walk. The set that finalized the block must t
 at or above it, and the headers in its proof must chain down to the block's hash. A
 justification's own target is not signed, so a precommit counts for it only when it signed that
 hash at that number, or a descendant whose ancestry headers lead down to it at that number: a
-source cannot relabel a final block's justification as a higher block. A set finalizes only
+source cannot relabel a final block's justification as a higher block. An authority that signed
+two different precommits in the round counts wherever they point, as finality-grandpa counts an
+equivocator's weight for every block. A set finalizes only
 with more than two thirds of a total weight above 0, from distinct authorities: a checkpoint
 with no voting weight (no authorities, or every weight 0) or with a negative weight is refused
 before anything is asked of the source, and so is a set change that schedules a set with no
@@ -241,12 +243,13 @@ Cost: one batched request per 64 set changes for the proofs and one for the head
 per set change on mainnet, where a set lasts 300 blocks (30 minutes). The walk stops after
 `maxSetChanges` (default 2016, six weeks) and reports the block not finalized, so the cost never
 grows with the chain's age; a fresher checkpoint is the remedy. Each justification's work is
-linear in its size, whatever the source sends. One carrying more than two precommits per voter
-(a GRANDPA commit holds at most an equivocator's two) or more than 600 ancestry headers (twice a
-set, which a set's votes never span) is refused. Each voter is tried once, by its first
-precommit, and the voter, repeat and ancestry checks, which walk each header at most once, run
-before any Ed25519 verification. A finalized result returns the set that justified the block as
-a checkpoint the caller can keep.
+linear in its size, whatever the source sends. A precommit from a non-voter or a voter already
+counted, or one repeating that voter's earlier precommit, is skipped by a lookup. Only a voter's
+first two different precommits are verified, so a justification costs at most two Ed25519
+verifications per voter, and each ancestry header is hashed once and walked at most once. None
+of these is refused for its number: Substrate accepts, stores and serves justifications that
+carry non-voters' precommits, repeats and repeated ancestry headers. A finalized result returns
+the set that justified the block as a checkpoint the caller can keep.
 
 Inclusion is a strict decode, never a byte search. `orderedTrieRoot` recomputes a block body's
 `extrinsicsRoot` (trie layout V1, which Midnight's state version 3 selects), and

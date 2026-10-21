@@ -1,7 +1,7 @@
 import { ed25519PublicKey, ed25519Sign } from "../ed25519.js";
 import { blake2b256, encodeHeader, headerHash, type BlockHeader, type RpcHeader, type WeightedAuthority } from "../substrate.js";
 import { compactAt, concatBytes, encodeCompact, toHex, u32le, u64le } from "../scale.js";
-import type { FinalityCheckpoint, FinalityRpc } from "../grandpa.js";
+import type { FinalityCheckpoint, FinalityRpc, GrandpaJustification } from "../grandpa.js";
 
 // A synthetic GRANDPA chain, generated lazily: set k (counting from `firstSetId`) finalizes the
 // blocks after the end of set k-1, and its last block carries an FRNK log naming set k+1.
@@ -30,11 +30,21 @@ const publicKey = (sk: Uint8Array) => {
 };
 
 // The precommit for `target` that the authority holding `sk` signs in a round of set `setId`.
-export const signedPrecommit = (sk: Uint8Array, target: BlockHeader, round: bigint, setId: bigint) => {
-  const hash = headerHash(target);
-  const message = concatBytes(new Uint8Array([1]), hash, u32le(target.number), u64le(round), u64le(setId));
-  return { target: { hash, number: target.number }, signature: ed25519Sign(message, sk), id: publicKey(sk) };
+export const signedPrecommit = (sk: Uint8Array, target: { hash: Uint8Array; number: number }, round: bigint, setId: bigint) => {
+  const message = concatBytes(new Uint8Array([1]), target.hash, u32le(target.number), u64le(round), u64le(setId));
+  return { target, signature: ed25519Sign(message, sk), id: publicKey(sk) };
 };
+
+export const encodeJustification = (j: GrandpaJustification) =>
+  concatBytes(
+    u64le(j.round),
+    j.target.hash,
+    u32le(j.target.number),
+    encodeCompact(j.precommits.length),
+    ...j.precommits.map((p) => concatBytes(p.target.hash, u32le(p.target.number), p.signature, p.id)),
+    encodeCompact(j.ancestries.length),
+    ...j.ancestries.map(encodeHeader),
+  );
 
 // A finality proof with its justification kept byte for byte and its unknown headers replaced.
 export function withUnknownHeaders(proof: Uint8Array, headers: BlockHeader[]): Uint8Array {
@@ -94,12 +104,10 @@ export function syntheticChain(spec: ChainSpec) {
 
   const justification = (k: number, target: BlockHeader, signers = keysFor(k)) => {
     const round = 7n;
+    const signed = { hash: headerHash(target), number: target.number };
     const quorum = signers.slice(0, signers.length - Math.floor((signers.length - 1) / 3));
-    const precommits = quorum.map((sk) => {
-      const p = signedPrecommit(sk, target, round, spec.firstSetId + BigInt(k));
-      return concatBytes(p.target.hash, u32le(p.target.number), p.signature, p.id);
-    });
-    return concatBytes(u64le(round), headerHash(target), u32le(target.number), encodeCompact(precommits.length), ...precommits, encodeCompact(0));
+    const precommits = quorum.map((sk) => signedPrecommit(sk, signed, round, spec.firstSetId + BigInt(k)));
+    return encodeJustification({ round, target: signed, precommits, ancestries: [] });
   };
   const proof = (target: BlockHeader, j: Uint8Array, unknown: BlockHeader[]) =>
     concatBytes(headerHash(target), encodeCompact(j.length), j, encodeCompact(unknown.length), ...unknown.map(encodeHeader));
