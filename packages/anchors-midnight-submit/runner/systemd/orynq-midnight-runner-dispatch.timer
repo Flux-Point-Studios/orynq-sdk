@@ -1,0 +1,13 @@
+# Dispatches two minutes after the timer starts (at boot, once enabled) and every 15 minutes
+# after, so a run a reboot or a crash ended resumes while its approval holds.
+[Unit]
+Description=Resume orynq Midnight mainnet runs after a reboot or a crash
+Documentation=https://github.com/Flux-Point-Studios/orynq-sdk/blob/main/packages/anchors-midnight-submit/runner/README.md
+
+[Timer]
+OnActiveSec=2min
+OnUnitActiveSec=15min
+Unit=orynq-midnight-runner-dispatch.service
+
+[Install]
+WantedBy=timers.target

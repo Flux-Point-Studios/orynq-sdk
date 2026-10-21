@@ -7,11 +7,19 @@
 // refuses every transaction that deploys nothing with Custom error: 170, InvalidDustSpendProof),
 // "lose-read" (the first read of a landed transaction fails), "lose-sync" (the wallet stops
 // syncing once a deploy landed), "fail-save" (the shielded state does not serialize, as
-// ledger-v8 8.1.3 once trapped on preprod) or "low-dust" (the wallet holds 0.5 DUST).
-import { readFileSync, writeFileSync } from "node:fs";
+// ledger-v8 8.1.3 once trapped on preprod), "fail-close" (closing the wallet throws), "low-dust"
+// (the wallet holds 0.5 DUST), "stall-sync" (the wallet's sync does not finish in time), "unfinal"
+// (the node's finalized head stays below every landed transaction), "foreign-block" (the node's
+// block of the landed transactions carries none of them), "lose-body" (the node answers for no
+// block's body) or "fork" (the node's block at their heights is another than the indexer's). A
+// test reorganizes the chain by moving a landed transaction to another block, or dropping it.
+// The FPS mainnet keys an operator loads are the ones the chain file pins, a test's throwaway
+// keys, when it pins any.
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import * as L from "@midnight-ntwrk/ledger-v8";
-import { midnightSource, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { midnightExtrinsic, midnightSource, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { ledgerNode } from "../../anchors-midnight/src/__tests__/ledger-node.js";
+import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS } from "../src/custody.js";
 import { NETWORK_IDENTITY, type OperatorWallet, type StateSave, type WalletOptions } from "../src/index.js";
 import { costParametersOf } from "../src/wallet.js";
 import { prover } from "./prover.js";
@@ -25,14 +33,23 @@ export interface OfflineChain {
   aheadMs: number;
   // Every transaction handed to the node, in order, whether or not it landed.
   sent: string[];
-  // Each landed transaction, and for a deploy the contract's address and initial state.
-  landed: Record<string, { raw: string; height: number; address?: string; state?: string }>;
+  // Each landed transaction, in block BLOCK unless `block` names another, and for a deploy the
+  // contract's address and initial state; a contract a test deployed before its run carries no
+  // bytes (raw "").
+  landed: Record<string, { raw: string; height: number; block?: string; address?: string; state?: string }>;
   // Every transaction whose DUST the wallet was asked to release.
   discarded: string[];
   // Set while the node lacks the indexer's newest block, as a node behind the indexer does.
   nodeLags?: boolean;
-  // How many times a run closed its wallet.
+  // How many times a run closed its wallet, and saved its sync state.
   walletCloses?: number;
+  walletSaves?: number;
+  // The state file each run opened its wallet with, and how long each waited for its sync.
+  walletOpens?: { stateFile: string | null }[];
+  syncWaits?: number[];
+  // The FPS mainnet keys this mainnet pins in the place of the real ones: its test's throwaway
+  // author key and salt key id. Without them the real ones are pinned.
+  fpsKeys?: { authorKeys: string[]; saltKeyIds: string[] };
 }
 
 const FILE = process.env.OFFLINE_CHAIN!;
@@ -40,7 +57,12 @@ const FAULTS = new Set(process.env.OFFLINE_FAULT?.split(","));
 const HEAD = "00".repeat(32);
 const BLOCK = "ab".repeat(32);
 const read = (): OfflineChain => JSON.parse(readFileSync(FILE, "utf8"));
-const write = (chain: OfflineChain) => writeFileSync(FILE, JSON.stringify(chain));
+// Written whole under this process's own name and renamed over the file, so neither this process
+// nor the test's, which both read the file at any moment, ever reads it half written.
+const write = (chain: OfflineChain) => {
+  writeFileSync(`${FILE}.${process.pid}`, JSON.stringify(chain));
+  renameSync(`${FILE}.${process.pid}`, FILE);
+};
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 let readsToLose = FAULTS.has("lose-read") ? 1 : 0;
 
@@ -50,16 +72,38 @@ let readsToLose = FAULTS.has("lose-read") ? 1 : 0;
 const hostNow = Date.now;
 Date.now = () => hostNow() + read().aheadMs;
 
+const pinned = read().fpsKeys;
+if (pinned) {
+  (MAINNET_AUTHOR_KEYS as string[]).splice(0, MAINNET_AUTHOR_KEYS.length, ...pinned.authorKeys);
+  (MAINNET_SALT_KEY_IDS as string[]).splice(0, MAINNET_SALT_KEY_IDS.length, ...pinned.saltKeyIds);
+}
+
 // The node reads its ledger in the newest block and in the block every transaction lands in.
 const ledger = ledgerNode({ blocks: [HEAD, BLOCK], contracts: (address) => Object.values(read().landed).find((t) => t.address === address)?.state });
 
-// The node's answer to one JSON-RPC request.
+// The node's answer to one JSON-RPC request. Every landed transaction is in its block at its own
+// height, HEAD is every other block, and the newest block HEAD, at height 1000, is final.
 function nodeAnswer(method: string, params: unknown[] = []) {
-  const identity = NETWORK_IDENTITY[read().network];
+  const chain = read();
+  const identity = NETWORK_IDENTITY[chain.network];
+  const landed = Object.values(chain.landed).filter((t) => t.raw !== "");
   if (method === "system_chain") return { result: identity.chain };
   if (method === "midnight_ledgerVersion") return { result: "8.1.3" };
   if (method === "state_getRuntimeVersion") return { result: { specVersion: 1000300 } };
-  if (method === "chain_getBlockHash") return { result: params[0] === 0 ? `0x${identity.genesis}` : read().nodeLags ? null : `0x${HEAD}` };
+  if (method === "chain_getBlockHash") {
+    if (params[0] === 0) return { result: `0x${identity.genesis}` };
+    const at = landed.find((t) => t.height === params[0]);
+    if (at) return { result: `0x${FAULTS.has("fork") ? HEAD : (at.block ?? BLOCK)}` };
+    return { result: chain.nodeLags ? null : `0x${HEAD}` };
+  }
+  if (method === "chain_getFinalizedHead") return { result: `0x${HEAD}` };
+  if (method === "chain_getHeader" && params[0] === `0x${HEAD}`) return { result: { number: FAULTS.has("unfinal") ? "0x0" : "0x3e8" } };
+  if (method === "chain_getBlock") {
+    const carried = landed.filter((t) => `0x${t.block ?? BLOCK}` === params[0]);
+    if (carried.length === 0 || FAULTS.has("lose-body")) return { result: null };
+    const extrinsics = FAULTS.has("foreign-block") ? [] : carried.map((t) => `0x${hex(midnightExtrinsic(new Uint8Array(Buffer.from(t.raw, "hex"))))}`);
+    return { result: { block: { extrinsics } } };
+  }
   if (method === "state_getStorage" && params[1] === `0x${HEAD}`) {
     const now = Buffer.alloc(8);
     now.writeBigUInt64LE(BigInt(Date.now()));
@@ -78,7 +122,7 @@ const indexer = {
       throw new Error("offline indexer: HTTP 502: Bad Gateway");
     }
     const actions = t.address === undefined ? [] : [{ kind: "ContractDeploy" as const, address: t.address, state: t.state! }];
-    return [{ hash, raw: t.raw, block: { height: t.height, hash: BLOCK, timestamp: Date.now() }, status: "SUCCESS", contractActions: actions }];
+    return [{ hash, raw: t.raw, block: { height: t.height, hash: t.block ?? BLOCK, timestamp: Date.now() }, status: "SUCCESS", contractActions: actions }];
   },
   async head() {
     return { height: 1000, hash: HEAD, timestamp: Date.now() };
@@ -128,22 +172,33 @@ globalThis.fetch = async (url, init) => {
 export const provingService = () => prover;
 
 // A synced wallet with DUST to spare that binds without adding a fee and lands what it submits.
-// It takes only the fee parameters the real wallet takes.
+// It takes only the fee parameters the real wallet takes, and like it saves on close only once synced.
 export async function openWallet(options: WalletOptions): Promise<OperatorWallet> {
   costParametersOf(options.costParameters);
-  const saveState = async (): Promise<StateSave> =>
-    FAULTS.has("fail-save") ? { saved: false, failures: [{ part: "shielded", error: "ParseError: Could not serialize local state: RuntimeError: unreachable" }] } : { saved: true };
+  const opened = read();
+  write({ ...opened, walletOpens: [...(opened.walletOpens ?? []), { stateFile: options.stateFile ?? null }] });
+  const stalls = FAULTS.has("stall-sync");
+  const saveState = async (): Promise<StateSave> => {
+    const chain = read();
+    write({ ...chain, walletSaves: (chain.walletSaves ?? 0) + 1 });
+    return FAULTS.has("fail-save") ? { saved: false, failures: [{ part: "shielded", error: "ParseError: Could not serialize local state: RuntimeError: unreachable" }] } : { saved: true };
+  };
+  const at = (applied: bigint) => ({ applied, highest: 9n, connected: true });
   return {
     network: options.network,
     addresses: options.expectedAddresses!,
-    async waitForSync() {},
+    async waitForSync(timeoutMs = 600_000) {
+      const chain = read();
+      write({ ...chain, syncWaits: [...(chain.syncWaits ?? []), timeoutMs] });
+      if (stalls) throw new Error(`the ${options.network} wallet did not sync within ${timeoutMs / 1000} s`);
+    },
     async progress() {
-      throw new Error("offline wallet: unexpected progress");
+      return { shielded: at(stalls ? 5n : 9n), unshielded: at(9n), dust: at(9n), synced: !stalls };
     },
     saveState,
     async balances() {
       if (FAULTS.has("lose-sync") && Object.keys(read().landed).length > 0) throw new Error(`the ${options.network} wallet did not sync within 600 s`);
-      return { night: 10n ** 9n, dust: FAULTS.has("low-dust") ? 5n * 10n ** 14n : 10n ** 16n, nightUtxos: 1, registeredNightUtxos: 1 };
+      return { night: 10n ** 9n, dust: FAULTS.has("dust-0.4") ? 4n * 10n ** 14n : FAULTS.has("low-dust") ? 5n * 10n ** 14n : 10n ** 16n, nightUtxos: 1, registeredNightUtxos: 1 };
     },
     async registerNightForDust() {
       return null;
@@ -178,7 +233,8 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     async close() {
       const chain = read();
       write({ ...chain, walletCloses: (chain.walletCloses ?? 0) + 1 });
-      return saveState();
+      if (FAULTS.has("fail-close")) throw new Error("offline wallet: the facade did not stop");
+      return stalls ? null : saveState();
     },
   };
 }

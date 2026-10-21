@@ -1,0 +1,21 @@
+{
+  "network": "mainnet (Midnight Mainnet, genesis 1941ca8e2bb88146c14dea084d3be7eb6e96ca7135429c543848b628124f2854)",
+  "payer": "mn_addr1hdg7gg557cwmd9v67jv37z38zvprt7d46xqhk7c4a7hfask6jwrs7qesvq",
+  "maxFeeDustPerTransaction": "0.01",
+  "maxDustPer24Hours": "0.1",
+  "maxApprovalHours": 24,
+  "maxConfirmationsPerTransaction": 3,
+  "deploy": {
+    "action": "deploy the immutable orynq-anchor-registry on Midnight MAINNET",
+    "authority": "committee [] (0 members), threshold 1, counter 0",
+    "verifierKeys": {
+      "anchor": "85dc57a4269dd3aceb82867ecc6c145ef5f679c6f51767f200250e7c075777c5",
+      "anchor_hiding": "081384ce20f2a726e1dd79c0bbfbaabb0fe756ffa15ae429be4cee30b47e790f"
+    }
+  },
+  "anchors": {
+    "action": "write these anchors to FPS's orynq-anchor-registry on Midnight MAINNET",
+    "authorKeys": ["6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08"],
+    "maxEntriesPerApproval": 8
+  }
+}

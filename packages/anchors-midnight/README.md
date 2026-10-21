@@ -171,9 +171,16 @@ the attempt that writes its row second never broadcasts. Each row records the wa
 the attempt's fee when `prepare` names it (`payer`); a journal created before that column existed
 gains it on open, its older rows naming none. `live(key)` returns a key's live attempt with its
 exact bytes and payer, so a caller that lost its own record of an attempt can resume it and name
-the wallet that paid it.
+the wallet that paid it. A landed row names the block the indexer placed it in, which a reorg
+can orphan: `relocate(txHash, chain)` settles a landed row afresh once the chain view's
+`finalHash(height)`, the block the node's finalized chain holds at the row's height, is another
+block. The row is then pending again and settled by its hash as any pending row is: landed where
+the indexer now places it, or retired once chain time is past its TTL plus the margin unseen,
+which frees its key. Nothing is prepared or broadcast, and a row whose block the node has not
+finalized, or has finalized as the very block the row names, stays as it is.
 `chainView(source, network)` reads `network` through its source: transactions from its
-indexer, contracts from its node (`contractStateOnNode` at the block), and chain time from the
+indexer, contracts from its node (`contractStateOnNode` at the block), the node's finalized block
+at a height (null above its finalized head), and chain time from the
 indexer's newest block only once the source's node holds that block at that height, as the
 smaller of the indexer's time for it and the node's own `Timestamp.Now` in it; until the node
 holds it there is no chain time, so an indexer that is forked, foreign or ahead of the node

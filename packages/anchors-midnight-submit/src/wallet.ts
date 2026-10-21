@@ -11,6 +11,7 @@ import { V1Builder } from "@midnight-ntwrk/wallet-sdk-dust-wallet/v1";
 import { WalletEntrySchema, WalletFacade, mergeWalletEntries, type BalancingRecipe, type FacadeState } from "@midnight-ntwrk/wallet-sdk-facade";
 import { ShieldedWallet } from "@midnight-ntwrk/wallet-sdk-shielded";
 import { PublicKey, UnshieldedWallet } from "@midnight-ntwrk/wallet-sdk-unshielded-wallet";
+import { Either } from "effect";
 import { filter, firstValueFrom, map, of, take, timeout } from "rxjs";
 import { readPrivateFile, writePrivateFile, type MidnightNetwork, type MidnightSource, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { broadcast, nodeRefusal } from "./broadcast.js";
@@ -49,6 +50,12 @@ export const DEFAULT_COST_PARAMETERS: CostParameters = { additionalFeeOverhead: 
 // How long a fee waits for the DUST sync to apply every event the indexer announced.
 const DUST_SYNC_WAIT_MS = 120_000;
 
+// How many of the indexer's events the shielded and DUST wallets apply at once. With the SDK's
+// default of 10, a sync from genesis spends more than half its time on the work done once per
+// batch; batches of 1000 apply DUST events more than twice as fast on preprod and reach the same
+// state. Each batch holds the event loop while it applies, and batches of 5000 were barely faster.
+const SYNC_BATCH_SIZE = 1000;
+
 // The cost parameters a wallet runs with. An overhead of at least 1 SPECK keeps every computed fee
 // above 0, so every fee is paid with a DUST spend. Unpatched, wallet-sdk-dust-wallet 4.2.0 never
 // finishes paying a fee computed as 0 (an anchor on a quiet chain, a maintenance update): it
@@ -69,8 +76,9 @@ export interface OperatorWallet {
   readonly addresses: WalletAddresses;
   waitForSync(timeoutMs?: number): Promise<void>;
   progress(): Promise<SyncProgress>;
-  // Saves the sync state to the wallet's state file, so the next open resumes from here. A save
-  // that fails is returned and logged, never thrown, and leaves the file as it was.
+  // Saves the sync state to the wallet's state file, so the next open resumes from here. It
+  // installs only a state each sub-wallet reads back, and starts once the wallet's previous save
+  // finished. A save that fails is returned and logged, never thrown, and leaves the file as it was.
   saveState(): Promise<StateSave>;
   balances(): Promise<WalletBalances>;
   // Registers every unregistered NIGHT UTXO to generate DUST for this wallet; null when none is.
@@ -115,9 +123,19 @@ function describeFailure(error: unknown): string {
     if (i._tag === "Unexpected") return [i.actual instanceof Error ? `${i.message}: ${i.actual.name}: ${i.actual.message}` : String(i.message)];
     return [i.issue, ...[i.issues].flat()].flatMap(thrown);
   };
-  const e = error as { name?: string; message?: string; issue?: unknown };
-  if (e?.issue === undefined) return `${e?.name ?? "Error"}: ${e?.message ?? String(error)}`;
-  return [e.name, ...thrown(e.issue)].join(": ");
+  const e = error as { name?: string; message?: string; issue?: unknown; cause?: { issue?: unknown } };
+  if (e?.issue !== undefined) return [e.name, ...thrown(e.issue)].join(": ");
+  // A wallet error wrapping a schema error quotes the state in its message.
+  if (e?.cause?.issue !== undefined) return `${e.name}: ${describeFailure(e.cause)}`;
+  return `${e?.name ?? "Error"}: ${e?.message ?? String(error)}`;
+}
+
+// A sub-wallet's class, as far as it reads a serialized state back, as its restore() does.
+type StateReader<S = unknown> = { allVariants(): readonly [{ variant: { deserializeState(serialized: string): Either.Either<S, unknown> } }] };
+
+// The state `Wallet` reads back from `serialized`, or what the SDK said of it.
+function readBack<S>(Wallet: StateReader<S>, serialized: string): Either.Either<S, string> {
+  return Either.mapLeft(Wallet.allVariants()[0].variant.deserializeState(serialized), describeFailure);
 }
 
 // The wallet's saved state, or null before it first saves one. A state saved by another wallet,
@@ -125,10 +143,16 @@ function describeFailure(error: unknown): string {
 // refused, as is a file group or others can read.
 export function readWalletState(file: string, network: MidnightNetwork, addresses: WalletAddresses, indexer: string): WalletSnapshot | null {
   if (!existsSync(file)) return null;
-  const saved = JSON.parse(readPrivateFile(file)) as { network: string; addresses: WalletAddresses; indexer: string } & WalletSnapshot;
-  if (saved.network !== network) throw new Error(`${file} was saved on ${saved.network}, not ${network}`);
+  let saved: { network: string; addresses: WalletAddresses; indexer: string } & WalletSnapshot;
+  try {
+    saved = JSON.parse(readPrivateFile(file));
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new Error(`${file} is not JSON; move it aside to sync from genesis`);
+    throw error;
+  }
+  if (saved.network !== network) throw new Error(`${file} was saved on another network`);
   if ((["unshielded", "shielded", "dust"] as const).some((role) => saved.addresses[role] !== addresses[role])) throw new Error(`${file} was saved by another wallet`);
-  if (saved.indexer !== indexer) throw new Error(`${file} was synced from ${saved.indexer}, not ${indexer}`);
+  if (saved.indexer !== indexer) throw new Error(`${file} was synced from another indexer`);
   return { shielded: saved.shielded, unshielded: saved.unshielded, dust: saved.dust };
 }
 
@@ -202,6 +226,18 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
   }
   if (options.stateFile) removeAbandonedSaves(options.stateFile);
   const saved = options.stateFile ? readWalletState(options.stateFile, network, addresses, endpoints.indexer) : null;
+  // Each sub-wallet's class, which reads back the states that sub-wallet serializes.
+  const readers = {} as Record<keyof WalletSnapshot, StateReader>;
+  // The sub-wallet `part`, of class `Wallet`: restored from the saved state, read back once, as
+  // restore() reads it, refusing a state it does not read back with what the SDK said of it,
+  // never the state; started afresh without one.
+  const subWallet = <S, R>(part: keyof WalletSnapshot, Wallet: StateReader<S>, restore: (state: S) => R, start: () => R): R => {
+    readers[part] = Wallet;
+    if (!saved) return start();
+    const read = readBack(Wallet, saved[part]);
+    if (Either.isLeft(read)) throw new Error(`${options.stateFile} does not restore (${part}: ${read.left}); move it aside to sync from genesis`);
+    return restore(read.right);
+  };
   const transport = await credentialRelay(endpoints);
   const submitTo = (tx: L.FinalizedTransaction) => broadcast(source, tx.serialize());
   const configuration = {
@@ -211,6 +247,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     relayURL: new URL(endpoints.node.replace(/^http/, "ws")),
     txHistoryStorage: new InMemoryTransactionHistoryStorage(WalletEntrySchema, mergeWalletEntries),
     costParameters,
+    batchUpdates: { size: SYNC_BATCH_SIZE },
   };
   let facade: WalletFacade;
   try {
@@ -224,11 +261,19 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
         }) as never,
         close: async () => undefined,
       }),
-      shielded: (c) => (saved ? ShieldedWallet(c).restore(saved.shielded) : ShieldedWallet(c).startWithSecretKeys(secrets.zswap)),
-      unshielded: (c) => (saved ? UnshieldedWallet(c).restore(saved.unshielded) : UnshieldedWallet(c).startWithPublicKey(PublicKey.fromKeyStore(secrets.night))),
+      // startFirst is what each class's restore() runs on the state it read back; the SDK types
+      // its result as a bare WalletLike, and restore()'s result as the wallet.
+      shielded: (c) => {
+        const Shielded = ShieldedWallet(c);
+        return subWallet("shielded", Shielded, (state) => Shielded.startFirst(Shielded, state) as ReturnType<typeof Shielded.restore>, () => Shielded.startWithSecretKeys(secrets.zswap));
+      },
+      unshielded: (c) => {
+        const Unshielded = UnshieldedWallet(c);
+        return subWallet("unshielded", Unshielded, (state) => Unshielded.startFirst(Unshielded, state) as ReturnType<typeof Unshielded.restore>, () => Unshielded.startWithPublicKey(PublicKey.fromKeyStore(secrets.night)));
+      },
       dust: (c) => {
         const Dust = CustomDustWallet(c, payingFees(new V1Builder().withDefaults(), secrets.dust));
-        return saved ? Dust.restore(saved.dust) : Dust.startWithSecretKey(secrets.dust, L.LedgerParameters.initialParameters().dust);
+        return subWallet("dust", Dust, (state) => Dust.startFirst(Dust, state) as ReturnType<typeof Dust.restore>, () => Dust.startWithSecretKey(secrets.dust, L.LedgerParameters.initialParameters().dust));
       },
       // The default service reverts bytes once their TTL has passed by this machine's clock while
       // the indexer does not list them, which an indexer behind the chain makes true of bytes
@@ -294,12 +339,15 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     }
   };
 
-  const saveState = async (): Promise<StateSave> => {
-    const file = options.stateFile;
-    if (!file) throw new Error("the wallet was opened without a state file");
+  const saveTo = async (file: string): Promise<StateSave> => {
     const parts = ["shielded", "unshielded", "dust"] as const;
     const serialized = await Promise.allSettled(parts.map((part) => facade[part].serializeState()));
-    const failures: StateSaveFailure[] = serialized.flatMap((s, i) => (s.status === "rejected" ? [{ part: parts[i]!, error: describeFailure(s.reason) }] : []));
+    const failures: StateSaveFailure[] = serialized.flatMap((s, i) => {
+      const part = parts[i]!;
+      if (s.status === "rejected") return [{ part, error: describeFailure(s.reason) }];
+      const read = readBack(readers[part], s.value);
+      return Either.isLeft(read) ? [{ part, error: read.left }] : [];
+    });
     if (failures.length === 0) {
       const [shielded, unshielded, dust] = serialized.map((s) => (s as PromiseFulfilledResult<string>).value) as [string, string, string];
       try {
@@ -313,6 +361,14 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       `${file}: the ${network} wallet's sync state was not saved (${failures.map((f) => `${f.part}: ${f.error}`).join("; ")}); the file keeps its last good save, and the next open resumes from it and replays the events since`,
     );
     return { saved: false, failures };
+  };
+  let previousSave: Promise<unknown> = Promise.resolve();
+  const saveState = async (): Promise<StateSave> => {
+    const file = options.stateFile;
+    if (!file) throw new Error("the wallet was opened without a state file");
+    const save = previousSave.then(() => saveTo(file));
+    previousSave = save;
+    return save;
   };
 
   return {

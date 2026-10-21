@@ -1,0 +1,11 @@
+# Starts orynq-midnight-runner@<id>.service for every approval not yet used, finished or expired.
+[Unit]
+Description=Start the orynq Midnight mainnet runner for new approvals
+Documentation=https://github.com/Flux-Point-Studios/orynq-sdk/blob/main/packages/anchors-midnight-submit/runner/README.md
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/lib/orynq-midnight-runner/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/.local/lib/orynq-midnight-runner/checkout/packages/anchors-midnight-submit
+ExecStart=%h/.local/lib/orynq-midnight-runner/checkout/packages/anchors-midnight-submit/runner/orynq-midnight-runner dispatch
+UMask=0077

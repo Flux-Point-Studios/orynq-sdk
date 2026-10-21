@@ -1,0 +1,6 @@
+#!/bin/sh
+# orynq-midnight-runner status [<intent id>] | check <intent id> | dispatch | run <intent id>
+# Runs runner/cli.ts from this package with the node first on PATH, as the units do.
+set -e
+cd "$(dirname "$(readlink -f "$0")")/.."
+exec node --import tsx runner/cli.ts "$@"
