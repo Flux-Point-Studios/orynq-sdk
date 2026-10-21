@@ -50,6 +50,12 @@ export const DEFAULT_COST_PARAMETERS: CostParameters = { additionalFeeOverhead: 
 // How long a fee waits for the DUST sync to apply every event the indexer announced.
 const DUST_SYNC_WAIT_MS = 120_000;
 
+// How many of the indexer's events the shielded and DUST wallets apply at once. With the SDK's
+// default of 10, a sync from genesis spends more than half its time on the work done once per
+// batch; batches of 1000 apply DUST events more than twice as fast on preprod and reach the same
+// state. Each batch holds the event loop while it applies, and batches of 5000 were barely faster.
+const SYNC_BATCH_SIZE = 1000;
+
 // The cost parameters a wallet runs with. An overhead of at least 1 SPECK keeps every computed fee
 // above 0, so every fee is paid with a DUST spend. Unpatched, wallet-sdk-dust-wallet 4.2.0 never
 // finishes paying a fee computed as 0 (an anchor on a quiet chain, a maintenance update): it
@@ -241,6 +247,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     relayURL: new URL(endpoints.node.replace(/^http/, "ws")),
     txHistoryStorage: new InMemoryTransactionHistoryStorage(WalletEntrySchema, mergeWalletEntries),
     costParameters,
+    batchUpdates: { size: SYNC_BATCH_SIZE },
   };
   let facade: WalletFacade;
   try {
