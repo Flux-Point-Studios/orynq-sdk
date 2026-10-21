@@ -1,5 +1,13 @@
 # @fluxpointstudios/poi-sdk-midnight-prover
 
+## 0.2.0
+
+### Minor Changes
+
+- 4933586: Add genuine Compact capability and rolling-digest proofs with a pinned native ledger verifier. Each proof carries a proved deadline at most one hour ahead, which a rewritten transaction TTL cannot extend. Verification binds public outputs to the expected statement and refuses untrusted keys, altered ledger parameters, malformed transactions and simulations. Existing mock APIs require explicit simulation mode and cannot provide production proof or publication claims.
+
+  Require an MCP SDK version containing the OAuth credential handling fix.
+
 ## 0.1.2
 
 ### Patch Changes
