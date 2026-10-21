@@ -240,8 +240,13 @@ but never accept one it refuses) and headers BLAKE2b-256.
 Cost: one batched request per 64 set changes for the proofs and one for the headers, about 6.7 KB
 per set change on mainnet, where a set lasts 300 blocks (30 minutes). The walk stops after
 `maxSetChanges` (default 2016, six weeks) and reports the block not finalized, so the cost never
-grows with the chain's age; a fresher checkpoint is the remedy. A finalized result returns the
-set that justified the block as a checkpoint the caller can keep.
+grows with the chain's age; a fresher checkpoint is the remedy. Each justification's work is
+linear in its size, whatever the source sends. One carrying more than two precommits per voter
+(a GRANDPA commit holds at most an equivocator's two) or more than 600 ancestry headers (twice a
+set, which a set's votes never span) is refused. Each voter is tried once, by its first
+precommit, and the voter, repeat and ancestry checks, which walk each header at most once, run
+before any Ed25519 verification. A finalized result returns the set that justified the block as
+a checkpoint the caller can keep.
 
 Inclusion is a strict decode, never a byte search. `orderedTrieRoot` recomputes a block body's
 `extrinsicsRoot` (trie layout V1, which Midnight's state version 3 selects), and

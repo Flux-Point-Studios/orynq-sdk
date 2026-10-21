@@ -63,37 +63,75 @@ function votingWeight(set: AuthoritySet): bigint | { error: string } {
   return total > 0n ? total : { error: `set ${set.setId} has no voting weight, so it finalizes nothing` };
 }
 
+// Midnight's GRANDPA sets last 300 blocks (30 minutes).
+const SET_LENGTH = 300;
+
+// A set's voters never vote past the block that ends it (Substrate's finality_target stops at a
+// pending set change), so a genuine justification's ancestry spans less than one set; twice
+// that leaves room for a fork.
+const MAX_ANCESTRY = 2 * SET_LENGTH;
+
 // The block a justification finalizes, when voters of `set` holding a supermajority of its
 // weight signed precommits, for this set id and round, for that block or a descendant shown
 // by the justification's ancestry headers; otherwise why not. A precommit that is unsigned,
 // from a non-voter, a repeat voter, or for a block outside the target's subtree adds no weight.
 // The justification's own target is unsigned: a precommit vouches for it only by signing that
 // hash at that number, or a descendant whose ancestry headers lead down to it at that number.
+//
+// The work is linear in the justification, whatever the source sends. finality-grandpa builds a
+// commit with at most two precommits per voter (both of an equivocator's), so one with more is
+// refused, as is an ancestry longer than MAX_ANCESTRY. A voter is tried once, by its first
+// precommit: a genuine commit holds no precommit that fails, and a source able to send one could
+// as well leave the voter out. Membership, the repeat check and the walk, which visits each
+// ancestry header at most once, all run before Ed25519.
 export function justifiedTarget(j: GrandpaJustification, set: AuthoritySet): Target | { error: string } {
   const total = votingWeight(set);
   if (typeof total !== "bigint") return total;
+  if (j.precommits.length > 2 * set.authorities.length) {
+    return { error: `the justification for block ${j.target.number} carries ${j.precommits.length} precommits, more than two for each of set ${set.setId}'s ${set.authorities.length} voters` };
+  }
+  if (j.ancestries.length > MAX_ANCESTRY) {
+    return { error: `the justification for block ${j.target.number} carries ${j.ancestries.length} ancestry headers, more than ${MAX_ANCESTRY}` };
+  }
   const weightOf = new Map(set.authorities.map((a) => [a.key, a.weight]));
   const ancestry = new Map(j.ancestries.map((h) => [toHex(headerHash(h)), h]));
+  // Whether each ancestry header walked so far leads down to the target, one block at a time.
+  const leads = new Map<string, boolean>();
   const descends = (from: Target): boolean => {
-    if (from.number < j.target.number) return false;
-    let hash = from.hash;
-    for (let n = from.number; n > j.target.number; n--) {
-      const header = ancestry.get(toHex(hash));
-      if (!header || header.number !== n) return false;
-      hash = header.parentHash;
+    if (from.number <= j.target.number) return from.number === j.target.number && bytesEqual(from.hash, j.target.hash);
+    let key = toHex(from.hash);
+    let header = ancestry.get(key);
+    if (!header || header.number !== from.number) return false;
+    const walked: string[] = [];
+    let answer = leads.get(key);
+    while (answer === undefined) {
+      walked.push(key);
+      if (header.number - 1 === j.target.number) {
+        answer = bytesEqual(header.parentHash, j.target.hash);
+      } else {
+        key = toHex(header.parentHash);
+        const parent = ancestry.get(key);
+        if (parent?.number === header.number - 1) {
+          header = parent;
+          answer = leads.get(key);
+        } else {
+          answer = false;
+        }
+      }
     }
-    return bytesEqual(hash, j.target.hash);
+    for (const k of walked) leads.set(k, answer);
+    return answer;
   };
-  const voted = new Set<string>();
+  const tried = new Set<string>();
   let weight = 0n;
   for (const p of j.precommits) {
     const id = toHex(p.id);
     const seats = weightOf.get(id);
-    if (seats === undefined || voted.has(id)) continue;
+    if (seats === undefined || tried.has(id)) continue;
+    tried.add(id);
+    if (!descends(p.target)) continue;
     const message = concatBytes(new Uint8Array([1]), p.target.hash, u32le(p.target.number), u64le(j.round), u64le(set.setId));
-    if (!ed25519Verify(p.signature, message, p.id) || !descends(p.target)) continue;
-    voted.add(id);
-    weight += seats;
+    if (ed25519Verify(p.signature, message, p.id)) weight += seats;
   }
   if (weight < supermajority(total)) {
     return { error: `the justification for block ${j.target.number} carries ${weight} of ${total} weight under set ${set.setId}; finality needs ${supermajority(total)}` };
@@ -116,7 +154,6 @@ export interface FinalityRpc {
 
 // Six weeks of Midnight's 30-minute GRANDPA sets: about 13 MB fetched in about 80 requests.
 export const DEFAULT_MAX_SET_CHANGES = 2016;
-const SET_LENGTH = 300;
 const BATCH = 64;
 
 export type FinalityResult = { setChanges: number; requests: number } & (

@@ -29,6 +29,13 @@ const publicKey = (sk: Uint8Array) => {
   return pk;
 };
 
+// The precommit for `target` that the authority holding `sk` signs in a round of set `setId`.
+export const signedPrecommit = (sk: Uint8Array, target: BlockHeader, round: bigint, setId: bigint) => {
+  const hash = headerHash(target);
+  const message = concatBytes(new Uint8Array([1]), hash, u32le(target.number), u64le(round), u64le(setId));
+  return { target: { hash, number: target.number }, signature: ed25519Sign(message, sk), id: publicKey(sk) };
+};
+
 // A finality proof with its justification kept byte for byte and its unknown headers replaced.
 export function withUnknownHeaders(proof: Uint8Array, headers: BlockHeader[]): Uint8Array {
   const length = compactAt(proof, 32);
@@ -86,13 +93,13 @@ export function syntheticChain(spec: ChainSpec) {
   const finalizedHeight = endOf(spec.setCount - 1);
 
   const justification = (k: number, target: BlockHeader, signers = keysFor(k)) => {
-    const hash = headerHash(target);
-    const setId = spec.firstSetId + BigInt(k);
     const round = 7n;
-    const message = concatBytes(new Uint8Array([1]), hash, u32le(target.number), u64le(round), u64le(setId));
     const quorum = signers.slice(0, signers.length - Math.floor((signers.length - 1) / 3));
-    const precommits = quorum.map((sk) => concatBytes(hash, u32le(target.number), ed25519Sign(message, sk), publicKey(sk)));
-    return concatBytes(u64le(round), hash, u32le(target.number), encodeCompact(precommits.length), ...precommits, encodeCompact(0));
+    const precommits = quorum.map((sk) => {
+      const p = signedPrecommit(sk, target, round, spec.firstSetId + BigInt(k));
+      return concatBytes(p.target.hash, u32le(p.target.number), p.signature, p.id);
+    });
+    return concatBytes(u64le(round), headerHash(target), u32le(target.number), encodeCompact(precommits.length), ...precommits, encodeCompact(0));
   };
   const proof = (target: BlockHeader, j: Uint8Array, unknown: BlockHeader[]) =>
     concatBytes(headerHash(target), encodeCompact(j.length), j, encodeCompact(unknown.length), ...unknown.map(encodeHeader));
