@@ -103,7 +103,7 @@ describe("orynq-midnight-runner dispatch", () => {
     expect(replacement.out).toBe(`started orynq-midnight-runner@${id}.service\n`);
   });
 
-  it("does not dispatch a used approval rewritten with other whitespace, key order or time notation", async () => {
+  it("does not dispatch a used approval rewritten with other whitespace, key order or offset", async () => {
     const h = home();
     const id = h.approve(DEPLOY);
     audit(h.paths.root, { intent: id, event: "no", approval_sha256: h.approvalSha256(id), problems: ["payer mismatch"] });

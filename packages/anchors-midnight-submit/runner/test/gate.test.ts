@@ -109,7 +109,7 @@ describe("admit: the approval gate", () => {
     expect(admit(r.paths, id, NOW)).toMatchObject({ ok: true });
   });
 
-  it("keeps a used approval used when its file is rewritten with other whitespace, key order or time notation", () => {
+  it("keeps a used approval used when its file is rewritten with other whitespace, key order or offset", () => {
     const r = runner();
     const id = r.approve(DEPLOY);
     writeFileSync(r.files.used(id, r.approvalSha256(id)), "{}");
