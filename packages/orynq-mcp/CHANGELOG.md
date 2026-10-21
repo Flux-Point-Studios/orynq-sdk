@@ -1,5 +1,19 @@
 # @fluxpointstudios/orynq-mcp
 
+## 0.4.0
+
+### Minor Changes
+
+- d08a00e: Add the read-only `verify_midnight_anchor` MCP tool and the `orynq verify midnight`, `orynq keys init midnight`, and `orynq anchor midnight` CLI commands. These prerelease surfaces require the optional anchors-midnight peer, which remains private and unavailable on npm until the D-10 release gate opens. Use a built orynq-sdk source checkout as documented in each package README; npm-only installs report this requirement without breaking other tools or commands. No Midnight submitter is published.
+
+  Keep private Midnight minor releases from forcing major releases of MCP and quickstart.
+
+### Patch Changes
+
+- 4933586: Add genuine Compact capability and rolling-digest proofs with a pinned native ledger verifier. Each proof carries a proved deadline at most one hour ahead, which a rewritten transaction TTL cannot extend. Verification binds public outputs to the expected statement and refuses untrusted keys, altered ledger parameters, malformed transactions and simulations. Existing mock APIs require explicit simulation mode and cannot provide production proof or publication claims.
+
+  Require an MCP SDK version containing the OAuth credential handling fix.
+
 ## 0.3.1
 
 ### Patch Changes
