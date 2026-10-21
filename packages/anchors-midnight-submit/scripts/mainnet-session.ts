@@ -1,7 +1,7 @@
 // What deploy-mainnet and anchor-mainnet share. Before anything is read, the process must carry no
 // Claude Code or Codex environment and its input and output must be a terminal; then the flags, every one
 // of them known; then a node that is Midnight Mainnet, the wallet the mnemonic derives only if it
-// is the recorded one, and the DUST floor whenever confirming may send bytes. The wallet syncs from
+// is the recorded one, and the DUST floor before preparing new bytes. The wallet syncs from
 // the state file both scripts share, saving it as it goes, so a sync that fails or runs out of time
 // is resumed by the next run. Each set of final bytes is sent only after the token naming its
 // transaction hash is typed at that terminal, and every way out closes the wallet before the
@@ -17,6 +17,7 @@ import {
   confirmationToken,
   ensurePrivateDir,
   formatDust,
+  parseDust,
   readJsonFile,
   networkEndpoints,
   openWallet,
@@ -31,9 +32,11 @@ export const home = homedir();
 // Where the FPS mainnet keys and the deploy wallet's mnemonic live.
 export const SECRETS = `${home}/.secrets/orynq-midnight-mainnet`;
 // Where the mainnet scripts keep their journals, results and wallet state: deploy-mainnet journals
-// the deploy at DEPLOY_JOURNAL, where anchor-mainnet reads which registry FPS deployed.
+// the deploy at DEPLOY_JOURNAL, where anchor-mainnet reads which registry FPS deployed, and
+// anchor-mainnet its anchors at ANCHORS_JOURNAL.
 export const STATE = `${home}/.local/state/orynq-midnight`;
 export const DEPLOY_JOURNAL = `${STATE}/mainnet-deploy.sqlite`;
+export const ANCHORS_JOURNAL = `${STATE}/mainnet-anchors.sqlite`;
 
 const MINUTE = 60_000;
 // A from-genesis sync of the mainnet wallet can take more than an hour.
@@ -46,8 +49,6 @@ export interface Mainnet {
   // waits until it has synced, resuming from and saving to the shared wallet state file.
   syncWallet(): Promise<OperatorWallet>;
 }
-
-const DUST = /^(\d+)(?:\.(\d{1,15}))?$/;
 
 // The script `name` sends `a mainnet ${noun}`, which deci `does` himself at his own terminal.
 // `flags` are its own flags with their defaults beside the shared ones; one without a default is
@@ -88,9 +89,7 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
   }
   for (const [flag, fallback] of Object.entries(defaults)) if (fallback === undefined && !given.has(flag)) fail(`--${flag} is required`);
   const option = (flag: Flag): string => given.get(flag) ?? defaults[flag]!;
-  const floorText = DUST.exec(option("dust-floor"));
-  if (!floorText) fail(`--dust-floor takes DUST as a decimal number with at most 15 places, not ${option("dust-floor")}`);
-  const floor = BigInt(floorText![1]!) * 10n ** 15n + BigInt((floorText![2] ?? "").padEnd(15, "0"));
+  const floor = parseDust(option("dust-floor")) ?? fail(`--dust-floor takes DUST as a decimal number with at most 15 places, not ${option("dust-floor")}`);
 
   return {
     option,
@@ -137,11 +136,9 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
       process.exit(0);
     },
 
-    // Confirming sends bytes only for new ones, or journalled ones no send of which ever returned
-    // and whose TTL has not passed: journalled bytes that landed are finished whatever the balance.
+    // Journalled bytes already carry their fee, whose held coin is excluded from this balance.
     requireDustFloor(dust: bigint, resumed: PreparedDeploy | PreparedAnchor | null) {
-      const sends = !resumed || (resumed.journal!.state === "pending" && resumed.journal!.broadcasts === 0 && !resumed.journal!.expired);
-      if (sends && dust < floor) throw new Error(`the wallet holds ${formatDust(dust)} DUST, below the ${formatDust(floor)} DUST floor`);
+      if (!resumed?.journal && dust < floor) throw new Error(`the wallet holds ${formatDust(dust)} DUST, below the ${formatDust(floor)} DUST floor in available coins; DUST held by journalled bytes becomes available after the wallet syncs past the spend's ctime plus the ledger DUST grace period (3 hours on mainnet), if the coin remains unspent`);
     },
 
     // Shows `summary` and returns only once the token of `prepared` is typed at the terminal.

@@ -10,7 +10,7 @@
 //   the node holds exactly the immutable registry at the plan's address (committee [],
 //   threshold 1, counter 0, the pinned verifier keys);
 //   the mnemonic derives exactly the recorded wallet, which holds at least the DUST floor
-//   whenever confirming an anchor may send bytes;
+//   before preparing new bytes (journalled bytes already carry their fee);
 //   the author and salt keys are the FPS mainnet keys (MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS).
 // For each entry in order it prints the exact summary of the final, balanced bytes and sends them
 // only after the token it shows, which names their transaction hash, is typed at that terminal.
@@ -41,7 +41,7 @@ import {
   type PreparedAnchor,
   type RegistryOperator,
 } from "../src/index.js";
-import { DEPLOY_JOURNAL, SECRETS, STATE, mainnetScript } from "./mainnet-session.js";
+import { ANCHORS_JOURNAL, DEPLOY_JOURNAL, SECRETS, STATE, mainnetScript } from "./mainnet-session.js";
 
 const { option, run, requireDustFloor, confirm } = mainnetScript({
   name: "anchor-mainnet",
@@ -49,8 +49,9 @@ const { option, run, requireDustFloor, confirm } = mainnetScript({
   does: "writes mainnet anchors",
   flags: {
     plan: undefined,
+    "plan-sha256": "",
     "deploy-journal": DEPLOY_JOURNAL,
-    journal: `${STATE}/mainnet-anchors.sqlite`,
+    journal: ANCHORS_JOURNAL,
     "author-key": `${SECRETS}/author-relay.key`,
     "salt-key": `${SECRETS}/salt.key`,
     results: `${STATE}/mainnet-anchors.json`,
@@ -117,7 +118,7 @@ async function finalOnNode(source: MidnightSource, operator: RegistryOperator, l
 }
 
 await run(async (connect) => {
-  const plan = readAnchorPlan(option("plan"));
+  const plan = readAnchorPlan(option("plan"), option("plan-sha256") || undefined);
   assertFpsRegistry("mainnet", plan.registry, option("deploy-journal"));
   const resultsPath = option("results");
   // The results file as it stands now: another run may have added to it since this one started.

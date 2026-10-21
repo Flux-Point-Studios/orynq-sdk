@@ -31,6 +31,13 @@ export async function assertChainIdentity(source: MidnightSource, network: Midni
   return { chain, genesis, specVersion, ledgerVersion };
 }
 
+// SPECK (10^-15 DUST) from DUST written as a decimal number with at most 15 places, or null for
+// any other text.
+export function parseDust(text: string): bigint | null {
+  const m = /^(\d+)(?:\.(\d{1,15}))?$/.exec(text);
+  return m ? BigInt(m[1]!) * 10n ** 15n + BigInt((m[2] ?? "").padEnd(15, "0")) : null;
+}
+
 // DUST from SPECK (10^-15 DUST), exactly, without trailing zeros.
 export function formatDust(speck: bigint): string {
   const whole = speck / 10n ** 15n;

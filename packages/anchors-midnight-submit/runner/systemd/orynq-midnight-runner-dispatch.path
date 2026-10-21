@@ -1,0 +1,11 @@
+# Dispatches as soon as an approval is written into the approvals directory.
+[Unit]
+Description=Watch for orynq Midnight mainnet approvals
+Documentation=https://github.com/Flux-Point-Studios/orynq-sdk/blob/main/packages/anchors-midnight-submit/runner/README.md
+
+[Path]
+PathChanged=%h/.local/state/orynq-midnight/runner/approvals
+Unit=orynq-midnight-runner-dispatch.service
+
+[Install]
+WantedBy=default.target

@@ -145,13 +145,46 @@ describe("the wallet's saved sync state", () => {
     expect(readWalletState(join(dir, "none.state.json"), "preprod", addresses, HOSTED)).toBeNull();
   });
 
+  it.each([
+    ["mnemonic", "synthetic words that are not a wallet phrase"],
+    ["key", "d".repeat(64)],
+    ["project-id", `mainnet${"e".repeat(32)}`],
+  ])("names a mistaken %s file without quoting its contents", (name, contents) => {
+    const file = join(dir, `${name}.not-json`);
+    writeFileSync(file, contents!, { mode: 0o600 });
+    let message = "";
+    try {
+      readWalletState(file, "preprod", addresses, HOSTED);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect({
+      safeDiagnostic: message === `${file} is not JSON; move it aside to sync from genesis`,
+      quotesContents: message.includes(contents!.slice(0, 10)),
+    }).toEqual({ safeDiagnostic: true, quotesContents: false });
+  });
+
+  it.each(["network", "indexer"])("does not quote an unexpected saved %s", (field) => {
+    const file = join(dir, `${field}.state.json`);
+    const contents = "synthetic-private-value";
+    writeFileSync(file, JSON.stringify({ network: "preprod", indexer: HOSTED, addresses, ...snapshot, [field]: contents }), { mode: 0o600 });
+    let message = "";
+    try {
+      readWalletState(file, "preprod", addresses, HOSTED);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect({ namesFile: message.includes(file), namesField: message.includes(field), quotesContents: message.includes(contents) })
+      .toEqual({ namesFile: true, namesField: true, quotesContents: false });
+  });
+
   it("is refused for another wallet or another network, so two wallets never share one", () => {
     const file = join(dir, "b.state.json");
     writeWalletState(file, "preprod", addresses, HOSTED, snapshot);
     for (const role of ["unshielded", "shielded", "dust"] as const) {
       expect(() => readWalletState(file, "preprod", { ...addresses, [role]: `${addresses[role]}b` }, HOSTED)).toThrow(/b\.state\.json was saved by another wallet/);
     }
-    expect(() => readWalletState(file, "mainnet", addresses, HOSTED)).toThrow(/b\.state\.json was saved on preprod, not mainnet/);
+    expect(() => readWalletState(file, "mainnet", addresses, HOSTED)).toThrow(/b\.state\.json was saved on another network/);
   });
 
   // Event ids differ between indexers: a state replayed against another indexer's events fails
@@ -160,7 +193,7 @@ describe("the wallet's saved sync state", () => {
     const file = join(dir, "d.state.json");
     writeWalletState(file, "preprod", addresses, HOSTED, snapshot);
     expect(() => readWalletState(file, "preprod", addresses, "https://midnight-preprod.blockfrost.io/api/v0")).toThrow(
-      /d\.state\.json was synced from https:\/\/indexer\.preprod\.midnight\.network\/api\/v3\/graphql, not https:\/\/midnight-preprod\.blockfrost\.io\/api\/v0/,
+      /d\.state\.json was synced from another indexer/,
     );
   });
 

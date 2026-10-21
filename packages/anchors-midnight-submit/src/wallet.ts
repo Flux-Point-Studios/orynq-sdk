@@ -143,10 +143,16 @@ function readBack<S>(Wallet: StateReader<S>, serialized: string): Either.Either<
 // refused, as is a file group or others can read.
 export function readWalletState(file: string, network: MidnightNetwork, addresses: WalletAddresses, indexer: string): WalletSnapshot | null {
   if (!existsSync(file)) return null;
-  const saved = JSON.parse(readPrivateFile(file)) as { network: string; addresses: WalletAddresses; indexer: string } & WalletSnapshot;
-  if (saved.network !== network) throw new Error(`${file} was saved on ${saved.network}, not ${network}`);
+  let saved: { network: string; addresses: WalletAddresses; indexer: string } & WalletSnapshot;
+  try {
+    saved = JSON.parse(readPrivateFile(file));
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new Error(`${file} is not JSON; move it aside to sync from genesis`);
+    throw error;
+  }
+  if (saved.network !== network) throw new Error(`${file} was saved on another network`);
   if ((["unshielded", "shielded", "dust"] as const).some((role) => saved.addresses[role] !== addresses[role])) throw new Error(`${file} was saved by another wallet`);
-  if (saved.indexer !== indexer) throw new Error(`${file} was synced from ${saved.indexer}, not ${indexer}`);
+  if (saved.indexer !== indexer) throw new Error(`${file} was synced from another indexer`);
   return { shielded: saved.shielded, unshielded: saved.unshielded, dust: saved.dust };
 }
 
