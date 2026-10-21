@@ -10,7 +10,7 @@ import { agentDriven } from "../src/custody.js";
 import { formatDust } from "../src/preflight.js";
 import { admit } from "./gate.js";
 import { runIntent } from "./run.js";
-import { FINISHED, audit, ensureRunnerRoot, mainnetPaths, readStatus, runnerFiles, writeStatus, type Status } from "./state.js";
+import { FINISHED, approvalUsed, audit, ensureRunnerRoot, mainnetPaths, readStatus, runnerFiles, writeStatus, type Status } from "./state.js";
 
 const USAGE = "usage: orynq-midnight-runner status [<intent id>] | check <intent id> | dispatch | run <intent id>";
 const PACKAGE = new URL("..", import.meta.url).pathname;
@@ -80,9 +80,10 @@ if (command === "status") {
   ensureRunnerRoot(paths.root);
   for (const file of readdirSync(files.approvals).sort()) {
     const each = /^([0-9a-f]{8})\.json$/.exec(file)?.[1];
-    if (!each || existsSync(files.used(each))) continue;
+    if (!each) continue;
     const text = readFileSync(files.approval(each));
     const approvalSha256 = createHash("sha256").update(text).digest("hex");
+    if (approvalUsed(paths.root, each, approvalSha256)) continue;
     // The run decides everything else, an expired approval included, and records it in the status.
     const status = readStatus(paths.root, each);
     if (status && FINISHED.includes(status.state) && status.approval_sha256 === approvalSha256) continue;

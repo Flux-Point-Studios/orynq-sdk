@@ -6,7 +6,7 @@ import { dirname } from "node:path";
 import { fresh } from "../../test/fakes.js";
 import { deployIntent } from "../confirm.js";
 import { LIMITS } from "../limits.js";
-import { readAudit, readStatus, writeStatus } from "../state.js";
+import { audit, readAudit, readStatus, writeStatus } from "../state.js";
 import { iso, stateRoot } from "./helpers.js";
 
 const LAUNCHER = new URL("../orynq-midnight-runner", import.meta.url).pathname;
@@ -91,6 +91,20 @@ describe("orynq-midnight-runner run", () => {
 });
 
 describe("orynq-midnight-runner dispatch", () => {
+  it("does not dispatch a durable NO after snapshot loss, but dispatches its replacement", async () => {
+    const h = home();
+    const id = h.approve(DEPLOY);
+    const approval = sha256(readFileSync(`${h.paths.root}/approvals/${id}.json`));
+    audit(h.paths.root, { intent: id, event: "no", approval_sha256: approval, problems: ["payer mismatch"] });
+    const stopped = await cli(h.env, "dispatch");
+    expect(stopped.code, stopped.err).toBe(0);
+    expect(h.systemctl()).toEqual([]);
+    h.approve(DEPLOY, { expires_at: iso(Date.now() + 3_600_000) });
+    const replacement = await cli(h.env, "dispatch");
+    expect(replacement.code, replacement.err).toBe(0);
+    expect(replacement.out).toBe(`started orynq-midnight-runner@${id}.service\n`);
+  });
+
   it("starts the unit of each approval not yet used or finished under that approval, and only those", async () => {
     const h = home();
     const unused = h.approve(DEPLOY);

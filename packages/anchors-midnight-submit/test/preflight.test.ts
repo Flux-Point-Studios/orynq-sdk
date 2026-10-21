@@ -404,7 +404,7 @@ describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
     ]);
   });
 
-  it("finishes a deploy that landed while its readback failed though the wallet is now under the DUST floor: the floor applies only when bytes may be sent", async ({ expect }) => {
+  it("finishes a deploy that landed while its readback failed though the wallet is now under the DUST floor", async ({ expect }) => {
     const m = offlineMainnet();
     expect(await m.run((token) => token, "lose-read")).toMatchObject({ status: 1 });
     const [sent] = m.chain().sent;
@@ -417,22 +417,27 @@ describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
     expect(m.journal()).toEqual([{ tx_hash: sent, state: "landed" }]);
   });
 
-  it("under the DUST floor, prepares no deploy and resends no journalled bytes, refusing before any summary", async ({ expect }) => {
+  it("under the DUST floor, refuses new bytes with the hold release condition", async ({ expect }) => {
     const m = offlineMainnet();
     const fresh = await m.run((token) => token, "low-dust");
     expect(fresh.status, fresh.output).toBe(1);
     expect(fresh.output).toContain("deploy-mainnet: the wallet holds 0.5 DUST, below the 1 DUST floor");
+    expect(fresh.output).toContain("DUST held by journalled bytes becomes available after the wallet syncs past the spend's ctime plus the ledger DUST grace period (3 hours on mainnet), if the coin remains unspent");
     expect([fresh.token, fresh.output.includes("deploy tx hash")]).toEqual([undefined, false]);
     expect(m.chain()).toMatchObject({ sent: [], discarded: [] });
     expect(m.journal()).toEqual([]);
+  });
 
+  it("under the DUST floor, resumes unsent journalled deploy bytes whose fee is already paid", async ({ expect }) => {
+    const m = offlineMainnet();
     expect(await m.run((token) => token, "refuse-broadcast")).toMatchObject({ status: 1 });
     const [refused] = m.chain().sent;
     const resend = await m.run((token) => token, "low-dust");
-    expect(resend.status, resend.output).toBe(1);
-    expect(resend.output).toContain("deploy-mainnet: the wallet holds 0.5 DUST, below the 1 DUST floor");
-    expect(resend.token).toBeUndefined();
-    expect(m.chain()).toMatchObject({ sent: [refused], discarded: [] });
+    expect(resend.status, resend.output).toBe(0);
+    expect(resend.output).toContain("journal          resumed: no send of these bytes ever returned; confirming sends them again");
+    expect(resend.token).toBe(`DEPLOY ${refused!.slice(0, 16)}`);
+    expect(m.chain()).toMatchObject({ sent: [refused, refused], discarded: [] });
+    expect(m.journal()).toEqual([{ tx_hash: refused, state: "landed" }]);
   });
 
   it("refuses a resumed deploy confirmed once the chain is past its TTL plus the margin, sending nothing, and says to rerun", async ({ expect }) => {
@@ -710,6 +715,17 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
       expect(r.tokens).toEqual([]);
     }
     expect(m.sent()).toHaveLength(balance === "0.4" ? 0 : 1);
+  });
+
+  it("under the DUST floor, resumes unsent journalled anchor bytes whose fee is already paid", async ({ expect }) => {
+    const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
+    expect(await m.run((token) => token, "refuse-broadcast")).toMatchObject({ status: 1 });
+    const [held] = m.sent();
+    const resumed = await m.run((token) => token, "low-dust");
+    expect(resumed.status, resumed.output).toBe(0);
+    expect(resumed.tokens).toEqual([`ANCHOR ${held!.slice(0, 16)}`]);
+    expect(m.sent()).toEqual([held, held]);
+    expect(m.journal()).toEqual([{ tx_hash: held, state: "landed" }]);
   });
 
   it("anchors each entry of the plan in order once its token is typed, reads each back final from the node, records only public data, and a rerun sends nothing", async ({ expect }) => {

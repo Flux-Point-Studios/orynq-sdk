@@ -4,7 +4,7 @@
 //   the process carries no Claude Code or Codex environment, and its input and output are a terminal;
 //   the node is Midnight Mainnet (system_chain, genesis) on runtime 1000300;
 //   the mnemonic derives exactly the recorded wallet, which holds at least the DUST floor
-//   whenever confirming may send bytes;
+//   before preparing new bytes (journalled bytes already carry their fee);
 //   the final, balanced bytes deploy exactly the registry's initial state (committee [],
 //   threshold 1, counter 0, the pinned verifier keys).
 // It then prints the exact summary and sends those bytes only after the token it shows, which

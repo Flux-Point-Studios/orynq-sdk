@@ -110,8 +110,11 @@ or FIDO2 signer.
   run the journalled deploy (`journalled()`), never a second one: it shows that deploy, marked as
   resumed (expired once its TTL has passed) with the wallet that paid it, and sends nothing before
   the same token is typed again; declining it releases no DUST, since its bytes may already be with
-  the node. The DUST floor applies only when confirming may send bytes, so a landed deploy whose
-  readback failed is finished however little DUST the wallet holds. The gates do not stop a process running as deci
+  the node. The DUST floor applies before preparing new bytes. Journalled deploys and anchors
+  already carry their fee, so resuming them does not require a second balance of available DUST,
+  including when no broadcast returned. A floor refusal explains that held coins become available
+  after wallet sync passes the spend's ctime plus the ledger DUST grace period (3 hours on mainnet),
+  if still unspent. The gates do not stop a process running as deci
   that drops the agent variables, drives a pseudo-terminal and types back the token it reads:
   the preflight suite does exactly that, once with inputs that do not exist, so it stops at its
   first read, and over an offline mainnet (`test/offline.ts` in place of the submit package),

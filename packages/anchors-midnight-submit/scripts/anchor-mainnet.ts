@@ -10,7 +10,7 @@
 //   the node holds exactly the immutable registry at the plan's address (committee [],
 //   threshold 1, counter 0, the pinned verifier keys);
 //   the mnemonic derives exactly the recorded wallet, which holds at least the DUST floor
-//   whenever confirming an anchor may send bytes;
+//   before preparing new bytes (journalled bytes already carry their fee);
 //   the author and salt keys are the FPS mainnet keys (MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS).
 // For each entry in order it prints the exact summary of the final, balanced bytes and sends them
 // only after the token it shows, which names their transaction hash, is typed at that terminal.

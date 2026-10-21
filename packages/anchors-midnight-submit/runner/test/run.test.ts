@@ -50,7 +50,7 @@ describe("runIntent over the fake tool", () => {
     expect(status).toMatchObject({ intent_id: id, action: "deploy", state: "done", attempt: 1, refusals: [], transactions: [{ item: "deploy", tx_hash: TX(0xaa), fee_dust: "0.000000000000002" }] });
     expect(readStatus(r.paths.root, id)).toEqual(status);
     expect(r.typed()).toEqual([{ run: 1, item: "deploy", typed: `DEPLOY ${TX(0xaa).slice(0, 16)}`, confirmed: true }]);
-    expect(JSON.parse(readFileSync(r.files.used(id), "utf8"))).toMatchObject({ outcome: "done" });
+    expect(JSON.parse(readFileSync(r.files.used(id, status.approval_sha256), "utf8"))).toMatchObject({ outcome: "done", approval_sha256: status.approval_sha256 });
     expect(r.events(id)).toEqual(["approval-seen", "run-start", "confirm", "run-end", "done"]);
     expect(readFileSync(r.files.log(id), "utf8")).toContain("deployed and read back from the node");
     expect(status.last_progress).toMatch(/^deployed and read back from the node/);
@@ -69,7 +69,7 @@ describe("runIntent over the fake tool", () => {
     expect(status).toMatchObject({ state: "refused", attempt: 1, transactions: [] });
     expect(status.refusals).toEqual([{ at: expect.any(String), reason: expect.stringMatching(problem) }]);
     expect(r.typed()).toEqual([{ run: 1, item: "deploy", typed: "NO", confirmed: false }]);
-    expect(JSON.parse(readFileSync(r.files.used(id), "utf8"))).toMatchObject({ outcome: "refused" });
+    expect(JSON.parse(readFileSync(r.files.used(id, status.approval_sha256), "utf8"))).toMatchObject({ outcome: "refused", approval_sha256: status.approval_sha256 });
     expect(r.events(id)).toEqual(["approval-seen", "run-start", "no", "run-end", "refused"]);
   });
 

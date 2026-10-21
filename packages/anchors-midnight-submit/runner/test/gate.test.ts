@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { afterDeployRegistry, deployIntent, intentSha256 } from "../confirm.js";
 import { admit, confirmedDust } from "../gate.js";
 import { LIMITS } from "../limits.js";
@@ -94,7 +94,25 @@ describe("admit: the approval gate", () => {
     const r = runner();
     const id = r.approve(DEPLOY);
     writeFileSync(r.files.used(id), JSON.stringify({ at: iso(NOW - HOUR), outcome: "done" }));
-    expect(refused(r, id)).toBe(`approval bf35fa0c was already used: ${readFileSync(r.files.used(id), "utf8")}`);
+    expect(refused(r, id)).toBe("approval bf35fa0c was already used");
+  });
+
+  it("refuses an approval-scoped used marker while leaving a replacement eligible", () => {
+    const r = runner();
+    const id = r.approve(DEPLOY);
+    const admitted = admit(r.paths, id, NOW);
+    expect(admitted.ok).toBe(true);
+    writeFileSync(`${r.files.used(id)}.${admitted.approvalSha256}`, "{}");
+    expect(admit(r.paths, id, NOW)).toMatchObject({ ok: false, reason: expect.stringContaining("already used") });
+    r.approve(DEPLOY, { expires_at: iso(NOW + HOUR) });
+    expect(admit(r.paths, id, NOW)).toMatchObject({ ok: true });
+  });
+
+  it("refuses a legacy NO whose approval identity cannot be recovered", () => {
+    const r = runner();
+    const id = r.approve(DEPLOY);
+    appendFileSync(r.files.audit, `${JSON.stringify({ at: iso(NOW), intent: id, event: "no", problems: ["payer mismatch"] })}\n`);
+    expect(admit(r.paths, id, NOW)).toMatchObject({ ok: false, reason: expect.stringContaining("already used") });
   });
 
   it.each<[string, Record<string, unknown>, string]>([

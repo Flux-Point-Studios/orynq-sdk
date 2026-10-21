@@ -55,26 +55,29 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
   const files = runnerFiles(root);
   let status: Status = readStatus(root, id) ?? { intent_id: id, state: "admitted", attempt: 0, transactions: [], refusals: [], updated_at: iso(Date.now()) };
   const save = (change: Partial<Status>) => (status = writeStatus(root, { ...status, ...change }));
+  let verdict = admit(paths, id, Date.now());
+  const originalApproval = verdict.approvalSha256;
   // Ends the run in `state`, naming `reason`; a run the tool finished, or one the runner stopped by
   // answering NO, spends the approval.
   const finish = (state: "done" | "refused" | "expired", reason?: string, spent = false): Status => {
     const at = iso(Date.now());
     if (spent) {
-      writeFileSync(files.used(id), JSON.stringify({ at, outcome: state, ...(reason ? { reason } : {}) }), { mode: 0o600, flag: "wx", flush: true });
-      flushDirectory(dirname(files.used(id)));
+      if (!originalApproval) throw new Error("cannot consume an approval without its digest");
+      const used = files.used(id, originalApproval);
+      writeFileSync(used, JSON.stringify({ at, approval_sha256: originalApproval, outcome: state, ...(reason ? { reason } : {}) }), { mode: 0o600, flag: "wx", flush: true });
+      flushDirectory(dirname(used));
     }
     save({ state, next_attempt_at: undefined, ...(reason ? { refusals: [...status.refusals, { at, reason }] } : {}) });
-    audit(root, { intent: id, event: state, ...(reason ? { reason } : {}) });
+    audit(root, { intent: id, event: state, approval_sha256: originalApproval, ...(reason ? { reason } : {}) });
     return status;
   };
 
-  let verdict = admit(paths, id, Date.now());
   audit(root, { intent: id, event: "approval-seen", approval_sha256: verdict.approvalSha256 ?? null, ...(verdict.ok ? { action: verdict.action, expires_at: verdict.approval.expires_at } : { refused: verdict.reason }) });
   if (!verdict.ok) {
     if (verdict.approvalSha256) save({ approval_sha256: verdict.approvalSha256 });
     return finish(verdict.expired ? "expired" : "refused", verdict.reason);
   }
-  const { action, intent, intentSha256, approvalSha256: originalApproval } = verdict;
+  const { action, intent, intentSha256 } = verdict;
   const recovered = new Map(status.transactions.map((t) => [t.tx_hash, t]));
   for (const event of readAudit(root)) {
     if (event.event !== "confirm" || event.intent !== id || recovered.has(String(event.tx_hash))) continue;
@@ -171,7 +174,7 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
       }
       if (problems.length > 0) {
         refusal ??= `${item}: ${problems.join("; ")}`;
-        audit(root, { intent: id, event: "no", item, tx_hash: check.txHash ?? null, problems });
+        audit(root, { intent: id, event: "no", approval_sha256: originalApproval, item, tx_hash: check.txHash ?? null, problems });
         return { ...check, problems };
       }
       confirmedItems.add(item);
@@ -181,7 +184,7 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
         expired = true;
         refusal = `${item}: the approval expired before confirmation was recorded`;
         const problems = [refusal];
-        audit(root, { intent: id, event: "no", item, tx_hash: check.txHash, problems });
+        audit(root, { intent: id, event: "no", approval_sha256: originalApproval, item, tx_hash: check.txHash, problems });
         return { ...check, problems };
       }
       confirmed = true;
@@ -211,7 +214,7 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
     if (!refusal) {
       for (const answer of answers.filter((a) => !a.confirmed)) {
         refusal ??= answer.problems.join("; ");
-        audit(root, { intent: id, event: "no", problems: answer.problems });
+        audit(root, { intent: id, event: "no", approval_sha256: originalApproval, problems: answer.problems });
       }
     }
     if (refusal) return finish(expired ? "expired" : "refused", refusal, !expired);

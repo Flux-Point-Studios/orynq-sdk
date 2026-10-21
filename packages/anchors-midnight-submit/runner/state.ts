@@ -20,7 +20,7 @@ export const mainnetPaths = (): RunnerPaths => ({ root: `${STATE}/runner`, deplo
 export const runnerFiles = (root: string) => ({
   intent: (id: string) => join(root, "intents", `${id}.json`),
   approval: (id: string) => join(root, "approvals", `${id}.json`),
-  used: (id: string) => join(root, "used", id),
+  used: (id: string, approvalSha256?: string) => join(root, "used", approvalSha256 ? `${id}.${approvalSha256}` : id),
   status: (id: string) => join(root, "status", `${id}.json`),
   log: (id: string) => join(root, "logs", `${id}.log`),
   approvals: join(root, "approvals"),
@@ -104,4 +104,14 @@ export function readAudit(root: string): (AuditEvent & { at: string })[] {
         throw new Error(`${file} line ${i + 1} is not JSON`);
       }
     });
+}
+
+// A durable NO survives loss of both the status and the used marker. Legacy consumption without
+// an approval identity cannot safely be assigned to a replacement, so it keeps the intent closed.
+export function approvalUsed(root: string, id: string, approvalSha256: string): boolean {
+  const files = runnerFiles(root);
+  return existsSync(files.used(id)) || existsSync(files.used(id, approvalSha256)) || readAudit(root).some((event) =>
+    event.intent === id && (event.event === "no" || event.event === "done") &&
+    (typeof event.approval_sha256 !== "string" || event.approval_sha256 === approvalSha256),
+  );
 }

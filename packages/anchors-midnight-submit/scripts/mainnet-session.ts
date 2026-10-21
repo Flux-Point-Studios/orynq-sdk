@@ -1,7 +1,7 @@
 // What deploy-mainnet and anchor-mainnet share. Before anything is read, the process must carry no
 // Claude Code or Codex environment and its input and output must be a terminal; then the flags, every one
 // of them known; then a node that is Midnight Mainnet, the wallet the mnemonic derives only if it
-// is the recorded one, and the DUST floor whenever confirming may send bytes. The wallet syncs from
+// is the recorded one, and the DUST floor before preparing new bytes. The wallet syncs from
 // the state file both scripts share, saving it as it goes, so a sync that fails or runs out of time
 // is resumed by the next run. Each set of final bytes is sent only after the token naming its
 // transaction hash is typed at that terminal, and every way out closes the wallet before the
@@ -136,11 +136,9 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
       process.exit(0);
     },
 
-    // Confirming sends bytes only for new ones, or journalled ones no send of which ever returned
-    // and whose TTL has not passed: journalled bytes that landed are finished whatever the balance.
+    // Journalled bytes already carry their fee, whose held coin is excluded from this balance.
     requireDustFloor(dust: bigint, resumed: PreparedDeploy | PreparedAnchor | null) {
-      const sends = !resumed || (resumed.journal!.state === "pending" && resumed.journal!.broadcasts === 0 && !resumed.journal!.expired);
-      if (sends && dust < floor) throw new Error(`the wallet holds ${formatDust(dust)} DUST, below the ${formatDust(floor)} DUST floor`);
+      if (!resumed?.journal && dust < floor) throw new Error(`the wallet holds ${formatDust(dust)} DUST, below the ${formatDust(floor)} DUST floor in available coins; DUST held by journalled bytes becomes available after the wallet syncs past the spend's ctime plus the ledger DUST grace period (3 hours on mainnet), if the coin remains unspent`);
     },
 
     // Shows `summary` and returns only once the token of `prepared` is typed at the terminal.

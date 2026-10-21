@@ -35,7 +35,7 @@ in it):
 |---|---|---|
 | `intents/<id>.json` | the CTO session | The intent object, in the shape the terminal wrappers show deci. Its id is the first 8 hex characters of the sha256 of its compact JSON (`JSON.stringify` of the parsed file, keys in the order written), as the wrappers compute it. |
 | `approvals/<id>.json` | the CTO session, only after deci approved that exact intent in chat | `{ "intent_id", "intent_sha256", "approved_at", "expires_at", "approved_via": "chat", "approver": "deci" }`, times in ISO 8601 |
-| `used/<id>` | the runner | The single-use marker: written when the tool finished (`done`), or when the runner stopped it by answering `NO` (`refused`) |
+| `used/<id>.<approval-sha256>` | the runner | The single-use marker for the approval consumed when the tool finished (`done`), or when the runner stopped it by answering `NO` (`refused`) |
 | `status/<id>.json` | the runner | `state`, `attempt`, `next_attempt_at`, `last_progress` (the tool's last output line), `transactions` (each confirmed transaction hash, its declared fee and the approval it was confirmed under), `refusals` (each with its reason) |
 | `audit.jsonl` | the runner | Append-only; see below |
 | `logs/<id>.log` | the runner | The tool's output, attempt by attempt |
@@ -49,7 +49,7 @@ every attempt and again at every prompt, and names the first that fails:
    `approver: "deci"` and `approved_via: "chat"`.
 3. Its `intent_sha256` is the intent's sha256.
 4. It was given no later than now, lasts at most `maxApprovalHours` (24), and has not expired.
-5. `used/<id>` does not exist.
+5. That approval has no used marker or durable `no`/`done` audit record.
 6. The action is allowlisted, and every fact `limits.json` pins matches, with no other field.
 7. The intent's fee cap is at or below the per-transaction cap.
 8. Other intents' DUST reservations for the rolling 24-hour window, plus this intent's maximum, stay at or
@@ -59,7 +59,14 @@ A refusal at the gate runs nothing and leaves the approval unused. Dispatch does
 intent that finished under the same approval file, so a corrected approval runs again.
 
 The full intent and approval digests are pinned for the run. A replacement stops that run;
-an approval's digest and parsed contents must come from identical bytes. The source plan is
+its refusal consumes only the original approval. A separately approved replacement remains
+eligible, with all earlier confirmations still counted and the same fee and journal checks.
+Every `no` audit record names the original approval and is flushed before the decision returns.
+Admission and dispatch recover it even if the process stopped before writing a used marker and
+the status snapshot was lost. Legacy `used/<id>` markers and terminal audit records without an
+approval digest keep the whole intent closed, since their approval identity is unknown.
+
+An approval's digest and parsed contents must come from identical bytes. The source plan is
 checked against its digest while parsing. The execution plan is checked against the approved
 entries, and its digest is passed as `--plan-sha256`; the anchor tool checks and parses those
 same bytes before connecting or opening a wallet. This also binds the private inputs of kind-2

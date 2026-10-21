@@ -8,7 +8,7 @@ import { readJsonFile } from "../src/json-file.js";
 import { formatDust, parseDust } from "../src/preflight.js";
 import { afterDeployRegistry, intentEntries, intentSha256, type AnchorsIntent, type DeployIntent } from "./confirm.js";
 import { LIMITS } from "./limits.js";
-import { readAudit, runnerFiles, type RunnerPaths } from "./state.js";
+import { approvalUsed, readAudit, runnerFiles, type RunnerPaths } from "./state.js";
 
 // What the CTO session writes once deci approved intent `intent_id` in chat.
 export interface Approval {
@@ -124,7 +124,7 @@ export function admit(paths: RunnerPaths, id: string, now: number): Admitted | R
     const { approvalSha256 } = approved;
     read.approvalSha256 = approvalSha256;
     if (approved.expiresAt <= now) return { ok: false, expired: true, reason: `the approval expired at ${approved.approval.expires_at}`, ...read };
-    if (existsSync(files.used(id))) refuse(`approval ${id} was already used: ${readFileSync(files.used(id), "utf8")}`);
+    if (approvalUsed(paths.root, id, approvalSha256)) refuse(`approval ${id} was already used`);
 
     let admitted: Pick<Admitted, "action" | "transactions"> & { maxFeeDust: string };
     if (intent.action === LIMITS.deploy.action) {
