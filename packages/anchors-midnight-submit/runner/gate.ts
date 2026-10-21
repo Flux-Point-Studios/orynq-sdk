@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { readAnchorPlan } from "../src/anchor-plan.js";
 import { readJsonFile } from "../src/json-file.js";
 import { formatDust, parseDust } from "../src/preflight.js";
-import { afterDeployRegistry, intentEntries, intentSha256, type AnchorsIntent, type DeployIntent } from "./confirm.js";
+import { afterDeployRegistry, instant, intentEntries, intentSha256, type AnchorsIntent, type DeployIntent } from "./confirm.js";
 import { LIMITS } from "./limits.js";
 import { approvalUsed, readAudit, runnerFiles, type RunnerPaths } from "./state.js";
 
@@ -52,8 +52,8 @@ export function confirmedDust(root: string, after: number, except?: string, exce
   const fees = new Map<string, bigint>();
   for (const e of readAudit(root)) {
     if (e.event !== "confirm" || e.intent === except || e.tx_hash === exceptTransaction) continue;
-    const confirmedAt = Date.parse(e.at);
-    const validUntil = Date.parse(String(e.valid_until ?? e.at));
+    const confirmedAt = instant(e.at);
+    const validUntil = instant(e.valid_until ?? e.at);
     const fee = parseDust(String(e.fee_dust));
     if (!Number.isFinite(confirmedAt) || !Number.isFinite(validUntil) || fee === null) throw new Error("the confirmation audit holds an invalid time or fee");
     if (Math.max(confirmedAt, validUntil) > after) fees.set(String(e.tx_hash), fee);
@@ -86,8 +86,9 @@ function plannedAnchors(paths: RunnerPaths, intent: AnchorsIntent) {
 }
 
 // The approval of intent `id` as it stands at `now`, and its identity: the sha256 of its six
-// values, each time as the instant it names. The same approval written with other whitespace, key
-// order or time notation keeps its identity, so once used it stays used.
+// values, each time as the instant it names. Every time must name its offset, so the instants are
+// the same in every time zone, and the same approval written with other whitespace, key order or
+// offset keeps its identity: once used it stays used.
 function approvalOf(paths: RunnerPaths, id: string, sha: string, now: number) {
   const file = runnerFiles(paths.root).approval(id);
   if (!existsSync(file)) refuse(`no approval ${file}`);
@@ -99,8 +100,8 @@ function approvalOf(paths: RunnerPaths, id: string, sha: string, now: number) {
   if (approval.approver !== "deci" || approval.approved_via !== "chat") refuse(`the approval is not deci's in chat: approver ${JSON.stringify(approval.approver)}, approved_via ${JSON.stringify(approval.approved_via)}`);
   if (approval.intent_sha256 !== sha) refuse(`the approval names intent sha256 ${approval.intent_sha256}, but ${runnerFiles(paths.root).intent(id)} hashes to ${sha}`);
   const [approvedAt, expiresAt] = (["approved_at", "expires_at"] as const).map((field) => {
-    const at = typeof approval[field] === "string" && /^\d{4}-\d\d-\d\dT/.test(approval[field]) ? Date.parse(approval[field]) : NaN;
-    return Number.isNaN(at) ? refuse(`the approval's ${field} ${JSON.stringify(approval[field])} is not an ISO 8601 time`) : at;
+    const at = instant(approval[field]);
+    return Number.isNaN(at) ? refuse(`the approval's ${field} ${JSON.stringify(approval[field])} is not an ISO 8601 time with Z or a ±hh:mm offset`) : at;
   }) as [number, number];
   if (approvedAt > now) refuse(`the approval was given at ${approval.approved_at}, after now (${new Date(now).toISOString()})`);
   if (expiresAt - approvedAt > LIMITS.maxApprovalHours * HOUR) refuse(`the approval runs from ${approval.approved_at} to ${approval.expires_at}, longer than ${LIMITS.maxApprovalHours} h`);

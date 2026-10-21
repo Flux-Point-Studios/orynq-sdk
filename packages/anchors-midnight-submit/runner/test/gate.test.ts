@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { afterDeployRegistry, deployIntent, intentSha256 } from "../confirm.js";
 import { admit, confirmedDust } from "../gate.js";
@@ -13,6 +13,7 @@ const refused = (r: ReturnType<typeof runner>, id: string, now = NOW) => {
   if (verdict.ok) throw new Error(`admitted ${id}`);
   return verdict.reason;
 };
+afterEach(() => vi.unstubAllEnvs());
 
 describe("admit: the approval gate", () => {
   it("admits deploy intent bf35fa0c under a 24-hour chat approval: one transaction under the 0.01 DUST cap", () => {
@@ -63,14 +64,14 @@ describe("admit: the approval gate", () => {
     r.approve(DEPLOY, { note: "also approve the rest" });
     expect(refused(r, id)).toBe('the approval has field "note"; it takes intent_id, intent_sha256, approved_at, expires_at, approved_via and approver');
     r.approve(DEPLOY, { expires_at: "tomorrow" });
-    expect(refused(r, id)).toBe('the approval\'s expires_at "tomorrow" is not an ISO 8601 time');
+    expect(refused(r, id)).toBe('the approval\'s expires_at "tomorrow" is not an ISO 8601 time with Z or a ±hh:mm offset');
     // Times Date.parse reads that are not ISO 8601 are refused too.
     r.approve(DEPLOY, { expires_at: "Tue, 20 Oct 2026 20:00:00 GMT" });
-    expect(refused(r, id)).toBe('the approval\'s expires_at "Tue, 20 Oct 2026 20:00:00 GMT" is not an ISO 8601 time');
+    expect(refused(r, id)).toBe('the approval\'s expires_at "Tue, 20 Oct 2026 20:00:00 GMT" is not an ISO 8601 time with Z or a ±hh:mm offset');
     r.approve(DEPLOY, { approved_at: "2026-10-20" });
-    expect(refused(r, id)).toBe('the approval\'s approved_at "2026-10-20" is not an ISO 8601 time');
+    expect(refused(r, id)).toBe('the approval\'s approved_at "2026-10-20" is not an ISO 8601 time with Z or a ±hh:mm offset');
     r.approve(DEPLOY, { approved_at: NOW - HOUR });
-    expect(refused(r, id)).toBe(`the approval's approved_at ${NOW - HOUR} is not an ISO 8601 time`);
+    expect(refused(r, id)).toBe(`the approval's approved_at ${NOW - HOUR} is not an ISO 8601 time with Z or a ±hh:mm offset`);
     writeFileSync(r.files.approval(id), "[]");
     expect(refused(r, id)).toBe("the approval is not a JSON object");
   });
@@ -126,6 +127,52 @@ describe("admit: the approval gate", () => {
     for (const change of [{ expires_at: iso(NOW + HOUR) }, { approved_at: iso(NOW - 30_000) }]) {
       writeFileSync(r.files.approval(id), JSON.stringify({ ...approval, ...change }));
       expect([change, admit(r.paths, id, NOW)]).toMatchObject([change, { ok: true }]);
+    }
+  });
+
+  // Date.parse reads a time without an offset in the process's zone (America/Denver on Gemtek),
+  // which would move both the 24-hour window and the approval's identity with TZ.
+  it.each(["America/Denver", "UTC"])("refuses approval times that name no offset under TZ=%s, at every instant", (tz) => {
+    vi.stubEnv("TZ", tz);
+    const r = runner();
+    const start = Date.parse("2026-10-20T17:59:00Z");
+    const verdicts = (change: Record<string, string>) => {
+      const id = r.approve(DEPLOY, change);
+      // Just after approval, and two and seven hours after the expiry the writer meant.
+      return [start + 60_000, start + 26 * HOUR, start + 31 * HOUR].map((at) => {
+        const verdict = admit(r.paths, id, at);
+        return verdict.ok ? "admitted" : verdict.reason;
+      });
+    };
+    for (const [change, field] of [
+      [{ approved_at: "2026-10-20T17:59:00", expires_at: "2026-10-21T17:59:00" }, "approved_at"],
+      [{ approved_at: "2026-10-20T17:59:00.123456" }, "approved_at"],
+      [{ expires_at: "2026-10-21T17:59:00" }, "expires_at"],
+      [{ expires_at: "2026-10-21T17:59" }, "expires_at"],
+      [{ expires_at: "2026-10-21T17:59:00+0000" }, "expires_at"],
+      [{ expires_at: "2026-10-21T17:59:00+00" }, "expires_at"],
+      [{ expires_at: "2026-10-21 17:59:00Z" }, "expires_at"],
+      [{ expires_at: "2026-10-21T17:59:00z" }, "expires_at"],
+    ] as [Record<string, string>, "approved_at" | "expires_at"][]) {
+      const reason = `the approval's ${field} ${JSON.stringify(change[field])} is not an ISO 8601 time with Z or a ±hh:mm offset`;
+      expect([change, verdicts(change)]).toEqual([change, [reason, reason, reason]]);
+    }
+    expect(verdicts({})).toEqual(["admitted", "the approval expired at 2026-10-21T17:59:00.000Z", "the approval expired at 2026-10-21T17:59:00.000Z"]);
+  });
+
+  it("reads approval times with Z or an offset as the same instants in every zone, so a used approval stays used when TZ changes", () => {
+    const r = runner();
+    const id = r.approve(DEPLOY, { approved_at: "2026-10-20T11:59:00.5-06:00", expires_at: "2026-10-21T17:59:00Z" });
+    const zones = ["America/Denver", "UTC", "Asia/Kolkata"];
+    const admitted = zones.map((tz) => {
+      vi.stubEnv("TZ", tz);
+      return admit(r.paths, id, NOW);
+    });
+    for (const verdict of admitted) expect(verdict).toMatchObject({ ok: true, expiresAt: Date.parse("2026-10-21T17:59:00Z"), approvalSha256: admitted[0]!.approvalSha256 });
+    writeFileSync(r.files.used(id, admitted[0]!.approvalSha256), "{}");
+    for (const tz of zones) {
+      vi.stubEnv("TZ", tz);
+      expect([tz, admit(r.paths, id, NOW)]).toMatchObject([tz, { ok: false, reason: `approval ${id} was already used` }]);
     }
   });
 
@@ -204,6 +251,15 @@ describe("admit: the approval gate", () => {
     expect(confirmedDust(r.paths.root, NOW - 24 * HOUR, id)).toBe(9n * 10n ** 13n);
     expect(admit(r.paths, id, NOW)).toMatchObject({ ok: true });
     expect(confirmedDust(r.paths.root, NOW - 24 * HOUR - 1)).toBe(19n * 10n ** 13n);
+  });
+
+  it("refuses when a confirmation's time names no offset, rather than read it in the runner's zone", () => {
+    for (const times of [{ at: "2026-10-20T17:00:00" }, { at: iso(NOW - HOUR), valid_until: "2026-10-20T17:10:00" }]) {
+      const r = runner();
+      const id = r.approve(DEPLOY);
+      appendFileSync(r.files.audit, `${JSON.stringify({ intent: "34941c71", event: "confirm", item: "deploy", tx_hash: "a1".repeat(32), fee_dust: "0.01", ...times })}\n`);
+      expect([times, refused(r, id)]).toEqual([times, "the confirmation audit holds an invalid time or fee"]);
+    }
   });
 
   it("refuses when the audit log does not read back, rather than undercount what was confirmed", () => {

@@ -111,7 +111,8 @@ describe("checkDeploySummary", () => {
 
   it("refuses a summary without a valid transaction deadline", () => {
     const summary = deploySummary({ chain, wallet, dust, prepared });
-    for (const text of [summary.replace(/^valid until .*\n/m, ""), summary.replace(prepared.ttl.toISOString(), "not-a-time")]) {
+    // A deadline without an offset would be read in the runner's zone and move its reservation.
+    for (const text of [summary.replace(/^valid until .*\n/m, ""), summary.replace(prepared.ttl.toISOString(), "not-a-time"), summary.replace(prepared.ttl.toISOString(), prepared.ttl.toISOString().slice(0, -1))]) {
       expect(checkDeploySummary(intent, text, TX.slice(0, 16)).problems).toEqual([expect.stringContaining("valid until")]);
     }
   });

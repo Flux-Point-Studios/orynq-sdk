@@ -65,6 +65,10 @@ export const intentEntries = (plan: AnchorPlan): IntentEntry[] =>
     ...(e.kind === 2 ? { attribute: String(e.attribute) } : {}),
   }));
 
+// The instant an ISO 8601 time names, or NaN unless it ends in Z or a ±hh:mm offset: Date.parse
+// reads a time without one in the process's time zone, so the instant would move with TZ.
+export const instant = (time: unknown) => (typeof time === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$/.test(time) ? Date.parse(time) : NaN);
+
 // The registry of an anchors intent authorized before the deploy landed: the one deploy-mainnet's
 // journal at `deployJournal` holds landed, written into the plan at `planOut`.
 export const afterDeployRegistry = (deployJournal: string, planOut: string) => `the registry ${deployJournal} records as landed and read back, written into ${planOut} by fill-registry.mjs`;
@@ -114,7 +118,7 @@ function paymentProblems(row: ReturnType<typeof rows>, payer: string, maxFeeDust
   const fee = parseDust(/^(\S+) DUST/.exec(row("fee (declared)") ?? "")?.[1] ?? "");
   if (fee === null || fee > parseDust(maxFeeDust)!) problems.push(`fee is ${shown(row("fee (declared)"))}, cap ${maxFeeDust} DUST`);
   const validUntil = row("valid until");
-  if (!validUntil || !Number.isFinite(Date.parse(validUntil))) problems.push(`valid until is ${shown(validUntil)}`);
+  if (Number.isNaN(instant(validUntil))) problems.push(`valid until is ${shown(validUntil)}`);
   const txHash = row(txRow);
   if (!txHash || !/^[0-9a-f]{64}$/.test(txHash) || !txHash.startsWith(token)) problems.push(`the token ${token} does not name the summarized transaction ${txHash ?? "(none)"}`);
   return { problems, ...(txHash ? { txHash } : {}), ...(fee === null ? {} : { fee }), ...(validUntil ? { validUntil } : {}) };

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fresh } from "../../test/fakes.js";
 import { deployIntent } from "../confirm.js";
@@ -7,12 +7,13 @@ import { LIMITS } from "../limits.js";
 import { runIntent } from "../run.js";
 import { readAudit, readStatus } from "../state.js";
 import type { FakeTool } from "./fake-tool.js";
-import { deployJournal, iso, journalled, scriptPid, stateRoot } from "./helpers.js";
+import { HOUR, deployJournal, iso, journalled, scriptPid, stateRoot } from "./helpers.js";
 
 const PACKAGE = new URL("../..", import.meta.url).pathname;
 const DEPLOY = deployIntent(LIMITS.payer, "0.01");
 const TX = (n: number) => n.toString(16).padStart(2, "0").repeat(32);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+afterEach(() => vi.unstubAllEnvs());
 
 // The runner over the fake tool, with a state root of its own: `fake` says what the tool shows,
 // `backoffMs` how long the runner waits between attempts.
@@ -106,13 +107,13 @@ describe("runIntent over the fake tool", () => {
     ]);
   });
 
-  it("answers NO to other bytes for a transaction it confirmed while the journal still holds that one", async () => {
+  it.each(["pending", "landed"] as const)("answers NO to other bytes for a transaction it confirmed while the journal holds that one %s", async (held) => {
     const r = runner({ kind: "deploy", failsAfterConfirm: 1, txHashes: [TX(0xaa), TX(0xbb)] });
     const id = r.approve(DEPLOY);
-    journalled(r.paths.deployJournal, TX(0xaa), "pending");
+    journalled(r.paths.deployJournal, TX(0xaa), held);
     const status = await r.run(id);
     expect(status).toMatchObject({ state: "refused", attempt: 2, transactions: [{ item: "deploy", tx_hash: TX(0xaa) }] });
-    expect(status.refusals[0]!.reason).toBe(`deploy: the journal holds ${TX(0xaa)}, confirmed for it earlier, pending; other bytes could land it twice`);
+    expect(status.refusals[0]!.reason).toBe(`deploy: the journal holds ${TX(0xaa)}, confirmed for it earlier, ${held}; other bytes could land it twice`);
     expect(r.typed().map((t) => [t.run, t.typed])).toEqual([
       [1, `DEPLOY ${TX(0xaa).slice(0, 16)}`],
       [2, "NO"],
@@ -206,6 +207,18 @@ describe("runIntent over the fake tool", () => {
     expect(r.runs()).toBe(1);
   });
 
+  it("keeps an approval it finished used from its done record alone, once the used marker and status are lost", async () => {
+    const r = runner({ kind: "deploy" });
+    const id = r.approve(DEPLOY);
+    const done = await r.run(id);
+    expect(r.events(id)).toEqual(["approval-seen", "run-start", "confirm", "run-end", "done"]);
+    rmSync(r.files.used(id, done.approval_sha256));
+    rmSync(r.files.status(id));
+    expect(admit(r.paths, id, Date.now())).toMatchObject({ ok: false, reason: `approval ${id} was already used` });
+    expect(await r.run(id)).toMatchObject({ state: "refused", attempt: 0 });
+    expect(r.runs()).toBe(1);
+  });
+
   it("stops once the approval expires between attempts, and does not start another", async () => {
     const r = runner({ kind: "deploy", syncFailures: 100 }, { backoffMs: [2000] });
     const id = r.approve(DEPLOY);
@@ -260,6 +273,24 @@ describe("runIntent over the fake tool", () => {
     const status = await r.run(id);
     expect(Date.parse(status.updated_at)).toBeGreaterThan(Date.parse(status.expires_at!));
     expect(status).toMatchObject({ state: "done", attempt: 1, transactions: [{ tx_hash: TX(0xaa) }] });
+  });
+
+  it("runs nothing for an approval whose times name no offset, in the runner's zone or in UTC, and runs its corrected approval", async () => {
+    const r = runner({ kind: "deploy" });
+    vi.stubEnv("TZ", "America/Denver");
+    // The local wall-clock time `ms` names in the runner's zone, as `date` without -u and Z prints it.
+    const local = (ms: number) => new Date(ms - new Date(ms).getTimezoneOffset() * 60_000).toISOString().slice(0, 19);
+    const approvedAt = local(Date.now() - 60_000);
+    const id = r.approve(DEPLOY, { approved_at: approvedAt, expires_at: local(Date.now() - 60_000 + 24 * HOUR) });
+    for (const tz of ["America/Denver", "UTC"]) {
+      vi.stubEnv("TZ", tz);
+      const status = await r.run(id);
+      expect(status).toMatchObject({ state: "refused", attempt: 0 });
+      expect(status.refusals.at(-1)!.reason).toBe(`the approval's approved_at "${approvedAt}" is not an ISO 8601 time with Z or a ±hh:mm offset`);
+    }
+    expect([r.runs(), r.typed(), r.events(id)]).toEqual([0, [], ["approval-seen", "refused", "approval-seen", "refused"]]);
+    r.approve(DEPLOY);
+    expect(await r.run(id)).toMatchObject({ state: "done", attempt: 1 });
   });
 
   it("refuses before running anything when the gate refuses, and leaves the approval unused", async () => {

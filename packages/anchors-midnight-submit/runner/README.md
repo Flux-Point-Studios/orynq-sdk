@@ -34,7 +34,7 @@ in it):
 | Path | Written by | What it holds |
 |---|---|---|
 | `intents/<id>.json` | the CTO session | The intent object, in the shape the terminal wrappers show deci. Its id is the first 8 hex characters of the sha256 of its compact JSON (`JSON.stringify` of the parsed file, keys in the order written), as the wrappers compute it. |
-| `approvals/<id>.json` | the CTO session, only after deci approved that exact intent in chat | `{ "intent_id", "intent_sha256", "approved_at", "expires_at", "approved_via": "chat", "approver": "deci" }`, times in ISO 8601 |
+| `approvals/<id>.json` | the CTO session, only after deci approved that exact intent in chat | `{ "intent_id", "intent_sha256", "approved_at", "expires_at", "approved_via": "chat", "approver": "deci" }`, times in ISO 8601 ending in `Z` or a `±hh:mm` offset |
 | `used/<id>.<approval-sha256>` | the runner | The single-use marker for the approval consumed when the tool finished (`done`), or when the runner stopped it by answering `NO` (`refused`). The approval sha256 is its identity (below), not the hash of the file's bytes. |
 | `status/<id>.json` | the runner | `state`, `attempt`, `next_attempt_at`, `last_progress` (the tool's last output line), `transactions` (each confirmed transaction hash, its declared fee and the approval it was confirmed under), `refusals` (each with its reason) |
 | `audit.jsonl` | the runner | Append-only; see below |
@@ -48,7 +48,8 @@ every attempt and again at every prompt, and names the first that fails:
 2. `approvals/<id>.json` exists, has exactly the six fields, names this intent, and says
    `approver: "deci"` and `approved_via: "chat"`.
 3. Its `intent_sha256` is the intent's sha256.
-4. It was given no later than now, lasts at most `maxApprovalHours` (24), and has not expired.
+4. Both times end in `Z` or a `±hh:mm` offset. It was given no later than now, lasts at most
+   `maxApprovalHours` (24), and has not expired.
 5. That approval has no used marker or durable `no`/`done` audit record.
 6. The action is allowlisted, and every fact `limits.json` pins matches, with no other field.
 7. The intent's fee cap is at or below the per-transaction cap.
@@ -68,9 +69,13 @@ the status snapshot was lost. Legacy `used/<id>` markers and terminal audit reco
 approval digest keep the whole intent closed, since their approval identity is unknown.
 
 An approval's identity, its approval sha256, is the sha256 of its six values with each time as
-the instant it names, not of the file's bytes. The same approval rewritten with other whitespace,
-key order or time notation is still the approval a used marker or a `no` consumed; a replacement
-with any other value is a new approval. The source plan is
+the instant it names, not of the file's bytes. The gate refuses a time without `Z` or a `±hh:mm`
+offset (`2026-10-20T17:59:00`, as `date -u` prints it without a `Z` in the format or Python's naive
+`isoformat()` does): `Date.parse` reads one in the runner's time zone, America/Denver on Gemtek,
+which would move the 24-hour window and, with `TZ`, the identity of an approval already used. The
+same approval rewritten with other whitespace, key order or offset for the same instants is still
+the approval a used marker or a `no` consumed, in every time zone; a replacement with any other
+value is a new approval. The source plan is
 checked against its digest while parsing. The execution plan is checked against the approved
 entries, and its digest is passed as `--plan-sha256`; the anchor tool checks and parses those
 same bytes before connecting or opening a wallet. This also binds the private inputs of kind-2
@@ -154,8 +159,10 @@ ends the run. Confirmation records include the approval digest and are flushed b
 token is written. Status and used markers are flushed too, including their directory entries;
 a missing status snapshot is rebuilt from the audit's confirmation history. The shared execution
 lock prevents two tools from passing the daily-cap check concurrently. Resumed bytes need fresh
-headroom when their earlier reservation has aged out. A missing or invalid validity deadline
-gets `NO` rather than an unbounded or shortened reservation.
+headroom when their earlier reservation has aged out. A missing or invalid validity deadline, or one
+without `Z` or an offset, gets `NO` rather than an unbounded, shortened or zone-dependent
+reservation; the gate refuses a confirmation record whose times lack one rather than read them in
+the runner's zone.
 
 **Expiry.** No attempt starts after the approval expires. A tool that has confirmed nothing is
 stopped at expiry. Every prompt after expiry gets `NO`. A tool that already confirmed a
@@ -283,18 +290,29 @@ its existing digest. A changed template requires a new intent and a new chat app
   34941c71 byte for byte. It names every mismatched fact of a deploy or anchor summary. It runs the
   wrappers' fake-tool checks in a pseudo-terminal (`fake-tool.ts` prints the tools' own summaries
   and prompts), hands each `NO` to `onNo` before the tool reads it, and reports no exit status
-  for a `script` a stray signal ended.
-- `gate.test.ts` refuses each failing condition at its boundary, and a used approval rewritten
-  with other whitespace, key order or time notation.
+  for a `script` a stray signal ended. A validity deadline without `Z` or an offset gets `NO`.
+- `gate.test.ts` refuses each failing condition at its boundary, approval and confirmation times
+  without `Z` or an offset under `TZ=America/Denver` and `TZ=UTC`, and a used approval rewritten
+  with other whitespace, key order or offset, or read under another time zone.
 - `plan.test.ts` ports `fill-registry.mjs`'s tests.
 - `run.test.ts` covers the run over the fake tool: a match, every mismatch, sync retries, a
-  resumed transaction, the journal guard (bytes it still holds, bytes it retired, bytes it never
-  held), three confirmations at most, the daily cap, an approval withdrawn during the sync,
+  resumed transaction, the journal guard (bytes it still holds pending or landed, bytes it
+  retired, bytes it never held), three confirmations at most, the daily cap, an approval withdrawn during the sync,
   expiry between attempts, before the next backoff ends and during an attempt, a tool that
   confirmed before expiry left to finish, a gate refusal, anchors waiting for the deploy, a
   mismatched anchor after a confirmed one, a `script` a stray signal ended retried rather than
-  finished, a `NO` for the other action recorded before the tool reads it, and a used approval
-  rewritten with the same values.
+  finished, a `NO` for the other action recorded before the tool reads it, a used approval
+  rewritten with the same values, a finished approval kept used by its `done` record once its used
+  marker and status are lost, and an approval whose times name no offset, which runs nothing in
+  either zone.
+- `state.test.ts` checks that each audit line is synced to disk before its file is closed.
+- `review.test.ts` covers reservations held past the validity deadline, one confirmation per item
+  per attempt, a wrong-action `NO`, the pinned approval identity, confirmation limits and daily
+  headroom recovered from the audit, the shared execution lock, and the plan digest the anchor tool
+  is given.
+- `recovery.test.ts` covers a replacement approval between attempts and during a run, a `NO` kept
+  terminal across an interruption before its used marker, and earlier confirmations counted
+  against a replacement's daily cap.
 - `cli.test.ts` covers the agent-environment and systemd refusals, a run that broke off,
   dispatch (a rewritten used approval and one the gate cannot name included), status, check and
   argument errors.
