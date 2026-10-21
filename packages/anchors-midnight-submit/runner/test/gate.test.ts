@@ -254,7 +254,11 @@ describe("admit: the approval gate", () => {
   });
 
   it("refuses when a confirmation's time names no offset, rather than read it in the runner's zone", () => {
-    for (const times of [{ at: "2026-10-20T17:00:00" }, { at: iso(NOW - HOUR), valid_until: "2026-10-20T17:10:00" }]) {
+    for (const times of [
+      { at: "2026-10-20T17:00:00" },
+      { at: "2026-10-20T17:00:00", valid_until: iso(NOW - HOUR) },
+      { at: iso(NOW - HOUR), valid_until: "2026-10-20T17:10:00" },
+    ]) {
       const r = runner();
       const id = r.approve(DEPLOY);
       appendFileSync(r.files.audit, `${JSON.stringify({ intent: "34941c71", event: "confirm", item: "deploy", tx_hash: "a1".repeat(32), fee_dust: "0.01", ...times })}\n`);
