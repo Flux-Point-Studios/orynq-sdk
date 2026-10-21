@@ -80,7 +80,7 @@ describe("runner review invariants", () => {
   it("recovers confirmation limits from the audit when a status snapshot is lost", async () => {
     const r = fixture();
     const id = r.approve(DEPLOY);
-    const approval = digest(readFileSync(r.files.approval(id)));
+    const approval = r.approvalSha256(id);
     for (const n of [1, 2, 3]) {
       appendFileSync(r.files.audit, `${JSON.stringify({ at: iso(Date.now()), event: "confirm", intent: id, item: "deploy", tx_hash: tx(n), fee_dust: "0.000000000000002", approval_sha256: approval })}\n`);
     }
@@ -93,7 +93,7 @@ describe("runner review invariants", () => {
   it("rechecks daily headroom when resuming bytes whose earlier reservation aged out", async () => {
     const r = fixture({ kind: "deploy", fee: String(10n ** 13n) });
     const id = r.approve(DEPLOY);
-    const approval = digest(readFileSync(r.files.approval(id)));
+    const approval = r.approvalSha256(id);
     const transactions = [
       { item: "deploy", tx_hash: tx(0xaa), fee_dust: "0.01", confirmed_at: iso(Date.now() - 25 * HOUR), approval_sha256: approval },
       { item: "deploy", tx_hash: tx(0xbb), fee_dust: "0.01", confirmed_at: iso(Date.now()), approval_sha256: approval },

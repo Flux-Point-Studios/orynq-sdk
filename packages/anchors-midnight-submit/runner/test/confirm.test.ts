@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { REGISTRY_VERIFIER_KEY_SHA256, entryCommitment, type EntryHashes } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { MAINNET_AUTHOR_KEYS } from "../../src/custody.js";
 import type { PreparedDeploy } from "../../src/deployer.js";
@@ -10,7 +10,7 @@ import { fresh } from "../../test/fakes.js";
 import { afterDeployRegistry, anchorsIntent, checkAnchorSummary, checkDeploySummary, deployIntent, driveTool, intentSha256, type Decision } from "../confirm.js";
 import { LIMITS } from "../limits.js";
 import type { FakeTool } from "./fake-tool.js";
-import { ENTRIES } from "./helpers.js";
+import { ENTRIES, scriptPid } from "./helpers.js";
 
 const FIXTURES = new URL("./fixtures/", import.meta.url).pathname;
 const fixture = (id: string) => readFileSync(`${FIXTURES}${id}.json`, "utf8");
@@ -211,6 +211,40 @@ describe("driveTool answering the tool in a pseudo-terminal", () => {
     expect(r.code).toBe(0);
     expect(r.typed).toEqual([{ run: 1, item: "deploy", typed: `DEPLOY ${"aa".repeat(8)}`, confirmed: true }]);
     expect(r.answers).toEqual([{ token: `DEPLOY ${"aa".repeat(8)}`, confirmed: true, problems: [] }]);
+  });
+
+  it.each<[string, Partial<FakeTool>, "DEPLOY" | "ANCHOR", Decision]>([
+    ["the summary", { payer: "mn_addr1other" }, "DEPLOY", { item: "deploy", problems: ['payer is "mn_addr1other"'], txHash: "aa".repeat(32), fee: 2n, validUntil: expect.any(String) }],
+    ["the action", {}, "ANCHOR", { problems: [`the tool asks for "DEPLOY ${"aa".repeat(8)}", not an ANCHOR token`] }],
+  ])("hands onNo the decision of a NO for %s before the tool is sent the NO", async (_, change, verb, decision) => {
+    const files = { runs: fresh("runs"), record: fresh("record.jsonl") };
+    const nos: { decision: Decision; toolAnswered: boolean }[] = [];
+    const onNo = (decision: Decision) => {
+      // Long enough for a tool already sent its NO to have recorded it.
+      const until = Date.now() + 1000;
+      while (Date.now() < until);
+      nos.push({ decision, toolAnswered: existsSync(files.record) });
+    };
+    const tool = driveTool({ command: [process.execPath, "--import", "tsx", "runner/test/fake-tool.ts"], cwd: PACKAGE, env: { ...human(), FAKE_TOOL: JSON.stringify({ kind: "deploy", ...change, ...files }) }, verb, decide: deploy, onNo });
+    expect((await tool.exited).code).toBe(1);
+    expect(nos).toEqual([{ decision, toolAnswered: false }]);
+  });
+
+  it("runs the tool without the descriptor its exit status is reported on, so the tool cannot report one", async () => {
+    let output = "";
+    const tool = driveTool({ command: ["sh", "-c", "printf 0 >&3; echo started; sleep 30"], cwd: PACKAGE, env: human(), verb: "DEPLOY", decide: deploy, onText: (text) => void (output += text) });
+    while (!output.includes("started")) await new Promise((resolve) => setTimeout(resolve, 25));
+    process.kill(scriptPid(), "SIGTERM");
+    expect(await tool.exited).toEqual({ code: null, answers: [] });
+  });
+
+  it.each(["SIGTERM", "SIGINT", "SIGQUIT"] as const)("reports no exit status when a stray %s ends script before the tool exits", async (signal) => {
+    const files = { runs: fresh("runs"), record: fresh("record.jsonl") };
+    let output = "";
+    const tool = driveTool({ command: [process.execPath, "--import", "tsx", "runner/test/fake-tool.ts"], cwd: PACKAGE, env: { ...human(), FAKE_TOOL: JSON.stringify({ kind: "deploy", syncMs: 60_000, ...files }) }, verb: "DEPLOY", decide: deploy, onText: (text) => void (output += text) });
+    while (!output.includes("Syncing the wallet")) await new Promise((resolve) => setTimeout(resolve, 25));
+    process.kill(scriptPid(), signal);
+    expect(await tool.exited).toEqual({ code: null, answers: [] });
   });
 
   it.each<[string, Partial<FakeTool>]>([

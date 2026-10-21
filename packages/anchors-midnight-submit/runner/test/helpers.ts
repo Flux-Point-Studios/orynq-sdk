@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { buildRegistryDeploy, registryInitialState } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
@@ -6,6 +6,7 @@ import { openJournal } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journa
 import { fresh } from "../../test/fakes.js";
 import { prover } from "../../test/prover.js";
 import { afterDeployRegistry, anchorsIntent, intentSha256, type AnchorsIntent, type DeployIntent } from "../confirm.js";
+import { admit } from "../gate.js";
 import { LIMITS } from "../limits.js";
 import { ensureRunnerRoot, runnerFiles, type RunnerPaths } from "../state.js";
 
@@ -45,6 +46,8 @@ export function stateRoot({ now = () => Date.now(), paths: given = {} }: { now?:
       if (approval) writeFileSync(files.approval(id), JSON.stringify({ intent_id: id, intent_sha256: sha, approved_at: iso(approved), expires_at: iso(approved + 24 * HOUR), approved_via: "chat", approver: "deci", ...approval }));
       return id;
     },
+    // The approval of intent `id` as the gate names it in used markers, statuses and the audit log.
+    approvalSha256: (id: string) => admit(paths, id, now()).approvalSha256!,
     // Records in the audit log that intent `intent` confirmed `txHash` for `fee` DUST at `at`.
     confirmed(intent: string, txHash: string, fee: string, at = now() - HOUR) {
       ensureRunnerRoot(paths.root);
@@ -74,4 +77,14 @@ export function journalled(path: string, txHash: string, state: "pending" | "lan
   const db = new DatabaseSync(path);
   db.prepare("insert into attempts (key, tx_hash, bytes, ttl_ms, state) values (?, ?, ?, ?, ?)").run(`mainnet/test/${txHash}`, txHash, new Uint8Array(1), Date.now(), state);
   db.close();
+}
+
+// The PID of the one `script` this test process runs a tool under, so a test signals it and
+// nothing else.
+export function scriptPid(): number {
+  const proc = `/proc/${process.pid}/task`;
+  const children = readdirSync(proc).flatMap((task) => readFileSync(`${proc}/${task}/children`, "utf8").split(" ").filter(Boolean));
+  const scripts = children.filter((pid) => readFileSync(`/proc/${pid}/comm`, "utf8").trim() === "script");
+  if (scripts.length !== 1) throw new Error(`this process runs ${scripts.length} script processes, not one`);
+  return Number(scripts[0]);
 }

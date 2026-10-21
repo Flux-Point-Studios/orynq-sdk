@@ -74,7 +74,8 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
 
   audit(root, { intent: id, event: "approval-seen", approval_sha256: verdict.approvalSha256 ?? null, ...(verdict.ok ? { action: verdict.action, expires_at: verdict.approval.expires_at } : { refused: verdict.reason }) });
   if (!verdict.ok) {
-    if (verdict.approvalSha256) save({ approval_sha256: verdict.approvalSha256 });
+    // The approval this refusal is about, or none where the gate refused before naming one.
+    save({ approval_sha256: verdict.approvalSha256 });
     return finish(verdict.expired ? "expired" : "refused", verdict.reason);
   }
   const { action, intent, intentSha256 } = verdict;
@@ -172,23 +173,22 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
         const spent = confirmedDust(root, at - DAY, undefined, check.txHash);
         if (spent + check.fee! > dailyCap) problems.push(`${formatDust(spent)} DUST reserved for the rolling 24 h window and this transaction's ${formatDust(check.fee!)} DUST come to more than the ${LIMITS.maxDustPer24Hours} DUST daily cap`);
       }
-      if (problems.length > 0) {
-        refusal ??= `${item}: ${problems.join("; ")}`;
-        audit(root, { intent: id, event: "no", approval_sha256: originalApproval, item, tx_hash: check.txHash ?? null, problems });
-        return { ...check, problems };
-      }
+      if (problems.length > 0) return { ...check, item, problems };
       confirmedItems.add(item);
       audit(root, { intent: id, event: "confirm", item, tx_hash: check.txHash, fee_dust: formatDust(check.fee!), valid_until: check.validUntil, resumed, approval_sha256: approvalSha256 });
       if (!resumed) save({ transactions: [...status.transactions, { item, tx_hash: check.txHash!, fee_dust: formatDust(check.fee!), confirmed_at: iso(at), approval_sha256: approvalSha256, valid_until: check.validUntil! }] });
       if (Date.now() >= expiresAt) {
         expired = true;
-        refusal = `${item}: the approval expired before confirmation was recorded`;
-        const problems = [refusal];
-        audit(root, { intent: id, event: "no", approval_sha256: originalApproval, item, tx_hash: check.txHash, problems });
-        return { ...check, problems };
+        return { ...check, item, problems: ["the approval expired before confirmation was recorded"] };
       }
       confirmed = true;
       return check;
+    };
+    // Every NO, whether `decide` or driveTool found the problem, is in the audit log, flushed,
+    // before the tool reads it, so a run interrupted after it cannot use the approval again.
+    const onNo = ({ item, txHash, problems }: Decision) => {
+      refusal ??= item ? `${item}: ${problems.join("; ")}` : problems.join("; ");
+      audit(root, { intent: id, event: "no", approval_sha256: originalApproval, item, tx_hash: txHash ?? null, problems });
     };
     const onText = (text: string) => {
       appendFileSync(files.log(id), text, { mode: 0o600 });
@@ -199,7 +199,7 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
     // Keep wallet access and confirmation accounting serialized until the tool exits.
     appendFileSync(files.executionLock, "", { mode: 0o600 });
     const command = ["flock", "--exclusive", files.executionLock, ...tool(action, plan, planSha256)];
-    const run = driveTool({ command, cwd, env, verb: action === "deploy" ? "DEPLOY" : "ANCHOR", decide, onText });
+    const run = driveTool({ command, cwd, env, verb: action === "deploy" ? "DEPLOY" : "ANCHOR", decide, onNo, onText });
     // At expiry a tool that has confirmed nothing is stopped; one that has goes on to finish what it sends.
     let stopped = false;
     const timer = setTimeout(() => {
@@ -207,16 +207,10 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
       stopped = true;
       run.stop();
     }, Math.max(0, expiresAt - Date.now()));
-    const { code, answers } = await run.exited;
+    const { code } = await run.exited;
     clearTimeout(timer);
     audit(root, { intent: id, event: "run-end", attempt, code });
 
-    if (!refusal) {
-      for (const answer of answers.filter((a) => !a.confirmed)) {
-        refusal ??= answer.problems.join("; ");
-        audit(root, { intent: id, event: "no", approval_sha256: originalApproval, problems: answer.problems });
-      }
-    }
     if (refusal) return finish(expired ? "expired" : "refused", refusal, !expired);
     if (stopped) return finish("expired", `the approval expired at ${approval.expires_at} before attempt ${attempt} confirmed anything; the tool was stopped`);
     if (code === 0) return finish("done", undefined, true);

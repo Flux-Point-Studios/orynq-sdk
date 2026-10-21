@@ -35,7 +35,7 @@ in it):
 |---|---|---|
 | `intents/<id>.json` | the CTO session | The intent object, in the shape the terminal wrappers show deci. Its id is the first 8 hex characters of the sha256 of its compact JSON (`JSON.stringify` of the parsed file, keys in the order written), as the wrappers compute it. |
 | `approvals/<id>.json` | the CTO session, only after deci approved that exact intent in chat | `{ "intent_id", "intent_sha256", "approved_at", "expires_at", "approved_via": "chat", "approver": "deci" }`, times in ISO 8601 |
-| `used/<id>.<approval-sha256>` | the runner | The single-use marker for the approval consumed when the tool finished (`done`), or when the runner stopped it by answering `NO` (`refused`) |
+| `used/<id>.<approval-sha256>` | the runner | The single-use marker for the approval consumed when the tool finished (`done`), or when the runner stopped it by answering `NO` (`refused`). The approval sha256 is its identity (below), not the hash of the file's bytes. |
 | `status/<id>.json` | the runner | `state`, `attempt`, `next_attempt_at`, `last_progress` (the tool's last output line), `transactions` (each confirmed transaction hash, its declared fee and the approval it was confirmed under), `refusals` (each with its reason) |
 | `audit.jsonl` | the runner | Append-only; see below |
 | `logs/<id>.log` | the runner | The tool's output, attempt by attempt |
@@ -56,17 +56,21 @@ every attempt and again at every prompt, and names the first that fails:
    below the daily cap. The maximum is its fee cap times its transactions.
 
 A refusal at the gate runs nothing and leaves the approval unused. Dispatch does not restart an
-intent that finished under the same approval file, so a corrected approval runs again.
+intent that finished under the same approval, so a corrected approval runs again.
 
 The full intent and approval digests are pinned for the run. A replacement stops that run;
 its refusal consumes only the original approval. A separately approved replacement remains
 eligible, with all earlier confirmations still counted and the same fee and journal checks.
-Every `no` audit record names the original approval and is flushed before the decision returns.
+Every `no` audit record names the original approval and is flushed before the tool reads the
+`NO`, a `NO` to a prompt for the other action included.
 Admission and dispatch recover it even if the process stopped before writing a used marker and
 the status snapshot was lost. Legacy `used/<id>` markers and terminal audit records without an
 approval digest keep the whole intent closed, since their approval identity is unknown.
 
-An approval's digest and parsed contents must come from identical bytes. The source plan is
+An approval's identity, its approval sha256, is the sha256 of its six values with each time as
+the instant it names, not of the file's bytes. The same approval rewritten with other whitespace,
+key order or time notation is still the approval a used marker or a `no` consumed; a replacement
+with any other value is a new approval. The source plan is
 checked against its digest while parsing. The execution plan is checked against the approved
 entries, and its digest is passed as `--plan-sha256`; the anchor tool checks and parses those
 same bytes before connecting or opening a wallet. This also binds the private inputs of kind-2
@@ -104,7 +108,7 @@ under a salt only the salt key derives, so the runner cannot recompute it.
 | `orynq-midnight-runner@<id>.service` | Runs intent `<id>`. Never enabled; dispatch starts it. |
 | `orynq-midnight-runner-dispatch.path` | Starts dispatch whenever a file in `approvals/` changes |
 | `orynq-midnight-runner-dispatch.timer` | Starts dispatch two minutes after it starts (at boot, once enabled) and every 15 minutes after, so a run that a reboot or a crash ended resumes while its approval holds |
-| `orynq-midnight-runner-dispatch.service` | `orynq-midnight-runner dispatch`: starts the unit of every approval that is not used or finished under the same approval file, and is not already running. The run records an expired approval's refusal. |
+| `orynq-midnight-runner-dispatch.service` | `orynq-midnight-runner dispatch`: starts the unit of every approval that is not used or finished under the same approval, and is not already running. The run records an expired approval's refusal. An approval the gate refuses before it has an identity (one that is not deci's in chat, say) is started once, and again once the gate can name it. |
 
 The units run `runner/orynq-midnight-runner` from
 `~/.local/lib/orynq-midnight-runner/checkout`, a symlink to the reviewed checkout, with
@@ -125,10 +129,13 @@ The units run `runner/orynq-midnight-runner` from
    deploy before joining this lock queue. A queued tool remains subject to approval expiry.
 4. At each prompt, the runner checks the summary (`confirm.ts`), the approval, the journal and the
    daily cap, then types the token or `NO`.
-5. A tool that exits 0 finishes the run (`done`), and the approval is used. A `NO` ends it
-   (`refused`, approval used). Any other failure, such as a wallet sync that timed out or a
-   readback that lost the indexer, is retried after 1, 2, 4, 8, 16, then every 30 minutes, until
-   the approval expires. The tools save the wallet's sync state every five minutes and when a
+5. A tool that exits 0 finishes the run (`done`), and the approval is used. The tool's exit
+   status is what the shell reports on its own descriptor once the tool exits, never `script`'s:
+   `script` exits 0 when a stray `SIGTERM`, `SIGINT` or `SIGQUIT` ends it, having killed the shell
+   and the tool. An attempt without that report was interrupted. A `NO` ends the run (`refused`,
+   approval used). An interrupted attempt and any other failure, such as a wallet sync that timed
+   out or a readback that lost the indexer, are retried after 1, 2, 4, 8, 16, then every 30
+   minutes, until the approval expires. The tools save the wallet's sync state every five minutes and when a
    sync fails, so each retry resumes the sync instead of starting from genesis.
 
 **No transaction is sent twice across retries.** The tools journal every transaction in a
@@ -235,8 +242,9 @@ mv "approvals/.$id.tmp" "approvals/$id.json"
 
 `confirm.ts` is what `auto-deploy.mjs` and `auto-anchor.mjs` check by hand. `deployIntent` and
 `anchorsIntent` build the intent objects they show, from `limits.json`. `checkDeploySummary` and
-`checkAnchorSummary` check a summary against an intent. `driveTool` runs a tool under `script` and
-answers its prompts. A wrapper that keeps its own terminal pre-authorization calls `driveTool` with
+`checkAnchorSummary` check a summary against an intent. `driveTool` runs a tool under `script`,
+answers its prompts, and returns the tool's own exit status, or null when a signal ended `script`
+first. A wrapper that keeps its own terminal pre-authorization calls `driveTool` with
 `decide` set to the matching check, and keeps a set of confirmed labels.
 During installation, replace each proof-directory wrapper's local `checks` function and PTY loop
 with imports of these functions from the reviewed checkout. Keep its initial terminal and
@@ -274,17 +282,22 @@ its existing digest. A changed template requires a new intent and a new chat app
 - `confirm.test.ts` checks the limits against the tools' pins. It rebuilds intents bf35fa0c and
   34941c71 byte for byte. It names every mismatched fact of a deploy or anchor summary. It runs the
   wrappers' fake-tool checks in a pseudo-terminal (`fake-tool.ts` prints the tools' own summaries
-  and prompts).
-- `gate.test.ts` refuses each failing condition at its boundary.
+  and prompts), hands each `NO` to `onNo` before the tool reads it, and reports no exit status
+  for a `script` a stray signal ended.
+- `gate.test.ts` refuses each failing condition at its boundary, and a used approval rewritten
+  with other whitespace, key order or time notation.
 - `plan.test.ts` ports `fill-registry.mjs`'s tests.
 - `run.test.ts` covers the run over the fake tool: a match, every mismatch, sync retries, a
   resumed transaction, the journal guard (bytes it still holds, bytes it retired, bytes it never
   held), three confirmations at most, the daily cap, an approval withdrawn during the sync,
   expiry between attempts, before the next backoff ends and during an attempt, a tool that
-  confirmed before expiry left to finish, a gate refusal, anchors waiting for the deploy, and a
-  mismatched anchor after a confirmed one.
+  confirmed before expiry left to finish, a gate refusal, anchors waiting for the deploy, a
+  mismatched anchor after a confirmed one, a `script` a stray signal ended retried rather than
+  finished, a `NO` for the other action recorded before the tool reads it, and a used approval
+  rewritten with the same values.
 - `cli.test.ts` covers the agent-environment and systemd refusals, a run that broke off,
-  dispatch, status, check and argument errors.
+  dispatch (a rewritten used approval and one the gate cannot name included), status, check and
+  argument errors.
 - `mainnet.test.ts` runs the real `deploy-mainnet` and `anchor-mainnet` over the offline mainnet:
   a stalled sync retried, a failed readback resumed with one send, a `NO` that sends nothing, and
   anchors written once the deploy journal lands the registry.

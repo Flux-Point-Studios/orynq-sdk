@@ -53,7 +53,7 @@ export interface Status {
   action?: "deploy" | "anchors";
   state: State;
   attempt: number;
-  approval_sha256?: string;
+  approval_sha256?: string | undefined;
   expires_at?: string;
   next_attempt_at?: string | undefined;
   last_progress?: string;
@@ -107,8 +107,9 @@ export function readAudit(root: string): (AuditEvent & { at: string })[] {
 }
 
 // A durable NO survives loss of both the status and the used marker. Legacy consumption without
-// an approval identity cannot safely be assigned to a replacement, so it keeps the intent closed.
-export function approvalUsed(root: string, id: string, approvalSha256: string): boolean {
+// an approval identity cannot safely be assigned to a replacement, so it keeps the intent closed,
+// and it is all that can be checked for an approval without an identity.
+export function approvalUsed(root: string, id: string, approvalSha256?: string): boolean {
   const files = runnerFiles(root);
   return existsSync(files.used(id)) || existsSync(files.used(id, approvalSha256)) || readAudit(root).some((event) =>
     event.intent === id && (event.event === "no" || event.event === "done") &&

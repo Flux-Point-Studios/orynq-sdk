@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fresh } from "../../test/fakes.js";
 import { deployIntent } from "../confirm.js";
+import { admit } from "../gate.js";
 import { LIMITS } from "../limits.js";
 import { runIntent } from "../run.js";
 import { readAudit, readStatus } from "../state.js";
 import type { FakeTool } from "./fake-tool.js";
-import { deployJournal, iso, journalled, stateRoot } from "./helpers.js";
+import { deployJournal, iso, journalled, scriptPid, stateRoot } from "./helpers.js";
 
 const PACKAGE = new URL("../..", import.meta.url).pathname;
 const DEPLOY = deployIntent(LIMITS.payer, "0.01");
 const TX = (n: number) => n.toString(16).padStart(2, "0").repeat(32);
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // The runner over the fake tool, with a state root of its own: `fake` says what the tool shows,
 // `backoffMs` how long the runner waits between attempts.
@@ -144,6 +146,64 @@ describe("runIntent over the fake tool", () => {
     const status = await r.run(id);
     expect(status).toMatchObject({ state: "refused", attempt: 2, transactions: [{ tx_hash: TX(0xa1), fee_dust: "0.01" }] });
     expect(status.refusals[0]!.reason).toBe("deploy: 0.1 DUST reserved for the rolling 24 h window and this transaction's 0.01 DUST come to more than the 0.1 DUST daily cap");
+  });
+
+  it("retries a run whose script a stray SIGTERM ended after a confirmation, resuming the anchor it confirmed, and finishes once the tool does", async () => {
+    const r = runner({ kind: "anchor", afterConfirmMs: 1500 });
+    const id = r.approve(r.anchors());
+    await deployJournal(r.paths.deployJournal);
+    const running = r.run(id);
+    while (r.typed().length === 0) await sleep(25);
+    process.kill(scriptPid(), "SIGTERM");
+    const status = await running;
+    expect(status).toMatchObject({ state: "done", attempt: 2 });
+    expect(status.transactions.map((t) => [t.item, t.tx_hash])).toEqual([
+      ["proof-run-1", TX(0xa0)],
+      ["proof-run-1-hidden", TX(0xa1)],
+    ]);
+    expect(r.typed().map((t) => [t.run, t.item, t.typed])).toEqual([
+      [1, "proof-run-1", `ANCHOR ${TX(0xa0).slice(0, 16)}`],
+      [2, "proof-run-1", `ANCHOR ${TX(0xa0).slice(0, 16)}`],
+      [2, "proof-run-1-hidden", `ANCHOR ${TX(0xa1).slice(0, 16)}`],
+    ]);
+    expect(readAudit(r.paths.root).filter((e) => e.event === "run-end").map((e) => e.code)).toEqual([null, 0]);
+  });
+
+  it("retries a run whose script a stray SIGINT ended during the wallet sync, rather than take it for finished", async () => {
+    const r = runner({ kind: "deploy", syncMs: 1500 });
+    const id = r.approve(DEPLOY);
+    const running = r.run(id);
+    while (!(existsSync(r.files.log(id)) && readFileSync(r.files.log(id), "utf8").includes("Syncing the wallet"))) await sleep(25);
+    process.kill(scriptPid(), "SIGINT");
+    const status = await running;
+    expect(status).toMatchObject({ state: "done", attempt: 2, transactions: [{ item: "deploy", tx_hash: TX(0xaa) }] });
+    expect(r.typed()).toEqual([{ run: 2, item: "deploy", typed: `DEPLOY ${TX(0xaa).slice(0, 16)}`, confirmed: true }]);
+    expect(r.events(id)).toEqual(["approval-seen", "run-start", "run-end", "retry", "run-start", "confirm", "run-end", "done"]);
+  });
+
+  it("records the NO to a prompt for the other action before the tool reads it, so an interrupted run cannot use the approval again", async () => {
+    const r = runner({ kind: "deploy", discardMs: 2000 });
+    const id = r.approve(r.anchors());
+    await deployJournal(r.paths.deployJournal);
+    const running = r.run(id);
+    while (r.typed().length === 0) await sleep(25);
+    // The tool has read its NO and is still discarding the bytes.
+    expect(admit(r.paths, id, Date.now())).toMatchObject({ ok: false, reason: `approval ${id} was already used` });
+    const status = await running;
+    expect(status).toMatchObject({ state: "refused", attempt: 1, transactions: [] });
+    expect(status.refusals[0]!.reason).toBe(`the tool asks for "DEPLOY ${TX(0xaa).slice(0, 16)}", not an ANCHOR token`);
+    expect(r.typed()).toEqual([{ run: 1, item: "deploy", typed: "NO", confirmed: false }]);
+  });
+
+  it("keeps an approval a NO used when its file is rewritten with the same values, and runs nothing more", async () => {
+    const r = runner({ kind: "deploy", payer: "mn_addr1other" });
+    const id = r.approve(DEPLOY);
+    expect((await r.run(id)).state).toBe("refused");
+    writeFileSync(r.files.approval(id), `${JSON.stringify(JSON.parse(readFileSync(r.files.approval(id), "utf8")), null, 2)}\n`);
+    const again = await r.run(id);
+    expect(again).toMatchObject({ state: "refused", attempt: 1 });
+    expect(again.refusals.at(-1)!.reason).toBe(`approval ${id} was already used`);
+    expect(r.runs()).toBe(1);
   });
 
   it("stops once the approval expires between attempts, and does not start another", async () => {

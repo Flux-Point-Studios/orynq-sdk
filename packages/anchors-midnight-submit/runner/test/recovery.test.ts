@@ -33,9 +33,11 @@ function drive(steps: ((d: Driver) => { code: number; answers?: { token: string;
     return { exited: Promise.resolve({ answers: [], ...result }), stop: () => undefined };
   });
 }
+// Answers one prompt as driveTool does: the runner's decision, and its NO hook before a NO.
 function answer(d: Driver, text = summary(), n = 170) {
   const decision = d.decide(text, tx(n).slice(0, 16));
   decisions.push(decision.problems.length === 0);
+  if (decision.problems.length > 0) d.onNo!(decision);
   return { code: decision.problems.length ? 1 : 0, answers: [{ token: `DEPLOY ${tx(n).slice(0, 16)}`, confirmed: decision.problems.length === 0, problems: decision.problems }] };
 }
 function run(r: ReturnType<typeof stateRoot>, id: string) {
@@ -101,7 +103,7 @@ describe("approval consumption across interruptions and replacement", () => {
 
   it("counts earlier confirmations against the daily cap for a replacement", async () => {
     const r = stateRoot(); const id = r.approve(intent);
-    audit(r.paths.root, { event: "confirm", intent: id, item: "deploy", tx_hash: tx(169), fee_dust: "0.01", valid_until: iso(Date.now() + 600_000), approval_sha256: hash(fs.readFileSync(r.files.approval(id))) });
+    audit(r.paths.root, { event: "confirm", intent: id, item: "deploy", tx_hash: tx(169), fee_dust: "0.01", valid_until: iso(Date.now() + 600_000), approval_sha256: r.approvalSha256(id) });
     r.confirmed("12345678", tx(168), "0.09");
     drive([d => { r.approve(intent, { expires_at: iso(Date.now() + HOUR) }); return answer(d); }]);
     expect((await run(r, id)).state).toBe("refused");

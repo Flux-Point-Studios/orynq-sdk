@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { afterDeployRegistry, deployIntent, intentSha256 } from "../confirm.js";
 import { admit, confirmedDust } from "../gate.js";
 import { LIMITS } from "../limits.js";
@@ -106,6 +106,27 @@ describe("admit: the approval gate", () => {
     expect(admit(r.paths, id, NOW)).toMatchObject({ ok: false, reason: expect.stringContaining("already used") });
     r.approve(DEPLOY, { expires_at: iso(NOW + HOUR) });
     expect(admit(r.paths, id, NOW)).toMatchObject({ ok: true });
+  });
+
+  it("keeps a used approval used when its file is rewritten with other whitespace, key order or time notation", () => {
+    const r = runner();
+    const id = r.approve(DEPLOY);
+    writeFileSync(r.files.used(id, r.approvalSha256(id)), "{}");
+    const approval = JSON.parse(readFileSync(r.files.approval(id), "utf8"));
+    expect([approval.approved_at, approval.expires_at]).toEqual(["2026-10-20T17:59:00.000Z", "2026-10-21T17:59:00.000Z"]);
+    for (const rewritten of [
+      `${JSON.stringify(approval, null, 4)}\n`,
+      JSON.stringify(Object.fromEntries(Object.entries(approval).reverse())),
+      JSON.stringify({ ...approval, approved_at: "2026-10-20T11:59:00-06:00", expires_at: "2026-10-21T17:59:00Z" }),
+    ]) {
+      writeFileSync(r.files.approval(id), rewritten);
+      expect([rewritten, admit(r.paths, id, NOW)]).toMatchObject([rewritten, { ok: false, reason: `approval ${id} was already used` }]);
+    }
+    // Any other time makes it another approval.
+    for (const change of [{ expires_at: iso(NOW + HOUR) }, { approved_at: iso(NOW - 30_000) }]) {
+      writeFileSync(r.files.approval(id), JSON.stringify({ ...approval, ...change }));
+      expect([change, admit(r.paths, id, NOW)]).toMatchObject([change, { ok: true }]);
+    }
   });
 
   it("refuses a legacy NO whose approval identity cannot be recovered", () => {

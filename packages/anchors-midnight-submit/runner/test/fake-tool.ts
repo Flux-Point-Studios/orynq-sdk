@@ -2,8 +2,9 @@
 // (deploySummary, anchorSummary, confirmOnTerminal) for bytes it makes up, so a test can change
 // any fact the runner checks. FAKE_TOOL (JSON) says how: `kind`, the facts to change, how many
 // runs fail their wallet sync first or fail after a confirmation (counted in the file `runs`),
-// how long each run takes to sync and to read a confirmed transaction back, and the file
-// `record`, to which every run appends a line per prompt with what was typed.
+// how long each run takes to sync, to read a confirmed transaction back and to discard bytes it
+// was answered NO for, and the file `record`, to which every run appends a line per prompt with
+// what was typed.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { entryCommitment } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { readAnchorPlan } from "../../src/anchor-plan.js";
@@ -20,6 +21,7 @@ export interface FakeTool {
   failsAfterConfirm?: number;
   syncMs?: number;
   afterConfirmMs?: number;
+  discardMs?: number;
   repeatPrompt?: boolean;
   // Facts every summary shows.
   chain?: Partial<ChainFacts>;
@@ -68,6 +70,13 @@ async function afterConfirm() {
   process.exit(1);
 }
 
+// A run answered NO discards its bytes, taking `discardMs`, and exits having sent nothing.
+async function notConfirmed(): Promise<never> {
+  process.stderr.write(`${name}: not confirmed; the prepared bytes were discarded and nothing was sent\n`);
+  await new Promise((resolve) => setTimeout(resolve, fake.discardMs ?? 0));
+  process.exit(1);
+}
+
 // Prints `summary` and asks for the token of `prepared` as the tool does; records what was typed.
 async function prompt(item: string, prepared: PreparedDeploy | PreparedAnchor, summary: string): Promise<boolean> {
   process.stdout.write(`\n${summary}\n`);
@@ -89,10 +98,7 @@ if (fake.kind === "deploy") {
     authority: { committee: fake.committee ?? 0, threshold: 1, counter: "0" },
     verifierKeys: { anchor: "85dc57a4269dd3aceb82867ecc6c145ef5f679c6f51767f200250e7c075777c5", anchor_hiding: "081384ce20f2a726e1dd79c0bbfbaabb0fe756ffa15ae429be4cee30b47e790f", ...fake.verifierKeys },
   };
-  if (!(await prompt("deploy", prepared, deploySummary({ chain, wallet, dust, prepared })))) {
-    process.stderr.write(`${name}: not confirmed; the prepared bytes were discarded and nothing was sent\n`);
-    process.exit(1);
-  }
+  if (!(await prompt("deploy", prepared, deploySummary({ chain, wallet, dust, prepared })))) await notConfirmed();
   if (fake.repeatPrompt && !(await prompt("deploy", prepared, deploySummary({ chain, wallet, dust, prepared })))) process.exit(1);
   await afterConfirm();
   process.stdout.write(`\ndeployed and read back from the node: ${JSON.stringify({ network: "mainnet", address: prepared.address, txHash: prepared.txHash })}\n`);
@@ -114,10 +120,7 @@ for (const planned of plan.entries) {
     commitment: change.commitment ?? (planned.kind === 1 ? Buffer.from(entryCommitment(entry)).toString("hex") : hex(0x99)),
     attribute: change.attribute ?? (planned.kind === 2 ? String(planned.attribute) : "00".repeat(32)),
   };
-  if (!(await prompt(planned.label, prepared, anchorSummary({ entry, chain, wallet, dust, label: planned.label, prepared })))) {
-    process.stderr.write(`${name}: not confirmed; the prepared bytes were discarded and nothing was sent\n`);
-    process.exit(1);
-  }
+  if (!(await prompt(planned.label, prepared, anchorSummary({ entry, chain, wallet, dust, label: planned.label, prepared })))) await notConfirmed();
   await afterConfirm();
   process.stdout.write(`${planned.label}: final on the node, carrying exactly the confirmed bytes; recorded\n`);
 }

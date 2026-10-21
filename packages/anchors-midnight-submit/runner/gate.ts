@@ -85,13 +85,13 @@ function plannedAnchors(paths: RunnerPaths, intent: AnchorsIntent) {
   if (intent.entries.length > LIMITS.anchors.maxEntriesPerApproval) refuse(`the intent writes ${intent.entries.length} anchors, more than the ${LIMITS.anchors.maxEntriesPerApproval} one approval may write`);
 }
 
-// The approval of intent `id` as it stands at `now`.
+// The approval of intent `id` as it stands at `now`, and its identity: the sha256 of its six
+// values, each time as the instant it names. The same approval written with other whitespace, key
+// order or time notation keeps its identity, so once used it stays used.
 function approvalOf(paths: RunnerPaths, id: string, sha: string, now: number) {
   const file = runnerFiles(paths.root).approval(id);
   if (!existsSync(file)) refuse(`no approval ${file}`);
-  const text = readFileSync(file);
-  const approvalSha256 = sha256(text);
-  const approval = readJsonFile(file, approvalSha256) as Approval;
+  const approval = readJsonFile(file) as Approval;
   if (typeof approval !== "object" || approval === null || Array.isArray(approval)) refuse("the approval is not a JSON object");
   const unknown = Object.keys(approval).find((field) => !APPROVAL_FIELDS.includes(field));
   if (unknown !== undefined) refuse(`the approval has field ${JSON.stringify(unknown)}; it takes ${APPROVAL_FIELDS.slice(0, -1).join(", ")} and ${APPROVAL_FIELDS.at(-1)}`);
@@ -104,6 +104,7 @@ function approvalOf(paths: RunnerPaths, id: string, sha: string, now: number) {
   }) as [number, number];
   if (approvedAt > now) refuse(`the approval was given at ${approval.approved_at}, after now (${new Date(now).toISOString()})`);
   if (expiresAt - approvedAt > LIMITS.maxApprovalHours * HOUR) refuse(`the approval runs from ${approval.approved_at} to ${approval.expires_at}, longer than ${LIMITS.maxApprovalHours} h`);
+  const approvalSha256 = sha256(JSON.stringify([approval.intent_id, approval.intent_sha256, approvedAt, expiresAt, approval.approved_via, approval.approver]));
   return { approval, approvalSha256, expiresAt };
 }
 

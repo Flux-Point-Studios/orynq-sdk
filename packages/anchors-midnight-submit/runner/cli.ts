@@ -4,8 +4,7 @@
 //   dispatch       starts the unit of every approval not yet used or finished under that approval
 //   run <id>       runs the intent; only as orynq-midnight-runner@<id>.service, started by systemd
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { agentDriven } from "../src/custody.js";
 import { formatDust } from "../src/preflight.js";
 import { admit } from "./gate.js";
@@ -81,8 +80,9 @@ if (command === "status") {
   for (const file of readdirSync(files.approvals).sort()) {
     const each = /^([0-9a-f]{8})\.json$/.exec(file)?.[1];
     if (!each) continue;
-    const text = readFileSync(files.approval(each));
-    const approvalSha256 = createHash("sha256").update(text).digest("hex");
+    // The approval's identity as the gate names it in used markers and statuses, if the gate gets
+    // that far: a run the gate refused before naming the approval finished under no identity.
+    const { approvalSha256 } = admit(paths, each, Date.now());
     if (approvalUsed(paths.root, each, approvalSha256)) continue;
     // The run decides everything else, an expired approval included, and records it in the status.
     const status = readStatus(paths.root, each);

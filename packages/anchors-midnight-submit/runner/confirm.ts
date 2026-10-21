@@ -173,13 +173,18 @@ export interface Answer {
 // Runs `command` in `cwd` under util-linux script, so the tool's input and output are a terminal,
 // and answers each of its prompts: the token when `decide`, given the output since the previous
 // prompt and the token's 16 hex characters, finds no problem, and "NO", which sends nothing,
-// otherwise or when the prompt is for another `verb`. `onText` sees the output as it arrives.
+// otherwise or when the prompt is for another `verb`. `onNo` sees each NO's decision before the
+// tool is sent it; `onText` sees the output as it arrives. The exit code is the tool's, as the
+// shell reports it on descriptor 3 once the tool exits, or null when nothing reported it: script
+// exits 0 when a signal ends it, having killed the shell and the tool, so its own exit code
+// cannot say that the tool finished. The tool runs with descriptor 3 closed, so it cannot report.
 export function driveTool({
   command,
   cwd,
   env,
   verb,
   decide,
+  onNo = () => undefined,
   onText = () => undefined,
 }: {
   command: string[];
@@ -187,12 +192,15 @@ export function driveTool({
   env: NodeJS.ProcessEnv;
   verb: "DEPLOY" | "ANCHOR";
   decide: (summary: string, token: string) => Decision;
+  onNo?: (decision: Decision) => void;
   onText?: (text: string) => void;
 }) {
-  const child = spawn("script", ["-qfec", command.map(quoted).join(" "), "/dev/null"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn("script", ["-qfc", `${command.map(quoted).join(" ")} 3>&-; printf %d $? >&3`, "/dev/null"], { cwd, env, stdio: ["pipe", "pipe", "pipe", "pipe"] });
   const answers: Answer[] = [];
   let seen = "";
   let from = 0;
+  let reported = "";
+  child.stdio[3]!.on("data", (chunk: Buffer) => void (reported += chunk.toString("utf8")));
   child.stdout.on("data", (chunk: Buffer) => {
     const text = chunk.toString("utf8").replaceAll("\r", "");
     seen += text;
@@ -201,9 +209,10 @@ export function driveTool({
       const [asked, kind, hex] = prompt;
       const summary = seen.slice(from, prompt.index);
       from = prompt.index + asked.length;
-      const { problems } = kind === verb ? decide(summary, hex!) : { problems: [`the tool asks for "${kind} ${hex}", not ${verb === "ANCHOR" ? "an" : "a"} ${verb} token`] };
-      const confirmed = problems.length === 0;
-      answers.push({ token: `${kind} ${hex}`, confirmed, problems });
+      const decision = kind === verb ? decide(summary, hex!) : { problems: [`the tool asks for "${kind} ${hex}", not ${verb === "ANCHOR" ? "an" : "a"} ${verb} token`] };
+      const confirmed = decision.problems.length === 0;
+      if (!confirmed) onNo(decision);
+      answers.push({ token: `${kind} ${hex}`, confirmed, problems: decision.problems });
       child.stdin.write(confirmed ? `${kind} ${hex}\n` : "NO\n");
     }
   });
@@ -212,7 +221,7 @@ export function driveTool({
   child.stdin.on("error", (error) => onText(`\nthe answer did not reach the tool: ${error.message}\n`));
   const exited = new Promise<{ code: number | null; answers: Answer[] }>((resolve, reject) => {
     child.on("error", reject);
-    child.on("close", (code) => resolve({ code, answers }));
+    child.on("close", () => resolve({ code: /^\d+$/.test(reported) ? Number(reported) : null, answers }));
   });
   return { exited, stop: () => void child.kill("SIGTERM") };
 }

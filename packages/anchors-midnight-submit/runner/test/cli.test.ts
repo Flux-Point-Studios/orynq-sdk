@@ -1,17 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fresh } from "../../test/fakes.js";
 import { deployIntent } from "../confirm.js";
 import { LIMITS } from "../limits.js";
 import { audit, readAudit, readStatus, writeStatus } from "../state.js";
-import { iso, stateRoot } from "./helpers.js";
+import { HOUR, iso, stateRoot } from "./helpers.js";
 
 const LAUNCHER = new URL("../orynq-midnight-runner", import.meta.url).pathname;
 const DEPLOY = deployIntent(LIMITS.payer, "0.01");
-const sha256 = (data: Buffer) => createHash("sha256").update(data).digest("hex");
 
 // A HOME of its own, and a systemctl stand-in first on PATH that logs its arguments and reports
 // `invocation` as every unit's InvocationID and every unit inactive.
@@ -35,6 +33,7 @@ function home(invocation = "") {
     paths: r.paths,
     approve: r.approve,
     anchors: r.anchors,
+    approvalSha256: r.approvalSha256,
     systemctl: () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : []),
   };
 }
@@ -94,8 +93,7 @@ describe("orynq-midnight-runner dispatch", () => {
   it("does not dispatch a durable NO after snapshot loss, but dispatches its replacement", async () => {
     const h = home();
     const id = h.approve(DEPLOY);
-    const approval = sha256(readFileSync(`${h.paths.root}/approvals/${id}.json`));
-    audit(h.paths.root, { intent: id, event: "no", approval_sha256: approval, problems: ["payer mismatch"] });
+    audit(h.paths.root, { intent: id, event: "no", approval_sha256: h.approvalSha256(id), problems: ["payer mismatch"] });
     const stopped = await cli(h.env, "dispatch");
     expect(stopped.code, stopped.err).toBe(0);
     expect(h.systemctl()).toEqual([]);
@@ -103,6 +101,39 @@ describe("orynq-midnight-runner dispatch", () => {
     const replacement = await cli(h.env, "dispatch");
     expect(replacement.code, replacement.err).toBe(0);
     expect(replacement.out).toBe(`started orynq-midnight-runner@${id}.service\n`);
+  });
+
+  it("does not dispatch a used approval rewritten with other whitespace, key order or time notation", async () => {
+    const h = home();
+    const id = h.approve(DEPLOY);
+    audit(h.paths.root, { intent: id, event: "no", approval_sha256: h.approvalSha256(id), problems: ["payer mismatch"] });
+    const file = `${h.paths.root}/approvals/${id}.json`;
+    const approval = JSON.parse(readFileSync(file, "utf8"));
+    const mountain = (at: string) => new Date(Date.parse(at) - 6 * HOUR).toISOString().replace("Z", "-06:00");
+    for (const rewritten of [
+      `${JSON.stringify(approval, null, 2)}\n`,
+      JSON.stringify(Object.fromEntries(Object.entries(approval).reverse())),
+      JSON.stringify({ ...approval, approved_at: mountain(approval.approved_at), expires_at: approval.expires_at.replace("Z", "+00:00") }),
+    ]) {
+      writeFileSync(file, rewritten);
+      const r = await cli(h.env, "dispatch");
+      expect([rewritten, r.code, r.out, h.systemctl()]).toEqual([rewritten, 0, "", []]);
+    }
+  });
+
+  it("starts an approval the gate refuses before naming it once, and again only once the gate names it", async () => {
+    const h = home("inv-1");
+    const id = h.approve(DEPLOY, { approver: "codex" });
+    // A run under an earlier approval finished.
+    writeStatus(h.paths.root, { intent_id: id, state: "done", attempt: 1, approval_sha256: "00".repeat(32), transactions: [], refusals: [], updated_at: "" });
+    const started = `started orynq-midnight-runner@${id}.service\n`;
+    expect((await cli(h.env, "dispatch")).out).toBe(started);
+    expect((await cli({ ...h.env, INVOCATION_ID: "inv-1" }, "run", id)).code).toBe(0);
+    const status = readStatus(h.paths.root, id)!;
+    expect([status.state, "approval_sha256" in status]).toEqual(["refused", false]);
+    expect((await cli(h.env, "dispatch")).out).toBe("");
+    h.approve(DEPLOY);
+    expect((await cli(h.env, "dispatch")).out).toBe(started);
   });
 
   it("starts the unit of each approval not yet used or finished under that approval, and only those", async () => {
@@ -116,14 +147,13 @@ describe("orynq-midnight-runner dispatch", () => {
     const finished = h.approve(deployIntent(LIMITS.payer, "0.007"));
     const reapproved = h.approve(deployIntent(LIMITS.payer, "0.006"));
     const finish = (id: string, state: "refused" | "expired", approval: string) => writeStatus(h.paths.root, { intent_id: id, state, attempt: 1, approval_sha256: approval, transactions: [], refusals: [], updated_at: "" });
-    const approvalSha256 = (id: string) => sha256(readFileSync(`${h.paths.root}/approvals/${id}.json`));
-    finish(finished, "refused", approvalSha256(finished));
+    finish(finished, "refused", h.approvalSha256(finished));
     finish(reapproved, "refused", "00".repeat(32));
     const first = await cli(h.env, "dispatch");
     expect(first.code, first.err).toBe(0);
     expect(first.out.trim().split("\n")).toEqual([unused, expired, reapproved].sort().map((id) => `started orynq-midnight-runner@${id}.service`));
     const [calls, events] = [h.systemctl().length, readAudit(h.paths.root).length];
-    finish(expired, "expired", approvalSha256(expired));
+    finish(expired, "expired", h.approvalSha256(expired));
     const r = await cli(h.env, "dispatch");
     expect(r.code, r.err).toBe(0);
     const started = [unused, reapproved].sort();
