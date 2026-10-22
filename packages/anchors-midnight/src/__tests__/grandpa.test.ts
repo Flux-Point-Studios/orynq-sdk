@@ -185,41 +185,137 @@ describe("justifiedTarget: a supermajority of the set's weight signed for this s
   });
 
   // finality-grandpa counts the weight of a voter that signed two different precommits in the
-  // round for every block, and a node's commit lists both, in the order they reached it.
+  // round for every block of the round's vote graph, and a node's commit lists both, in the order
+  // they reached it. The graph's base is the commit's lowest precommit, every precommit must
+  // descend from it, and the target must lead to a voter's precommit.
   describe("an equivocator", () => {
     const below = (n: number) => chain.header(target.number - n);
     const withVoter2 = (...precommits: GrandpaJustification["precommits"]) => ({ ...j(), precommits: [...j().precommits.slice(0, 2), ...precommits] });
     const final = { hash: headerHash(target), number: target.number };
     const short = { error: expect.stringMatching(/carries 2 of 4 weight/) };
+    // Another block at a header's height, with the same parent.
+    const sibling = (header: BlockHeader): BlockHeader => ({ ...header, stateRoot: new Uint8Array(32) });
+    // A fork that leaves the target's chain above block T-3: a block at T-2 and its child at T-1.
+    const forkAt2 = sibling(below(2));
+    const forkAt1 = { ...below(1), parentHash: headerHash(forkAt2) };
+    const forkPair = [vote(keys[2]!, forkAt1), vote(keys[2]!, below(1))];
+    const forkAncestries = [target, below(1), below(2), below(3), below(4), forkAt2, forkAt1];
 
     it("counts when its precommit for an ancestor of the target comes before its precommit for the target", () => {
       expect(justifiedTarget({ ...withVoter2(vote(keys[2]!, below(1)), vote(keys[2]!, target)), ancestries: [target] }, set)).toEqual(final);
     });
 
-    it("counts when neither of its precommits is in the target's subtree, as in Substrate's justification_with_equivocation", () => {
-      expect(justifiedTarget({ ...withVoter2(vote(keys[2]!, below(2)), vote(keys[2]!, below(1))), ancestries: [target, below(1)] }, set)).toEqual(final);
+    it("counts when both its precommits are for ancestors of the target, as in Substrate's justification_with_equivocation", () => {
+      const upstream = { ...withVoter2(vote(keys[2]!, below(2)), vote(keys[2]!, below(1))), ancestries: [target, below(1)] };
+      expect(justifiedTarget(upstream, set)).toEqual(final);
+      // With its whole weight: 2 of 5 seats, and 4 of 5 are needed.
+      expect(justifiedTarget(upstream, { ...set, authorities: set.authorities.map((a, i) => ({ ...a, weight: i === 2 ? 2n : 1n })) })).toEqual(final);
     });
 
-    it("is not made by one precommit off the target's subtree, listed once or twice", () => {
-      expect(justifiedTarget(withVoter2(vote(keys[2]!, below(1))), set)).toEqual(short);
-      expect(justifiedTarget(withVoter2(vote(keys[2]!, below(1)), vote(keys[2]!, below(1))), set)).toEqual(short);
+    it("finds the target's chain only through headers at their own numbers", () => {
+      // The target relabeled one block up, with byzantine precommits signed for those numbers: the
+      // headers below it sit one block lower than the relabel says, so none of them is on its chain.
+      const up = (header: BlockHeader) => signedPrecommit(keys[2]!, { hash: headerHash(header), number: header.number + 1 }, 7n, 100n);
+      const relabeled = { ...j(), target: { hash: headerHash(target), number: target.number + 1 }, ancestries: [target, below(1)] };
+      const precommits = [...keys.slice(0, 2).map((sk) => signedPrecommit(sk, relabeled.target, 7n, 100n)), up(below(1)), up(below(2))];
+      expect(justifiedTarget({ ...relabeled, precommits }, set)).toEqual({ error: expect.stringMatching(/carries 2 of 4 weight/) });
+    });
+
+    it("is not made by one precommit below the target, listed once or twice, on the target's chain or not", () => {
+      for (const ancestries of [[], [target]]) {
+        expect(justifiedTarget({ ...withVoter2(vote(keys[2]!, below(1))), ancestries }, set)).toEqual(short);
+        expect(justifiedTarget({ ...withVoter2(vote(keys[2]!, below(1)), vote(keys[2]!, below(1))), ancestries }, set)).toEqual(short);
+      }
     });
 
     it("is not made by two precommits when either is forged, or signed for another set id or round", () => {
+      const ancestries = [target, below(1)];
+      expect(justifiedTarget({ ...withVoter2(vote(keys[2]!, below(1)), vote(keys[2]!, below(2))), ancestries }, set)).toEqual(final);
       for (const pair of [
         [vote(keys[2]!, below(1)), forged(vote(keys[2]!, below(2)))],
         [forged(vote(keys[2]!, below(1))), vote(keys[2]!, below(2))],
         [vote(keys[2]!, below(1)), signedPrecommit(keys[2]!, { hash: headerHash(below(2)), number: below(2).number }, 7n, 101n)],
         [vote(keys[2]!, below(1)), signedPrecommit(keys[2]!, { hash: headerHash(below(2)), number: below(2).number }, 8n, 100n)],
       ]) {
-        expect(justifiedTarget(withVoter2(...pair), set)).toEqual(short);
+        expect(justifiedTarget({ ...withVoter2(...pair), ancestries }, set)).toEqual(short);
       }
     });
 
     it("adds no weight when it is not a voter", () => {
       const [stranger] = testKeys("stranger", 1);
-      expect(justifiedTarget(withVoter2(vote(stranger!, below(1)), vote(stranger!, below(2))), set)).toEqual(short);
+      expect(justifiedTarget({ ...withVoter2(vote(stranger!, below(1)), vote(stranger!, below(2))), ancestries: [target, below(1)] }, set)).toEqual(short);
     });
+
+    it("counts with two blocks at one height when both descend from the lowest precommit, and not when one of them is it", () => {
+      const pair = [vote(keys[2]!, below(1)), vote(keys[2]!, sibling(below(1)))];
+      const ancestries = [target, below(1), sibling(below(1))];
+      expect(justifiedTarget({ ...withVoter2(...pair, vote(keys[3]!, below(2))), ancestries }, set)).toEqual(final);
+      expect(justifiedTarget({ ...withVoter2(...pair), ancestries }, set)).toEqual(short);
+    });
+
+    it("counts with a precommit on a fork only when the fork leaves the target's chain at or above the lowest signed precommit on that chain", () => {
+      expect(justifiedTarget({ ...withVoter2(...forkPair, vote(keys[3]!, below(3))), ancestries: forkAncestries }, set)).toEqual(final);
+      // A precommit off the target's chain, however low, is no base.
+      const offChain = sibling(below(4));
+      for (const base of [vote(keys[3]!, below(2)), forged(vote(keys[3]!, below(3))), vote(keys[3]!, offChain)]) {
+        expect(justifiedTarget({ ...withVoter2(...forkPair, base), ancestries: [...forkAncestries, offChain] }, set)).toEqual(short);
+      }
+    });
+
+    it("takes no base from an authority with no weight, which finality-grandpa's voter set leaves out", () => {
+      const [silent] = testKeys("silent", 1);
+      const withSilent = { ...set, authorities: [...set.authorities, { key: toHex(ed25519PublicKey(silent!)), weight: 0n }] };
+      expect(justifiedTarget({ ...withVoter2(...forkPair, vote(silent!, below(3))), ancestries: forkAncestries }, withSilent)).toEqual(short);
+      expect(justifiedTarget({ ...withVoter2(...forkPair, vote(keys[3]!, below(3))), ancestries: forkAncestries }, withSilent)).toEqual(final);
+    });
+
+    it("adds nothing to a target no voter's precommit is for or descends from", () => {
+      const ancestries = [target, below(1)];
+      const equivocators = keys.slice(0, 3).flatMap((sk) => [vote(sk, below(2)), vote(sk, below(1))]);
+      expect(justifiedTarget({ ...j(), precommits: equivocators, ancestries }, set)).toEqual({ error: expect.stringMatching(/carries 0 of 4 weight/) });
+      expect(justifiedTarget({ ...j(), precommits: [...equivocators, vote(keys[3]!, target)], ancestries }, set)).toEqual(final);
+    });
+
+    // GRANDPA signs neither a chain nor its genesis: a key used on two chains with the same set id
+    // and round signs precommits that verify on both.
+    describe("made of one key's precommits on two chains", () => {
+      // `other` shares only the block both chains build on, 1000, with `chain`.
+      const other = uniform(3, { extrinsicsRootOf: (n) => testKeys(`other-${n}`, 1)[0]! });
+      const shared = fromHex(chain.checkpoint(0).startsAfter.hash, "block 1000");
+      const pairs = keys.slice(0, 3).flatMap((sk) => [vote(sk, chain.header(1250)), vote(sk, other.header(1250))]);
+      const fabricated: BlockHeader = { ...target, stateRoot: new Uint8Array(32) };
+      const forgedTarget = { hash: headerHash(fabricated), number: fabricated.number };
+      const routeOf = (c: typeof chain, from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => c.header(from + i));
+      const bothChains = [fabricated, ...routeOf(chain, 1001, 1299), ...routeOf(other, 1001, 1250)];
+
+      it("finalizes no fabricated block, whatever the ancestry headers show", () => {
+        expect(justifiedTarget({ round: 7n, target: forgedTarget, precommits: pairs, ancestries: [] }, set)).toEqual({ error: expect.stringMatching(/carries 0 of 4 weight/) });
+        // With a byzantine voter's precommit for it, and headers linking it down through one chain or both.
+        const byzantine = vote(keys[3]!, fabricated);
+        for (const ancestries of [[fabricated, ...routeOf(chain, 1251, 1299)], bothChains]) {
+          expect(justifiedTarget({ round: 7n, target: forgedTarget, precommits: [...pairs, byzantine], ancestries }, set)).toEqual({ error: expect.stringMatching(/carries 1 of 4 weight/) });
+        }
+      });
+
+      it("is reported not final by verifyFinality", async () => {
+        const proof = chain.proof(fabricated, encodeJustification({ round: 7n, target: forgedTarget, precommits: pairs, ancestries: [] }), []);
+        const rpc: FinalityRpc = { proveFinality: async (heights) => heights.map(() => proof), headers: chain.rpc.headers };
+        expect(await verifyFinality({ rpc, block: { height: 1300, hash: toHex(forgedTarget.hash) }, checkpoints: [chain.checkpoint(0)] })).toMatchObject({ finalized: false });
+      });
+
+      it("counts the pairs once a precommit for the block both chains share is the lowest, as finality-grandpa does", () => {
+        const sharedVote = signedPrecommit(keys[3]!, { hash: shared, number: 1000 }, 7n, 100n);
+        expect(justifiedTarget({ round: 7n, target: forgedTarget, precommits: [...pairs, vote(keys[3]!, fabricated), sharedVote], ancestries: bothChains }, set)).toEqual(forgedTarget);
+      });
+    });
+  });
+
+  it("counts no precommit whose signed number is not its block's, even where another voter's walk passed that block", () => {
+    const [child, grandchild] = [chain.header(target.number + 1), chain.header(target.number + 2)];
+    for (const number of [child.number - 1, child.number + 4]) {
+      const precommits = [vote(keys[0]!, grandchild), vote(keys[1]!, target), signedPrecommit(keys[2]!, { hash: headerHash(child), number }, 7n, 100n)];
+      expect(justifiedTarget({ ...j(), precommits, ancestries: [grandchild, child] }, set)).toEqual({ error: expect.stringMatching(/carries 2 of 4 weight/) });
+    }
   });
 });
 
@@ -247,7 +343,7 @@ describe("justifiedTarget's work is linear in the justification, whatever the so
     ["each voter's signature moved onto all 600 blocks of the route", () => justificationOf(base, keys.flatMap(moved), route), refused, 8],
     ["3000 non-voters' precommits ahead of the quorum's", () => justificationOf(base, [...Array.from({ length: 3000 }, (_, i) => stranger(i)), ...quorum], route), final, 3],
     ["the quorum's precommits with 20,000 ancestry headers", () => justificationOf(base, quorum, Array(20_000).fill(route[0]!)), final, 3],
-    ["every voter equivocating along the route", () => justificationOf(base, keys.flatMap((sk) => [vote(sk, tip), vote(sk, route[299]!)]), route), final, 4],
+    ["every voter equivocating along the route", () => justificationOf(base, keys.flatMap((sk) => [vote(sk, tip), vote(sk, route[299]!)]), route), final, 8],
   ] as const)("%s", (label, justification, result, verifications) => {
     const j = justification();
     const w = work(j, set);
@@ -377,6 +473,52 @@ describe("verifyFinality on a synthetic chain", () => {
     };
     const r = await verifyFinality({ rpc: forged, block: attacker.block(attacker.endOf(3) + 2), checkpoints: [honest.checkpoint(0)] });
     expect(r).toMatchObject({ finalized: false, reason: expect.stringMatching(/does not hash to its justified hash/) });
+  });
+
+  describe("never adopts an authority set from a set-change block at or before the start of the set that justified it", () => {
+    // Ten-block sets, each with its own keys, and set 3 trusted. A justification may be relabeled
+    // down to an ancestor of the blocks its precommits signed, so the source can present set 3's
+    // own justification of its last block as one of an earlier set-change block. That block's
+    // FRNK log names a set whose keys are not set 4's; if the walk adopted them under set 4's id,
+    // those keys could sign a fabricated block as set 4.
+    const chain = syntheticChain({ firstSetId: 100n, genesisEnd: 1000, setLengths: () => 10, setCount: 6, keysFor: (k) => testKeys(`set-${k}`, 4) });
+    const trusted = chain.checkpoint(3);
+    const fabricated: BlockHeader = { ...chain.header(chain.endOf(3) + 5), stateRoot: new Uint8Array(32) };
+
+    it("control: the walk from set 3 finalizes the real block at that height", async () => {
+      expect(await verifyFinality({ rpc: chain.rpc, block: chain.block(fabricated.number), checkpoints: [trusted] })).toMatchObject({ finalized: true, setChanges: 1 });
+    });
+
+    it.each([
+      ["the block set 3 starts after", 2],
+      ["an earlier set's last block", 1],
+      ["the oldest set's last block", 0],
+    ])("refuses set 3's last justification relabeled as %s", async (_label, k) => {
+      const end = chain.header(chain.endOf(k));
+      const genuine = decodeJustification(chain.justification(3, chain.header(chain.endOf(3))));
+      const between = Array.from({ length: chain.endOf(3) - end.number }, (_, i) => chain.header(end.number + 1 + i));
+      const relabeled = chain.proof(end, encodeJustification({ ...genuine, target: { hash: headerHash(end), number: end.number }, ancestries: between }), [end]);
+      // The keys that end's FRNK log names, signing the fabricated block under set 4's id.
+      const forgedBy = (unknown: BlockHeader[]) => chain.proof(fabricated, chain.justification(4, fabricated, testKeys(`set-${k + 1}`, 4)), unknown);
+      let relabelSent = false;
+      const rpc: FinalityRpc = {
+        proveFinality: async (heights) =>
+          heights.map((h) => {
+            if (h === trusted.startsAfter.height + 1 && !relabelSent) {
+              relabelSent = true;
+              return relabeled;
+            }
+            if (h === fabricated.number) return forgedBy([]);
+            return h === end.number + 1 ? forgedBy([fabricated]) : null;
+          }),
+        headers: chain.rpc.headers,
+      };
+      expect(decodeFinalityProof(relabeled).justification.precommits).toEqual(genuine.precommits);
+      expect(await verifyFinality({ rpc, block: { height: fabricated.number, hash: toHex(headerHash(fabricated)) }, checkpoints: [trusted] })).toMatchObject({
+        finalized: false,
+        reason: `the end of set 103 is justified at block ${end.number}, not after its start ${trusted.startsAfter.height}`,
+      });
+    });
   });
 
   it("never reports a block's hash at a height above it: a justification relabeled within the set's predicted range", async () => {

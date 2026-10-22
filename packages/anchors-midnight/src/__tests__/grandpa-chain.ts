@@ -3,10 +3,9 @@ import { blake2b256, encodeHeader, headerHash, type BlockHeader, type RpcHeader,
 import { compactAt, concatBytes, encodeCompact, toHex, u32le, u64le } from "../scale.js";
 import type { FinalityCheckpoint, FinalityRpc, GrandpaJustification } from "../grandpa.js";
 
-// A synthetic GRANDPA chain, generated lazily: set k (counting from `firstSetId`) finalizes the
-// blocks after the end of set k-1, and its last block carries an FRNK log naming set k+1.
-// Headers link within a set; a set's first header names a stand-in parent, since the verifier
-// links headers only between a block and the end of its own set.
+// A synthetic GRANDPA chain, generated lazily and in order: set k (counting from `firstSetId`)
+// finalizes the blocks after the end of set k-1, and its last block carries an FRNK log naming
+// set k+1. Every header names the one before it as its parent, across set ends too.
 export interface ChainSpec {
   firstSetId: bigint;
   genesisEnd: number;
@@ -73,28 +72,27 @@ export function syntheticChain(spec: ChainSpec) {
     const payload = concatBytes(variant, encodeCompact(next.length), ...next.flatMap((a) => [Buffer.from(a.key, "hex"), u64le(a.weight)]), u32le(0));
     return concatBytes(new Uint8Array([4]), new Uint8Array(Buffer.from("FRNK")), encodeCompact(payload.length), payload);
   };
-  const segments = new Map<number, BlockHeader[]>();
+  const segments: BlockHeader[][] = [];
   const byHashIndex = new Map<string, BlockHeader>();
+  let parent = seed("genesis-end");
   const segment = (k: number) => {
-    let headers = segments.get(k);
-    if (!headers) {
-      headers = [];
-      let parent = seed(`parent-of-set-${k}`);
-      for (let n = endOf(k - 1) + 1; n <= endOf(k); n++) {
+    for (let i = segments.length; i <= k; i++) {
+      const headers: BlockHeader[] = [];
+      for (let n = endOf(i - 1) + 1; n <= endOf(i); n++) {
         const header: BlockHeader = {
           parentHash: parent,
           number: n,
           stateRoot: seed(`state-${n}`),
           extrinsicsRoot: spec.extrinsicsRootOf?.(n) ?? seed(`extrinsics-${n}`),
-          digest: n === endOf(k) && k < spec.setCount - 1 ? [frnk(k)] : [],
+          digest: n === endOf(i) && i < spec.setCount - 1 ? [frnk(i)] : [],
         };
         headers.push(header);
         parent = headerHash(header);
         byHashIndex.set(toHex(parent), header);
       }
-      segments.set(k, headers);
+      segments.push(headers);
     }
-    return headers;
+    return segments[k]!;
   };
   const header = (height: number) => {
     const k = setOf(height);
