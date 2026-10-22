@@ -1,12 +1,12 @@
+import { createHash } from "node:crypto";
 import { ed25519PublicKey, ed25519Sign } from "../ed25519.js";
 import { blake2b256, encodeHeader, headerHash, type BlockHeader, type RpcHeader, type WeightedAuthority } from "../substrate.js";
 import { compactAt, concatBytes, encodeCompact, toHex, u32le, u64le } from "../scale.js";
-import type { FinalityCheckpoint, FinalityRpc } from "../grandpa.js";
+import type { FinalityCheckpoint, FinalityRpc, GrandpaJustification } from "../grandpa.js";
 
-// A synthetic GRANDPA chain, generated lazily: set k (counting from `firstSetId`) finalizes the
-// blocks after the end of set k-1, and its last block carries an FRNK log naming set k+1.
-// Headers link within a set; a set's first header names a stand-in parent, since the verifier
-// links headers only between a block and the end of its own set.
+// A synthetic GRANDPA chain, generated lazily and in order: set k (counting from `firstSetId`)
+// finalizes the blocks after the end of set k-1, and its last block carries an FRNK log naming
+// set k+1. Every header names the one before it as its parent, across set ends too.
 export interface ChainSpec {
   firstSetId: bigint;
   genesisEnd: number;
@@ -28,6 +28,48 @@ const publicKey = (sk: Uint8Array) => {
   if (!pk) publicKeys.set(id, (pk = ed25519PublicKey(sk)));
   return pk;
 };
+
+const precommitMessage = (target: { hash: Uint8Array; number: number }, round: bigint, setId: bigint) =>
+  concatBytes(new Uint8Array([1]), target.hash, u32le(target.number), u64le(round), u64le(setId));
+
+// The precommit for `target` that the authority holding `sk` signs in a round of set `setId`.
+export const signedPrecommit = (sk: Uint8Array, target: { hash: Uint8Array; number: number }, round: bigint, setId: bigint) => ({
+  target,
+  signature: ed25519Sign(precommitMessage(target, round, setId), sk),
+  id: publicKey(sk),
+});
+
+// The same precommit signed again under another nonce. RFC 8032 lets the signer choose the nonce,
+// so a key holder can sign one message in as many valid ways as it likes. The nonce here is the
+// secret scalar of the key `nonceLabel` seeds, whose public key is then the signature's R.
+const ORDER = 2n ** 252n + 27742317777372353535851937790883648493n;
+const littleEndian = (bytes: Uint8Array) => bytes.reduceRight((n, b) => (n << 8n) + BigInt(b), 0n);
+const sha512 = (...parts: Uint8Array[]) => new Uint8Array(createHash("sha512").update(concatBytes(...parts)).digest());
+const secretScalar = (sk: Uint8Array) => {
+  const a = sha512(sk).subarray(0, 32);
+  a[0]! &= 248;
+  a[31]! &= 127;
+  a[31]! |= 64;
+  return littleEndian(a);
+};
+export const resignedPrecommit = (sk: Uint8Array, target: { hash: Uint8Array; number: number }, round: bigint, setId: bigint, nonceLabel: string) => {
+  const nonce = seed(nonceLabel);
+  const r = publicKey(nonce);
+  const k = littleEndian(sha512(r, publicKey(sk), precommitMessage(target, round, setId))) % ORDER;
+  const s = (secretScalar(nonce) + k * secretScalar(sk)) % ORDER;
+  return { target, signature: concatBytes(r, Uint8Array.from({ length: 32 }, (_, i) => Number((s >> BigInt(8 * i)) & 0xffn))), id: publicKey(sk) };
+};
+
+export const encodeJustification = (j: GrandpaJustification) =>
+  concatBytes(
+    u64le(j.round),
+    j.target.hash,
+    u32le(j.target.number),
+    encodeCompact(j.precommits.length),
+    ...j.precommits.map((p) => concatBytes(p.target.hash, u32le(p.target.number), p.signature, p.id)),
+    encodeCompact(j.ancestries.length),
+    ...j.ancestries.map(encodeHeader),
+  );
 
 // A finality proof with its justification kept byte for byte and its unknown headers replaced.
 export function withUnknownHeaders(proof: Uint8Array, headers: BlockHeader[]): Uint8Array {
@@ -56,28 +98,27 @@ export function syntheticChain(spec: ChainSpec) {
     const payload = concatBytes(variant, encodeCompact(next.length), ...next.flatMap((a) => [Buffer.from(a.key, "hex"), u64le(a.weight)]), u32le(0));
     return concatBytes(new Uint8Array([4]), new Uint8Array(Buffer.from("FRNK")), encodeCompact(payload.length), payload);
   };
-  const segments = new Map<number, BlockHeader[]>();
+  const segments: BlockHeader[][] = [];
   const byHashIndex = new Map<string, BlockHeader>();
+  let parent = seed("genesis-end");
   const segment = (k: number) => {
-    let headers = segments.get(k);
-    if (!headers) {
-      headers = [];
-      let parent = seed(`parent-of-set-${k}`);
-      for (let n = endOf(k - 1) + 1; n <= endOf(k); n++) {
+    for (let i = segments.length; i <= k; i++) {
+      const headers: BlockHeader[] = [];
+      for (let n = endOf(i - 1) + 1; n <= endOf(i); n++) {
         const header: BlockHeader = {
           parentHash: parent,
           number: n,
           stateRoot: seed(`state-${n}`),
           extrinsicsRoot: spec.extrinsicsRootOf?.(n) ?? seed(`extrinsics-${n}`),
-          digest: n === endOf(k) && k < spec.setCount - 1 ? [frnk(k)] : [],
+          digest: n === endOf(i) && i < spec.setCount - 1 ? [frnk(i)] : [],
         };
         headers.push(header);
         parent = headerHash(header);
         byHashIndex.set(toHex(parent), header);
       }
-      segments.set(k, headers);
+      segments.push(headers);
     }
-    return headers;
+    return segments[k]!;
   };
   const header = (height: number) => {
     const k = setOf(height);
@@ -86,13 +127,11 @@ export function syntheticChain(spec: ChainSpec) {
   const finalizedHeight = endOf(spec.setCount - 1);
 
   const justification = (k: number, target: BlockHeader, signers = keysFor(k)) => {
-    const hash = headerHash(target);
-    const setId = spec.firstSetId + BigInt(k);
     const round = 7n;
-    const message = concatBytes(new Uint8Array([1]), hash, u32le(target.number), u64le(round), u64le(setId));
+    const signed = { hash: headerHash(target), number: target.number };
     const quorum = signers.slice(0, signers.length - Math.floor((signers.length - 1) / 3));
-    const precommits = quorum.map((sk) => concatBytes(hash, u32le(target.number), ed25519Sign(message, sk), publicKey(sk)));
-    return concatBytes(u64le(round), hash, u32le(target.number), encodeCompact(precommits.length), ...precommits, encodeCompact(0));
+    const precommits = quorum.map((sk) => signedPrecommit(sk, signed, round, spec.firstSetId + BigInt(k)));
+    return encodeJustification({ round, target: signed, precommits, ancestries: [] });
   };
   const proof = (target: BlockHeader, j: Uint8Array, unknown: BlockHeader[]) =>
     concatBytes(headerHash(target), encodeCompact(j.length), j, encodeCompact(unknown.length), ...unknown.map(encodeHeader));

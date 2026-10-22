@@ -287,22 +287,47 @@ supplies (`grandpa_proveFinality` and `chain_getHeader`, batched), trusting only
 checkpoints it is given. A checkpoint names a GRANDPA set id, its weighted authorities, and the
 set-change block after which that set finalizes. From the nearest checkpoint below the block,
 the verifier follows each set change: the outgoing set must justify the set-change block with a
-supermajority of its weight (finality-grandpa's threshold, `total - (total - 1) / 3`), and that
-block's header, which must hash to the justified hash, names the next set in its FRNK log; a
-forced or delayed change stops the walk. The set that finalized the block must then justify a block
-at or above it, and the headers in its proof must chain down to the block's hash. A
-justification's own target is not signed, so a precommit counts for it only when it signed that
-hash at that number, or a descendant whose ancestry headers lead down to it at that number: a
-source cannot relabel a final block's justification as a higher block. A set finalizes only
-with more than two thirds of a total weight above 0, from distinct authorities: a checkpoint
-with no voting weight (no authorities, or every weight 0) or with a negative weight is refused
-before anything is asked of the source, and so is a set change that schedules a set with no
-voting weight.
+supermajority of its weight (finality-grandpa's threshold, `total - (total - 1) / 3`), the block
+must come after the set's start, and its header, which must hash to the justified hash, names the
+next set in its FRNK log; a forced or delayed change stops the walk. The set that finalized the
+block must then justify a block at or above it, and the headers in its proof must chain down to
+the block's hash. A justification's own target is not signed, so a precommit counts for it only
+when it signed that hash at that number, or a descendant whose ancestry headers lead down to it at
+that number: a source cannot relabel a final block's justification as a higher block. It can
+relabel it as a lower one, an ancestor the precommits also finalize, which is why a set-change
+block at or before the set's start is refused: the set's own last justification relabeled as an
+older set-change block would otherwise install that block's authorities as the next set.
+
+An authority that signed two different precommits in the round equivocated. finality-grandpa
+tells precommits apart by target and signature, so one precommit signed twice is an equivocation
+too (Ed25519 lets the signer choose the nonce). It reads an authority's first two different
+precommits and no more, and counts an equivocator's weight for every block of the round's vote
+graph: the blocks that descend from the round's base and lead to a precommit. The base is the
+commit's lowest voter precommit, the first at that number, and finality-grandpa refuses a commit
+holding a voter precommit that does not descend from it. This verifier counts an equivocator when
+that lowest precommit is signed, lies on the target's chain, and is, or through the ancestry
+headers is an ancestor of, both of the equivocator's first two precommits, and some authority's
+precommit is for the target or a descendant. A precommit outside the base's descendants makes
+finality-grandpa refuse the whole commit; here that precommit is set aside, and its signer counts
+only as its other precommit does. GRANDPA signs neither a chain nor its genesis, so a precommit an
+authority key signed on another GRANDPA chain with the same set id and round verifies here as
+well. Paired with one from this chain it counts only when the commit's lowest precommit is for a
+block both chains share, as finality-grandpa requires of the round's base.
+
+A set finalizes only with more than two thirds of a total weight above 0, from distinct
+authorities, and an authority with weight 0 is no voter, as in finality-grandpa's voter set. A
+checkpoint with no voting weight (no authorities, or every weight 0) or with a negative weight is
+refused before anything is asked of the source, and so is a set change that schedules a set with
+no voting weight.
 
 Trust assumption: "consensus-verified" means that the checkpoint really is that GRANDPA set, and
-that every set from it to the block had more than two thirds of its weight honest. Signatures
-are Ed25519 (OpenSSL, RFC 8032 strict, which can refuse a ZIP-215 signature Substrate accepts
-but never accept one it refuses) and headers BLAKE2b-256.
+that every set from it to the block had more than two thirds of its weight held by honest keys
+that sign under that set id on this chain alone. A justification that keys holding a
+supermajority of a set's weight signed under that set id on another GRANDPA chain verifies here,
+and the walk then follows that chain's own set changes. That includes an earlier incarnation of
+this chain: a chain restarted from a new genesis with the same GRANDPA keys counts its set ids
+from 0 again. Signatures are Ed25519 (OpenSSL, RFC 8032 strict, which can refuse a ZIP-215
+signature Substrate accepts but never accept one it refuses) and headers BLAKE2b-256.
 
 Cost: one batched request per 32 set changes for the proofs and one for the headers, where most
 sets last 300 blocks (30 minutes) on mainnet; after a set of another length the walk asks for
@@ -311,8 +336,15 @@ requests because rpc.mainnet.midnight.network refuses a JSON-RPC request body ov
 64 header requests exceed. Through that node, the walk from set 9284 to set 10422 (1138 set
 changes) took 182 requests and returned about 141 MB, in 48 seconds on 2026-10-21. The walk
 stops after `maxSetChanges` (default 2016, six weeks) and reports the block not finalized, so
-the cost never grows with the chain's age; a fresher checkpoint is the remedy. A finalized
-result returns the set that justified the block as a checkpoint the caller can keep.
+the cost never grows with the chain's age; a fresher checkpoint is the remedy. Each
+justification's work is linear in its size, whatever the source sends. A precommit from a
+non-voter, one repeating a voter's earlier precommit (the same target and signature), and any
+after a voter's first two different precommits are skipped by a lookup. Only those first two and
+the commit's lowest voter precommit are verified, so a justification costs at most two Ed25519
+verifications per voter and one more, and each ancestry header is hashed once and walked at most
+once. None of these is refused for its number: Substrate accepts, stores and serves
+justifications that carry non-voters' precommits, repeats and repeated ancestry headers. A
+finalized result returns the set that justified the block as a checkpoint the caller can keep.
 
 Inclusion is a strict decode, never a byte search. `orderedTrieRoot` recomputes a block body's
 `extrinsicsRoot` (trie layout V1, which Midnight's state version 3 selects), and

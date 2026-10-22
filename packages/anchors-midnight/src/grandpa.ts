@@ -12,10 +12,16 @@ interface Target {
   number: number;
 }
 
+interface SignedPrecommit {
+  target: Target;
+  signature: Uint8Array;
+  id: Uint8Array;
+}
+
 export interface GrandpaJustification {
   round: bigint;
   target: Target;
-  precommits: Array<{ target: Target; signature: Uint8Array; id: Uint8Array }>;
+  precommits: SignedPrecommit[];
   ancestries: BlockHeader[];
 }
 
@@ -64,37 +70,92 @@ function votingWeight(set: AuthoritySet): bigint | { error: string } {
 }
 
 // The block a justification finalizes, when voters of `set` holding a supermajority of its
-// weight signed precommits, for this set id and round, for that block or a descendant shown
-// by the justification's ancestry headers; otherwise why not. A precommit that is unsigned,
-// from a non-voter, a repeat voter, or for a block outside the target's subtree adds no weight.
-// The justification's own target is unsigned: a precommit vouches for it only by signing that
-// hash at that number, or a descendant whose ancestry headers lead down to it at that number.
+// weight vouch for it; otherwise why not. Only precommits signed for this set id and round count.
+// The justification's own target is unsigned: a voter vouches for it by a precommit for that hash
+// at that number, or for a descendant whose ancestry headers lead down to it one block at a time.
+//
+// finality-grandpa tells a voter's precommits apart by target and signature, so one precommit
+// signed twice is two, and it reads a voter's first two different precommits and no more. A voter
+// with two equivocated, and its weight counts for every block of the round's vote graph: the
+// blocks from the round's base, the commit's lowest voter precommit (the first at its number), up
+// to a voter's precommit; validate_commit refuses a commit holding a voter precommit that is not
+// the base or its descendant. So an equivocator vouches here when that lowest precommit is signed,
+// lies on the target's chain, and is, or through the ancestry headers is an ancestor of, both its
+// precommits, and some voter vouched for the target directly. Where finality-grandpa refuses the
+// whole commit, this sets the stray precommit aside instead: an equivocator with one precommit off
+// the base vouches only as its other precommit does. GRANDPA signs neither a chain nor its
+// genesis, so what a key signed on another chain with the same set id and round verifies here too;
+// such a pair counts only where the base is a block the two chains share.
+//
+// The work is linear in the justification, whatever the source sends: non-voters and repeated
+// precommits are skipped by a lookup, each voter's first two different precommits and the
+// commit's lowest are verified, and each ancestry header is hashed once and walked at most once.
 export function justifiedTarget(j: GrandpaJustification, set: AuthoritySet): Target | { error: string } {
   const total = votingWeight(set);
   if (typeof total !== "bigint") return total;
-  const weightOf = new Map(set.authorities.map((a) => [a.key, a.weight]));
+  // finality-grandpa's voter set leaves out an authority with no weight.
+  const weightOf = new Map(set.authorities.filter((a) => a.weight > 0n).map((a) => [a.key, a.weight]));
   const ancestry = new Map(j.ancestries.map((h) => [toHex(headerHash(h)), h]));
-  const descends = (from: Target): boolean => {
-    if (from.number < j.target.number) return false;
-    let hash = from.hash;
-    for (let n = from.number; n > j.target.number; n--) {
-      const header = ancestry.get(toHex(hash));
-      if (!header || header.number !== n) return false;
-      hash = header.parentHash;
-    }
-    return bytesEqual(hash, j.target.hash);
+  const headerAt = (hash: string, number: number) => {
+    const header = ancestry.get(hash);
+    return header?.number === number ? header : undefined;
   };
-  const voted = new Set<string>();
-  let weight = 0n;
+  // The target's chain: the hash at each height from the target down through its ancestry headers.
+  const chain = new Map<number, string>();
+  let link: string | undefined = toHex(j.target.hash);
+  for (let n = j.target.number; link !== undefined; n--) {
+    chain.set(n, link);
+    const header = headerAt(link, n);
+    link = header && toHex(header.parentHash);
+  }
+  // The height at which a block joins the target's chain, walking down its ancestry headers one
+  // block at a time, or -1 if it never does. Each header walked is remembered, so walked once.
+  const joined = new Map<string, number>();
+  const join = (from: Target): number => {
+    const walked: string[] = [];
+    let hash = toHex(from.hash);
+    let n = from.number;
+    let found: number | undefined;
+    while (found === undefined) {
+      const header = headerAt(hash, n);
+      if (chain.get(n) === hash) found = n;
+      else if (!header) found = -1;
+      else if ((found = joined.get(hash)) === undefined) {
+        walked.push(hash);
+        hash = toHex(header.parentHash);
+        n--;
+      }
+    }
+    for (const k of walked) joined.set(k, found);
+    return found;
+  };
+  const signs = (p: SignedPrecommit) => ed25519Verify(p.signature, concatBytes(new Uint8Array([1]), p.target.hash, u32le(p.target.number), u64le(j.round), u64le(set.setId)), p.id);
+  const same = (a: SignedPrecommit, b: SignedPrecommit) => a.target.number === b.target.number && bytesEqual(a.target.hash, b.target.hash) && bytesEqual(a.signature, b.signature);
+  // Each voter's first two different precommits, and whether each one's signature verified; and
+  // the commit's lowest voter precommit, the first at its number.
+  const votes = new Map<string, Array<SignedPrecommit & { signed: boolean }>>();
+  let lowest: (SignedPrecommit & { signed?: boolean }) | undefined;
   for (const p of j.precommits) {
     const id = toHex(p.id);
-    const seats = weightOf.get(id);
-    if (seats === undefined || voted.has(id)) continue;
-    const message = concatBytes(new Uint8Array([1]), p.target.hash, u32le(p.target.number), u64le(j.round), u64le(set.setId));
-    if (!ed25519Verify(p.signature, message, p.id) || !descends(p.target)) continue;
-    voted.add(id);
-    weight += seats;
+    if (!weightOf.has(id)) continue;
+    const earlier = votes.get(id) ?? [];
+    let read = earlier.find((e) => same(e, p));
+    if (!read && earlier.length < 2) {
+      read = { ...p, signed: signs(p) };
+      votes.set(id, [...earlier, read]);
+    }
+    if (!lowest || p.target.number < lowest.target.number) lowest = read ?? p;
   }
+  // The round's base, only when signed and on the target's chain; otherwise no equivocator counts.
+  const base = lowest && (lowest.signed ?? signs(lowest)) && join(lowest.target) === lowest.target.number ? lowest.target.number : Infinity;
+  let direct = 0n;
+  let equivocated = 0n;
+  for (const [id, tried] of votes) {
+    const joins = tried.filter((t) => t.signed).map((t) => join(t.target));
+    if (joins.includes(j.target.number)) direct += weightOf.get(id)!;
+    else if (joins.length === 2 && joins.every((n) => n >= base)) equivocated += weightOf.get(id)!;
+  }
+  const weight = direct > 0n ? direct + equivocated : 0n;
   if (weight < supermajority(total)) {
     return { error: `the justification for block ${j.target.number} carries ${weight} of ${total} weight under set ${set.setId}; finality needs ${supermajority(total)}` };
   }
@@ -137,11 +198,11 @@ function decodeProof(raw: Uint8Array): FinalityProof | { error: string } {
 }
 
 // Verifies that `block` is final under GRANDPA, trusting only `checkpoints`: from the nearest
-// checkpoint below the block it follows each authority set change (a set-change block
-// justified by the outgoing set, whose header names the next set) to the set that finalized
-// the block, then checks that set's justification and the header chain down to the block.
-// The work is bounded by `maxSetChanges`, never by the chain's age: past the bound the block
-// is reported not finalized, with the reason.
+// checkpoint below the block it follows each authority set change (a set-change block after the
+// set's start, justified by the outgoing set, whose header names the next set) to the set that
+// finalized the block, then checks that set's justification and the header chain down to the
+// block. The work is bounded by `maxSetChanges`, never by the chain's age: past the bound the
+// block is reported not finalized, with the reason.
 export async function verifyFinality({
   rpc,
   block,
@@ -176,8 +237,13 @@ export async function verifyFinality({
     if (out.length !== hashes.length) throw new Error(`the source answered ${out.length} headers for ${hashes.length} hashes`);
     return out.map(headerFromRpc);
   };
-  // Moves to the set after `end`, the set-change block the current set justified.
+  // Moves to the set after `end`, the set-change block the current set justified. A justification
+  // can name any ancestor of the blocks its precommits signed, and a set's voters sign no block
+  // past its last, so its last block is the one block after its start that schedules a change.
   const advance = (end: Target, header: BlockHeader): FinalityResult | null => {
+    if (end.number <= set.startsAfter.height) {
+      return notFinal(`the end of set ${set.setId} is justified at block ${end.number}, not after its start ${set.startsAfter.height}`);
+    }
     let next: WeightedAuthority[] | null;
     try {
       next = scheduledAuthorityChange(header);
