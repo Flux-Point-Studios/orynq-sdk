@@ -64,6 +64,13 @@ const justificationOf = (target: BlockHeader, precommits: GrandpaJustification["
   ancestries,
 });
 const forged = <P extends { signature: Uint8Array }>(p: P): P => ({ ...p, signature: p.signature.map((b, i) => (i === 0 ? b ^ 1 : b)) });
+// A justification of that round in which every key signed `target`'s hash at `target`'s number,
+// whatever number the block with that hash carries.
+const signedByEveryKey = (target: { hash: Uint8Array; number: number }) =>
+  encodeJustification({ round: 7n, target, precommits: keys.map((sk) => signedPrecommit(sk, target, 7n, 100n)), ancestries: [] });
+
+// A source that answers every height with `proof`.
+const answering = (proof: Uint8Array, headers: FinalityRpc["headers"]): FinalityRpc => ({ proveFinality: async (heights) => heights.map(() => proof), headers });
 
 // The finality proof with its justification's unsigned target number set to `number`, every
 // signed byte kept, and no headers between the target and the block.
@@ -81,8 +88,8 @@ describe("justifiedTarget: a supermajority of the set's weight signed for this s
   const j = () => decodeJustification(chain.justification(0, target));
   const set = { setId: 100n, authorities: chain.authorities(0) };
 
-  it("finality-grandpa's threshold: 87 of 130, 3 of 4", () => {
-    expect([supermajority(130n), supermajority(4n), supermajority(1n)]).toEqual([87n, 3n, 1n]);
+  it("finality-grandpa's threshold: 87 of 130, 5 of 6, 3 of 4, 3 of 3", () => {
+    expect([supermajority(130n), supermajority(6n), supermajority(4n), supermajority(3n), supermajority(1n)]).toEqual([87n, 5n, 3n, 3n, 1n]);
   });
 
   it("positive control: the set's own justification finalizes its target", () => {
@@ -327,8 +334,7 @@ describe("justifiedTarget: a supermajority of the set's weight signed for this s
 
       it("is reported not final by verifyFinality", async () => {
         const proof = chain.proof(fabricated, encodeJustification({ round: 7n, target: forgedTarget, precommits: pairs, ancestries: [] }), []);
-        const rpc: FinalityRpc = { proveFinality: async (heights) => heights.map(() => proof), headers: chain.rpc.headers };
-        expect(await verifyFinality({ rpc, block: { height: 1300, hash: toHex(forgedTarget.hash) }, checkpoints: [chain.checkpoint(0)] })).toMatchObject({ finalized: false });
+        expect(await verifyFinality({ rpc: answering(proof, chain.rpc.headers), block: { height: 1300, hash: toHex(forgedTarget.hash) }, checkpoints: [chain.checkpoint(0)] })).toMatchObject({ finalized: false });
       });
 
       it("counts the pairs once a precommit for the block both chains share is the lowest, as finality-grandpa does", () => {
@@ -386,10 +392,24 @@ describe("justifiedTarget's work is linear in the justification, whatever the so
 });
 
 describe("verifyFinality on a synthetic chain", () => {
-  it("finalizes a block inside the checkpoint's own set with one request", async () => {
+  it("finalizes a block inside the checkpoint's own set, its last block included, with one request", async () => {
     const chain = uniform(4);
-    const r = await verifyFinality({ rpc: chain.rpc, block: chain.block(1100), checkpoints: [chain.checkpoint(0)] });
-    expect(r).toMatchObject({ finalized: true, setChanges: 0, requests: 1, justified: { height: chain.endOf(0) } });
+    for (const height of [1100, chain.endOf(0)]) {
+      const r = await verifyFinality({ rpc: chain.rpc, block: chain.block(height), checkpoints: [chain.checkpoint(0)] });
+      expect(r).toMatchObject({ finalized: true, setChanges: 0, requests: 1, justified: { height: chain.endOf(0) } });
+    }
+  });
+
+  it("refuses a source that answers a different number of proofs or headers than it was asked for", async () => {
+    const chain = uniform(4);
+    const block = chain.block(chain.endOf(0) + 9);
+    const short = async <T>(answer: Promise<T[]>) => (await answer).slice(1);
+    await expect(verifyFinality({ rpc: { ...chain.rpc, proveFinality: (heights) => short(chain.rpc.proveFinality(heights)) }, block, checkpoints: [chain.checkpoint(0)] })).rejects.toThrow(
+      "the source answered 0 finality proofs for 1 heights",
+    );
+    await expect(verifyFinality({ rpc: { ...chain.rpc, headers: (hashes) => short(chain.rpc.headers(hashes)) }, block, checkpoints: [chain.checkpoint(0)] })).rejects.toThrow(
+      "the source answered 0 headers for 1 hashes",
+    );
   });
 
   it("walks five set changes in two batched requests and proves the block under the sixth set", async () => {
@@ -401,12 +421,18 @@ describe("verifyFinality on a synthetic chain", () => {
     if (r.finalized) expect(r.checkpoint).toMatchObject({ setId: 105n, startsAfter: { height: chain.endOf(4) } });
   });
 
-  it("starts from the nearest checkpoint below the block, and never from one above it", async () => {
+  it("starts from the nearest checkpoint below the block, and never from one at or above it", async () => {
     const chain = uniform(8);
     const block = chain.block(chain.endOf(4) + 17);
     const r = await verifyFinality({ rpc: chain.rpc, block, checkpoints: [chain.checkpoint(0), chain.checkpoint(4), chain.checkpoint(6)] });
     expect(r).toMatchObject({ finalized: true, setChanges: 1 });
     expect(await verifyFinality({ rpc: chain.rpc, block, checkpoints: [chain.checkpoint(6)] })).toMatchObject({ finalized: false, reason: expect.stringMatching(/no finality checkpoint lies below block/) });
+    // Set 105 starts after set 104's last block, so only set 104 signed that block.
+    expect(await verifyFinality({ rpc: chain.rpc, block: chain.block(chain.endOf(4)), checkpoints: [chain.checkpoint(4), chain.checkpoint(5)] })).toMatchObject({
+      finalized: true,
+      setChanges: 0,
+      checkpoint: { setId: 104n },
+    });
   });
 
   it("follows sets whose lengths change, resyncing where a predicted end is wrong", async () => {
@@ -414,6 +440,36 @@ describe("verifyFinality on a synthetic chain", () => {
     const chain = syntheticChain({ firstSetId: 9n, genesisEnd: 50, setLengths: (k) => lengths[k]!, setCount: lengths.length });
     const block = chain.block(chain.endOf(4) + 3);
     expect(await verifyFinality({ rpc: chain.rpc, block, checkpoints: [chain.checkpoint(0)] })).toMatchObject({ finalized: true, setChanges: 5 });
+  });
+
+  it("proves a set's last block under that set when the resync's justification is of that block", async () => {
+    const chain = syntheticChain({ firstSetId: 100n, genesisEnd: 1000, setLengths: (k) => [400, 300, 300][k]!, setCount: 3 });
+    expect(await verifyFinality({ rpc: chain.rpc, block: chain.block(1400), checkpoints: [chain.checkpoint(0)] })).toMatchObject({
+      finalized: true,
+      setChanges: 0,
+      justified: chain.block(1400),
+      checkpoint: { setId: 100n },
+    });
+  });
+
+  it("trusts keys, not a chain: another chain the checkpoint's keys sign under the same set ids verifies too", async () => {
+    const chain = uniform(3);
+    // A chain that does not hold the checkpoint's block 1000: its set 100 starts after its own block 900.
+    const another = (keysFor?: (k: number) => Uint8Array[]) =>
+      syntheticChain({ firstSetId: 100n, genesisEnd: 900, setLengths: (k) => (k === 0 ? 400 : 300), setCount: 3, ...(keysFor ? { keysFor } : {}) });
+    const other = another();
+    expect(other.block(1000).hash).not.toBe(chain.checkpoint(0).startsAfter.hash);
+    expect(await verifyFinality({ rpc: other.rpc, block: other.block(1450), checkpoints: [chain.checkpoint(0)] })).toMatchObject({
+      finalized: true,
+      setChanges: 1,
+      justified: other.block(1600),
+      checkpoint: { setId: 101n, startsAfter: other.block(1300) },
+    });
+    const strangers = another(() => testKeys("stranger", 4));
+    expect(await verifyFinality({ rpc: strangers.rpc, block: strangers.block(1450), checkpoints: [chain.checkpoint(0)] })).toMatchObject({
+      finalized: false,
+      reason: expect.stringMatching(/the end of set 100 does not verify: .*carries 0 of 4 weight under set 100/),
+    });
   });
 
   describe("walks through a set end whose justification Substrate stores", () => {
@@ -514,6 +570,24 @@ describe("verifyFinality on a synthetic chain", () => {
     expect(r).toMatchObject({ finalized: false, reason: expect.stringMatching(/does not hash to its justified hash/) });
   });
 
+  it("never adopts a set change under a number its header does not carry, even one the outgoing set's keys signed", async () => {
+    // Set 100 ends at block 1301, one past the walk's predicted end, 1300.
+    const chain = syntheticChain({ firstSetId: 100n, genesisEnd: 1000, setLengths: (k) => (k === 0 ? 301 : 300), setCount: 3 });
+    const block = chain.block(1305);
+    expect(await verifyFinality({ rpc: chain.rpc, block, checkpoints: [chain.checkpoint(0)] })).toMatchObject({ finalized: true, checkpoint: { setId: 101n, startsAfter: chain.block(1301) } });
+    // Every key of set 100 signs block 1301 as number 1300, for both the walk and the resync.
+    const end = chain.header(1301);
+    const proof = chain.proof(end, signedByEveryKey({ hash: headerHash(end), number: 1300 }), [end]);
+    const rpc: FinalityRpc = {
+      proveFinality: async (heights) => Promise.all(heights.map(async (h) => (h <= end.number ? proof : (await chain.rpc.proveFinality([h]))[0]!))),
+      headers: chain.rpc.headers,
+    };
+    expect(await verifyFinality({ rpc, block, checkpoints: [chain.checkpoint(0)] })).toMatchObject({
+      finalized: false,
+      reason: "the source's header for block 1300 does not hash to its justified hash",
+    });
+  });
+
   describe("never adopts an authority set from a set-change block at or before the start of the set that justified it", () => {
     // Ten-block sets, each with its own keys, and set 3 trusted. A justification may be relabeled
     // down to an ancestor of the blocks its precommits signed, so the source can present set 3's
@@ -576,6 +650,18 @@ describe("verifyFinality on a synthetic chain", () => {
     expect(await verifyFinality({ rpc: relabeling, block: chain.block(end), checkpoints: [chain.checkpoint(1)] })).toMatchObject({ finalized: true, justified: chain.block(end) });
   });
 
+  it("never reports a block at a height its header does not carry, even under a number the set's keys signed", async () => {
+    const chain = uniform(4);
+    // Every key of set 100 signs block 1300 as number 1299, so each header below it reads one low.
+    const end = chain.header(chain.endOf(0));
+    const below = Array.from({ length: 20 }, (_, i) => chain.header(end.number - 19 + i));
+    const rpc = answering(chain.proof(end, signedByEveryKey({ hash: headerHash(end), number: end.number - 1 }), below), chain.rpc.headers);
+    expect(await verifyFinality({ rpc, block: { height: end.number - 21, hash: chain.block(end.number - 20).hash }, checkpoints: [chain.checkpoint(0)] })).toMatchObject({
+      finalized: false,
+      reason: `header ${end.number - 1} of the finality proof does not chain to block ${end.number - 1}`,
+    });
+  });
+
   it("refuses a checkpoint with no voting weight, or a negative weight, before asking the source anything", async () => {
     const chain = uniform(4);
     const at = chain.checkpoint(0);
@@ -612,6 +698,22 @@ describe("verifyFinality on a synthetic chain", () => {
     expect(await verifyFinality({ rpc: tampered, block, checkpoints: [chain.checkpoint(0)] })).toMatchObject({
       finalized: false,
       reason: expect.stringMatching(/does not chain to block/),
+    });
+  });
+
+  it("names why a proof falls short: it justifies a block below the block, or carries too few headers down to it", async () => {
+    const chain = uniform(4);
+    const block = chain.block(chain.endOf(0) + 5);
+    const below = chain.header(block.height - 3);
+    expect(await verifyFinality({ rpc: answering(chain.proof(below, chain.justification(1, below), []), chain.rpc.headers), block, checkpoints: [chain.checkpoint(1)] })).toMatchObject({
+      finalized: false,
+      reason: `the finality proof for block ${block.height} justifies only block ${below.number}`,
+    });
+    const genuine = (await chain.rpc.proveFinality([block.height]))[0]!;
+    const headers = decodeFinalityProof(genuine).unknownHeaders;
+    expect(await verifyFinality({ rpc: answering(withUnknownHeaders(genuine, headers.slice(1)), chain.rpc.headers), block, checkpoints: [chain.checkpoint(1)] })).toMatchObject({
+      finalized: false,
+      reason: `the finality proof carries ${headers.length - 1} headers between blocks ${block.height} and ${chain.endOf(1)}`,
     });
   });
 });
@@ -700,8 +802,7 @@ describe.each(["mainnet", "preprod"])("golden: real %s finality, replayed", (net
     // The recorded justification is for a set's last block; the live attack relabeled the latest
     // justified block of a running set. A trusted checkpoint one block later puts the relabeled
     // height inside the set's predicted range, as the running set did.
-    const forged = relabeled(raw!, f.setEnd + 1);
-    const lying: FinalityRpc = { proveFinality: async (heights) => heights.map(() => forged), headers: rpc().headers };
+    const lying = answering(relabeled(raw!, f.setEnd + 1), rpc().headers);
     const shifted = { ...own, startsAfter: { ...own.startsAfter, height: own.startsAfter.height + 1 } };
     expect(await verifyFinality({ rpc: lying, block: { height: f.setEnd + 1, hash: toHex(j.target.hash) }, checkpoints: [shifted] })).toMatchObject({
       finalized: false,

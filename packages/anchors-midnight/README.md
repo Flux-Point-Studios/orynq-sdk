@@ -254,9 +254,13 @@ refused before anything is asked of the source, and so is a set change that sche
 no voting weight.
 
 Trust assumption: "consensus-verified" means that the checkpoint really is that GRANDPA set, and
-that every set from it to the block had more than two thirds of its weight honest. Signatures
-are Ed25519 (OpenSSL, RFC 8032 strict, which can refuse a ZIP-215 signature Substrate accepts
-but never accept one it refuses) and headers BLAKE2b-256.
+that every set from it to the block had more than two thirds of its weight held by honest keys
+that sign under that set id on this chain alone. A justification that keys holding a
+supermajority of a set's weight signed under that set id on another GRANDPA chain verifies here,
+and the walk then follows that chain's own set changes. That includes an earlier incarnation of
+this chain: a chain restarted from a new genesis with the same GRANDPA keys counts its set ids
+from 0 again. Signatures are Ed25519 (OpenSSL, RFC 8032 strict, which can refuse a ZIP-215
+signature Substrate accepts but never accept one it refuses) and headers BLAKE2b-256.
 
 Cost: one batched request per 64 set changes for the proofs and one for the headers, about 6.7 KB
 per set change on mainnet, where a set lasts 300 blocks (30 minutes). The walk stops after
