@@ -12,10 +12,16 @@ interface Target {
   number: number;
 }
 
+interface SignedPrecommit {
+  target: Target;
+  signature: Uint8Array;
+  id: Uint8Array;
+}
+
 export interface GrandpaJustification {
   round: bigint;
   target: Target;
-  precommits: Array<{ target: Target; signature: Uint8Array; id: Uint8Array }>;
+  precommits: SignedPrecommit[];
   ancestries: BlockHeader[];
 }
 
@@ -64,25 +70,26 @@ function votingWeight(set: AuthoritySet): bigint | { error: string } {
 }
 
 // The block a justification finalizes, when voters of `set` holding a supermajority of its
-// weight vouch for it; otherwise why not. Of each voter only the first two different precommits
-// are read, as finality-grandpa imports no more, and only those signed for this set id and round.
+// weight vouch for it; otherwise why not. Only precommits signed for this set id and round count.
 // The justification's own target is unsigned: a voter vouches for it by a precommit for that hash
 // at that number, or for a descendant whose ancestry headers lead down to it one block at a time.
 //
-// A voter with two such precommits equivocated. finality-grandpa counts an equivocator's weight
-// for every block of the round's vote graph: the blocks from the round's base, the commit's lowest
-// precommit, up to a voter's precommit; validate_commit refuses a commit holding a precommit that
-// is not the base or its descendant. So an equivocator vouches here when the lowest signed
-// precommit on the target's chain is, or through the ancestry headers is an ancestor of, both its
+// finality-grandpa tells a voter's precommits apart by target and signature, so one precommit
+// signed twice is two, and it reads a voter's first two different precommits and no more. A voter
+// with two equivocated, and its weight counts for every block of the round's vote graph: the
+// blocks from the round's base, the commit's lowest voter precommit (the first at its number), up
+// to a voter's precommit; validate_commit refuses a commit holding a voter precommit that is not
+// the base or its descendant. So an equivocator vouches here when that lowest precommit is signed,
+// lies on the target's chain, and is, or through the ancestry headers is an ancestor of, both its
 // precommits, and some voter vouched for the target directly. Where finality-grandpa refuses the
 // whole commit, this sets the stray precommit aside instead: an equivocator with one precommit off
-// that base vouches only as its other precommit does. GRANDPA signs neither a chain nor its
+// the base vouches only as its other precommit does. GRANDPA signs neither a chain nor its
 // genesis, so what a key signed on another chain with the same set id and round verifies here too;
-// such a pair shares a base only where the two chains share that block.
+// such a pair counts only where the base is a block the two chains share.
 //
 // The work is linear in the justification, whatever the source sends: non-voters and repeated
-// precommits are skipped by a lookup, at most two precommits per voter are verified, and each
-// ancestry header is hashed once and walked at most once.
+// precommits are skipped by a lookup, each voter's first two different precommits and the
+// commit's lowest are verified, and each ancestry header is hashed once and walked at most once.
 export function justifiedTarget(j: GrandpaJustification, set: AuthoritySet): Target | { error: string } {
   const total = votingWeight(set);
   if (typeof total !== "bigint") return total;
@@ -122,28 +129,31 @@ export function justifiedTarget(j: GrandpaJustification, set: AuthoritySet): Tar
     for (const k of walked) joined.set(k, found);
     return found;
   };
-  // Each voter's first two different precommits, and whether each one's signature verified.
-  const votes = new Map<string, Array<{ target: Target; signed: boolean }>>();
+  const signs = (p: SignedPrecommit) => ed25519Verify(p.signature, concatBytes(new Uint8Array([1]), p.target.hash, u32le(p.target.number), u64le(j.round), u64le(set.setId)), p.id);
+  const same = (a: SignedPrecommit, b: SignedPrecommit) => a.target.number === b.target.number && bytesEqual(a.target.hash, b.target.hash) && bytesEqual(a.signature, b.signature);
+  // Each voter's first two different precommits, and whether each one's signature verified; and
+  // the commit's lowest voter precommit, the first at its number.
+  const votes = new Map<string, Array<SignedPrecommit & { signed: boolean }>>();
+  let lowest: (SignedPrecommit & { signed?: boolean }) | undefined;
   for (const p of j.precommits) {
     const id = toHex(p.id);
     if (!weightOf.has(id)) continue;
     const earlier = votes.get(id) ?? [];
-    if (earlier.length === 2 || earlier.some((e) => e.target.number === p.target.number && bytesEqual(e.target.hash, p.target.hash))) continue;
-    const message = concatBytes(new Uint8Array([1]), p.target.hash, u32le(p.target.number), u64le(j.round), u64le(set.setId));
-    votes.set(id, [...earlier, { target: p.target, signed: ed25519Verify(p.signature, message, p.id) }]);
+    let read = earlier.find((e) => same(e, p));
+    if (!read && earlier.length < 2) {
+      read = { ...p, signed: signs(p) };
+      votes.set(id, [...earlier, read]);
+    }
+    if (!lowest || p.target.number < lowest.target.number) lowest = read ?? p;
   }
-  const voters = [...votes].map(([id, tried]) => ({
-    seats: weightOf.get(id)!,
-    signed: tried.filter((t) => t.signed).map((t) => ({ number: t.target.number, joins: join(t.target) })),
-  }));
-  // finality-grandpa's round base is the commit's lowest precommit; here, the lowest signed one
-  // on the target's chain.
-  const base = voters.flatMap((v) => v.signed).reduce((low, p) => (p.joins === p.number ? Math.min(low, p.number) : low), Infinity);
+  // The round's base, only when signed and on the target's chain; otherwise no equivocator counts.
+  const base = lowest && (lowest.signed ?? signs(lowest)) && join(lowest.target) === lowest.target.number ? lowest.target.number : Infinity;
   let direct = 0n;
   let equivocated = 0n;
-  for (const { seats, signed } of voters) {
-    if (signed.some((p) => p.joins === j.target.number)) direct += seats;
-    else if (signed.length === 2 && signed.every((p) => p.joins >= base)) equivocated += seats;
+  for (const [id, tried] of votes) {
+    const joins = tried.filter((t) => t.signed).map((t) => join(t.target));
+    if (joins.includes(j.target.number)) direct += weightOf.get(id)!;
+    else if (joins.length === 2 && joins.every((n) => n >= base)) equivocated += weightOf.get(id)!;
   }
   const weight = direct > 0n ? direct + equivocated : 0n;
   if (weight < supermajority(total)) {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { ed25519PublicKey, ed25519Sign } from "../ed25519.js";
 import { blake2b256, encodeHeader, headerHash, type BlockHeader, type RpcHeader, type WeightedAuthority } from "../substrate.js";
 import { compactAt, concatBytes, encodeCompact, toHex, u32le, u64le } from "../scale.js";
@@ -28,10 +29,35 @@ const publicKey = (sk: Uint8Array) => {
   return pk;
 };
 
+const precommitMessage = (target: { hash: Uint8Array; number: number }, round: bigint, setId: bigint) =>
+  concatBytes(new Uint8Array([1]), target.hash, u32le(target.number), u64le(round), u64le(setId));
+
 // The precommit for `target` that the authority holding `sk` signs in a round of set `setId`.
-export const signedPrecommit = (sk: Uint8Array, target: { hash: Uint8Array; number: number }, round: bigint, setId: bigint) => {
-  const message = concatBytes(new Uint8Array([1]), target.hash, u32le(target.number), u64le(round), u64le(setId));
-  return { target, signature: ed25519Sign(message, sk), id: publicKey(sk) };
+export const signedPrecommit = (sk: Uint8Array, target: { hash: Uint8Array; number: number }, round: bigint, setId: bigint) => ({
+  target,
+  signature: ed25519Sign(precommitMessage(target, round, setId), sk),
+  id: publicKey(sk),
+});
+
+// The same precommit signed again under another nonce. RFC 8032 lets the signer choose the nonce,
+// so a key holder can sign one message in as many valid ways as it likes. The nonce here is the
+// secret scalar of the key `nonceLabel` seeds, whose public key is then the signature's R.
+const ORDER = 2n ** 252n + 27742317777372353535851937790883648493n;
+const littleEndian = (bytes: Uint8Array) => bytes.reduceRight((n, b) => (n << 8n) + BigInt(b), 0n);
+const sha512 = (...parts: Uint8Array[]) => new Uint8Array(createHash("sha512").update(concatBytes(...parts)).digest());
+const secretScalar = (sk: Uint8Array) => {
+  const a = sha512(sk).subarray(0, 32);
+  a[0]! &= 248;
+  a[31]! &= 127;
+  a[31]! |= 64;
+  return littleEndian(a);
+};
+export const resignedPrecommit = (sk: Uint8Array, target: { hash: Uint8Array; number: number }, round: bigint, setId: bigint, nonceLabel: string) => {
+  const nonce = seed(nonceLabel);
+  const r = publicKey(nonce);
+  const k = littleEndian(sha512(r, publicKey(sk), precommitMessage(target, round, setId))) % ORDER;
+  const s = (secretScalar(nonce) + k * secretScalar(sk)) % ORDER;
+  return { target, signature: concatBytes(r, Uint8Array.from({ length: 32 }, (_, i) => Number((s >> BigInt(8 * i)) & 0xffn))), id: publicKey(sk) };
 };
 
 export const encodeJustification = (j: GrandpaJustification) =>

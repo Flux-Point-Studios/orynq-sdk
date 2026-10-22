@@ -17,7 +17,7 @@ import {
 } from "../grandpa.js";
 import { finalityRpc } from "../source.js";
 import { replaySource } from "./recorded-source.js";
-import { encodeJustification, signedPrecommit, syntheticChain, testKeys, withUnknownHeaders } from "./grandpa-chain.js";
+import { encodeJustification, resignedPrecommit, signedPrecommit, syntheticChain, testKeys, withUnknownHeaders } from "./grandpa-chain.js";
 
 // Every Ed25519 verification is still performed, and counted.
 vi.mock("../ed25519.js", async (importOriginal) => {
@@ -185,9 +185,10 @@ describe("justifiedTarget: a supermajority of the set's weight signed for this s
   });
 
   // finality-grandpa counts the weight of a voter that signed two different precommits in the
-  // round for every block of the round's vote graph, and a node's commit lists both, in the order
-  // they reached it. The graph's base is the commit's lowest precommit, every precommit must
-  // descend from it, and the target must lead to a voter's precommit.
+  // round, different in target or signature, for every block of the round's vote graph, and a
+  // node's commit lists both, in the order they reached it. The graph's base is the commit's
+  // lowest voter precommit, the first at its number, every voter precommit must descend from it,
+  // and the target must lead to a voter's precommit.
   describe("an equivocator", () => {
     const below = (n: number) => chain.header(target.number - n);
     const withVoter2 = (...precommits: GrandpaJustification["precommits"]) => ({ ...j(), precommits: [...j().precommits.slice(0, 2), ...precommits] });
@@ -203,6 +204,19 @@ describe("justifiedTarget: a supermajority of the set's weight signed for this s
 
     it("counts when its precommit for an ancestor of the target comes before its precommit for the target", () => {
       expect(justifiedTarget({ ...withVoter2(vote(keys[2]!, below(1)), vote(keys[2]!, target)), ancestries: [target] }, set)).toEqual(final);
+    });
+
+    it("counts once when one of its precommits is for the target", () => {
+      const precommits = [vote(keys[0]!, target), vote(keys[2]!, below(1)), vote(keys[2]!, target)];
+      expect(justifiedTarget({ ...j(), precommits, ancestries: [target] }, set)).toEqual(short);
+    });
+
+    it("is made by two different signatures of one precommit, as finality-grandpa tells votes apart by target and signature", () => {
+      const once = vote(keys[2]!, below(1));
+      const again = resignedPrecommit(keys[2]!, once.target, 7n, 100n, "another nonce");
+      expect(toHex(again.signature)).not.toBe(toHex(once.signature));
+      expect(justifiedTarget({ ...withVoter2(once, again), ancestries: [target] }, set)).toEqual(final);
+      expect(justifiedTarget({ ...withVoter2(once, forged(again)), ancestries: [target] }, set)).toEqual(short);
     });
 
     it("counts when both its precommits are for ancestors of the target, as in Substrate's justification_with_equivocation", () => {
@@ -260,6 +274,20 @@ describe("justifiedTarget: a supermajority of the set's weight signed for this s
       for (const base of [vote(keys[3]!, below(2)), forged(vote(keys[3]!, below(3))), vote(keys[3]!, offChain)]) {
         expect(justifiedTarget({ ...withVoter2(...forkPair, base), ancestries: [...forkAncestries, offChain] }, set)).toEqual(short);
       }
+    });
+
+    it("takes the base from the commit's lowest precommit even when its voter lists it after two others", () => {
+      const precommits = [vote(keys[2]!, below(1)), vote(keys[2]!, sibling(below(1))), vote(keys[2]!, below(3))];
+      const ancestries = [target, below(1), below(2), sibling(below(1))];
+      expect(justifiedTarget({ ...withVoter2(...precommits), ancestries }, set)).toEqual(final);
+      expect(justifiedTarget({ ...withVoter2(...precommits.slice(0, 2), forged(precommits[2]!)), ancestries }, set)).toEqual(short);
+    });
+
+    it("takes the first of the commit's lowest precommits as the base, as validate_commit does", () => {
+      const ancestries = [...forkAncestries, sibling(below(3))];
+      const [onChain, offChain] = [vote(keys[3]!, below(3)), vote(keys[3]!, sibling(below(3)))];
+      expect(justifiedTarget({ ...withVoter2(...forkPair, onChain, offChain), ancestries }, set)).toEqual(final);
+      expect(justifiedTarget({ ...withVoter2(...forkPair, offChain, onChain), ancestries }, set)).toEqual(short);
     });
 
     it("takes no base from an authority with no weight, which finality-grandpa's voter set leaves out", () => {
@@ -320,8 +348,9 @@ describe("justifiedTarget: a supermajority of the set's weight signed for this s
 });
 
 // The work is counted, not timed (the times are only reported): at most two Ed25519
-// verifications for each voter, and at most two reads of each ancestry header's parent link, one
-// to hash the header and one to walk from it, however the source repeats or arranges what it sends.
+// verifications for each voter and one for the commit's lowest precommit, and at most two reads of
+// each ancestry header's parent link, one to hash the header and one to walk from it, however the
+// source repeats or arranges what it sends.
 describe("justifiedTarget's work is linear in the justification, whatever the source sends", () => {
   const chain = syntheticChain({ firstSetId: 100n, genesisEnd: 1000, setLengths: () => 700, setCount: 1 });
   const set = { setId: 100n, authorities: chain.authorities(0) };
@@ -344,6 +373,8 @@ describe("justifiedTarget's work is linear in the justification, whatever the so
     ["3000 non-voters' precommits ahead of the quorum's", () => justificationOf(base, [...Array.from({ length: 3000 }, (_, i) => stranger(i)), ...quorum], route), final, 3],
     ["the quorum's precommits with 20,000 ancestry headers", () => justificationOf(base, quorum, Array(20_000).fill(route[0]!)), final, 3],
     ["every voter equivocating along the route", () => justificationOf(base, keys.flatMap((sk) => [vote(sk, tip), vote(sk, route[299]!)]), route), final, 8],
+    // Three for the others, two for voter 3's first two, and one for the commit's lowest, its last.
+    ["a voter's signature moved onto all 600 blocks of the route, lowest last, after the others' precommits", () => justificationOf(base, [...keys.slice(0, 3).map((sk) => vote(sk, tip)), ...moved(keys[3]!).reverse()], route), final, 6],
   ] as const)("%s", (label, justification, result, verifications) => {
     const j = justification();
     const w = work(j, set);
@@ -385,24 +416,32 @@ describe("verifyFinality on a synthetic chain", () => {
     expect(await verifyFinality({ rpc: chain.rpc, block, checkpoints: [chain.checkpoint(0)] })).toMatchObject({ finalized: true, setChanges: 5 });
   });
 
-  it("walks through a set end whose justification lists an equivocator's ancestor precommit first, or carries repeats and non-voters' precommits", async () => {
+  describe("walks through a set end whose justification Substrate stores", () => {
     const chain = uniform(4);
     const end = chain.header(chain.endOf(0));
-    const signedEnd = { hash: headerHash(end), number: end.number };
-    const reshaped = (change: (j: GrandpaJustification) => GrandpaJustification): FinalityRpc => ({
+    const below = (n: number) => chain.header(end.number - n);
+    const sibling = { ...below(1), stateRoot: new Uint8Array(32) };
+    const strangers = testKeys("stranger", 9).map((sk) => signedPrecommit(sk, { hash: headerHash(end), number: end.number }, 7n, 100n));
+    // The two precommits for the end that every shape keeps, then voter 2's.
+    const reshaped = (voter2: (j: GrandpaJustification) => GrandpaJustification["precommits"], ancestries: (j: GrandpaJustification) => BlockHeader[]): FinalityRpc => ({
       proveFinality: async (heights) =>
         (await chain.rpc.proveFinality(heights)).map((raw) => {
           const proof = raw && decodeFinalityProof(raw);
-          return proof && proof.justification.target.number === end.number ? chain.proof(end, encodeJustification(change(proof.justification)), proof.unknownHeaders) : raw;
+          if (!proof || proof.justification.target.number !== end.number) return raw;
+          const j = proof.justification;
+          return chain.proof(end, encodeJustification({ ...j, precommits: [...j.precommits.slice(0, 2), ...voter2(j)], ancestries: ancestries(j) }), proof.unknownHeaders);
         }),
       headers: chain.rpc.headers,
     });
-    const equivocated = reshaped((j) => ({ ...j, precommits: [...j.precommits.slice(0, 2), vote(keys[2]!, chain.header(end.number - 1)), j.precommits[2]!], ancestries: [end] }));
-    const strangers = testKeys("stranger", 9).map((sk) => signedPrecommit(sk, signedEnd, 7n, 100n));
-    const padded = reshaped((j) => ({ ...j, precommits: [...j.precommits, ...strangers, ...j.precommits, ...j.precommits] }));
-    for (const rpc of [equivocated, padded]) {
+
+    it.each([
+      ["an equivocator's ancestor precommit listed first", reshaped((j) => [vote(keys[2]!, below(1)), j.precommits[2]!], () => [end])],
+      ["an equivocator's two signatures of one precommit, as a node's own round builds it", reshaped(() => [vote(keys[2]!, below(1)), resignedPrecommit(keys[2]!, { hash: headerHash(below(1)), number: below(1).number }, 7n, 100n, "another nonce")], () => [end])],
+      ["an equivocator's third precommit as the lowest, as a commit it gossips can carry", reshaped(() => [vote(keys[2]!, below(1)), vote(keys[2]!, sibling), vote(keys[2]!, below(3))], () => [end, below(1), below(2), sibling])],
+      ["repeats and non-voters' precommits", reshaped((j) => [j.precommits[2]!, ...strangers, ...j.precommits, ...j.precommits], (j) => j.ancestries)],
+    ])("%s", async (_label, rpc) => {
       expect(await verifyFinality({ rpc, block: chain.block(chain.endOf(1) + 9), checkpoints: [chain.checkpoint(0)] })).toMatchObject({ finalized: true, setChanges: 2 });
-    }
+    });
   });
 
   it("follows a change of authorities, and refuses a set signed by the authorities it replaced", async () => {

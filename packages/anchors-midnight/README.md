@@ -231,18 +231,21 @@ relabel it as a lower one, an ancestor the precommits also finalize, which is wh
 block at or before the set's start is refused: the set's own last justification relabeled as an
 older set-change block would otherwise install that block's authorities as the next set.
 
-An authority that signed two different precommits in the round equivocated, and finality-grandpa
-counts its weight for every block of the round's vote graph: the blocks that descend from the
-round's lowest precommit and lead to a precommit, in a commit whose every precommit descends from
-that lowest one. This verifier counts an equivocator when the lowest signed precommit on the
-target's chain is, or through the ancestry headers is an ancestor of, both its precommits, and
-some authority's precommit is for the target or a descendant. A precommit outside that lowest
-one's descendants makes finality-grandpa refuse the whole commit; here that precommit is set
-aside, and its signer counts only as its other precommit does. GRANDPA signs neither a chain nor
-its genesis, so a precommit an authority key signed on another GRANDPA chain with the same set id
-and round verifies here as well. Paired with one from this chain it counts only once the lowest
-signed precommit on the target's chain is for a block both chains share, as finality-grandpa
-requires of the round's lowest precommit.
+An authority that signed two different precommits in the round equivocated. finality-grandpa
+tells precommits apart by target and signature, so one precommit signed twice is an equivocation
+too (Ed25519 lets the signer choose the nonce). It reads an authority's first two different
+precommits and no more, and counts an equivocator's weight for every block of the round's vote
+graph: the blocks that descend from the round's base and lead to a precommit. The base is the
+commit's lowest voter precommit, the first at that number, and finality-grandpa refuses a commit
+holding a voter precommit that does not descend from it. This verifier counts an equivocator when
+that lowest precommit is signed, lies on the target's chain, and is, or through the ancestry
+headers is an ancestor of, both of the equivocator's first two precommits, and some authority's
+precommit is for the target or a descendant. A precommit outside the base's descendants makes
+finality-grandpa refuse the whole commit; here that precommit is set aside, and its signer counts
+only as its other precommit does. GRANDPA signs neither a chain nor its genesis, so a precommit an
+authority key signed on another GRANDPA chain with the same set id and round verifies here as
+well. Paired with one from this chain it counts only when the commit's lowest precommit is for a
+block both chains share, as finality-grandpa requires of the round's base.
 
 A set finalizes only with more than two thirds of a total weight above 0, from distinct
 authorities, and an authority with weight 0 is no voter, as in finality-grandpa's voter set. A
@@ -260,12 +263,13 @@ per set change on mainnet, where a set lasts 300 blocks (30 minutes). The walk s
 `maxSetChanges` (default 2016, six weeks) and reports the block not finalized, so the cost never
 grows with the chain's age; a fresher checkpoint is the remedy. Each justification's work is
 linear in its size, whatever the source sends. A precommit from a non-voter, one repeating a
-voter's earlier precommit, and any after a voter's first two different precommits are skipped by
-a lookup. Only those first two are verified, so a justification costs at most two Ed25519
-verifications per voter, and each ancestry header is hashed once and walked at most once. None
-of these is refused for its number: Substrate accepts, stores and serves justifications that
-carry non-voters' precommits, repeats and repeated ancestry headers. A finalized result returns
-the set that justified the block as a checkpoint the caller can keep.
+voter's earlier precommit (the same target and signature), and any after a voter's first two
+different precommits are skipped by a lookup. Only those first two and the commit's lowest voter
+precommit are verified, so a justification costs at most two Ed25519 verifications per voter and
+one more, and each ancestry header is hashed once and walked at most once. None of these is
+refused for its number: Substrate accepts, stores and serves justifications that carry
+non-voters' precommits, repeats and repeated ancestry headers. A finalized result returns the set
+that justified the block as a checkpoint the caller can keep.
 
 Inclusion is a strict decode, never a byte search. `orderedTrieRoot` recomputes a block body's
 `extrinsicsRoot` (trie layout V1, which Midnight's state version 3 selects), and
