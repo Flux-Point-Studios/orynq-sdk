@@ -9,10 +9,11 @@ import { fromHex, toHex } from "./scale.js";
 import { finalityRpc, type IndexedTransaction, type MidnightSource } from "./source.js";
 import { headerFromRpc, headerHash, includedTransactionIndex, orderedTrieRoot, type RpcHeader } from "./substrate.js";
 
-// Status, most to least severe: a check failed outright (invalid), sources disagree with each
-// other or with consensus (conflict), a source could not answer (unavailable), the block is not
-// shown final (unverified-finality), the author is not a known one (unauthenticated) or is
-// outside its window (author-revoked). valid needs every check to pass at consensus-verified.
+// Status, most to least severe: a check failed outright (invalid), as when another key wrote the
+// anchor than the one the caller pinned; sources disagree with each other or with consensus
+// (conflict), a source could not answer (unavailable), the block is not shown final
+// (unverified-finality), the author is not a known one (unauthenticated) or is outside its window
+// (author-revoked). valid needs every check to pass at consensus-verified.
 export type AnchorStatus = "valid" | "invalid" | "conflict" | "unavailable" | "unverified-finality" | "unauthenticated" | "author-revoked";
 const SEVERITY: readonly Exclude<AnchorStatus, "valid">[] = ["invalid", "conflict", "unavailable", "unverified-finality", "unauthenticated", "author-revoked"];
 
@@ -34,7 +35,8 @@ export interface VerifyRequest {
   network: MidnightNetwork;
   txHash: string;
   expect: Expectation;
-  // An author key the caller trusts in place of the KNOWN_AUTHORS document.
+  // An author key the caller trusts in place of the KNOWN_AUTHORS document; an anchor any other
+  // key wrote is invalid.
   expectedAuthor?: Hash32;
 }
 
@@ -63,7 +65,8 @@ export interface VerifyResult {
   registry: { generation: number; address: string } | null;
   block: BlockRef | null;
   anchor: AnchorCall | null;
-  author: ((AuthorStatus | { status: "expected" }) & { key: string }) | null;
+  // key is always the key that wrote the anchor; expected, the key the caller pinned.
+  author: ((AuthorStatus | { status: "expected" } | { status: "mismatch"; expected: string }) & { key: string }) | null;
   // The fields the anchor's commitment binds that matched the request.
   verifiedFields: string[];
   notes: string[];
@@ -338,9 +341,13 @@ export async function verifyMidnightAnchor(request: VerifyRequest, options: Veri
 
   if (request.expectedAuthor !== undefined) {
     const expected = toHex(hash32(request.expectedAuthor, "expectedAuthor"));
-    result.author = { status: "expected", key: anchor.author };
-    if (expected === anchor.author) checks.pass("author", "the caller's expected author wrote it");
-    else checks.fail("author", "unauthenticated", `written by ${anchor.author}, not the expected ${expected}`);
+    if (expected === anchor.author) {
+      result.author = { status: "expected", key: anchor.author };
+      checks.pass("author", "the caller's expected author wrote it");
+    } else {
+      result.author = { status: "mismatch", key: anchor.author, expected };
+      checks.fail("author", "invalid", `written by ${anchor.author}, not the expected ${expected}`);
+    }
   } else {
     const status = authors.author(request.network, anchor.author, indexed.block.height);
     result.author = { ...status, key: anchor.author };

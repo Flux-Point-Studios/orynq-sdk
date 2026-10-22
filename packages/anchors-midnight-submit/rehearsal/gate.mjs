@@ -23,7 +23,7 @@ export const VERIFIER_NEGATIVES = {
   "kind 1 against another bundle's entry": ["invalid", "expectation"],
   "kind 2 against another attribute": ["invalid", "expectation"],
   "a kind-1 anchor read as kind 2": ["invalid", "expectation"],
-  "a stranger as the expected author": ["unauthenticated", "author"],
+  "a stranger as the expected author": ["invalid", "author"],
   "a transaction hash no chain holds": ["invalid", "indexer"],
   "the registry deploy read as an anchor": ["invalid", "anchor"],
   "the DUST registration read as an anchor": ["invalid", "anchor"],

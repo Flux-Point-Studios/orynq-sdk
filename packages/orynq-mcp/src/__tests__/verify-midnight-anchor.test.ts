@@ -162,11 +162,15 @@ describe("verify_midnight_anchor", () => {
     expect(await report(client, { txHash: user.anchors.public.txHash, commitment: user.anchors.public.commitment, expectedAuthor: authorKey })).toMatchObject({ status: "valid", verifiedFields: ["commitment"] });
   });
 
-  it("verifies a kind-2 anchor by its attribute, reports an anchor when nothing is expected, and is unauthenticated without an author it knows", async () => {
+  it("verifies a kind-2 anchor by its attribute, reports an anchor when nothing is expected, is unauthenticated without an author it knows, and invalid when another key wrote it than expectedAuthor", async () => {
     const client = await midnightOnly();
     expect(await report(client, { txHash: user.anchors.hidden.txHash, attribute: bundle.modelManifestHash, expectedAuthor: authorKey })).toMatchObject({ status: "valid", verifiedFields: ["committedAttribute"] });
     expect(await report(client, { txHash: user.anchors.hidden.txHash, expectedAuthor: authorKey })).toMatchObject({ status: "valid", verifiedFields: [], anchor: { kind: 2, commitment: user.anchors.hidden.commitment } });
     expect(await report(client, { txHash: user.anchors.hidden.txHash })).toMatchObject({ status: "unauthenticated", author: { status: "unknown", key: authorKey } });
+    expect(await report(client, { txHash: user.anchors.hidden.txHash, expectedAuthor: "11".repeat(32) })).toMatchObject({
+      status: "invalid",
+      author: { status: "mismatch", key: authorKey, expected: "11".repeat(32) },
+    });
     expect(await report(client, { txHash: user.anchors.public.txHash, attribute: bundle.modelManifestHash, expectedAuthor: authorKey })).toMatchObject({ status: "invalid" });
   });
 

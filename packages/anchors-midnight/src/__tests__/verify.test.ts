@@ -296,10 +296,21 @@ describe("critique2 (c): authors come from the signed KNOWN_AUTHORS document", (
     expect(r).toMatchObject({ status: "author-revoked", author: { status: "outside-window", validTo: HEIGHTS.anchor - 1 } });
   });
 
-  it("an author the caller pins is accepted in place of the document, and any other is not", async () => {
+  it("an author the caller pins is accepted in place of the document, and an anchor any other key wrote is invalid, naming both keys", async () => {
     const chain = anchorChain();
     expect(await verify(chain, request("stranger", KIND1, { expectedAuthor: fixture.stranger.key }))).toMatchObject({ status: "valid", author: { status: "expected", key: fixture.stranger.key } });
-    expect(await verify(chain, request("anchor", KIND1, { expectedAuthor: fixture.stranger.key }))).toMatchObject({ status: "unauthenticated" });
+    const other = await verify(chain, request("anchor", KIND1, { expectedAuthor: fixture.stranger.key }));
+    expect(other).toMatchObject({ status: "invalid", assurance: "consensus-verified", author: { status: "mismatch", key: fixture.author.key, expected: fixture.stranger.key } });
+    expect(other.checks.filter((c) => !c.ok)).toEqual([{ name: "author", ok: false, detail: `written by ${fixture.author.key}, not the expected ${fixture.stranger.key}` }]);
+  });
+
+  it("a pinned author mismatch outranks unshown finality, so it never reads like the pinned author's own anchor", async () => {
+    const chain = anchorChain();
+    const [own, other] = await Promise.all(
+      [fixture.author.key, fixture.stranger.key].map((expectedAuthor) => verify(chain, request("anchor", KIND1, { expectedAuthor }), { finality: "skip" })),
+    );
+    expect([own!.status, own!.assurance, own!.author]).toEqual(["unverified-finality", "multi-path", { status: "expected", key: fixture.author.key }]);
+    expect([other!.status, other!.assurance, other!.author]).toEqual(["invalid", "multi-path", { status: "mismatch", key: fixture.author.key, expected: fixture.stranger.key }]);
   });
 
   it("refuses a registry whose pinned deploy height is not where its deploy is", async () => {
@@ -409,8 +420,8 @@ describe("golden: FPS's mainnet anchors against the pinned registry, replayed", 
       ["kind 2, FPS key pinned", "valid", "consensus-verified", "expected"],
       ["kind 1, no author key pinned", "unauthenticated", "consensus-verified", "unknown"],
       ["kind 2, no author key pinned", "unauthenticated", "consensus-verified", "unknown"],
-      ["kind 1, wrong author key", "unauthenticated", "consensus-verified", "expected"],
-      ["kind 2, wrong author key", "unauthenticated", "consensus-verified", "expected"],
+      ["kind 1, wrong author key", "invalid", "consensus-verified", "mismatch"],
+      ["kind 2, wrong author key", "invalid", "consensus-verified", "mismatch"],
       ["kind 1, commitment one bit off", "invalid", "consensus-verified", "expected"],
       ["kind 2, attribute one bit off", "invalid", "consensus-verified", "expected"],
       ["kind 1, registry address not pinned", "invalid", "consensus-verified", null],
@@ -475,6 +486,7 @@ describe("golden: FPS's mainnet anchors against the pinned registry, replayed", 
     const detail = async (name: string, check: string) => (await replay(run(name))).checks.find((c) => c.name === check)?.detail;
     expect(await detail("kind 1, no author key pinned", "author")).toBe(`KNOWN_AUTHORS serial 0 does not list ${FPS_AUTHOR}`);
     expect(await detail("kind 2, wrong author key", "author")).toBe(`written by ${FPS_AUTHOR}, not the expected ${FPS_AUTHOR.slice(0, -1)}9`);
+    expect((await replay(run("kind 1, wrong author key"))).author).toEqual({ status: "mismatch", key: FPS_AUTHOR, expected: `${FPS_AUTHOR.slice(0, -1)}9` });
     expect(await detail("kind 1, commitment one bit off", "expectation")).toBe(
       "the anchor commits to c5027cecfc7c6dac5dcce026178ccaec51afe30735dc311635907b8e06b69a59, not c5027cecfc7c6dac5dcce026178ccaec51afe30735dc311635907b8e06b69a58",
     );
@@ -483,5 +495,20 @@ describe("golden: FPS's mainnet anchors against the pinned registry, replayed", 
     );
     expect(await detail("kind 1, registry address not pinned", "anchor")).toBe("transaction e273d480e57b3315937c8929fbc3c11ab798d42b4ff6c0b88172856dec6b7d58 writes no anchor to a registry generation");
     expect(await detail("another contract's call", "anchor")).toBe("transaction 987c01eeee3fc7123b82cdcaa476c44927d283b5d6ab1e3d337ba7ea4bd013ec writes no anchor to a registry generation");
+  });
+
+  // What orynq verify midnight and verify_midnight_anchor get: the shipped KNOWN_AUTHORS, which
+  // trusts no checkpoint, so neither anchor is shown final.
+  it("without a checkpoint, FPS's key and another key pinned differ in status and author, not only in a check", async () => {
+    const other = "11".repeat(32);
+    for (const name of ["kind 1, FPS key pinned", "kind 2, FPS key pinned"]) {
+      const { request } = run(name);
+      const [own, wrong] = await Promise.all(
+        [FPS_AUTHOR, other].map((expectedAuthor) => verifyMidnightAnchor({ network: "mainnet", ...request, expectedAuthor }, { source: replaySource(f.recording) })),
+      );
+      expect([own!.status, own!.assurance, own!.author]).toEqual(["unverified-finality", "multi-path", { status: "expected", key: FPS_AUTHOR }]);
+      expect([wrong!.status, wrong!.assurance, wrong!.author]).toEqual(["invalid", "multi-path", { status: "mismatch", key: FPS_AUTHOR, expected: other }]);
+      expect(check(own!, "finality")!.detail).toBe(`no finality checkpoint lies below block ${own!.block!.height}`);
+    }
   });
 });

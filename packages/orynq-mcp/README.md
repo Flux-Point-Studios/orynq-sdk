@@ -24,8 +24,9 @@ source-checkout quick start above links it. Without it the server still starts, 
 against the registry generations that package pins (generation 1 on mainnet) and its
 KNOWN_AUTHORS document, which lists no author and no finality checkpoint yet. So an anchor's
 author reads `unknown` unless the `expectedAuthor` input names the key, and, since the tool
-takes no checkpoint, a mainnet anchor verifies at most to `unverified-finality` (see that
-package's README).
+takes no checkpoint, a mainnet anchor verifies at most to `unverified-finality`. An anchor
+another key wrote than `expectedAuthor` names reads `author: { status: "mismatch" }`, with both
+keys, and is `invalid` (see that package's README).
 
 ### Claude Desktop config
 
@@ -97,7 +98,7 @@ package's README).
 - All trace tools are safe — they only modify in-memory state
 - `anchor_cardano_prepare` computes hashes but never signs or submits
 - `anchor_cardano_submit` requires `confirm: true` and `CARDANO_SIGNER_KEY`; in v1 it returns serialized metadata for manual CLI submission
-- `anchor_materios_submit` is a dry run unless `confirm: true`, an argument the model supplies, not a person's approval; it needs `MATERIOS_RPC_URL` and `MATERIOS_SIGNER_URI`
+- `anchor_materios_submit` is a dry run unless `confirm: true`. The model supplies that argument, so it proves no person approved; the tool needs `MATERIOS_RPC_URL` and `MATERIOS_SIGNER_URI`
 - `verify_cardano_anchor`, `verify_midnight_anchor` and `estimate_cost` are read-only
 - `verify_midnight_anchor` takes a transaction hash and at most one expectation (a bundle's `entry`
   hashes, a kind-1 `commitment` or a kind-2 `attribute`), plus an optional `expectedAuthor`. It

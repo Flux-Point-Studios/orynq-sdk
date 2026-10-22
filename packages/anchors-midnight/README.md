@@ -113,11 +113,13 @@ in the result:
 5. The registry's pinned deploy goes through the same steps and must deploy exactly the
    immutable registry state at the registry's address, in the pinned block; the indexer's and the
    node's state snapshots are cross-checks.
-6. The anchor must match the request, and its author must be known for that height.
+6. The anchor must match the request, and its author must be the key the caller pins
+   (`expectedAuthor`) or, with none pinned, a key KNOWN_AUTHORS lists for that height.
 
 Statuses, most severe first: `invalid`, `conflict` (sources disagree with each other or with
 consensus), `unavailable`, `unverified-finality`, `unauthenticated`, `author-revoked`, and
-`valid`. Assurance says how far inclusion is established: `consensus-verified`, `multi-path`
+`valid`. A result takes the status of its most severe failed check, and `checks` lists every
+one that failed. Assurance says how far inclusion is established: `consensus-verified`, `multi-path`
 (indexer and node agree; on Blockfrost that is one operator running two pieces of software),
 `single-path` or `none`. A result is `valid` only at `consensus-verified`: skipping finality
 (`finality: "skip"`), a checkpoint more than `maxSetChanges` set changes away, or a node that
@@ -132,13 +134,16 @@ circuit binds the attribute to the commitment and never checks it against the tr
 re-verified locally: the npm ledger WASM cannot verify one, and inclusion in a final block is
 what shows consensus did.
 
-The `author` field says how the author key was judged. `known` and `outside-window` come from a
-signed KNOWN_AUTHORS document (below): the key is listed, and the block lies inside its window of
-block heights, or outside it (status `author-revoked`). `unknown` means no document this package
-ships or the caller passes lists the key, and the status is `unauthenticated`; that is all it
-says, since the anchor can still be final and well formed. `expected` means the caller pinned a
-key with `expectedAuthor`, whether or not it matched: the `author` check and the status say
-which, and an anchor by another key is `unauthenticated`, its `author.key` the key that wrote it.
+The `author` field says how the author key was judged; its `key` is always the key that wrote
+the anchor. `known` and `outside-window` come from a signed KNOWN_AUTHORS document (below): the
+key is listed, and the block lies inside its window of block heights, or outside it (status
+`author-revoked`). `unknown` means no document this package ships or the caller passes lists the
+key; that is all it says, since the anchor can still be final and well formed. It makes the
+status `unauthenticated` unless a more severe status applies, such as `unverified-finality` when
+no trusted checkpoint shows the block final. `expected` means the caller pinned that key with
+`expectedAuthor` and it wrote the anchor. `mismatch` means another key wrote it: `author.expected`
+is the pinned key, and the status is `invalid`, the most severe, so an anchor by another key
+never reads like one by the pinned key, final or not.
 
 `verifyReport(result)` is the result as a terminal prints it and a model reads it: the finality
 checkpoint is dropped (its weights are bigints, which JSON cannot carry), a block hash that is not
@@ -157,10 +162,12 @@ Until a signed KNOWN_AUTHORS document ships (below), three things come from the 
 - A GRANDPA checkpoint you trust, in `checkpoints`. None ships, and without one an anchor verifies
   at most to `unverified-finality`, never `valid`. Finality and inclusion (below) says what a
   checkpoint is; a finalized result returns a newer one to keep.
-- The author key, in `expectedAuthor`. No author is known, so without it every mainnet anchor is
-  `unauthenticated` with `author: { status: "unknown" }`. FPS's mainnet author key is
-  `6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08`. This README and the
-  package's tests name it, so pinning it trusts this package's publisher, as running its code does.
+- The author key, in `expectedAuthor`. No author is known, so without it every mainnet anchor
+  reads `author: { status: "unknown" }` and is never `valid`. With it, an anchor that key wrote
+  reads `expected`, and one any other key wrote reads `mismatch` and is `invalid`. FPS's mainnet
+  author key is `6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08`. This
+  README and the package's tests name it, so pinning it trusts this package's publisher, as
+  running its code does.
 
 ```ts
 import { midnightSource, sourceEndpoints, verifyMidnightAnchor, type FinalityCheckpoint } from "@fluxpointstudios/orynq-sdk-anchors-midnight";

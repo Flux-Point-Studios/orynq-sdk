@@ -47,8 +47,8 @@ const RUNS = [
   { name: "kind 2, FPS key pinned", txHash: KIND2.txHash, expect: { kind: 2, attribute: KIND2.attribute }, expectedAuthor: FPS_AUTHOR, want: ["valid", KIND2.commitment] },
   { name: "kind 1, no author key pinned", txHash: KIND1.txHash, expect: { kind: 1, commitment: KIND1.commitment }, want: ["unauthenticated", KIND1.commitment] },
   { name: "kind 2, no author key pinned", txHash: KIND2.txHash, expect: { kind: 2, attribute: KIND2.attribute }, want: ["unauthenticated", KIND2.commitment] },
-  { name: "kind 1, wrong author key", txHash: KIND1.txHash, expect: { kind: 1, commitment: KIND1.commitment }, expectedAuthor: flipLastBit(FPS_AUTHOR), want: ["unauthenticated", KIND1.commitment] },
-  { name: "kind 2, wrong author key", txHash: KIND2.txHash, expect: { kind: 2, attribute: KIND2.attribute }, expectedAuthor: flipLastBit(FPS_AUTHOR), want: ["unauthenticated", KIND2.commitment] },
+  { name: "kind 1, wrong author key", txHash: KIND1.txHash, expect: { kind: 1, commitment: KIND1.commitment }, expectedAuthor: flipLastBit(FPS_AUTHOR), want: ["invalid", KIND1.commitment] },
+  { name: "kind 2, wrong author key", txHash: KIND2.txHash, expect: { kind: 2, attribute: KIND2.attribute }, expectedAuthor: flipLastBit(FPS_AUTHOR), want: ["invalid", KIND2.commitment] },
   { name: "kind 1, commitment one bit off", txHash: KIND1.txHash, expect: { kind: 1, commitment: flipLastBit(KIND1.commitment) }, expectedAuthor: FPS_AUTHOR, want: ["invalid", KIND1.commitment] },
   { name: "kind 2, attribute one bit off", txHash: KIND2.txHash, expect: { kind: 2, attribute: flipLastBit(KIND2.attribute) }, expectedAuthor: FPS_AUTHOR, want: ["invalid", KIND2.commitment] },
   {

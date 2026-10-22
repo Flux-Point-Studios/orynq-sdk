@@ -236,13 +236,13 @@ describe("the evidence gate", () => {
   describe("the verifier negatives", () => {
     const name = "a stranger as the expected author";
     it("refuses a negative that verified valid", () => {
-      expect(failuresOf((r) => (r.verified.negatives[name] = { status: "valid", assurance: "consensus-verified", failed: [] }))).toEqual([`verifier negative "${name}": valid at consensus-verified assurance, expected unauthenticated from the author check`]);
+      expect(failuresOf((r) => (r.verified.negatives[name] = { status: "valid", assurance: "consensus-verified", failed: [] }))).toEqual([`verifier negative "${name}": valid at consensus-verified assurance, expected invalid from the author check`]);
     });
 
     it("refuses a negative that failed for another cause, such as a source that could not answer", () => {
       expect(failuresOf((r) => (r.verified.negatives["finality skipped"] = { status: "unavailable", assurance: "single-path", failed: ["node: fetch failed"] }))).toHaveLength(1);
       expect(failuresOf((r) => (r.verified.negatives["a registry at another address"].failed = ["indexer: as recorded"]))).toHaveLength(1);
-      expect(failuresOf((r) => delete r.verified.negatives[name])).toEqual([`verifier negative "${name}": not verified, expected unauthenticated from the author check`]);
+      expect(failuresOf((r) => delete r.verified.negatives[name])).toEqual([`verifier negative "${name}": not verified, expected invalid from the author check`]);
     });
   });
 
