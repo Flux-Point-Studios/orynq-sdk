@@ -131,7 +131,7 @@ describe("verify_midnight_anchor", () => {
       expect((await client.listTools()).tools.map((t) => t.name)).toContain("verify_midnight_anchor");
       expect(await call(client, { txHash: "00".repeat(32) })).toEqual({
         isError: true,
-        text: `verify_midnight_anchor needs ${MIDNIGHT_PACKAGE}, an optional peer dependency of orynq-mcp that is not installed. Midnight is not yet published on npm; use a built orynq-sdk source checkout (see the package README).`,
+        text: `verify_midnight_anchor needs ${MIDNIGHT_PACKAGE}, an optional peer dependency of orynq-mcp that is not installed; install it beside orynq-mcp (npm install ${MIDNIGHT_PACKAGE}).`,
       });
     } finally {
       await client.close();

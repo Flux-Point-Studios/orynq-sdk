@@ -152,11 +152,15 @@ describe("orynq verify midnight", () => {
     expect(r.stdout).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f]/);
   });
 
-  it("with the registries this build ships (none deployed), answers invalid without asking a source", async () => {
+  it("verifies against the registries this build ships: mainnet's pinned generation, and on preprod, where none is deployed, without asking a source", async () => {
+    const mainnet = await run(["verify", "midnight", user.anchors.public.txHash, ...at(served)], { knownAuthors: user.chain.authors() });
+    expect([mainnet.code, line(mainnet.stdout, "status")]).toEqual([1, "invalid"]);
+    expect(mainnet.stdout).toContain("1 registry generation on mainnet");
+    expect(mainnet.stdout).toContain(`transaction ${user.anchors.public.txHash} writes no anchor to a registry generation`);
     served.requests.length = 0;
-    const r = await run(["verify", "midnight", user.anchors.public.txHash, ...at(served)], { knownAuthors: user.chain.authors() });
-    expect([r.code, line(r.stdout, "status")]).toEqual([1, "invalid"]);
-    expect(r.stdout).toContain("no registry generation is deployed on mainnet");
+    const preprod = await run(["verify", "midnight", user.anchors.public.txHash, "--network", "preprod", ...at(served)], { knownAuthors: user.chain.authors() });
+    expect([preprod.code, line(preprod.stdout, "status")]).toEqual([1, "invalid"]);
+    expect(preprod.stdout).toContain("no registry generation is deployed on preprod");
     expect(served.requests).toEqual([]);
   });
 
@@ -310,9 +314,10 @@ describe("the orynq bin", () => {
     const path = join(dir, "bin-key.json");
     const keys = orynq("keys", "init", "midnight", "--out", path);
     expect([keys.status, readUserKey(path).authorKey]).toEqual([0, line(keys.stdout, "author key")]);
-    const verify = orynq("verify", "midnight", user.anchors.public.txHash, "--indexer", served.indexer, "--rpc", served.node);
+    // spawnSync blocks this process, which serves the source, so the verify asks it nothing.
+    const verify = orynq("verify", "midnight", user.anchors.public.txHash, "--network", "preprod", "--indexer", served.indexer, "--rpc", served.node);
     expect([verify.status, line(verify.stdout, "status")]).toEqual([1, "invalid"]);
-    expect(verify.stdout).toContain("no registry generation is deployed on mainnet");
+    expect(verify.stdout).toContain("no registry generation is deployed on preprod");
   });
 
   // The Midnight package is an optional peer: an install without it gets the bin and both
@@ -328,7 +333,7 @@ describe("the orynq bin", () => {
     const r = spawnSync(process.execPath, [join(pkg, "bin", "orynq.mjs"), "verify", "midnight", "00".repeat(32)], { encoding: "utf8", input: "" });
     expect([r.status, r.stderr]).toEqual([
       1,
-      expect.stringContaining("the Midnight commands need @fluxpointstudios/orynq-sdk-anchors-midnight, an optional peer dependency that is not installed. Midnight is not yet published on npm; use a built orynq-sdk source checkout (see the package README)."),
+      expect.stringContaining("the Midnight commands need @fluxpointstudios/orynq-sdk-anchors-midnight, an optional peer dependency that is not installed; install it beside this package (npm install @fluxpointstudios/orynq-sdk-anchors-midnight)."),
     ]);
     expect(r.stderr).not.toContain(pkg);
   });

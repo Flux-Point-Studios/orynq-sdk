@@ -17,13 +17,15 @@ pnpm --filter @fluxpointstudios/orynq-mcp... build
 node packages/orynq-mcp/dist/index.js
 ```
 
-Midnight verification is prerelease. Its optional peer,
-`@fluxpointstudios/orynq-sdk-anchors-midnight`, remains private until the D-10 release
-gate opens and cannot be installed from npm. Use the source-checkout quick start above
-(`git clone https://github.com/Flux-Point-Studios/orynq-sdk.git`, then `cd orynq-sdk`).
-The workspace install links the peer; the filtered build includes its dependencies.
-An npm-only installation still starts, but the Midnight tool returns an error directing
-you to this source setup. The submit package also remains private.
+Midnight verification needs the optional peer `@fluxpointstudios/orynq-sdk-anchors-midnight`,
+installed beside this package (`npm install @fluxpointstudios/orynq-sdk-anchors-midnight`); the
+source-checkout quick start above links it. Without it the server still starts, and
+`verify_midnight_anchor` returns an error naming the package to install. The tool verifies
+against the registry generations that package pins (generation 1 on mainnet) and its
+KNOWN_AUTHORS document, which lists no author and no finality checkpoint yet. So an anchor's
+author reads `unknown` unless the `expectedAuthor` input names the key, and, since the tool
+takes no checkpoint, a mainnet anchor verifies at most to `unverified-finality` (see that
+package's README).
 
 ### Claude Desktop config
 

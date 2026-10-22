@@ -114,10 +114,12 @@ export interface FinalityRpc {
   headers(hashes: readonly string[]): Promise<RpcHeader[]>;
 }
 
-// Six weeks of Midnight's 30-minute GRANDPA sets: about 13 MB fetched in about 80 requests.
+// Six weeks of Midnight's 30-minute GRANDPA sets.
 export const DEFAULT_MAX_SET_CHANGES = 2016;
 const SET_LENGTH = 300;
-const BATCH = 64;
+// rpc.mainnet.midnight.network refuses a request body over 8 KiB: 64 chain_getHeader requests
+// in one batch take 8.5 KB, 32 take 4.3 KB.
+const BATCH = 32;
 
 export type FinalityResult = { setChanges: number; requests: number } & (
   | { finalized: true; justified: BlockRef; checkpoint: FinalityCheckpoint }

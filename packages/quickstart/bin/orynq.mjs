@@ -46,7 +46,7 @@ async function loadMidnight() {
     return await (existsSync(built) ? import(built.href) : import("../src/midnight.ts"));
   } catch (e) {
     if (e?.code === "ERR_MODULE_NOT_FOUND" && String(e.message).includes(`'${MIDNIGHT_PACKAGE}'`)) {
-      throw new Error(`the Midnight commands need ${MIDNIGHT_PACKAGE}, an optional peer dependency that is not installed. Midnight is not yet published on npm; use a built orynq-sdk source checkout (see the package README).`);
+      throw new Error(`the Midnight commands need ${MIDNIGHT_PACKAGE}, an optional peer dependency that is not installed; install it beside this package (npm install ${MIDNIGHT_PACKAGE}).`);
     }
     throw e;
   }

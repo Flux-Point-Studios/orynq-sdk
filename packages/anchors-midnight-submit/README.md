@@ -2,8 +2,8 @@
 
 Deploys the immutable `orynq-anchor-registry` on Midnight and writes anchors to it. The verify
 side, the contract and the journal live in `@fluxpointstudios/orynq-sdk-anchors-midnight`; this
-package holds everything that spends DUST or touches a key. It is private until the mainnet
-registry exists.
+package holds everything that spends DUST or touches a key. It is private: it is not published
+to npm.
 
 ## Pieces
 

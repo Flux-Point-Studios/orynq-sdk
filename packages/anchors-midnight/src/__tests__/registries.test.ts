@@ -13,9 +13,27 @@ export const registryInfo = (overrides: Partial<RegistryInfo> = {}): RegistryInf
 });
 
 describe("registry generations", () => {
-  it("lists mainnet and preprod, and no generation is deployed on either yet", () => {
+  // Read from mainnet through its public node: deploy transaction 1bb33baa… is extrinsic 4 of
+  // block 3113819 (29533eda…), whose header hashes to it and whose body matches its
+  // extrinsicsRoot; its final bytes pass assertRegistryDeployBytes, deploying exactly the
+  // immutable registry state at 438b1ea1…; the node holds no contract there in block 3113818
+  // and, in block 3113819, a state assertRegistryState accepts, whose two verifier keys equal
+  // the compiled ones.
+  it("pins generation 1 on mainnet, deployed in block 3113819 under runtime 1000300 with this contract's verifier keys, and none on preprod", () => {
     expect(Object.keys(MIDNIGHT_REGISTRIES).sort()).toEqual(["mainnet", "preprod"]);
-    expect(MIDNIGHT_REGISTRIES.mainnet).toEqual([]);
+    expect(MIDNIGHT_REGISTRIES.mainnet).toEqual([
+      {
+        generation: 1,
+        address: "438b1ea134e760e8b4e87409d663f36561f15341880c118dc41e4fc2b224c736",
+        deployTxHash: "1bb33baad6eff44f9f485fef1a83b7f2200f09174d286936081574a3221535e8",
+        deployHeight: 3113819,
+        runtimeSpecVersion: 1000300,
+        circuits: {
+          anchor: { vkSha256: "85dc57a4269dd3aceb82867ecc6c145ef5f679c6f51767f200250e7c075777c5" },
+          anchor_hiding: { vkSha256: "081384ce20f2a726e1dd79c0bbfbaabb0fe756ffa15ae429be4cee30b47e790f" },
+        },
+      },
+    ]);
     expect(MIDNIGHT_REGISTRIES.preprod).toEqual([]);
     for (const list of Object.values(MIDNIGHT_REGISTRIES)) expect(() => assertRegistryGenerations(list)).not.toThrow();
   });

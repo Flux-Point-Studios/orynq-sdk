@@ -1,8 +1,10 @@
 # @fluxpointstudios/orynq-sdk-anchors-midnight
 
 Orynq anchors on Midnight. This package holds the `orynq-anchor-registry` Compact contract, the
-exact state it is deployed with, and the checks that refuse any other deploy. It is private
-until the registry is deployed on mainnet.
+exact state it is deployed with, the checks that refuse any other deploy, and the verifier that
+checks an anchor against the registry generations it pins. Generation 1 is deployed on Midnight
+mainnet. This package is public (`npm install @fluxpointstudios/orynq-sdk-anchors-midnight`); the
+submitter, `@fluxpointstudios/orynq-sdk-anchors-midnight-submit`, is private.
 
 ## The registry contract
 
@@ -76,9 +78,19 @@ rules, and returns the public author key. `readUserKey(path)` refuses everything
 `readAuthorSecret` refuses, any other format, unknown fields, and equal keys. It refuses a bare
 author key file too, so a tool that anchors with a user's key never takes a service's key file.
 
-`MIDNIGHT_REGISTRIES` lists the deployed registry generations per network. None is deployed yet.
-Each entry pins its address, deploy transaction, the runtime whose extrinsic layout the decoder
-knows (spec 1000300), and this contract's verifier keys, which `assertRegistryGenerations` checks.
+## Registry generations
+
+`MIDNIGHT_REGISTRIES` lists the deployed registry generations per network. Each entry pins its
+address, deploy transaction and block height, the runtime whose extrinsic layout the decoder
+knows (spec 1000300), and this contract's verifier keys, which `assertRegistryGenerations`
+checks. The verifier accepts an anchor only in a pinned generation, and verifies that
+generation's pinned deploy the way it verifies the anchor.
+
+| Network | Generation | Address | Deploy transaction | Block |
+|---|---|---|---|---|
+| mainnet | 1 | `438b1ea134e760e8b4e87409d663f36561f15341880c118dc41e4fc2b224c736` | `1bb33baad6eff44f9f485fef1a83b7f2200f09174d286936081574a3221535e8` | 3113819 |
+
+No generation is pinned on preprod.
 
 ## Verifying an anchor
 
@@ -120,12 +132,60 @@ circuit binds the attribute to the commitment and never checks it against the tr
 re-verified locally: the npm ledger WASM cannot verify one, and inclusion in a final block is
 what shows consensus did.
 
+The `author` field says how the author key was judged. `known` and `outside-window` come from a
+signed KNOWN_AUTHORS document (below): the key is listed, and the block lies inside its window of
+block heights, or outside it (status `author-revoked`). `unknown` means no document this package
+ships or the caller passes lists the key, and the status is `unauthenticated`; that is all it
+says, since the anchor can still be final and well formed. `expected` means the caller pinned a
+key with `expectedAuthor`, whether or not it matched: the `author` check and the status say
+which, and an anchor by another key is `unauthenticated`, its `author.key` the key that wrote it.
+
 `verifyReport(result)` is the result as a terminal prints it and a model reads it: the finality
 checkpoint is dropped (its weights are bigints, which JSON cannot carry), a block hash that is not
 64 hex characters drops the block, and every check, note, operator and the transaction hash pass
 through `printable`, which turns control, format, private-use and unassigned characters and line
 separators into `?` and cuts text at 300 characters. A source's text can still say anything
 printable; the status and assurance are what to act on.
+
+## Verifying an anchor on mainnet
+
+Until a signed KNOWN_AUTHORS document ships (below), three things come from the caller:
+
+- A source. Midnight decommissioned its public mainnet indexer on 2026-10-09, so the indexer is
+  Blockfrost's (`sourceEndpoints("mainnet", { blockfrostProjectIdFile })`) or one you run
+  (`sourceEndpoints("mainnet", { indexer, node })`).
+- A GRANDPA checkpoint you trust, in `checkpoints`. None ships, and without one an anchor verifies
+  at most to `unverified-finality`, never `valid`. Finality and inclusion (below) says what a
+  checkpoint is; a finalized result returns a newer one to keep.
+- The author key, in `expectedAuthor`. No author is known, so without it every mainnet anchor is
+  `unauthenticated` with `author: { status: "unknown" }`. FPS's mainnet author key is
+  `6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08`. This README and the
+  package's tests name it, so pinning it trusts this package's publisher, as running its code does.
+
+```ts
+import { midnightSource, sourceEndpoints, verifyMidnightAnchor, type FinalityCheckpoint } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+
+declare const checkpoint: FinalityCheckpoint; // a GRANDPA set you trust
+const source = midnightSource(sourceEndpoints("mainnet", { blockfrostProjectIdFile: "/path/to/project-id" })!);
+const result = await verifyMidnightAnchor(
+  {
+    network: "mainnet",
+    txHash: "e273d480e57b3315937c8929fbc3c11ab798d42b4ff6c0b88172856dec6b7d58",
+    expect: { kind: 1, commitment: "c5027cecfc7c6dac5dcce026178ccaec51afe30735dc311635907b8e06b69a59" },
+    expectedAuthor: "6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08",
+  },
+  { source, checkpoints: [checkpoint] },
+);
+```
+
+FPS's first two mainnet anchors, both `valid` at `consensus-verified` with that key pinned:
+
+| Kind | Transaction | Block | Commitment |
+|---|---|---|---|
+| 1 | `e273d480e57b3315937c8929fbc3c11ab798d42b4ff6c0b88172856dec6b7d58` | 3113832 | `c5027cecfc7c6dac5dcce026178ccaec51afe30735dc311635907b8e06b69a59` |
+| 2 | `5cf70930503785a1a4524f458ec6986d9e1083ad04a2851946e911bb87338643` | 3113847 | `7d3e484c72ad02493526ba7bd885977264e02b57d8bc4645d4d67c18123476da` |
+
+The kind-2 anchor's attribute is `6087363539cf4a83f465b586740d385ffe9d87d3be00701a66f0ad0f2f50ae15`.
 
 ## Finding anchors
 
@@ -210,8 +270,8 @@ document cannot roll a revocation back, and a document that fails to verify is a
 No trust root and no document ship yet: the first trust-root key is generated, and the first
 document signed, by deci on a machine no model drives, with
 `node --import tsx scripts/known-authors.ts new-root-key SEED_FILE` and
-`... sign DOCUMENT_FILE SEED_FILE`. Until then every author is `unknown`, and no checkpoint is
-trusted.
+`... sign DOCUMENT_FILE SEED_FILE`. Until then every author is `unknown` and no checkpoint is
+trusted, unless the caller pins a key and passes a checkpoint (Verifying an anchor on mainnet).
 
 ## Finality and inclusion
 
@@ -237,11 +297,15 @@ that every set from it to the block had more than two thirds of its weight hones
 are Ed25519 (OpenSSL, RFC 8032 strict, which can refuse a ZIP-215 signature Substrate accepts
 but never accept one it refuses) and headers BLAKE2b-256.
 
-Cost: one batched request per 64 set changes for the proofs and one for the headers, about 6.7 KB
-per set change on mainnet, where a set lasts 300 blocks (30 minutes). The walk stops after
-`maxSetChanges` (default 2016, six weeks) and reports the block not finalized, so the cost never
-grows with the chain's age; a fresher checkpoint is the remedy. A finalized result returns the
-set that justified the block as a checkpoint the caller can keep.
+Cost: one batched request per 32 set changes for the proofs and one for the headers, where most
+sets last 300 blocks (30 minutes) on mainnet; after a set of another length the walk asks for
+that set's end on its own and fetches the rest of its batch again. A batch holds at most 32
+requests because rpc.mainnet.midnight.network refuses a JSON-RPC request body over 8 KiB, which
+64 header requests exceed. Through that node, the walk from set 9284 to set 10422 (1138 set
+changes) took 182 requests and returned about 141 MB, in 48 seconds on 2026-10-21. The walk
+stops after `maxSetChanges` (default 2016, six weeks) and reports the block not finalized, so
+the cost never grows with the chain's age; a fresher checkpoint is the remedy. A finalized
+result returns the set that justified the block as a checkpoint the caller can keep.
 
 Inclusion is a strict decode, never a byte search. `orderedTrieRoot` recomputes a block body's
 `extrinsicsRoot` (trie layout V1, which Midnight's state version 3 selects), and
@@ -299,6 +363,16 @@ headers and a state read proof, and recordings of the finality walk, the verifie
 run against Blockfrost, which the tests replay and which fail on any request that was not
 recorded. The registry transactions in `src/__tests__/fixtures/registry-transactions.json` were
 proven in-process with the committed keys by `scripts/registry-fixtures.ts`.
+
+`src/__tests__/fixtures/mainnet-anchors.json` is the verifier's run on FPS's two mainnet anchors
+against the pinned generation, with FPS's key pinned, and on the controls beside them: no key
+pinned, the wrong key, a commitment or attribute one bit off, a registry address that is not
+pinned, and another contract's call in the same block. `scripts/mainnet-anchors.mjs` recorded it
+through rpc.mainnet.midnight.network, a node, with no indexer: it reads each transaction's
+block, events and contract state from the node in the indexer's place, and its finality starts
+from set 10422, which its walk from `mainnet-finality.json`'s set 9284 returned. It exits 1
+unless every verdict is the expected one, and runs the same way from a directory that installed
+the packed package.
 
 `MIDNIGHT_PP=~/.cache/midnight/zk-params nice -n 19 pnpm test:slow` proves both circuits
 in-process (about a minute on one core) and scans the proven, bound bytes. The npm ledger WASM

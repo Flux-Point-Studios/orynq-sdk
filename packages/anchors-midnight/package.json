@@ -1,8 +1,7 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-anchors-midnight",
   "version": "0.1.0",
-  "private": true,
-  "description": "Orynq anchors on Midnight: the immutable orynq-anchor-registry contract, its exact deploy state and the checks that pin it",
+  "description": "Orynq anchors on Midnight: the immutable orynq-anchor-registry contract, its exact deploy state, the registry generations it is pinned to, and a verifier that checks an anchor from its own bytes to a GRANDPA-final block",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

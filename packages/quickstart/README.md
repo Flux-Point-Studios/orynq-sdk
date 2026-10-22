@@ -30,18 +30,12 @@ orynq anchor midnight --network mainnet --key ~/.orynq/midnight-key.json --bundl
 The Midnight commands need `@fluxpointstudios/orynq-sdk-anchors-midnight`, an optional peer
 dependency installed beside this package; without it they exit 1 naming it.
 
-Midnight support is prerelease: `@fluxpointstudios/orynq-sdk-anchors-midnight` and
-`@fluxpointstudios/orynq-sdk-anchors-midnight-submit` remain private and are not on npm.
-An npm install of this package does not enable the Midnight commands. Until the D-10
-release gate opens, run them from a built source checkout, where pnpm links the private peer:
-
-```bash
-git clone https://github.com/Flux-Point-Studios/orynq-sdk.git
-cd orynq-sdk
-pnpm install --frozen-lockfile
-pnpm --filter @fluxpointstudios/orynq-sdk-quickstart... build
-node packages/quickstart/bin/orynq.mjs verify midnight <txHash>
-```
+Install it with `npm install @fluxpointstudios/orynq-sdk-anchors-midnight`. It pins the
+mainnet registry generation the commands verify against, and its KNOWN_AUTHORS document lists
+no author and no finality checkpoint yet. So an anchor's author reads `unknown` unless
+`--author` names the key, and, since the commands take no checkpoint, a mainnet anchor verifies
+at most to `unverified-finality` (see that package's README).
+`@fluxpointstudios/orynq-sdk-anchors-midnight-submit` is private and not on npm.
 
 `orynq verify midnight` is read-only and needs no key and no DUST. It checks an anchor with
 `verifyMidnightAnchor` from `@fluxpointstudios/orynq-sdk-anchors-midnight` and prints its labels:

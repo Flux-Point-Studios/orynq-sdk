@@ -283,8 +283,8 @@ describe("verifyFinality's cost is bounded by maxSetChanges, not by chain age", 
     expect(r).toMatchObject({ finalized: false, reason: expect.stringMatching(/more than 2016 GRANDPA set changes past the nearest checkpoint/) });
     expect(r.setChanges).toBe(DEFAULT_MAX_SET_CHANGES + 1);
     expect(r.requests).toBe(chain.answering().requests);
-    expect(r.requests).toBeLessThanOrEqual(2 * Math.ceil((DEFAULT_MAX_SET_CHANGES + 1) / 64) + 3);
-    expect(chain.answering().items).toBeLessThanOrEqual(2 * (DEFAULT_MAX_SET_CHANGES + 1) + 2 * 64 + 1);
+    expect(r.requests).toBeLessThanOrEqual(2 * Math.ceil((DEFAULT_MAX_SET_CHANGES + 1) / 32) + 3);
+    expect(chain.answering().items).toBeLessThanOrEqual(2 * (DEFAULT_MAX_SET_CHANGES + 1) + 2 * 32 + 1);
     process.stdout.write(`\n365-day anchor: ${r.requests} requests, ${chain.answering().items} items, verifier ${verifierSeconds.toFixed(2)} s\n`);
     expect(verifierSeconds).toBeLessThan(10);
   }, 120_000);
@@ -295,7 +295,7 @@ describe("verifyFinality's cost is bounded by maxSetChanges, not by chain age", 
     const block = chain.block(chain.endOf(k - 1) + 5);
     const r = await verifyFinality({ rpc: chain.rpc, block, checkpoints: [chain.checkpoint(0), chain.checkpoint(k - SETS_PER_DAY)] });
     expect(r).toMatchObject({ finalized: true, setChanges: SETS_PER_DAY });
-    expect(r.requests).toBe(3 + 3);
+    expect(r.requests).toBe(3 + 5);
   }, 120_000);
 });
 
