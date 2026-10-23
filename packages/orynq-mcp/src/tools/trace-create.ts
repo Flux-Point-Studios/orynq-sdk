@@ -30,7 +30,7 @@ export function registerTraceCreate(
     {
       agentId: z.string().describe("Unique identifier of the agent initiating the trace"),
       description: z.string().optional().describe("Optional human-readable description of the trace purpose"),
-      metadata: z.record(z.unknown()).optional().describe("Optional key-value metadata to attach to the trace"),
+      metadata: z.record(z.string(), z.unknown()).optional().describe("Optional key-value metadata to attach to the trace"),
     },
     async ({ agentId, description, metadata }) => {
       return safeTool(async () => {
