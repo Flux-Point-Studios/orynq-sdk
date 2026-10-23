@@ -4,8 +4,7 @@ import { createSecretFile, readPrivateFile } from "./private-file.js";
 import { concatBytes, toHex } from "./scale.js";
 
 // The kinds the registry writes: anchor() refuses kind 2, which only anchor_hiding() writes.
-// A verifier rejects every other kind.
-export const ANCHOR_KIND = { ENTRY_PUBLIC: 1, ENTRY_HIDDEN: 2 } as const;
+export const ANCHOR_KIND = { ENTRY_PUBLIC: 1, ENTRY_HIDDEN: 2, BATCH_SET: 3 } as const;
 export type AnchorKind = (typeof ANCHOR_KIND)[keyof typeof ANCHOR_KIND];
 
 export type Hash32 = Uint8Array | string;
@@ -38,6 +37,15 @@ const entryWords = (entry: EntryHashes) =>
 // Kind 1: the public commitment, entry_digest(root, manifest, merkle or 32 zero bytes).
 export function entryCommitment(entry: EntryHashes): Uint8Array {
   return pureCircuits.entry_digest(...entryWords(entry));
+}
+
+export function batchSetCommitment({ materiosGenesis, anchorIds }: { materiosGenesis: Hash32; anchorIds: readonly Hash32[] }): Uint8Array {
+  if (anchorIds.length < 1 || anchorIds.length > 1024) throw new Error("Batch set must contain 1..1024 anchor ids");
+  const ids = anchorIds.map((id) => hash32(id, "anchorId"));
+  const names = ids.map(toHex);
+  for (let i = 1; i < names.length; i++) if (names[i - 1]! >= names[i]!) throw new Error("Batch anchor ids must be unique and strictly ascending");
+  const tag = new Uint8Array(32); tag.set(new TextEncoder().encode("orynq:anchor-batches:v1"));
+  return sha256(concatBytes(tag, hash32(materiosGenesis, "materiosGenesis"), ...ids));
 }
 
 // Kind 2: anchor_hiding() publishes hidingCommitment(hiddenDigest(entry, attribute), salt) and

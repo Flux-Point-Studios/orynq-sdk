@@ -2,7 +2,7 @@ import * as L from "@midnight-ntwrk/ledger-v8";
 import { decodeAnchorTransaction, type AnchorCall, type AnchorTransaction } from "./anchor-transaction.js";
 import { entryCommitment, hash32, hiddenDigest, hidingCommitment, type EntryHashes, type Hash32 } from "./commitment.js";
 import { verifyFinality, type BlockRef, type FinalityCheckpoint, type FinalityResult } from "./grandpa.js";
-import { knownAuthors as shippedKnownAuthors, type AuthorStatus, type KnownAuthors } from "./known-authors.js";
+import { knownAuthors as shippedKnownAuthors, authorStatusAt, type AuthorStatus, type KnownAuthors } from "./known-authors.js";
 import { KNOWN_RUNTIME_SPEC_VERSIONS, MIDNIGHT_REGISTRIES, assertRegistryGenerations, type MidnightNetwork, type RegistryInfo } from "./registries.js";
 import { assertRegistryDeployBytes, assertRegistryState } from "./registry.js";
 import { fromHex, toHex } from "./scale.js";
@@ -28,6 +28,7 @@ export type Assurance = "consensus-verified" | "multi-path" | "single-path" | "n
 export type Expectation =
   | { kind: 1; entry: EntryHashes }
   | { kind: 1; commitment: Hash32 }
+  | { kind: 3; commitment: Hash32 }
   | { kind: 2; attribute: Hash32; opening?: EntryHashes & { salt: Hash32 } }
   | { kind: "any" };
 
@@ -217,9 +218,9 @@ const stateCheck = (checks: Checks, name: string, stateHex: string | undefined, 
 // The fields a commitment binds that match the request, or why the request does not match.
 function expectation(expect: Expectation, anchor: AnchorCall): { fields: string[] } | { error: string } {
   if (expect.kind === "any") return { fields: [] };
-  if (!("kind" in expect) || (expect.kind !== 1 && expect.kind !== 2)) return { error: `kind ${String((expect as { kind: unknown }).kind)} is not one the registry writes` };
+  if (!("kind" in expect) || (expect.kind !== 1 && expect.kind !== 2 && expect.kind !== 3)) return { error: `kind ${String((expect as { kind: unknown }).kind)} is not one the SDK recognizes` };
   if (anchor.kind !== expect.kind) return { error: `the anchor is kind ${anchor.kind}, not kind ${expect.kind}` };
-  if (expect.kind === 1) {
+  if (expect.kind === 1 || expect.kind === 3) {
     if ("entry" in expect) {
       const want = toHex(entryCommitment(expect.entry));
       return want === anchor.commitment ? { fields: ["rootHash", "manifestHash", "merkleRoot"] } : { error: `the anchor commits to ${anchor.commitment}, not to the entry (${want})` };
@@ -293,6 +294,7 @@ export async function verifyMidnightAnchor(request: VerifyRequest, options: Veri
     if (decoded.touches.length) throw new Error(`transaction ${txHash} also carries a ${decoded.touches[0]!.action === "deploy" ? "deploy" : "maintenance update"} aimed at registry ${decoded.touches[0]!.address}`);
     if (decoded.calls.length !== 1) throw new Error(decoded.calls.length === 0 ? `transaction ${txHash} writes no anchor to a registry generation` : `transaction ${txHash} writes ${decoded.calls.length} anchors`);
     anchor = decoded.calls[0]!;
+    if (![1, 2, 3].includes(anchor.kind)) throw new Error(`anchor kind ${anchor.kind} is not one the SDK recognizes`);
     checks.pass("anchor", `${anchor.entryPoint}() wrote kind ${anchor.kind} to registry ${anchor.address}`);
   } catch (error) {
     checks.fail("anchor", "invalid", message(error));
@@ -349,11 +351,17 @@ export async function verifyMidnightAnchor(request: VerifyRequest, options: Veri
       checks.fail("author", "invalid", `written by ${anchor.author}, not the expected ${expected}`);
     }
   } else {
-    const status = authors.author(request.network, anchor.author, indexed.block.height);
+    const status = authorStatusAt(authors, request.network, anchor.author, indexed.block.height);
     result.author = { ...status, key: anchor.author };
     if (status.status === "known") checks.pass("author", `${status.id} (${status.role}) within its window`);
     else if (status.status === "outside-window") checks.fail("author", "author-revoked", `${status.id}'s window is ${status.validFrom} to ${status.validTo ?? "open"}; block ${indexed.block.height} lies outside it`);
     else checks.fail("author", "unauthenticated", `KNOWN_AUTHORS serial ${authors.serial} does not list ${anchor.author}`);
+  }
+  if (anchor.kind === 3) {
+    const status = authorStatusAt(authors, request.network, anchor.author, indexed.block.height);
+    if (status.status === "outside-window") checks.fail("batch-author", "author-revoked", "the batch author's window excludes this block");
+    else if (status.status !== "known" || status.role !== "batch") checks.fail("batch-author", "unauthenticated", "kind 3 requires a known author with role batch at this block");
+    else checks.pass("batch-author", "a known batch author within its window wrote the set");
   }
   return done();
 }

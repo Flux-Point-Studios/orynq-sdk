@@ -3,6 +3,7 @@ import type { FinalityCheckpoint } from "./grandpa.js";
 import type { MidnightNetwork } from "./registries.js";
 import { fromHex, toHex } from "./scale.js";
 import shipped from "../known-authors.json" with { type: "json" };
+import { auditCheckpoints } from "./checkpoints.js";
 
 // The authors a verifier recognizes, and the GRANDPA checkpoints it trusts, as a JSON document
 // signed by an offline trust-root key. A revocation is a later document (a higher serial) that
@@ -10,7 +11,7 @@ import shipped from "../known-authors.json" with { type: "json" };
 export const KNOWN_AUTHORS_FORMAT = "orynq-known-authors/v1";
 const SIGNING_DOMAIN = `${KNOWN_AUTHORS_FORMAT}\n`;
 const NETWORKS: readonly MidnightNetwork[] = ["mainnet", "preprod"];
-const ROLES = ["relay"] as const;
+const ROLES = ["relay", "batch"] as const;
 
 export interface KnownAuthor {
   key: string;
@@ -57,6 +58,11 @@ export interface KnownAuthors {
   authors(network: MidnightNetwork): readonly KnownAuthor[];
   checkpoints(network: MidnightNetwork): FinalityCheckpoint[];
   author(network: MidnightNetwork, key: string, height: number): AuthorStatus;
+}
+
+export function authorStatusAt(document: KnownAuthors, network: MidnightNetwork, key: string, height: number): AuthorStatus {
+  if (!Number.isSafeInteger(height) || height < 0) throw new Error("Author lookup requires a block height");
+  return document.author(network, key, height);
 }
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -170,14 +176,14 @@ export function openKnownAuthors(signed: SignedKnownAuthors, trustRoots: readonl
 // that fails is an error rather than something to skip, and an older serial never wins.
 export function knownAuthors({ documents = [], trustRoots = KNOWN_AUTHORS_TRUST_ROOTS }: { documents?: readonly SignedKnownAuthors[]; trustRoots?: readonly string[] } = {}): KnownAuthors {
   const all = [...SHIPPED_KNOWN_AUTHORS, ...documents];
-  const bySerial = new Map<number, string>();
-  let newest: KnownAuthors = view(0, new Map());
+  const bySerial = new Map<number, { document: string; opened: KnownAuthors }>();
   for (const signed of all) {
     const opened = openKnownAuthors(signed, trustRoots);
     const seen = bySerial.get(opened.serial);
-    if (seen !== undefined && seen !== signed.document) throw new Error(`two different documents carry serial ${opened.serial}`);
-    bySerial.set(opened.serial, signed.document);
-    if (opened.serial > newest.serial) newest = opened;
+    if (seen !== undefined && seen.document !== signed.document) throw new Error(`two different documents carry serial ${opened.serial}`);
+    bySerial.set(opened.serial, { document: signed.document, opened });
   }
-  return newest;
+  const ordered = [...bySerial.values()].map((entry) => entry.opened).sort((a, b) => a.serial - b.serial);
+  for (let i = 1; i < ordered.length; i++) for (const network of NETWORKS) auditCheckpoints(ordered[i - 1]!.checkpoints(network), ordered[i]!.checkpoints(network));
+  return ordered.at(-1) ?? view(0, new Map());
 }
