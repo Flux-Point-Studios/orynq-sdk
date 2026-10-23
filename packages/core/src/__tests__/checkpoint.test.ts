@@ -109,6 +109,15 @@ describe("deterministic census batches and compact member snapshots", () => {
     }
   });
 
+  it("preserves prefixed live certificate domains in compact snapshots", () => {
+    const batch = censusBatch({ genesis: fixture.genesis, finalizedHeight: 1, receipts: records });
+    const prefixed = structuredClone(batch);
+    for (const member of prefixed.receipts) {
+      if (member.certFormat.chainId !== null) member.certFormat.chainId = `0x${member.certFormat.chainId}`;
+    }
+    expect(parseMemberSnapshot(memberSnapshot(prefixed)).anchorId).toBe(batch.anchorId);
+  });
+
   it("fits 4096 members in the byte budget and preserves every recomputed leaf", () => {
     const receipt = fixture.receipts.find((r: { format: string }) => r.format === "scale-v1");
     const tuples = Array.from({ length: 4096 }, (_, i) => [hash(Buffer.from(String(i))), receipt.contentHash, receipt.baseRootSha256, receipt.storageLocatorHash, 0]);
