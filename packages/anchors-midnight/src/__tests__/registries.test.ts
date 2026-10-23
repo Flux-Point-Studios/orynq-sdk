@@ -27,6 +27,7 @@ describe("registry generations", () => {
         address: "438b1ea134e760e8b4e87409d663f36561f15341880c118dc41e4fc2b224c736",
         deployTxHash: "1bb33baad6eff44f9f485fef1a83b7f2200f09174d286936081574a3221535e8",
         deployHeight: 3113819,
+        deployBlockHash: "29533edab5c2ac5777cbdf5c4d0a8b467666a308142c9e2418f13d5b2f06f27b",
         runtimeSpecVersion: 1000300,
         circuits: {
           anchor: { vkSha256: "85dc57a4269dd3aceb82867ecc6c145ef5f679c6f51767f200250e7c075777c5" },
@@ -51,6 +52,7 @@ describe("registry generations", () => {
 
   it("refuses malformed addresses and hashes, repeated addresses and generations out of order", () => {
     expect(() => assertRegistryGenerations([registryInfo({ address: "AB".repeat(32) })])).toThrow(/generation 1: address must be 64 lowercase hex/);
+    expect(() => assertRegistryGenerations([registryInfo({ deployBlockHash: "00" })])).toThrow(/deployBlockHash/);
     expect(() => assertRegistryGenerations([registryInfo({ deployTxHash: "cd".repeat(31) })])).toThrow(/generation 1: deployTxHash must be 64 lowercase hex/);
     expect(() => assertRegistryGenerations([registryInfo(), registryInfo({ generation: 2 })])).toThrow(/generation 2 repeats address/);
     expect(() => assertRegistryGenerations([registryInfo({ generation: 2 }), registryInfo({ generation: 1, address: "ef".repeat(32) })])).toThrow(

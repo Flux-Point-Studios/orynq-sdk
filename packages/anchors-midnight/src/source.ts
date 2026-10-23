@@ -3,6 +3,7 @@ import type { MidnightNetwork } from "./registries.js";
 import { readPrivateFile } from "./private-file.js";
 import { fromHex } from "./scale.js";
 import type { RpcHeader } from "./substrate.js";
+import type { ExecutionRequest } from "./execution.js";
 
 // Where a source reads from: a Midnight indexer's GraphQL endpoint and a Midnight node's
 // JSON-RPC endpoint, with the request headers that authenticate to them.
@@ -33,6 +34,8 @@ export interface IndexedAction {
 
 export interface MidnightSource {
   operator: string;
+  network?: MidnightNetwork;
+  verifyExecution?(request: ExecutionRequest): Promise<{ runtimeSpecVersion: number; timestamp: number }>;
   indexer: {
     transactions(hash: string): Promise<IndexedTransaction[]>;
     head(): Promise<{ height: number; hash: string; timestamp: number }>;
@@ -48,6 +51,9 @@ export interface MidnightSource {
     batch<T = unknown>(calls: Array<[method: string, params: unknown[]]>): Promise<T[]>;
   };
 }
+
+// The source answered with data contradicting a caller hint or authenticated chain data.
+export class SourceConflict extends Error {}
 
 // A node's JSON-RPC error answer to `method`, with the answer's error code.
 export class NodeError extends Error {
@@ -291,7 +297,7 @@ function subscribe(endpoints: SourceEndpoints, redact: (s: string) => string, ad
 // behind the ledger's zswap root in the same block: a batch is refused at its first failed
 // request, so -32602 on the contract read means the node read that ledger and found no contract.
 // Any MidnightSource's node may raise that error, so it is recognized by its method and code.
-export async function contractStateOnNode(source: MidnightSource, address: string, at?: string): Promise<string | null> {
+export async function contractStateOnNode(source: Pick<MidnightSource, "node" | "operator">, address: string, at?: string): Promise<string | null> {
   const block = at === undefined ? [] : [`0x${at}`];
   try {
     const [, state] = await source.node.batch<unknown>([

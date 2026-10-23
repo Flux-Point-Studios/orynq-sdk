@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { censusBatch, decodeReceiptRecord, merklePath } from "@fluxpointstudios/orynq-sdk-core/checkpoint";
 import { authorKey, batchSetCommitment } from "../commitment.js";
 import { authorStatusAt } from "../known-authors.js";
 import { auditCheckpoints, checkpointId } from "../checkpoints.js";
-import { verifyBatchProof, verifyBatchSet } from "../batch-proof.js";
+import { BatchSetCache, verifyBatchProof, verifyBatchSet } from "../batch-proof.js";
 import { verifyMidnightAnchor } from "../verify.js";
 import { registryInitialState } from "../registry.js";
 import { toHex } from "../scale.js";
@@ -96,6 +96,53 @@ describe("portable receipt-to-Midnight proofs", () => {
     const set = await verifyBatchSet({ network: "mainnet", materiosGenesis: genesis, ...bundle.set, midnight: bundle.midnight }, options());
     expect(set).toMatchObject({ status: "valid", facts: { authorKey: key, blockHeight: 2023, blockHash: bundle.midnight.blockHash, knownAuthorsSerial: 1 } });
     expect(set.facts?.checkpointId).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("reuses a verified set while rechecking current authors and trust policy", async () => {
+    const cache = new BatchSetCache(2);
+    const opts = { ...options(), setCache: cache };
+    const calls = vi.spyOn(chain.source.node, "call");
+    try {
+      const first = await verifyBatchProof(request(), opts);
+      expect(first.status).toBe("valid");
+      const count = calls.mock.calls.length;
+      expect(count).toBeGreaterThan(0);
+      if (first.anchor) first.anchor.status = "invalid";
+      const second = await verifyBatchProof(request(), opts);
+      expect(second.status).toBe("valid");
+      expect(second.anchor?.status).toBe("valid");
+      expect(calls.mock.calls.length).toBe(count);
+      const revoked = { ...opts, knownAuthors: chain.authors([{ key, role: "batch", validTo: 2022 }]) };
+      expect((await verifyBatchProof(request(), revoked)).status).toBe("author-revoked");
+      expect(calls.mock.calls.length).toBe(count);
+      expect((await verifyBatchProof(request(), { ...opts, finality: "skip" })).status).toBe("unverified-finality");
+      expect(calls.mock.calls.length).toBeGreaterThan(count);
+    } finally { calls.mockRestore(); }
+  });
+
+  it("invalidates cached success when the same source changes network or execution policy", async () => {
+    const cache = new BatchSetCache();
+    const opts = { ...options(), setCache: cache };
+    expect((await verifyBatchProof(request(), opts)).status).toBe("valid");
+    chain.source.network = "preprod";
+    try { expect((await verifyBatchProof(request(), opts)).status).toBe("invalid"); }
+    finally { delete chain.source.network; }
+    chain.source.verifyExecution = async () => { throw new Error("New source execution policy cannot authenticate this anchor"); };
+    try { expect((await verifyBatchProof(request(), opts)).status).not.toBe("valid"); }
+    finally { delete chain.source.verifyExecution; }
+  });
+
+  it("does not alias invalid numeric finality budgets to the default cache policy", async () => {
+    const setCache = new BatchSetCache();
+    const opts = { ...options(), setCache };
+    expect((await verifyBatchProof(request(), opts)).status).toBe("valid");
+    for (const maxSetChanges of [NaN, Infinity, -1, 1.5]) {
+      expect((await verifyBatchProof(request(), { ...opts, maxSetChanges })).status).toBe("invalid");
+    }
+  });
+
+  it("bounds verified-set cache capacity", () => {
+    for (const capacity of [0, -1, 1.5, 4097]) expect(() => new BatchSetCache(capacity)).toThrow();
   });
 
   it("does not allow a relay, unknown author or expected-author pin to bypass the batch role", async () => {
