@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -132,6 +132,31 @@ describe("checkLayouts against a registry", () => {
   afterAll(() => server.close());
 
   const options = () => ({ registry: url, singletons: ["@midnight-ntwrk/ledger-v8"], visibility: { attempts: 3, delayMs: 10 } });
+
+  it.each(["ECONNRESET", "UND_ERR_SOCKET"])("retries a transient %s registry read within the visibility budget", async (code) => {
+    const original = globalThis.fetch;
+    const failure = new TypeError("fetch failed", { cause: { code } });
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(original).mockRejectedValueOnce(failure);
+    try {
+      expect((await checkLayouts(["@f/good@1.0.0"], options())).problems).toEqual([]);
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("rethrows the final transient failure and never retries a configuration error", async () => {
+    for (const [code, attempts] of [["ECONNRESET", 3], ["ERR_INVALID_URL", 1]] as const) {
+      const failure = new TypeError("fetch failed", { cause: { code } });
+      const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(failure);
+      try {
+        await expect(checkLayouts(["@f/good@1.0.0"], options())).rejects.toBe(failure);
+        expect(fetch).toHaveBeenCalledTimes(attempts);
+      } finally {
+        fetch.mockRestore();
+      }
+    }
+  });
 
   it("passes a package that installs, imports and resolves one copy of each singleton", async () => {
     expect(await checkLayouts(["@f/good@1.0.0"], options())).toEqual({
