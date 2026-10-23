@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-anchors-midnight",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Orynq anchors on Midnight: the immutable orynq-anchor-registry contract, its exact deploy state, the registry generations it is pinned to, and a verifier that checks an anchor from its own bytes to a GRANDPA-final block",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,7 +24,8 @@
     "contract/managed/contract",
     "contract/managed/keys",
     "contract/managed/zkir/anchor.bzkir",
-    "contract/managed/zkir/anchor_hiding.bzkir"
+    "contract/managed/zkir/anchor_hiding.bzkir",
+    "BATCH-PROOFS.md"
   ],
   "scripts": {
     "build": "tsup",
@@ -38,7 +39,8 @@
     "@midnight-ntwrk/compact-runtime": "0.16.0",
     "@midnight-ntwrk/ledger-v8": "8.1.3",
     "@midnight-ntwrk/onchain-runtime-v3": "3.1.2",
-    "@noble/hashes": "^2.4.0"
+    "@noble/hashes": "^2.4.0",
+    "@fluxpointstudios/orynq-sdk-core": "workspace:^"
   },
   "devDependencies": {
     "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*",

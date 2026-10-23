@@ -28,8 +28,8 @@ describe("commitments are the compiled pure circuits, which are plain SHA-256", 
   const attribute = random32();
   const salt = random32();
 
-  it("ANCHOR_KIND names exactly the two kinds the registry writes", () => {
-    expect(ANCHOR_KIND).toEqual({ ENTRY_PUBLIC: 1, ENTRY_HIDDEN: 2 });
+  it("ANCHOR_KIND names public entries, hidden entries and batch sets", () => {
+    expect(ANCHOR_KIND).toEqual({ ENTRY_PUBLIC: 1, ENTRY_HIDDEN: 2, BATCH_SET: 3 });
   });
 
   it("entryCommitment is entry_digest over the entry's hashes, written as sha256:-prefixed or bare hex", () => {

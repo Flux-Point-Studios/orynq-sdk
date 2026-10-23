@@ -149,6 +149,9 @@ importers:
 
   packages/anchors-midnight:
     dependencies:
+      '@fluxpointstudios/orynq-sdk-core':
+        specifier: workspace:^
+        version: link:../core
       '@midnight-ntwrk/compact-runtime':
         specifier: 0.16.0
         version: 0.16.0
