@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline";
 import { REGISTRY_CIRCUITS, hash32, type EntryHashes, type MidnightNetwork, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { batchAnchorCommitment, type BatchAnchorData } from "./batch-plan.js";
 import { agentDriven } from "./custody.js";
 import type { PreparedDeploy } from "./deployer.js";
 import type { PreparedAnchor } from "./operator.js";
@@ -87,24 +88,33 @@ export function deploySummary({ prepared, ...facts }: SummaryOf<PreparedDeploy>)
   ]);
 }
 
-const KIND = { 1: "1: anchor(), a public commitment to the entry", 2: "2: anchor_hiding(), a hiding commitment the attribute is bound to" } as const;
+const KIND = { 1: "1: anchor(), a public commitment to the entry", 2: "2: anchor_hiding(), a hiding commitment the attribute is bound to", 3: "3: anchor(), a public commitment to receipt batches" } as const;
 
 // What the human confirms of an anchor: its plan label, what it writes to which registry, under
 // which author key, and its transaction. A kind-2 anchor shows the attribute it publishes; nothing
 // that opens its commitment is shown.
-export function anchorSummary({ prepared, label, entry, ...facts }: SummaryOf<PreparedAnchor> & { label: string; entry: EntryHashes }): string {
+export function anchorSummary({ prepared, label, entry, batch, ...facts }: SummaryOf<PreparedAnchor> & { label: string; entry?: EntryHashes; batch?: BatchAnchorData }): string {
+  let rows: string[];
+  if (prepared.kind === 3) {
+    if (!batch) throw new Error("A kind-3 summary requires its batch members");
+    const commitment = Buffer.from(batchAnchorCommitment(batch)).toString("hex");
+    if (commitment !== prepared.commitment || label !== commitment || prepared.attribute !== "00".repeat(32)) throw new Error("The summary does not describe the prepared batch anchor");
+    rows = [`members          ${batch.batches.length}`, `materios genesis ${batch.materiosGenesis}`];
+  } else if (prepared.kind === 2) rows = [`attribute        ${prepared.attribute}`];
+  else {
+    if (!entry) throw new Error("A kind-1 summary requires its entry");
+    rows = [
+      `root hash        ${Buffer.from(hash32(entry.rootHash, "rootHash")).toString("hex")}`,
+      `manifest hash    ${Buffer.from(hash32(entry.manifestHash, "manifestHash")).toString("hex")}`,
+      `merkle root      ${Buffer.from(entry.merkleRoot === undefined ? new Uint8Array(32) : hash32(entry.merkleRoot, "merkleRoot")).toString("hex")}`,
+    ];
+  }
   return bytesSummary({ ...facts, prepared, noun: "anchor" }, [
     `label            ${label}`,
     `kind             ${KIND[prepared.kind]}`,
     `registry         ${prepared.registry}`,
     `commitment       ${prepared.commitment}`,
-    ...(prepared.kind === 2
-      ? [`attribute        ${prepared.attribute}`]
-      : [
-          `root hash        ${Buffer.from(hash32(entry.rootHash, "rootHash")).toString("hex")}`,
-          `manifest hash    ${Buffer.from(hash32(entry.manifestHash, "manifestHash")).toString("hex")}`,
-          `merkle root      ${Buffer.from(entry.merkleRoot === undefined ? new Uint8Array(32) : hash32(entry.merkleRoot, "merkleRoot")).toString("hex")}`,
-        ]),
+    ...rows,
     `author key       ${prepared.author}`,
     `anchor tx hash   ${prepared.txHash}`,
   ]);

@@ -19,11 +19,13 @@ const mainnet = await vi.hoisted(async () => {
   const dir = mkdtempSync(join(tmpdir(), "orynq-mainnet-stand-in-"));
   const authorKeyFile = join(dir, "author-relay.key");
   const saltKeyFile = join(dir, "salt.key");
-  return { dir, authorKeyFile, saltKeyFile, authorKey: createAuthorKeyFile(authorKeyFile), saltKeyId: createSaltKeyFile(saltKeyFile) };
+  const retiredKeyFile = join(dir, "retired.key");
+  return { dir, authorKeyFile, saltKeyFile, retiredKeyFile, retiredKey: createAuthorKeyFile(retiredKeyFile), authorKey: createAuthorKeyFile(authorKeyFile), saltKeyId: createSaltKeyFile(saltKeyFile) };
 });
 vi.mock("../src/custody.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/custody.js")>()),
   MAINNET_AUTHOR_KEYS: [mainnet.authorKey],
+  RETIRED_AUTHOR_KEYS: [mainnet.retiredKey],
   MAINNET_SALT_KEY_IDS: [mainnet.saltKeyId],
 }));
 
@@ -62,6 +64,12 @@ const withoutAgents = <T>(fn: () => T): T =>
     for (const name of Object.keys(process.env)) if (name === "CLAUDECODE" || name.startsWith("CLAUDE_CODE_") || name.startsWith("CODEX_")) delete process.env[name];
     return fn();
   });
+
+it("refuses retired author identities for both writer roles before opening a journal", () => {
+  for (const authorRole of ["relay", "batch"] as const) {
+    expect(() => operator({ authorKeyFile: mainnet.retiredKeyFile, authorRole })).toThrow(/retired author key/);
+  }
+});
 
 describe("off mainnet, the FPS mainnet keys are refused by what they are, wherever the file lives", () => {
   it("an operator refuses a copy of the mainnet author key, and loads any other key from the same place", () => {

@@ -109,6 +109,7 @@ const pin = process.argv.indexOf("--plan-sha256");
 const plan = readAnchorPlan(process.argv[process.argv.indexOf("--plan") + 1]!, pin < 0 ? undefined : process.argv[pin + 1]);
 let n = 0;
 for (const planned of plan.entries) {
+  if (planned.kind === 3) throw new Error("The legacy fake tool requires relay plans");
   const change = fake.anchors?.[planned.label] ?? {};
   const entry = change.rootHash ? { ...planned.entry, rootHash: change.rootHash } : planned.entry;
   const prepared: PreparedAnchor = {

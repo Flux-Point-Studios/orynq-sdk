@@ -255,3 +255,7 @@ also runs the runner's suite (`runner/test`), which drives these scripts over th
 verifies every anchor from a separate process with the packed verify package, and writes an
 evidence pack only for what its gate establishes. Its offline tests run with `pnpm test`; the
 runbook is `rehearsal/README.md`.
+
+Batch plans use kind3 with `materiosGenesis` and1–1,024 strictly ascending `batches`, each containing `anchorId`, `rootHash` and `manifestHash`. Every member ID must derive from its root and manifest; the plan label must equal the batch-set commitment. A homogeneous kind3 mainnet plan selects the batch role and does not load a salt key. Plans mixing batch and relay entries are refused before wallet synchronization.
+
+`registryOperator({authorRole: "batch", ...})` prepares/submits kind3 through the existing write-ahead journal and exact-byte checks. The default relay role permits kinds1/2. Mainnet batch public-key pins are initially empty, so this writer cannot send a batch there until a reviewed key is pinned. Retired author identities cannot write on any network. Existing agent and secret-path gates remain in force. Legacy per-intent runner approvals refuse batch plans; standing admission is a separate integration.

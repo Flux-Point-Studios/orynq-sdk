@@ -13,6 +13,9 @@ export const agentDriven = (env: NodeJS.ProcessEnv = process.env) =>
 // key and the kind-2 salt key's id. Off mainnet an operator refuses a key file holding one of
 // them wherever it lives, so a copy or a hard link is refused like the original.
 export const MAINNET_AUTHOR_KEYS: readonly string[] = ["6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08"];
+// No mainnet batch author is authorized until its public key is reviewed and pinned.
+export const MAINNET_BATCH_AUTHOR_KEYS: readonly string[] = [];
+export const RETIRED_AUTHOR_KEYS: readonly string[] = ["6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08"];
 export const MAINNET_SALT_KEY_IDS: readonly string[] = ["448a1b1a6a289af3e432a9533af92250b92f8b7c91768f60b87a9de90df2ee41"];
 
 // Refuses, off mainnet, a file inside ~/.secrets/orynq-midnight-mainnet, where the FPS mainnet

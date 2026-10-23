@@ -56,14 +56,17 @@ export function deployIntent(payer: string, maxFeeDust: string): DeployIntent {
 // The plan's entries as an intent lists them: each hash as the plan writes it, a missing Merkle
 // root as 32 zero bytes.
 export const intentEntries = (plan: AnchorPlan): IntentEntry[] =>
-  plan.entries.map((e) => ({
-    label: e.label,
-    kind: e.kind,
-    rootHash: String(e.entry.rootHash),
-    manifestHash: String(e.entry.manifestHash),
-    merkleRoot: e.entry.merkleRoot === undefined ? "00".repeat(32) : String(e.entry.merkleRoot),
-    ...(e.kind === 2 ? { attribute: String(e.attribute) } : {}),
-  }));
+  plan.entries.map((e) => {
+    if (e.kind === 3) throw new Error("Batch plans require a standing intent, not a legacy per-intent approval");
+    return {
+      label: e.label,
+      kind: e.kind,
+      rootHash: String(e.entry.rootHash),
+      manifestHash: String(e.entry.manifestHash),
+      merkleRoot: e.entry.merkleRoot === undefined ? "00".repeat(32) : String(e.entry.merkleRoot),
+      ...(e.kind === 2 ? { attribute: String(e.attribute) } : {}),
+    };
+  });
 
 // The instant an ISO 8601 time names, or NaN unless it ends in Z or a ±hh:mm offset: Date.parse
 // reads a time without one in the process's time zone, so the instant would move with TZ.
