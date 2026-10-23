@@ -9,6 +9,7 @@ import {
 
 const fixture = JSON.parse(readFileSync(new URL("./fixtures/checkpoint-receipts.json", import.meta.url), "utf8"));
 const corpus = JSON.parse(readFileSync(new URL("./fixtures/checkpoint-corpus.json", import.meta.url), "utf8"));
+const manifestDel = JSON.parse(readFileSync(new URL("./fixtures/checkpoint-manifest-del.json", import.meta.url), "utf8"));
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const bare = (value: string) => value.replace(/^0x/, "");
 const hex = (byte: number) => byte.toString(16).padStart(2, "0").repeat(32);
@@ -104,9 +105,18 @@ describe("deterministic census batches and compact member snapshots", () => {
   });
 
   it("matches Python manifest hashing across counts, heights and insertion orders", () => {
-    for (const { manifest, hash } of corpus.manifests) {
+    for (const { manifest, hash } of [...corpus.manifests, manifestDel]) {
       expect(bare(manifestHash(Object.fromEntries(Object.entries(manifest).reverse()) as Parameters<typeof manifestHash>[0]))).toBe(hash);
     }
+  });
+
+  it("preserves prefixed live certificate domains in compact snapshots", () => {
+    const batch = censusBatch({ genesis: fixture.genesis, finalizedHeight: 1, receipts: records });
+    const prefixed = structuredClone(batch);
+    for (const member of prefixed.receipts) {
+      if (member.certFormat.chainId !== null) member.certFormat.chainId = `0x${member.certFormat.chainId}`;
+    }
+    expect(parseMemberSnapshot(memberSnapshot(prefixed)).anchorId).toBe(batch.anchorId);
   });
 
   it("fits 4096 members in the byte budget and preserves every recomputed leaf", () => {

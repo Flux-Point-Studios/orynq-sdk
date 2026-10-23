@@ -198,7 +198,7 @@ export function anchorId(rootHash: string, manifestHash: string): string { retur
 export function manifestHash(manifest: CheckpointBatch["manifest"]): string {
   // The daemon hashes Python json.dumps(sort_keys=True), including its separators.
   const json = `{${Object.keys(manifest).sort().map((key) => `${JSON.stringify(key)}: ${JSON.stringify(manifest[key as keyof typeof manifest])}`).join(", ")}}`;
-  return digest(encoder.encode(json.replace(/[\u0080-\uffff]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`)));
+  return digest(encoder.encode(json.replace(/[\u007f-\uffff]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`)));
 }
 
 function batchFromMembers(genesis: string, finalizedHeight: number, receipts: CheckpointMember[]): CheckpointBatch {
@@ -229,7 +229,11 @@ export function censusBatch(input: { genesis: string; finalizedHeight: number; r
 }
 
 export function memberSnapshot(batch: CheckpointBatch): string {
-  const receipts = batch.receipts.map((r) => [r.receiptId, r.contentHash, r.baseRootSha256, r.storageLocatorHash, r.certFormat.format === "scale-v1" ? 0 : r.certFormat.chainId === LIVE_GENESIS ? 1 : 2]);
+  const receipts = batch.receipts.map((r) => {
+    encodeCert(r.certFormat, batch.genesis, r.receiptId, r);
+    const code = r.certFormat.format === "scale-v1" ? 0 : bareHash(r.certFormat.chainId as string) === LIVE_GENESIS ? 1 : 2;
+    return [r.receiptId, r.contentHash, r.baseRootSha256, r.storageLocatorHash, code];
+  });
   const result = JSON.stringify({ genesis: batch.genesis, finalizedHeight: batch.finalizedHeight, receipts });
   if (encoder.encode(result).length > SNAPSHOT_BUDGET) throw new Error("Member snapshot exceeds size budget");
   return result;

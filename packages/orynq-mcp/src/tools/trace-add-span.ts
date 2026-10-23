@@ -32,7 +32,7 @@ export function registerTraceAddSpan(
       name: z.string().describe("Human-readable name for the span"),
       parentSpanId: z.string().optional().describe("Optional parent span ID for nesting"),
       visibility: z.enum(["public", "private"]).optional().describe("Span visibility level (defaults to public)"),
-      metadata: z.record(z.unknown()).optional().describe("Optional key-value metadata to attach to the span"),
+      metadata: z.record(z.string(), z.unknown()).optional().describe("Optional key-value metadata to attach to the span"),
     },
     async ({ traceId, name, parentSpanId, visibility, metadata }) => {
       const entry = store.get(traceId);
