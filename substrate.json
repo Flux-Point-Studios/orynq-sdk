@@ -23,7 +23,8 @@
       "consumes": [
         "orinq-receipts-pallet",
         "blob-gateway-api",
-        "process-trace"
+        "process-trace",
+        "checkpoint-primitives"
       ],
       "status": "live"
     },
@@ -378,6 +379,19 @@
       ],
       "status": "experimental",
       "terminal": true
+    },
+    {
+      "id": "checkpoint-primitives",
+      "name": "Receipt checkpoint primitives",
+      "desc": "Shared SCALE receipt decoding, canonical certificate encodings, daemon-compatible Merkle proofs, deterministic census batches and bounded compact member snapshots.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/core/src/checkpoint.ts"
+      ],
+      "consumes": [
+        "orinq-receipts-pallet"
+      ],
+      "status": "experimental"
     }
   ]
 }
