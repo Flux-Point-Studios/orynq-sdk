@@ -43,7 +43,7 @@ export function registerTraceAppendEvents(
               .optional()
               .describe("Event visibility level"),
             metadata: z
-              .record(z.unknown())
+              .record(z.string(), z.unknown())
               .optional()
               .describe("Optional key-value metadata"),
           }),

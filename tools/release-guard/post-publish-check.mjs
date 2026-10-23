@@ -57,8 +57,16 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function served(spec, registry, { attempts, delayMs }) {
   const url = `${registry.replace(/\/$/, "")}/${nameOf(spec).replace("/", "%2f")}/${spec.slice(spec.lastIndexOf("@") + 1)}`;
   for (let i = 1; i <= attempts; i++) {
-    const res = await fetch(url);
-    await res.body?.cancel();
+    let res;
+    try {
+      res = await fetch(url);
+      await res.body?.cancel();
+    } catch (error) {
+      const code = error?.cause?.code ?? error?.code;
+      if (!["ECONNRESET", "UND_ERR_SOCKET"].includes(code) || i === attempts) throw error;
+      await sleep(delayMs);
+      continue;
+    }
     if (res.ok) return true;
     if (res.status !== 404) throw new Error(`${spec}: registry answered HTTP ${res.status}`);
     if (i < attempts) await sleep(delayMs);
