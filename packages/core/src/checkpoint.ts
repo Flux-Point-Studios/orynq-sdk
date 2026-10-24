@@ -195,6 +195,14 @@ export function checkpointLeaf(genesis: string, receiptId: string, certificateHa
 
 export function anchorId(rootHash: string, manifestHash: string): string { return digest(concat(bytes(rootHash), bytes(manifestHash))); }
 
+export function batchSetCommitment({ materiosGenesis, anchorIds }: { materiosGenesis: string; anchorIds: readonly string[] }): string {
+  if (!Array.isArray(anchorIds) || anchorIds.length < 1 || anchorIds.length > 1024) throw new Error("Batch set must contain 1..1024 anchor ids");
+  const ids = Array.from(anchorIds, bareHash);
+  for (let i = 1; i < ids.length; i++) if (ids[i - 1]! >= ids[i]!) throw new Error("Batch anchor ids must be unique and strictly ascending");
+  const tag = new Uint8Array(32); tag.set(encoder.encode("orynq:anchor-batches:v1"));
+  return digest(concat(tag, bytes(materiosGenesis), ...ids.map(bytes)));
+}
+
 export function manifestHash(manifest: CheckpointBatch["manifest"]): string {
   // The daemon hashes Python json.dumps(sort_keys=True), including its separators.
   const json = `{${Object.keys(manifest).sort().map((key) => `${JSON.stringify(key)}: ${JSON.stringify(manifest[key as keyof typeof manifest])}`).join(", ")}}`;

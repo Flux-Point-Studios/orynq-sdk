@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import fixture from "./fixtures/storage-proof-mainnet.json";
 import { provedValue } from "../storage-proof.js";
-import { verifyExecution } from "../execution.js";
+import { verifyExecution, verifyBlockEffects } from "../execution.js";
 import { readFileSync } from "node:fs";
 import { metadata, unifyMetadata } from "@polkadot-api/substrate-bindings";
 import { getDynamicBuilder, getLookupFn } from "@polkadot-api/metadata-builders";
@@ -64,7 +64,7 @@ describe("authenticated Midnight execution after finalized inclusion", () => {
       const header = { ...request.header, stateRoot: fromHex(changed.root, "synthetic state root") };
       const blockHash = toHex(headerHash(header));
       const answers = node((answers: any[]) => { answers[2] = { at: `0x${blockHash}`, proof: changed.nodes }; });
-      await expect(verifyExecution(answers, { ...request, header, blockHash })).rejects.toThrow(/full execution/);
+      await expect(verifyExecution(answers, { ...request, header, blockHash })).rejects.toThrow(/execution/);
     }
   });
 
@@ -89,4 +89,73 @@ describe("authenticated Midnight execution after finalized inclusion", () => {
       (a: any[]) => { a[2].at = fixture.header.parentHash; },
     ]) await expect(verifyExecution(node(change), request)).rejects.toThrow();
   });
+});
+
+
+describe("authenticated block execution outcomes", () => {
+  const withEvents = (edit: (events: any[]) => void) => {
+    const events = codec.dec(fixture.events) as any[];
+    edit(events);
+    const changed = changedValue(fixture.executionProof.proof, fixture.header.stateRoot, fixture.events, `0x${Buffer.from(codec.enc(events)).toString("hex")}`);
+    const header = { ...request.header, stateRoot: fromHex(changed.root, "synthetic state root") };
+    const blockHash = toHex(headerHash(header));
+    return { node: node((answers: any[]) => { answers[2] = { at: `0x${blockHash}`, proof: changed.nodes }; }), request: { ...request, header, blockHash } };
+  };
+  const target = (event: any) => event.phase.type === "ApplyExtrinsic" && event.phase.value === 4;
+
+  it("shares one authenticated block proof across execution classifications", async () => {
+    const effects = await verifyBlockEffects(node(), request);
+    expect(effects.runtimeSpecVersion).toBe(1000300);
+    expect(effects.timestamp).toBe(Number(Buffer.from(fixture.timestamp.slice(2), "hex").readBigUInt64LE()));
+    expect(effects.outcome(4, request.txHash)).toBe("SUCCESS");
+    expect(() => effects.outcome(3, request.txHash)).toThrow();
+  });
+
+  it.each(["partial", "failed"] as const)("authenticates explicit %s outcomes", async (mode) => {
+    const answer = withEvents(events => {
+      for (let i = events.length - 1; i >= 0; i--) {
+        const record = events[i];
+        if (!target(record)) continue;
+        if (mode === "failed" && record.event.type === "Midnight") events.splice(i, 1);
+        if (mode === "partial" && record.event.type === "Midnight" && record.event.value.type === "TxApplied") record.event.value.type = "TxPartialSuccess";
+        if (mode === "failed" && record.event.type === "System" && record.event.value.type === "ExtrinsicSuccess") record.event.value = { type: "ExtrinsicFailed", value: { dispatch_error: { type: "Other", value: undefined }, dispatch_info: record.event.value.value.dispatch_info } };
+      }
+    });
+    const effects = await verifyBlockEffects(answer.node, answer.request);
+    expect(effects.outcome(4, request.txHash)).toBe(mode === "partial" ? "PARTIAL_SUCCESS" : "FAILURE");
+    await expect(verifyExecution(answer.node, answer.request)).rejects.toThrow(/execution/);
+  });
+
+  it.each(["missing", "wrong-hash", "duplicate-system", "duplicate-midnight", "failed-with-effects"])("refuses ambiguous authenticated events: %s", async (mode) => {
+    const answer = withEvents(events => {
+      const applied = events.find(record => target(record) && record.event.type === "Midnight" && record.event.value.type === "TxApplied");
+      const system = events.find(record => target(record) && record.event.type === "System" && record.event.value.type === "ExtrinsicSuccess");
+      if (mode === "missing") events.splice(events.indexOf(applied), 1);
+      if (mode === "wrong-hash") applied.event.value.value = "0x" + "aa".repeat(32);
+      if (mode === "duplicate-system") events.push(structuredClone(system));
+      if (mode === "duplicate-midnight") events.push(structuredClone(applied));
+      if (mode === "failed-with-effects") system.event.value = { type: "ExtrinsicFailed", value: { dispatch_error: { type: "Other", value: undefined }, dispatch_info: system.event.value.value.dispatch_info } };
+    });
+    const effects = await verifyBlockEffects(answer.node, answer.request);
+    expect(() => effects.outcome(4, request.txHash)).toThrow();
+    await expect(verifyExecution(answer.node, answer.request)).rejects.toThrow();
+  });
+
+  it("refuses invalid outcome targets and substituted execution witnesses", async () => {
+    const effects = await verifyBlockEffects(node(), request);
+    for (const index of [-1, 1.5, NaN]) expect(() => effects.outcome(index, request.txHash)).toThrow();
+    expect(() => effects.outcome(4, "0x" + request.txHash)).toThrow();
+    await expect(verifyBlockEffects(node((answers: any[]) => { answers[2].proof = []; }), request)).rejects.toThrow();
+  });
+});
+
+
+it("holds on authenticated applications outside the body-bound send list", async () => {
+  const events = codec.dec(fixture.events) as any[];
+  const sends = events.filter(record => record.event.type === "Midnight" && ["TxApplied", "TxPartialSuccess"].includes(record.event.value.type)).map(record => ({ extrinsicIndex: record.phase.value, txHash: record.event.value.value.slice(2) }));
+  const effects = await verifyBlockEffects(node(), request);
+  expect(() => effects.assertApplications(sends)).not.toThrow();
+  expect(() => effects.assertApplications(sends.slice(1))).toThrow(/unmatched|application/i);
+  expect(() => effects.assertApplications(sends.map((send, i) => i ? send : { ...send, txHash: "aa".repeat(32) }))).toThrow(/unmatched|application/i);
+  expect(() => effects.assertApplications([...sends, sends[0]!])).toThrow();
 });

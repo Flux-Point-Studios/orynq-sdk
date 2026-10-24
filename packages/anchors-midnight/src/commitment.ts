@@ -1,7 +1,8 @@
 import { sha256 } from "@noble/hashes/sha2.js";
+import { batchSetCommitment as checkpointBatchSetCommitment } from "@fluxpointstudios/orynq-sdk-core/checkpoint";
 import { pureCircuits } from "../contract/managed/contract/index.js";
 import { createSecretFile, readPrivateFile } from "./private-file.js";
-import { concatBytes, toHex } from "./scale.js";
+import { concatBytes, fromHex, toHex } from "./scale.js";
 
 // The kinds the registry writes: anchor() refuses kind 2, which only anchor_hiding() writes.
 export const ANCHOR_KIND = { ENTRY_PUBLIC: 1, ENTRY_HIDDEN: 2, BATCH_SET: 3 } as const;
@@ -41,11 +42,7 @@ export function entryCommitment(entry: EntryHashes): Uint8Array {
 
 export function batchSetCommitment({ materiosGenesis, anchorIds }: { materiosGenesis: Hash32; anchorIds: readonly Hash32[] }): Uint8Array {
   if (anchorIds.length < 1 || anchorIds.length > 1024) throw new Error("Batch set must contain 1..1024 anchor ids");
-  const ids = anchorIds.map((id) => hash32(id, "anchorId"));
-  const names = ids.map(toHex);
-  for (let i = 1; i < names.length; i++) if (names[i - 1]! >= names[i]!) throw new Error("Batch anchor ids must be unique and strictly ascending");
-  const tag = new Uint8Array(32); tag.set(new TextEncoder().encode("orynq:anchor-batches:v1"));
-  return sha256(concatBytes(tag, hash32(materiosGenesis, "materiosGenesis"), ...ids));
+  return fromHex(checkpointBatchSetCommitment({ materiosGenesis: toHex(hash32(materiosGenesis, "materiosGenesis")), anchorIds: Array.from(anchorIds, (id) => toHex(hash32(id, "anchorId"))) }), "batch set commitment");
 }
 
 // Kind 2: anchor_hiding() publishes hidingCommitment(hiddenDigest(entry, attribute), salt) and
