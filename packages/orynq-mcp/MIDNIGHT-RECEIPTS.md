@@ -8,11 +8,14 @@ Configure the read-only sources explicitly on the server:
 
 ```text
 MIDNIGHT_PROOF_GATEWAY_URL=https://midnight-proofs-a.fluxpointstudios.com
-MIDNIGHT_PROOF_RPC_URL=https://rpc.mainnet.midnight.network
+MIDNIGHT_PROOF_RPC_URL=https://midnight-proofs-a.fluxpointstudios.com/midnight/mainnet/rpc
 MIDNIGHT_NETWORK=mainnet
 ```
 
 Copy B is `https://midnight-proofs-b.fluxpointstudios.com`. Each invocation uses one gateway.
+The read RPC is a restricted hosted proxy; the provider token stays on the server. Midnight's
+former `rpc.mainnet.midnight.network` endpoint is retired. You may configure your own
+credential-free read RPC instead. The hosted proxy needs anchors-midnight 0.3.1 or later.
 The two stores share a public tunnel and do not provide independent public availability.
 These new variables do not change the existing transaction-hash verifier or wallet endpoints.
 No proof-store writer credential, indexer credential or signing key is needed.
@@ -47,7 +50,7 @@ The CLI exposes the same verifier:
 orynq verify midnight-receipt RECEIPT_ID --genesis MATERIOS_GENESIS \
   --content-hash CONTENT_HASH --certificate-hash CERTIFICATE_HASH \
   --gateway https://midnight-proofs-a.fluxpointstudios.com \
-  --rpc https://rpc.mainnet.midnight.network
+  --rpc https://midnight-proofs-a.fluxpointstudios.com/midnight/mainnet/rpc
 ```
 
 It prints JSON and exits 0 only for valid evidence. Save the result's `continuation` object
