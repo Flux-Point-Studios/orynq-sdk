@@ -31,8 +31,9 @@ Steps:
        advertised `[blocks_from, blocks_to]` window. Return the first
        candidate that covers the receipt's block range.
 
-The result is a JSON document with the full lineage. If the chain
-through every step matches, the lineage is independently verified.
+The result is a JSON document with the full lineage. A match is a lead,
+not a proof of inclusion: README.md lists what this script leaves
+unchecked.
 """
 from __future__ import annotations
 
@@ -166,7 +167,10 @@ def step6_match_anchor(
     """Find an anchor candidate that (a) carries the expected Materios
     chain id and (b) covers `receipt_block_num` in its `blocks` range.
 
-    Anchor metadata shape:
+    This reads only the flat encoding of the label 8746 record. The live
+    anchor worker writes the detailed-schema encoding,
+    {"map": [{"k": {"string": "p"}, "v": {"string": "materios"}}, ...]},
+    which has no top-level `p` and is skipped here. Flat encoding:
         {
           "p":        "materios",
           "v":        2,

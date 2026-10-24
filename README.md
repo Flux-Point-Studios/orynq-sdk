@@ -306,6 +306,8 @@ curl -H "project_id: $BLOCKFROST_KEY" \
   "https://cardano-mainnet.blockfrost.io/api/v0/txs/{txHash}/metadata"
 ```
 
+A receipt on the Materios partner chain reaches Cardano inside a checkpoint batch anchored under label 8746. `verifyMateriosCheckpointAnchor` checks that anchor end to end, from the receipt's leaf to a confirmed transaction funded by a wallet you pin; [the anchors-cardano README](packages/anchors-cardano/README.md#verifying-a-receipts-anchor) lists what a caller supplies and what the check trusts.
+
 ---
 
 ## Packages
@@ -316,7 +318,7 @@ curl -H "project_id: $BLOCKFROST_KEY" \
 |---------|-------------|
 | `@fluxpointstudios/orynq-sdk-quickstart` | Solo-dev DX: `orynq init` / `orynq trace` CLI + one-call `bootstrapAndTrace()` API |
 | `@fluxpointstudios/orynq-sdk-process-trace` | Cryptographic process trace builder with hash chains and Merkle trees |
-| `@fluxpointstudios/orynq-sdk-anchors-cardano` | Cardano anchor builder, serializer, and verifier |
+| `@fluxpointstudios/orynq-sdk-anchors-cardano` | Cardano anchor builder, serializer, and verifier; end-to-end verifier of Materios checkpoint anchors (label 8746), with [the record's two encodings and what a caller supplies](packages/anchors-cardano/README.md) |
 | `@fluxpointstudios/orynq-sdk-anchors-materios` | Materios chain receipts, certification, blob uploads, and verification |
 | `@fluxpointstudios/orynq-sdk-anchors-midnight` | Midnight anchor verifier against the immutable orynq-anchor-registry, pinned to mainnet generation 1; [what a caller supplies](packages/anchors-midnight/README.md#verifying-an-anchor-on-mainnet) |
 | `@fluxpointstudios/orynq-sdk-midnight-prover` | Local Compact capability and rolling-digest proofs with native verification; [build requirements and limits](packages/midnight-prover/README.md) |
