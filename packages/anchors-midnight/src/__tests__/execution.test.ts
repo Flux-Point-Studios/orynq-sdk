@@ -31,6 +31,15 @@ describe("authenticated Midnight execution after finalized inclusion", () => {
     expect(result.timestamp).toBe(Number(Buffer.from(fixture.timestamp.slice(2), "hex").readBigUInt64LE()));
   });
 
+  it("authenticates the runtime when the transport can return only a compact code-path witness", async () => {
+    const original = node(), bounded: MidnightSource["node"] = { ...original, async batch<T>(calls: [string, unknown[]][]) {
+      if ((calls[1]![1][0] as string[]).includes("0x3a636f6465")) throw new Error("Raw runtime value exceeds the transport budget");
+      expect(calls[1]![1]).toEqual([["0x3a636f646500"], fixture.header.parentHash]);
+      return original.batch<T>(calls);
+    } };
+    expect((await verifyExecution(bounded, request)).runtimeSpecVersion).toBe(1000300);
+  });
+
   it("does not accept a successful neighbor extrinsic or a different transaction hash", async () => {
     await expect(verifyExecution(node(), { ...request, extrinsicIndex: 3 })).rejects.toThrow();
     await expect(verifyExecution(node(), { ...request, txHash: "00".repeat(32) })).rejects.toThrow();

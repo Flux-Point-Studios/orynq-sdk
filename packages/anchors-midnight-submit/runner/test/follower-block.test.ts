@@ -51,7 +51,7 @@ it("never reads execution witnesses after finality failed", async () => {
 
 it("refuses an unavailable or unsupported execution witness", async () => {
   for (const code of [false, true]) {
-    const opts = options((method, params, answer) => method === "state_getReadProof" && (params[0] as string[]).includes("0x3a636f6465") === code ? { ...answer, proof: [] } : answer);
+    const opts = options((method, params, answer) => method === "state_getReadProof" && (params[0] as string[]).includes("0x3a636f646500") === code ? { ...answer, proof: [] } : answer);
     await expect(verifyFollowerBlock(opts)).rejects.toThrow();
   }
 });
