@@ -4,6 +4,8 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { censusBatch, certHash, memberSnapshot, parseMemberSnapshot, type ReceiptRecord } from "@fluxpointstudios/orynq-sdk-core/checkpoint";
 import { batchAnchorCommitment, type BatchMember } from "../src/batch-plan.js";
+import { parseBatchSet, verifyBatchSet, type VerifyOptions } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { publishRetainedObjects, type PublicationOptions } from "./publisher.js";
 import type { Census } from "./census.js";
 
 interface BatchEntry { kind: 3; label: string; materiosGenesis: string; batches: BatchMember[] }
@@ -35,7 +37,8 @@ create table if not exists plan_objects (commitment text not null references pla
 create table if not exists claims (receipt_id text primary key, cert_hash text not null, commitment text not null references plans(commitment));
 `;
 
-export function openCensusState(path: string, scope: { network: "mainnet" | "preprod"; genesis: string; registry: string }) {
+export function openCensusState(path: string, input: { network: "mainnet" | "preprod"; genesis: string; registry: string }) {
+  const scope = { network: input.network, genesis: input.genesis, registry: input.registry };
   if (!["mainnet", "preprod"].includes(scope.network) || !HASH.test(scope.genesis) || !HASH.test(scope.registry)) throw new Error("Invalid census state scope");
   const parent = lstatSync(dirname(path));
   if (!parent.isDirectory() || parent.mode & 0o077 || (process.getuid && parent.uid !== process.getuid())) throw new Error("Census state directory must be private and owned by the caller");
@@ -94,7 +97,7 @@ export function openCensusState(path: string, scope: { network: "mainnet" | "pre
     }
     db.prepare("insert into census_head(id,height,hash) values(1,?,?) on conflict(id) do update set height=excluded.height,hash=excluded.hash").run(census.finalizedHeight, census.finalizedHash);
   }
-  function putObject(kind: "members" | "plans", body: string) {
+  function putObject(kind: "members" | "plans" | "sets", body: string) {
     const sha256 = digest(body), key = `${kind}/${sha256}`;
     db.prepare("insert into objects(key,kind,sha256,body) values(?,?,?,?) on conflict(key) do nothing").run(key, kind, sha256, body);
     const existing = db.prepare("select body from objects where key=?").get(key);
@@ -128,6 +131,13 @@ export function openCensusState(path: string, scope: { network: "mainnet" | "pre
     });
     const planned = db.prepare("select o.*,r.anchor_id from plan_objects r join objects o using(key) where r.commitment=? and o.kind='plans'").all(commitment) as unknown as ObjectRow[];
     if (planned.length !== 1 || planned[0]!.anchor_id !== null || checkedObject(planned[0]!).body !== plannedBody(scope.network, plan, row.finalized_hash, row.finalized_height, snapshots)) throw new Error("Census planned mapping differs or is missing");
+    const sets = db.prepare("select o.*,r.anchor_id from plan_objects r join objects o using(key) where r.commitment=? and o.kind='sets'").all(commitment) as unknown as ObjectRow[];
+    if (sets.length > 1 || (row.state === "landed" && sets.length !== 1)) throw new Error("Census landed set mapping differs or is missing");
+    for (const object of sets) {
+      if (object.anchor_id !== null) throw new Error("Census set has an unexpected member link");
+      assertSet(parseBatchSet(JSON.parse(checkedObject(object).body)), plan, commitment);
+      if (row.state === "landed" && object.published !== 1) throw new Error("Landed census set was not acknowledged");
+    }
     const claims = db.prepare("select receipt_id,cert_hash from claims where commitment=?").all(commitment);
     if (row.state === "abandoned") {
       if (claims.length) throw new Error("Abandoned census plan retains claims");
@@ -140,9 +150,48 @@ export function openCensusState(path: string, scope: { network: "mainnet" | "pre
     const row = db.prepare("select commitment from plans where state in ('planned','confirmed')").get();
     return row ? getPlan(row.commitment as string) : null;
   }
+  function assertSet(set: ReturnType<typeof parseBatchSet>, plan: CensusPlan["plan"], commitment: string) {
+    if (set.network !== scope.network || set.materiosGenesis !== scope.genesis || set.midnight.registry !== scope.registry || set.commitment !== commitment) throw new Error("Landed set scope differs from census plan");
+    const ids = plan.entries[0].batches.map(member => member.anchorId);
+    if (set.anchorIds.length !== ids.length || set.anchorIds.some((id, i) => id !== ids[i])) throw new Error("Landed set members differ from census plan");
+  }
+  function acknowledgePublication(key: string, sha256: string) {
+    const row = db.prepare("select * from objects where key=?").get(key) as unknown as ObjectRow | undefined;
+    if (!row || checkedObject(row).sha256 !== sha256) throw new Error("Publication digest differs from durable object");
+    db.prepare("update objects set published=1 where key=?").run(key);
+  }
 
   return {
     currentPlan,
+    async publishLandedSet(value: unknown, options: { verify: () => VerifyOptions; publication: PublicationOptions }): Promise<{ objects: number; readbacks: number }> {
+      const publication = { network: options.publication.network, targets: options.publication.targets.map(target => ({ url: target.url, apiKey: target.apiKey })) }, loadVerification = options.verify;
+      const set = parseBatchSet(value), body = JSON.stringify(set), plan = getPlan(set.commitment);
+      assertSet(set, plan.plan, plan.commitment);
+      if (plan.state !== "confirmed" && plan.state !== "landed") throw new Error("Landed set requires a confirmed census plan");
+      if (publication.network !== scope.network) throw new Error("Landed set publication network differs from census scope");
+      const verify = async () => { if ((await verifyBatchSet(set, loadVerification())).status !== "valid") throw new Error("Landed set lacks a current valid consensus proof"); };
+      await verify();
+      transaction(() => {
+        const current = getPlan(set.commitment); assertSet(set, current.plan, current.commitment);
+        if (current.state !== "confirmed" && current.state !== "landed") throw new Error("Census plan changed before set staging");
+        const existing = db.prepare("select key from plan_objects where commitment=? and key like 'sets/%'").get(set.commitment);
+        const object = putObject("sets", body);
+        if (existing && existing.key !== object.key) throw new Error("Immutable census set evidence differs");
+        db.prepare("insert into plan_objects(commitment,key,anchor_id) values(?,?,null) on conflict(commitment,key) do nothing").run(set.commitment, object.key);
+      });
+      const objects = db.prepare("select o.* from objects o join plan_objects r using(key) where r.commitment=? order by o.kind,o.key").all(set.commitment) as unknown as ObjectRow[];
+      const published = await publishRetainedObjects(objects.map(object => ({ kind: object.kind, ...checkedObject(object) })), publication, acknowledgePublication);
+      await verify();
+      transaction(() => {
+        const current = getPlan(set.commitment); assertSet(set, current.plan, current.commitment);
+        if (current.state !== "confirmed" && current.state !== "landed") throw new Error("Census plan changed before landing");
+        const retained = db.prepare("select o.* from objects o join plan_objects r using(key) where r.commitment=? and o.kind='sets'").get(set.commitment) as unknown as ObjectRow | undefined;
+        if (!retained || checkedObject(retained).body !== body) throw new Error("Exact staged set evidence was lost before landing");
+        if (db.prepare("select 1 from plan_objects r join objects o using(key) where r.commitment=? and o.published=0 limit 1").get(set.commitment)) throw new Error("Landed set publication is incomplete");
+        db.prepare("update plans set state='landed' where commitment=?").run(set.commitment);
+      });
+      return published;
+    },
     prepare(census: Census, nowMillis: bigint): CensusPlan | null {
       if (typeof nowMillis !== "bigint" || nowMillis < 0n) throw new Error("Invalid planning chain time");
       return transaction(() => {
@@ -197,11 +246,7 @@ export function openCensusState(path: string, scope: { network: "mainnet" | "pre
       const rows = db.prepare("select o.* from objects o join plan_objects r using(key) where r.commitment=? order by o.kind,o.key").all(commitment) as unknown as ObjectRow[];
       return rows.map(row => ({ kind: row.kind, ...checkedObject(row) }));
     },
-    acknowledgePublication(key: string, sha256: string) {
-      const row = db.prepare("select * from objects where key=?").get(key) as unknown as ObjectRow | undefined;
-      if (!row || checkedObject(row).sha256 !== sha256) throw new Error("Publication digest differs from durable object");
-      db.prepare("update objects set published=1 where key=?").run(key);
-    },
+    acknowledgePublication,
     confirm(commitment: string, census: Census) {
       transaction(() => {
         observe(census);

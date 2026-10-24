@@ -400,7 +400,7 @@
     {
       "id": "midnight-census-plan-state",
       "name": "Durable Midnight census plans",
-      "desc": "Private versioned SQLite state atomically persists canonical census snapshots, kind-3 plans, receipt claims and publication outbox. Confirmation rechecks fresh certificates and publication acknowledgements; confirmed claims cannot be released by restart or abandonment. Landing and coverage require an external authenticated follower.",
+      "desc": "Private versioned SQLite state atomically persists canonical census snapshots, kind-3 plans, permanent receipt claims and publication outbox. Confirmation rechecks fresh certificates. Combined landing requires current public consensus verification before immutable set staging and after fresh two-copy member/plan/set readbacks, then atomically retains the exact landed set. Interrupted publication resumes without another transaction; landing does not settle uncertain attempts or release their fees.",
       "kind": "toolkit",
       "paths": [
         "packages/anchors-midnight-submit/runner/census-state.ts",
@@ -447,7 +447,7 @@
     {
       "id": "midnight-retained-publisher",
       "name": "Midnight retained proof publisher",
-      "desc": "Reads back every canonical member and recovery-plan object from two retained proof stores before durable acknowledgement, including previously acknowledged objects. Exact byte digests, member-before-plan ordering, bounded reads and deadlines, credential-free public reads and redirect refusal preserve recovery preconditions across restart. Independent storage ownership is an operator prerequisite.",
+      "desc": "Reads back every canonical member, recovery-plan and optional landed-set object from two retained proof stores before durable acknowledgement, including previously acknowledged objects. Exact byte digests, member-before-plan-before-set ordering, bounded reads and deadlines, credential-free public reads and redirect refusal preserve recovery preconditions across restart. Independent storage ownership is an operator prerequisite.",
       "kind": "toolkit",
       "paths": [
         "packages/anchors-midnight-submit/runner/publisher.ts",
