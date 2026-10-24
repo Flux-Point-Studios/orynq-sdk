@@ -23,6 +23,8 @@
     "clean": "rimraf dist"
   },
   "dependencies": {
+    "@noble/hashes": "^2.4.0",
+    "undici": "6.29.1",
     "@fluxpointstudios/orynq-sdk-anchors-midnight": "workspace:*",
     "@midnight-ntwrk/ledger-v8": "8.1.3",
     "@midnight-ntwrk/wallet-sdk-abstractions": "2.1.0",
