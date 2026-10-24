@@ -164,7 +164,7 @@
         ]
       }
     },
-    "state_getReadProof[[\"0x3a636f6465\"],\"0x61069dfc6a56fc5d0c9b0bf578321eba3d934189d5d93cad2485fd172d614090\"]": {
+    "state_getReadProof[[\"0x3a636f646500\"],\"0x61069dfc6a56fc5d0c9b0bf578321eba3d934189d5d93cad2485fd172d614090\"]": {
       "at": "0x61069dfc6a56fc5d0c9b0bf578321eba3d934189d5d93cad2485fd172d614090",
       "proof": [
         "0x27036f646539568eeb0802fa59d74ac0bc5c7ab62fc05c23ea947937458a4b011558516138",
@@ -267,7 +267,7 @@
         ]
       }
     },
-    "state_getReadProof[[\"0x3a636f6465\"],\"0xa863f1520a7f2df26d8976a70cf3dd82614e9b548608b9f5b3823cdea88e5f12\"]": {
+    "state_getReadProof[[\"0x3a636f646500\"],\"0xa863f1520a7f2df26d8976a70cf3dd82614e9b548608b9f5b3823cdea88e5f12\"]": {
       "at": "0xa863f1520a7f2df26d8976a70cf3dd82614e9b548608b9f5b3823cdea88e5f12",
       "proof": [
         "0x27036f646539568eeb0802fa59d74ac0bc5c7ab62fc05c23ea947937458a4b011558516138",
@@ -388,7 +388,7 @@
         ]
       }
     },
-    "state_getReadProof[[\"0x3a636f6465\"],\"0x152195797a9180d1d019bc01a5c6d8e2396bc01c22ac5b298f4d26da551f8938\"]": {
+    "state_getReadProof[[\"0x3a636f646500\"],\"0x152195797a9180d1d019bc01a5c6d8e2396bc01c22ac5b298f4d26da551f8938\"]": {
       "at": "0x152195797a9180d1d019bc01a5c6d8e2396bc01c22ac5b298f4d26da551f8938",
       "proof": [
         "0x27036f646539568eeb0802fa59d74ac0bc5c7ab62fc05c23ea947937458a4b011558516138",
@@ -409,5 +409,6 @@
         "0x9f00c365c3cf59d671eb72da0e7a4113c41002505f0e7b9012096b41c4eb3aaf947f6ea429080000685f0f1f0515f462cdcf84e0f1d6045dfcbb2060ce835fa1010000"
       ]
     }
-  }
+  },
+  "runtimeWitnessProvenance": "Code-path witnesses omit the raw Wasm value; code requests are rebound to a strict extension while verification still authenticates the actual :code key hash."
 }
