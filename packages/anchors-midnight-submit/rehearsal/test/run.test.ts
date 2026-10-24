@@ -17,6 +17,7 @@ import type { OfflineChain } from "../../test/offline.js";
 const HERE = new URL("..", import.meta.url).pathname;
 const OFFLINE = new URL("../../test/offline.ts", import.meta.url).pathname;
 const MINUTE = 60_000;
+const RUN_TIMEOUT = 120_000;
 const KIND1 = ["git-head", "contract-hashes", "compactc-version", "zk-material", "preprod-chain", "preprod-runtime", "preprod-ledger", "git-log", "commitment-suite", "node-version", "pnpm-lock-midnight", "uname"];
 const h = () => randomBytes(32).toString("hex");
 
@@ -46,7 +47,7 @@ function rehearsal(bundles: string[] = []) {
       const child = spawn(process.execPath, ["--import", "tsx", "run.ts", phase], {
         cwd: `${root}/rehearsal`,
         env: { ...process.env, HOME: home, OFFLINE_CHAIN: chainFile, OFFLINE_FAULT: fault },
-        timeout: 120_000,
+        timeout: RUN_TIMEOUT,
       });
       let output = "";
       for (const stream of [child.stdout, child.stderr]) {
@@ -81,7 +82,8 @@ const recorded = (chain: OfflineChain, txHash: string) => {
 afterAll(removeScratch);
 
 // Each test runs its own rehearsal in its own directory, so they run side by side.
-describe.concurrent("run.ts deploy", () => {
+// Recovery cases run two independently bounded child processes.
+describe.concurrent("run.ts deploy", { timeout: 2 * RUN_TIMEOUT + 30_000 }, () => {
   it("deploys, records the landed deploy as the one it prepared and reads it back", async ({ expect }) => {
     const r = rehearsal();
     expect(await r.run()).toMatchObject({ status: 0 });
