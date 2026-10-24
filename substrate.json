@@ -411,6 +411,21 @@
         "checkpoint-primitives"
       ],
       "status": "experimental"
+    },
+    {
+      "id": "materios-certified-census",
+      "name": "Finalized certified receipt census",
+      "desc": "Reads every Materios receipt at one fixed finalized block through bounded storage RPC, validates Blake2_128Concat keys and exact SCALE values, classifies certificate provenance with shared core primitives, and preserves pending or contradicted entries. Re-enumeration observes late certification; independent coverage recount is required because RPC completeness is an operator trust boundary.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight-submit/runner/census.ts",
+        "packages/anchors-midnight-submit/runner/CENSUS.md"
+      ],
+      "consumes": [
+        "checkpoint-primitives",
+        "orinq-receipts-pallet"
+      ],
+      "status": "experimental"
     }
   ]
 }
