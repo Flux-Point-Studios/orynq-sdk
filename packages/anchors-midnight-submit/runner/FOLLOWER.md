@@ -148,13 +148,15 @@ the controller's lifetime lock. This module does not authorize broadcast alone.
 `openStandingDelivery` composes the session, census, two retained stores and
 submission journal around the wallet's raw submission method. Each call copies
 its bytes, verifies pending journal provenance and serialized maximum TTLs, saves
-wallet state, freshly publishes both copies, and confirms membership against a
-fresh census. Only then does it mint a thirty-second, exact-byte, single-use
-permission. The callback consumes permission before awaiting, rechecks admission
-asynchronously and synchronously, and samples clocks after deserializing the
+wallet state and journals the exact unsent bytes before publication. Its callback
+consumes a single-use invocation before awaiting, freshly publishes both copies
+and confirms membership against a fresh census. Only then does it mint a
+thirty-second exact-byte permission, recheck admission asynchronously and
+synchronously, and sample clocks after deserializing the
 transaction. Current policy, head freshness, host-clock continuity and every
 serialized TTL still apply at the final wallet handoff.
 
+Publication failures retain the same unsent journal bytes for fresh retries.
 Unknown delivery retains journal, claim and fee reservations. An explicit wallet
 refusal forbids reusing those bytes in that process. Failed wallet persistence
 latches restart. Reconciliation requires known provenance and the serialized

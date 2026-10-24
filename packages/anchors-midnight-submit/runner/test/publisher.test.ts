@@ -180,13 +180,23 @@ describe("standing delivery after retained publication", () => {
     follower.assertAdmitted(exact);
   });
 
-  it("refuses delivery when either copy or the fresh certificate is unavailable", async () => {
+  it("retains exact unsent bytes across publication and certificate failures", async () => {
     const raw = await bytes(), commitment = state.currentPlan()!.commitment; rejectSecond = true;
     await expect(delivery.submit(raw, commitment)).rejects.toThrow(/store|publication/i);
-    expect(submit).not.toHaveBeenCalled(); expect(journal.pending()).toEqual([]);
+    expect(submit).not.toHaveBeenCalled(); expect(journal.pending()).toHaveLength(1);
+    const key = { ...batchScope, commitment, kind: 3, attribute: "00".repeat(32) };
+    expect(journal.live(key)?.bytes).toEqual(raw); expect(journal.pending()[0]!.broadcasts).toBe(0);
     rejectSecond = false; currentCensus = { ...census, entries: [{ receiptId, status: "pending", reason: "missing" }] };
     await expect(delivery.submit(raw, commitment)).rejects.toThrow(/member|certif/i);
     expect(submit).not.toHaveBeenCalled();
+    expect(journal.live(key)?.bytes).toEqual(raw); expect(journal.pending()[0]!.broadcasts).toBe(0);
+    currentCensus = census;
+    const recovered = journal.live(key)!, before = calls.length;
+    await delivery.submit(recovered.bytes, commitment);
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(Buffer.from(submit.mock.calls[0]![0].serialize())).toEqual(Buffer.from(raw));
+    expect(journal.pending()).toHaveLength(1); expect(journal.pending()[0]!.broadcasts).toBe(1);
+    expect(calls.length).toBeGreaterThan(before); expect(follower.admissions()).toHaveLength(1);
   });
 
   it("requires fresh copies again when a previous journal call returned without sending", async () => {
