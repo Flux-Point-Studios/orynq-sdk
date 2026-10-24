@@ -9,6 +9,26 @@ does it classify their execution outcomes. It never reads indexer status or time
 Any authenticated application outside that body-bound send list stops the read,
 including wrapped or scheduled dispatch that this bare-send decoder cannot represent.
 
+`openFollowerReader({source, checkpoints, maxSetChanges?}).range({after, end})`
+authenticates an endpoint once and walks each exact parent/body back to the durable
+`after` reference. It yields complete verified blocks in ascending order. A range
+contains at most 32 blocks and sixteen MiB of decoded bodies. Every block,
+including an empty one, still requires runtime, execution-event and time witnesses.
+An effects failure preserves only earlier complete blocks already yielded.
+
+The reader keeps at most 64 verified derived authority checkpoints in memory.
+It selects the nearest original input root first, then a cached path belonging to
+that root. Each path carries its cumulative transition count; the remaining budget
+is the original allowance minus that count. Historical fallback from an original
+root recounts its path. Cache promotion requires successful finality and exact
+linkage to the durable parent. Output policy identity always names the original
+inputs; restart re-verifies from those inputs. Conflicting derived checkpoints hold.
+
+The caller supplies one bounded HTTP budget and deadline for each catch-up turn,
+including endpoint discovery and execution proofs. Eviction can repeat work; a
+cold prefix exceeding that budget needs an explicit recovery or policy migration.
+It must never reset transition accounting or trust serialized cache metadata.
+
 The public `verifyBlockEffects(node, {blockHash, header})` shares execution proofs
 across a block. Its header must already be authenticated. Its `outcome(index,
 txHash)` requires an independently verified body/index/hash binding: System
@@ -112,3 +132,10 @@ must separately bound decoded responses, deadlines and catch-up work.
 Validation includes recorded real mainnet data and read-only public RPC checks at
 blocks 3113832 and 3113847, including all three and five Midnight sends respectively.
 No wallet is loaded and no transaction is prepared or broadcast by this module.
+
+A read-only mainnet acceptance sequence verified three consecutive blocks with
+the range reader. Its cold block used 27 HTTP requests and 16,702,494 decoded
+bytes; two warm blocks used five requests and 2,259,340 bytes in 1.747 seconds.
+Every block retained the original policy identity and exact parent links.
+This sample establishes neither sustained catch-up speed nor complete history.
+Raw runtime-code witnesses still account for about 1.078 MB per block.
