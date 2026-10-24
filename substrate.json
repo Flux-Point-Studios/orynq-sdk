@@ -445,6 +445,21 @@
         "checkpoint-primitives"
       ],
       "status": "experimental"
+    },
+    {
+      "id": "midnight-retained-publisher",
+      "name": "Midnight retained proof publisher",
+      "desc": "Reads back every canonical member and recovery-plan object from two retained proof stores before durable acknowledgement, including previously acknowledged objects. Exact byte digests, member-before-plan ordering, bounded reads and deadlines, credential-free public reads and redirect refusal preserve recovery preconditions across restart. Independent storage ownership is an operator prerequisite.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight-submit/runner/publisher.ts",
+        "packages/anchors-midnight-submit/runner/PUBLISHER.md"
+      ],
+      "consumes": [
+        "midnight-census-plan-state",
+        "midnight-proof-candidates"
+      ],
+      "status": "experimental"
     }
   ]
 }
