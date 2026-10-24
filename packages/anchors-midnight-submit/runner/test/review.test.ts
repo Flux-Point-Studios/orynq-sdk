@@ -57,8 +57,8 @@ describe("runner review invariants", () => {
 
   it("records a wrong-action NO as a terminal refusal", async () => {
     const r = fixture({ kind: "deploy" });
-    const id = r.approve(r.anchors(), { expires_at: iso(Date.now() + 5000) });
     await deployJournal(r.paths.deployJournal);
+    const id = r.approve(r.anchors());
     const result = await r.run(id);
     expect(result.state).toBe("refused");
     expect(result.attempt).toBe(1);

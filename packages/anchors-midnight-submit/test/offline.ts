@@ -65,6 +65,7 @@ const write = (chain: OfflineChain) => {
 };
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 let readsToLose = FAULTS.has("lose-read") ? 1 : 0;
+let finalityClockAdvanced = false;
 
 // The process reads the chain's clock as its own, as a host whose clock is right does: a deployer
 // stamps its TTLs from Date.now, so a clock left behind the chain's would stamp bytes the chain
@@ -96,7 +97,13 @@ function nodeAnswer(method: string, params: unknown[] = []) {
     if (at) return { result: `0x${FAULTS.has("fork") ? HEAD : (at.block ?? BLOCK)}` };
     return { result: chain.nodeLags ? null : `0x${HEAD}` };
   }
-  if (method === "chain_getFinalizedHead") return { result: `0x${HEAD}` };
+  if (method === "chain_getFinalizedHead") {
+    if (FAULTS.has("expire-finality-poll") && !finalityClockAdvanced) {
+      write({ ...chain, aheadMs: chain.aheadMs + 11 * 60_000 });
+      finalityClockAdvanced = true;
+    }
+    return { result: `0x${HEAD}` };
+  }
   if (method === "chain_getHeader" && params[0] === `0x${HEAD}`) return { result: { number: FAULTS.has("unfinal") ? "0x0" : "0x3e8" } };
   if (method === "chain_getBlock") {
     const carried = landed.filter((t) => `0x${t.block ?? BLOCK}` === params[0]);
