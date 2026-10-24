@@ -46,6 +46,11 @@ and catches up under bounded HTTP work. `midnightReadRpcUrl` is an explicit read
 wallet submission and sync continue to use the existing Blockfrost endpoint selection.
 The hosted read proxy keeps the provider credential server-side. Midnight's former public
 mainnet RPC is retired; activate the restricted proxy before using this configuration.
+Once caught up, the follower waits sixty seconds between idle polls to amortize read quota
+over several blocks. Successful catch-up continues immediately; source errors retry after
+five seconds. The controller still runs every fifteen seconds and refuses a head older than
+the existing two-minute freshness limit. Measure total steady-state provider usage before
+activation; a bounded local cap does not establish sufficient shared-project capacity.
 
 Anchor mode remains operator-terminal-only on mainnet. Agent-driven processes refuse before
 shared state or credential access. Acquire the canonical shared execution lock before wallet

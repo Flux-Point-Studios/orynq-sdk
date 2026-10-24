@@ -59,7 +59,7 @@ it("keeps following during slow proof preparation and drains it before returning
   const running = runStandingLoops({ catchup, controller, abort, publish: () => {}, hold: () => {} }).then(() => { completed = true; });
   try {
     await vi.advanceTimersByTimeAsync(15_001); expect(prepared).toBe(1);
-    await vi.advanceTimersByTimeAsync(125_000); expect(followed).toBeGreaterThan(10); expect(prepared).toBe(1);
+    await vi.advanceTimersByTimeAsync(125_000); expect(followed).toBe(3); expect(prepared).toBe(1);
     abort.abort(); await vi.advanceTimersByTimeAsync(1); expect(completed).toBe(false);
     release!(); await running; expect(completed).toBe(true);
   } finally { abort.abort(); release?.(); await Promise.allSettled([running]); vi.useRealTimers(); }
@@ -77,11 +77,24 @@ it("aborts and drains the sibling loop before propagating a fatal failure", asyn
 it("reports each loop start and completion separately while a controller is busy",async()=>{
   vi.useFakeTimers();const abort=new AbortController(),events:unknown[][]=[];let release:(()=>void)|undefined;
   const running=runStandingLoops({abort,catchup:{turn:async()=>({state:"idle"})},controller:{turn:async()=>{await new Promise<void>(resolve=>{release=resolve;});return {state:"idle"};}},publish:(...event)=>{events.push(event);},hold:()=>{}});
-  try {await vi.advanceTimersByTimeAsync(20_001);
+  try {await vi.advanceTimersByTimeAsync(120_001);
     expect(events.some(event=>event[2]==="controller"&&event[3]==="start")).toBe(true);
     expect(events.filter(event=>event[2]==="follower"&&event[3]==="success").length).toBeGreaterThan(2);
     expect(events.some(event=>event[2]==="controller"&&event[3]==="success")).toBe(false);
   }finally{abort.abort();release?.();await running;vi.useRealTimers();}
+});
+
+it("batches idle reads for sixty seconds while draining catchup immediately and retrying failures promptly",async()=>{
+  vi.useFakeTimers();const abort=new AbortController(),starts:number[]=[];
+  const catchup={turn:vi.fn(async()=>{starts.push(Date.now());if(starts.length===1)throw new Error("temporary read refusal");return {state:starts.length===2?"progress":"idle"};})};
+  const running=runStandingLoops({abort,catchup,publish:()=>{},hold:()=>{}});
+  try{
+    await vi.advanceTimersByTimeAsync(4_999);expect(starts).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);expect(starts).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(10);expect(starts).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(59_999);expect(starts).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(1);expect(starts).toHaveLength(4);expect(starts[3]!-starts[2]!).toBe(60_000);
+  }finally{abort.abort();await running;vi.useRealTimers();}
 });
 
 it("records a fatal controller hold before draining and preserves its typed cause",async()=>{

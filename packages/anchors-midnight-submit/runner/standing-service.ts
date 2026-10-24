@@ -80,7 +80,7 @@ export async function runStandingLoops(options: {
         publish(progress, result, "follower", "start");
         const next = await catchup.turn(); progress = next.state; caughtUp = progress === "idle";
         if (!abort.signal.aborted) publish(progress, result, "follower", "success");
-        if (!caughtUp) wait = 10;
+        wait = caughtUp ? 60_000 : 10;
       } catch (error) { caughtUp = false; failure(error, "follower"); }
       if (abort.signal.aborted) return;
       await pause(wait);
