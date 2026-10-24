@@ -44,6 +44,9 @@ turn replaces its budget. The caller's cancellation signal remains lifetime-boun
 Observed history rollback and authenticated policy-continuity faults latch restart.
 Initial and later signed policy views are retained before scope refusals; changing
 checkpoints requires retained-history migration rather than a fresh reader.
+Remembered views restore a minimum serial without rejecting a newer view retained
+by another component. Freshly loaded views still reject serial rollback, and
+same-serial conflicts retain their hold.
 
 `state.coverage()` reads floor, head, earliest attempt boundary and the next
 bounded migration replay range in one transaction. It includes provenance without

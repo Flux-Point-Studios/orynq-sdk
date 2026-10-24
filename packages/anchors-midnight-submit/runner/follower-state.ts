@@ -109,11 +109,11 @@ export function openFollowerState(path: string, input: Scope) {
     const boundary = headRow(); if (!boundary) throw new Error("Attempt needs a verified prebroadcast boundary");
     db.prepare("insert into follower_attempts(tx_hash,bytes,ttl,fee,commitment,boundary_height,boundary_hash) values(?,?,?,?,?,?,?)").run(facts.txHash, bytes, facts.ttl, fee, facts.commitment, boundary.height, boundary.hash);
   }
-  function observePolicy(authors: KnownAuthors) {
+  function observePolicy(authors: KnownAuthors, remembered = false) {
     if (!Number.isSafeInteger(authors.serial) || authors.serial < 1) throw new Error("Invalid standing author policy serial");
     const digest = hash(JSON.stringify([authors.serial, authors.authors(scope.network), authors.checkpoints(scope.network).map(checkpointId)]));
     const previous = db.prepare("select serial,digest,conflicted from follower_policies where id=1").get();
-    if (previous && Number(previous.serial) > authors.serial) return "Standing author policy serial rewound";
+    if (previous && Number(previous.serial) > authors.serial) return remembered && previous.conflicted !== 1 ? null : "Standing author policy serial rewound or conflicted";
     if (previous && previous.serial === authors.serial && (previous.digest !== digest || previous.conflicted === 1)) {
       db.prepare("update follower_policies set conflicted=1 where id=1").run();
       return "Standing author policy conflict requires a newer authoritative serial";
@@ -121,8 +121,8 @@ export function openFollowerState(path: string, input: Scope) {
     db.prepare("insert into follower_policies(id,serial,digest,conflicted) values(1,?,?,0) on conflict(id) do update set serial=excluded.serial,digest=excluded.digest,conflicted=0").run(authors.serial, digest);
     return null;
   }
-  function retainPolicy(authors: KnownAuthors) {
-    const failure = transaction(() => observePolicy(authors));
+  function retainPolicy(authors: KnownAuthors, remembered = false) {
+    const failure = transaction(() => observePolicy(authors, remembered));
     if (failure) throw new Error(failure);
   }
   function admissions(): Admission[] {
@@ -153,7 +153,8 @@ export function openFollowerState(path: string, input: Scope) {
     feeFacts: () => transaction(feeFacts),
     admissions,
     assertAdmissionHistory,
-    observeStandingPolicy: retainPolicy,
+    observeStandingPolicy: (authors: KnownAuthors) => retainPolicy(authors),
+    rememberStandingPolicy: (authors: KnownAuthors) => retainPolicy(authors, true),
     recordVerifiedBlock(block: FollowerBlock) {
       if (block.network !== scope.network || block.policyDigest !== scope.policyDigest) throw new Error("Verified follower block scope differs from the durable trust policy");
       if (!Number.isSafeInteger(block.block.height) || block.block.height < 1 || !isHash(block.block.hash) || !isHash(block.parentHash) || !Number.isSafeInteger(block.timestamp) || block.timestamp < 0 || block.runtimeSpecVersion !== scope.runtimeSpecVersion || !Array.isArray(block.sends) || block.sends.length > 65_536) throw new Error("Invalid follower block facts");

@@ -31,7 +31,7 @@ export function openFollowerCatchup(options: { state: ReturnType<typeof openFoll
   }
   function policy() {
     let authors: KnownAuthors;
-    try { state.observeStandingPolicy(rememberedAuthors); authors = loadAuthors(); state.observeStandingPolicy(authors); rememberedAuthors = authors; }
+    try { state.rememberStandingPolicy(rememberedAuthors); authors = loadAuthors(); state.observeStandingPolicy(authors); rememberedAuthors = authors; }
     catch (error) { fatal = new Error("Follower policy continuity failed; process restart required", { cause: error }); throw fatal; }
     if (followerPolicyDigest(authors.checkpoints(scope.network)) !== scope.policyDigest) throw new Error("Follower checkpoint changes require retained-history migration");
     const windows = authors.authors(scope.network).filter(row => row.key === scope.author && row.role === "batch");

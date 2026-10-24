@@ -85,6 +85,18 @@ it("binds current author-policy checkpoints to the follower's verification polic
   expect(() => state.reserveStandingAttempt(raw, policy())).toThrow(/serial|rewound/i);
 });
 
+it("restores remembered policy floors without accepting stale reloads or clearing conflicts", () => {
+  const { state, path } = setup();
+  state.observeStandingPolicy(batchAuthors({}, 2));
+  expect(() => state.rememberStandingPolicy(batchAuthors())).not.toThrow();
+  expect(() => state.observeStandingPolicy(batchAuthors())).toThrow(/rewound/i);
+  expect(() => state.observeStandingPolicy(batchAuthors({ role: "relay" }, 2))).toThrow(/conflict/i);
+  expect(() => state.rememberStandingPolicy(batchAuthors())).toThrow(/conflict/i);
+  const db = new DatabaseSync(path); db.exec("delete from follower_policies"); db.close();
+  state.rememberStandingPolicy(batchAuthors({}, 2));
+  expect(() => state.observeStandingPolicy(batchAuthors())).toThrow(/rewound/i);
+});
+
 it("retains one commitment across unknown bytes and allows only an identical retry", async () => {
   const { state } = setup(), raw = await batchBytes({ ttl: now + 10 * minute }); state.reserveStandingAttempt(raw, policy());
   expect(() => state.reserveStandingAttempt(raw, policy())).not.toThrow();

@@ -18,7 +18,7 @@ export function openStandingSession(options: { state: ReturnType<typeof openFoll
   const hold: (message: string) => never = message => { fatal = new Error(`${message}; standing process restart required`); throw fatal; };
   function observeAuthors() {
     try {
-      state.observeStandingPolicy(rememberedAuthors);
+      state.rememberStandingPolicy(rememberedAuthors);
       const current = loadAuthors(); state.observeStandingPolicy(current); rememberedAuthors = current;
       return current;
     } catch { return hold("Standing authenticated policy continuity failed"); }

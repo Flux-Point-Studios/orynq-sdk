@@ -162,6 +162,14 @@ it("accepts a legitimate policy advance during the final read without poisoning 
   await expect(session.ready()).resolves.toMatchObject({ chainTime: f.clock.wallTime });
 });
 
+it("accepts a sibling observer's legitimate policy advance while still refusing a stale reload", async () => {
+  const f = setup(); let policy = batchAuthors();
+  const session = openStandingSession({ ...f.options, authors: () => policy }); advance(f, 20 * minute + 1000);
+  policy = batchAuthors({}, 2); f.state.observeStandingPolicy(policy);
+  await expect(session.ready()).resolves.toMatchObject({ chainTime: f.clock.wallTime });
+  policy = batchAuthors(); await expect(session.ready()).rejects.toThrow(/serial|policy|continuity/i);
+});
+
 it("requires the durable interval to contain the exact verified startup block", async () => {
   const f = setup(), other = openStandingSession({ ...f.options, verifiedStart: { ...block(11, now), block: { height: 11, hash: h(99) } } });
   advance(f, 20 * minute + 1000);

@@ -122,3 +122,9 @@ it("retains a newer mismatched checkpoint policy before refusing construction", 
   chain.checkpoint = original; serial = 1;
   expect(open).toThrow(/serial|policy|continuity/i);
 });
+
+it("accepts a sibling observer's legitimate policy advance before its next turn", async () => {
+  const follower = open(); serial = 2; state.observeStandingPolicy(authors());
+  await expect(follower.start()).resolves.toMatchObject({ block: chain.ref(1365) });
+  serial = 1; await expect(follower.turn()).rejects.toThrow(/serial|policy|continuity/i);
+});
