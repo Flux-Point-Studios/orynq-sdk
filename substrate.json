@@ -417,6 +417,23 @@
       "status": "experimental"
     },
     {
+      "id": "midnight-receipt-discovery",
+      "name": "Midnight receipt proof discovery",
+      "desc": "Locates SHA-addressed member and set hints, binds the exact requested receipt ID/content/certificate, reconstructs portable proofs and independently verifies current author policy, execution and GRANDPA finality through isolated RPC sources. One shared request/decoded-byte/deadline budget bounds all HTTP; resumable forward progress is independent of damaged-evidence repair. Unresolved or exhausted hints never prove chain absence or coverage.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight/src/discovery.ts",
+        "packages/anchors-midnight/src/source.ts",
+        "packages/anchors-midnight/src/rpc-source.ts"
+      ],
+      "consumes": [
+        "anchors-midnight",
+        "checkpoint-primitives",
+        "midnight-proof-candidates"
+      ],
+      "status": "experimental"
+    },
+    {
       "id": "materios-certified-census",
       "name": "Finalized certified receipt census",
       "desc": "Reads every Materios receipt at one fixed finalized block through bounded storage RPC, validates Blake2_128Concat keys and exact SCALE values, classifies certificate provenance with shared core primitives, and preserves pending or contradicted entries. Re-enumeration observes late certification; independent coverage recount is required because RPC completeness is an operator trust boundary.",

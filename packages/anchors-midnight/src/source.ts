@@ -13,6 +13,9 @@ export interface SourceEndpoints {
   indexerWs: string;
   node: string;
   headers: Record<string, string>;
+  // Cancels HTTP calls; WebSocket subscriptions retain their iterator lifecycle.
+  httpSignal?: AbortSignal;
+  httpBudget?: { requests: number; bytes: number; abort: AbortController };
 }
 
 export interface IndexedTransaction {
@@ -140,8 +143,46 @@ export function midnightSource(endpoints: SourceEndpoints): MidnightSource {
   const secrets = Object.values(endpoints.headers).filter((v) => v.length >= 8);
   const redact = (text: string) => secrets.reduce((t, s) => t.split(s).join("<redacted>"), text);
   const post = async (url: string, what: string, body: unknown): Promise<unknown> => {
-    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...endpoints.headers }, body: JSON.stringify(body) });
-    const text = await res.text();
+    const serialized = JSON.stringify(body);
+    if (new TextEncoder().encode(serialized).byteLength > 1024 * 1024) throw new HttpUnavailable(`${endpoints.operator} ${what}: request byte budget exceeded`);
+    const budget = endpoints.httpBudget;
+    if (budget) {
+      if (!Number.isSafeInteger(budget.requests) || budget.requests < 0 || !Number.isSafeInteger(budget.bytes) || budget.bytes < 0) throw new HttpUnavailable("Invalid shared HTTP budget");
+      if (!budget.requests) { budget.abort.abort("request-budget"); throw new HttpUnavailable("Shared HTTP request budget exceeded"); }
+      budget.requests--;
+    }
+    const abort = new AbortController(), signal = AbortSignal.any([abort.signal, ...(endpoints.httpSignal ? [endpoints.httpSignal] : []), ...(budget ? [budget.abort.signal] : [])]);
+    const timer = setTimeout(() => abort.abort(), 15_000); timer.unref?.();
+    let res: Response, text = "";
+    try {
+      res = await fetch(url, { method: "POST", redirect: "error", signal, headers: { "content-type": "application/json", ...endpoints.headers }, body: serialized });
+      const decoder = new TextDecoder("utf-8", { fatal: true });
+      let bytes = 0;
+      if (res.body) {
+        const reader = res.body.getReader();
+        try {
+          for (;;) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            bytes += chunk.value.byteLength;
+            if (budget) {
+              if (chunk.value.byteLength > budget.bytes) { budget.abort.abort("byte-budget"); throw new HttpUnavailable("Shared HTTP response byte budget exceeded"); }
+              budget.bytes -= chunk.value.byteLength;
+            }
+            if (bytes > 40 * 1024 * 1024) {
+              await reader.cancel(); abort.abort();
+              throw new HttpUnavailable(`${endpoints.operator} ${what}: response byte budget exceeded`);
+            }
+            text += decoder.decode(chunk.value, { stream: true });
+          }
+        } finally { reader.releaseLock(); }
+      }
+      text += decoder.decode();
+    } catch (error) {
+      abort.abort();
+      if (error instanceof HttpUnavailable) throw error;
+      throw new HttpUnavailable(redact(`${endpoints.operator} ${what}: HTTP request unavailable`));
+    } finally { clearTimeout(timer); }
     if (!res.ok) throw new Error(redact(`${endpoints.operator} ${what}: HTTP ${res.status}: ${text.slice(0, 300)}`));
     try {
       return JSON.parse(text);
@@ -211,6 +252,8 @@ export function midnightSource(endpoints: SourceEndpoints): MidnightSource {
     },
   };
 }
+
+class HttpUnavailable extends Error {}
 
 // The indexer's contractActions subscription over graphql-transport-ws. Messages queue until
 // the consumer asks for them; an error or the server's completion ends the iteration.
