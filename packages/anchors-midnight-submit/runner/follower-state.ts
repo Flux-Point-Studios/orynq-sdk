@@ -14,6 +14,10 @@ interface Scope { network: MidnightNetwork; genesis: string; registry: string; a
 interface BlockRow { height: number; hash: string; parent_hash: string; timestamp: number; digest: string }
 interface Observation { height: number; blockHash: string; extrinsicIndex: number; txHash: string; status: "SUCCESS" | "PARTIAL_SUCCESS" | "FAILURE"; fee: bigint; policyKey: boolean }
 interface AttemptRow { tx_hash: string; bytes: Uint8Array; ttl: number; fee: string; commitment: string; boundary_height: number; boundary_hash: string }
+interface Admission { txHash: string; policySerial: number; head: { height: number; hash: string } }
+export class StandingHistoryLost extends Error {
+  constructor() { super("Standing admitted reservation history was lost"); }
+}
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
 const isHash = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 const SCHEMA = `
@@ -121,10 +125,23 @@ export function openFollowerState(path: string, input: Scope) {
     const failure = transaction(() => observePolicy(authors));
     if (failure) throw new Error(failure);
   }
+  function admissions(): Admission[] {
+    return db.prepare("select a.tx_hash,a.policy_serial,a.head_height,a.head_hash from follower_admissions a join follower_attempts t on t.tx_hash=a.tx_hash order by a.tx_hash").all().map(row => ({ txHash: String(row.tx_hash), policySerial: Number(row.policy_serial), head: { height: Number(row.head_height), hash: String(row.head_hash) } }));
+  }
+  function assertAdmissionHistory(previous: readonly Admission[]) {
+    if (!previous.length) return;
+    const retained = new Map(admissions().map(row => [row.txHash, row]));
+    for (const row of previous) {
+      const current = retained.get(row.txHash);
+      if (!current || current.policySerial < row.policySerial || current.head.height < row.head.height || (current.head.height === row.head.height && current.head.hash !== row.head.hash)) throw new StandingHistoryLost();
+    }
+  }
   return {
     head,
     observations,
     feeFacts: () => transaction(feeFacts),
+    admissions,
+    assertAdmissionHistory,
     observeStandingPolicy: retainPolicy,
     recordVerifiedBlock(block: FollowerBlock) {
       if (block.network !== scope.network || block.policyDigest !== scope.policyDigest) throw new Error("Verified follower block scope differs from the durable trust policy");
@@ -166,13 +183,14 @@ export function openFollowerState(path: string, input: Scope) {
       if (!deadlines.length || deadlines.some(value => !Number.isSafeInteger(value) || value < 0)) throw new Error("Attempt has no valid serialized TTL");
       transaction(() => recordProvenance(bytes, { txHash: decoded.txHash, ttl: Math.max(...deadlines), fee: declaredFee(final), commitment: call!.commitment }));
     },
-    reserveStandingAttempt(inputBytes: Uint8Array, policy: { commitment: string; authors: KnownAuthors; started: StandingClockPoint; current: StandingClockPoint }) {
+    reserveStandingAttempt(inputBytes: Uint8Array, policy: { commitment: string; authors: KnownAuthors; started: StandingClockPoint; current: StandingClockPoint & { height: number; hash: string }; retainedAdmissions?: readonly Admission[] }) {
       const bytes = new Uint8Array(inputBytes);
       // A newer revocation must survive refusal of this admission.
       retainPolicy(policy.authors);
       return transaction(() => {
+        assertAdmissionHistory(policy.retainedAdmissions ?? []);
         const policyFailure = observePolicy(policy.authors); if (policyFailure) throw new Error(policyFailure);
-        const snapshot = headRow(); if (!snapshot || policy.current.chainTime !== snapshot.timestamp) throw new Error("Standing clock evidence differs from the durable head");
+        const snapshot = headRow(); if (!snapshot || policy.current.height !== snapshot.height || policy.current.hash !== snapshot.hash || policy.current.chainTime !== snapshot.timestamp) throw new Error("Standing clock evidence differs from the durable head");
         assertStandingClock(policy.started, policy.current);
         if (followerPolicyDigest(policy.authors.checkpoints(scope.network)) !== scope.policyDigest) throw new Error("Standing author checkpoints differ from the follower finality policy");
         const admitted = assertStandingTransaction(bytes, { ...scope, commitment: policy.commitment }, { height: snapshot.height, timestamp: snapshot.timestamp, runtimeSpecVersion: scope.runtimeSpecVersion }, policy.authors);

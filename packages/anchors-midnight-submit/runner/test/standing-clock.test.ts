@@ -1,9 +1,14 @@
 import { expect, it } from "vitest";
-import { assertStandingClock, assertStandingFreshClock } from "../standing-clock.js";
+import { assertStandingClock, assertStandingFreshClock, assertStandingHostClock } from "../standing-clock.js";
 
 const minute = 60_000, base = Date.parse("2026-10-24T00:00:00Z");
 const start = () => ({ chainTime: base, wallTime: base, monotonicMillis: 500 });
 const ready = () => ({ chainTime: base + 20 * minute, wallTime: base + 20 * minute, monotonicMillis: 500 + 20 * minute });
+
+it("checks host-clock continuity before a chain snapshot is available", () => {
+  expect(() => assertStandingHostClock(start(), ready())).not.toThrow();
+  expect(() => assertStandingHostClock(start(), { ...ready(), wallTime: ready().wallTime + 1001 })).toThrow(/step/i);
+});
 
 it("requires twenty authenticated chain minutes and twenty minutes in the current process", () => {
   expect(() => assertStandingClock(start(), ready())).not.toThrow();

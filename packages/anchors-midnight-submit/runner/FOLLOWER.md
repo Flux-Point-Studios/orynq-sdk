@@ -50,6 +50,19 @@ process-monotonic progress after every start, and agreement between wall and
 monotonic elapsed time. The controller must capture a new start point for each
 process, preserve it through retries and latch clock faults until restart.
 
+`openStandingSession` captures a fresh verified startup block and host-clock birth
+by value. Every new process waits strictly beyond twenty chain minutes and at
+least twenty monotonic minutes. It checks coherent follower snapshots, current
+signed policy and exact head identity again before reserving copied transaction
+bytes. Ordinary catch-up and head advancement can retry; observed clock steps,
+rewinds or lost reservation history latch a restart requirement.
+
+The process remembers its admissions and latest observed authenticated policy.
+Admission watermarks are checked inside the reservation transaction so a
+same-head restore cannot silently erase an earlier claim. A whole-process restore
+still needs independent retained policy and accounting history. A ready session
+or historical admission does not grant wallet delivery permission.
+
 SQLite and its owning process are a trusted local persistence boundary. Reads do
 not cryptographically reauthenticate stored observations against retained proofs.
 Private permissions, atomic transactions and interval checks do not protect against
