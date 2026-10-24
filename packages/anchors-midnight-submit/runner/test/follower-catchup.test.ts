@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createServer, type Server } from "node:http";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -12,10 +12,13 @@ import { batchAuthors, batchScope } from "./batch-fixture.js";
 
 const now = 1_800_000_000_000, day = 86_400_000, timestamp = (height: number) => now + (height - 1365) * day / 4;
 let server: Server, root: string, url: string, state: ReturnType<typeof openFollowerState>, chain: ReturnType<typeof followerChain>;
-let tip = 1365, corruptHeight = 0, requests = 0, validFrom = 1350, serial = 1, shiftWindow = false;
+let tip = 1365, corruptHeight = 0, requests = 0, httpRequests = 0, validFrom = 1350, serial = 1, shiftWindow = false;
+let responseFault: "truncated" | "duplicate-id" | "wrong-id" | "rpc-error" | null = null;
+let stallEffects: "headers" | "body" | null = null, effectRequests = 0, effectsStarted: (() => void) | undefined, effectsClosed: (() => void) | undefined;
 const authors = () => batchAuthors({ validFrom }, serial, [{ ...chain.checkpoint, setId: chain.checkpoint.setId.toString(), authorities: chain.checkpoint.authorities.map(row => ({ key: row.key, weight: row.weight.toString() })) }]);
 beforeEach(async () => {
-  tip = 1365; corruptHeight = 0; requests = 0; validFrom = 1350; serial = 1; shiftWindow = false;
+  tip = 1365; corruptHeight = 0; requests = 0; httpRequests = 0; validFrom = 1350; serial = 1; shiftWindow = false;
+  responseFault = null; stallEffects = null; effectRequests = 0; effectsStarted = undefined; effectsClosed = undefined;
   chain = followerChain((method, params, value) => {
     if (shiftWindow && method === "state_getReadProof" && params[1] === `0x${chain.ref(1301).hash}`) { validFrom = 1299; serial = 2; shiftWindow = false; }
     if (corruptHeight && method === "state_getReadProof" && params[1] === `0x${chain.ref(corruptHeight).hash}`) return { ...value, proof: [] };
@@ -27,12 +30,31 @@ beforeEach(async () => {
   server = createServer(async (req, res) => {
     try {
       const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
-      const input = JSON.parse(Buffer.concat(chunks).toString()), answer = async (request: { id: unknown; method: string; params?: unknown[] }) => {
+      httpRequests++;
+      const body = Buffer.concat(chunks);
+      if (body.length > 8192) throw new Error("fixture request exceeds byte limit");
+      const input = JSON.parse(body.toString());
+      if (Array.isArray(input) && input.length > 32) throw new Error("fixture request exceeds call limit");
+      const effects = Array.isArray(input) && input.some(call => call.method === "state_getReadProof");
+      if (effects) effectRequests++;
+      if (effects && stallEffects) {
+        res.once("close", () => effectsClosed?.());
+        if (stallEffects === "body") { res.writeHead(200, { "content-type": "application/json" }); res.write("["); }
+        else effectsStarted?.();
+        return;
+      }
+      const answer = async (request: { id: unknown; method: string; params?: unknown[] }) => {
         requests++;
         const result = request.method === "chain_getFinalizedHead" ? `0x${chain.ref(tip).hash}` : await chain.source.node.call(request.method, request.params);
         return { jsonrpc: "2.0", id: request.id, result };
       };
-      const result = Array.isArray(input) ? await Promise.all(input.map(answer)) : await answer(input);
+      const result: unknown = Array.isArray(input) ? (await Promise.all(input.map(answer))).reverse() : await answer(input);
+      if (effects && Array.isArray(result)) {
+        if (responseFault === "truncated") result.pop();
+        if (responseFault === "duplicate-id") result[0].id = result[1].id;
+        if (responseFault === "wrong-id") result[0].id = -1;
+        if (responseFault === "rpc-error") result[0] = { jsonrpc: "2.0", id: result[0].id, error: { code: -32000, message: "fixture proof unavailable" } };
+      }
       res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(result));
     } catch { res.writeHead(500); res.end("fixture failure"); }
   });
@@ -58,6 +80,42 @@ it("appends bounded complete ranges from the actual durable cursor across turns"
   expect(await follower.turn()).toMatchObject({ state: "progress", blocks: 32, head: chain.ref(1365) });
   expect(await follower.turn()).toMatchObject({ state: "idle", head: chain.ref(1365) });
   expect(state.feeFacts().chainTime).toBe(now); expect(requests).toBeGreaterThan(0);
+});
+
+it("keeps a 32-block catch-up turn within the shared proxy capacity", async () => {
+  const follower = open(); await follower.start(); await follower.turn();
+  const before = { httpRequests, requests };
+  expect(await follower.turn()).toMatchObject({ state: "progress", blocks: 32, head: chain.ref(1333) });
+  expect(httpRequests - before.httpRequests).toBeLessThan(50);
+  expect(requests - before.requests).toBeLessThan(110);
+});
+
+it.each(["truncated", "duplicate-id", "wrong-id", "rpc-error"] as const)("retains its cursor when a shared HTTP proof response is %s", async fault => {
+  const follower = open(); await follower.start(); await follower.turn();
+  const head = state.head(), before = effectRequests; responseFault = fault;
+  await expect(follower.turn()).rejects.toThrow();
+  expect(state.head()).toEqual(head); expect(effectRequests - before).toBe(1);
+});
+
+it.each(["headers", "body"] as const)("drains a shared HTTP proof request cancelled during %s without starting another group", async phase => {
+  const abort = new AbortController(), follower = open(abort.signal); await follower.start(); await follower.turn();
+  const head = state.head(), before = effectRequests;
+  const started = new Promise<void>(resolve => { effectsStarted = resolve; });
+  const closed = new Promise<void>(resolve => { effectsClosed = resolve; });
+  stallEffects = phase;
+  const originalFetch = globalThis.fetch, spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const response = await originalFetch(input, init);
+    const calls = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+    if (phase !== "body" || !Array.isArray(calls) || !calls.some(call => call.method === "state_getReadProof") || !response.body) return response;
+    return new Response(response.body.pipeThrough(new TransformStream({ transform(chunk, controller) {
+      controller.enqueue(chunk); effectsStarted?.();
+    } })), { status: response.status, headers: response.headers });
+  });
+  try {
+    const turn = follower.turn(), rejected = expect(turn).rejects.toThrow();
+    await started; abort.abort(); await rejected; await closed;
+    expect(state.head()).toEqual(head); expect(effectRequests - before).toBe(1);
+  } finally { abort.abort(); spy.mockRestore(); }
 });
 
 it("keeps only complete yielded blocks on an effects failure and resumes there", async () => {
