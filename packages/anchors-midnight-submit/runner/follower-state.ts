@@ -137,6 +137,17 @@ export function openFollowerState(path: string, input: Scope) {
     }
   }
   return {
+    scope: () => ({ ...scope }),
+    coverage: () => transaction(() => {
+      const floor = db.prepare("select * from follower_blocks order by height limit 1").get() as unknown as BlockRow | undefined;
+      const snapshot = headRow(), boundary = db.prepare("select boundary_height,boundary_hash from follower_attempts order by boundary_height limit 1").get();
+      const first = db.prepare("select * from follower_blocks where batch_indexed<>1 order by height limit 1").get() as unknown as BlockRow | undefined;
+      const end = first && db.prepare("select height,hash from follower_blocks where height=?").get(Math.min(first.height + 31, snapshot!.height));
+      if (first && !end) throw new Error("Follower replay interval is incomplete");
+      const point = (row: BlockRow | undefined) => row ? { height: row.height, hash: row.hash, parentHash: row.parent_hash, timestamp: row.timestamp } : null;
+      return { floor: point(floor), head: point(snapshot), earliestAttempt: boundary ? { height: Number(boundary.boundary_height), hash: String(boundary.boundary_hash) } : null,
+        replay: first ? { after: { height: first.height - 1, hash: first.parent_hash }, end: { height: Number(end!.height), hash: String(end!.hash) } } : null };
+    }),
     head,
     observations,
     feeFacts: () => transaction(feeFacts),
