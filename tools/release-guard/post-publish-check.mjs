@@ -106,7 +106,9 @@ async function checkLayout(specs, { registry, singletons }, importsToCheck) {
         maxBuffer: 64 << 20,
       });
     } catch (e) {
-      return { problems: [`${label}: npm install failed: ${lastLine(e.stderr) || e.message}`], layout: null };
+      const npmCode = /^npm (?:error|ERR!) code ([A-Z][A-Z0-9_]{0,63})\s*$/m.exec(String(e.stderr))?.[1] ?? "unavailable";
+      const exit = Number.isSafeInteger(e.code) ? e.code : "unavailable";
+      return { problems: [`${label}: npm install failed (exit=${exit}, npm=${npmCode})`], layout: null };
     }
     const problems = [];
     for (const spec of importsToCheck) {

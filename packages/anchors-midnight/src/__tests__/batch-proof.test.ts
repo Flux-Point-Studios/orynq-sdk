@@ -1,17 +1,14 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import * as L from "@midnight-ntwrk/ledger-v8";
-import { censusBatch, decodeReceiptRecord, merklePath } from "@fluxpointstudios/orynq-sdk-core/checkpoint";
-import { authorKey, batchSetCommitment } from "../commitment.js";
+import { batchSetCommitment } from "../commitment.js";
 import { authorStatusAt } from "../known-authors.js";
 import { auditCheckpoints, checkpointId } from "../checkpoints.js";
 import { BatchSetCache, verifyBatchProof, verifyBatchSet } from "../batch-proof.js";
 import { verifyMidnightAnchor } from "../verify.js";
-import { registryInitialState } from "../registry.js";
 import { toHex } from "../scale.js";
-import { anchorChain, fixture } from "./anchor-chain.js";
-import { finalBytes, unprovenRegistryCall } from "./registry-call.js";
+import { anchorChain } from "./anchor-chain.js";
+import { batchChain } from "./batch-chain.js";
 
 const h = (byte: number) => byte.toString(16).padStart(2, "0").repeat(32);
 const receiptFixture = JSON.parse(readFileSync(new URL("../../../core/src/__tests__/fixtures/checkpoint-receipts.json", import.meta.url), "utf8"));
@@ -67,25 +64,8 @@ describe("portable receipt-to-Midnight proofs", () => {
   const request = (proof = bundle) => ({ proof, network: "mainnet" as const, materiosGenesis: genesis, contentHash: bundle.receipt.contentHash });
 
   beforeAll(async () => {
-    const receipts = receiptFixture.receipts.map((r: { raw: string; receiptId: string }) => ({ receiptId: r.receiptId, ...decodeReceiptRecord(Buffer.from(r.raw, "hex")) }));
-    const batch = censusBatch({ genesis, finalizedHeight: 2416892, receipts });
-    const anchorIds = [batch.anchorId.slice(2), h(0), h(255)].sort();
-    const commitment = toHex(batchSetCommitment({ materiosGenesis: genesis, anchorIds }));
-    const secret = new Uint8Array(32).fill(19);
-    key = toHex(authorKey(secret));
-    const { tx } = unprovenRegistryCall({ address: fixture.registry.address, state: registryInitialState(), call: { circuit: "anchor", args: [Buffer.from(commitment, "hex"), 3n] }, witnesses: { authorSecret: secret } });
-    const bytes = await finalBytes(tx);
-    const txHash = L.Transaction.deserialize("signature", "proof", "binding", bytes).transactionHash();
-    chain = anchorChain({ place: [[2023, "anchor", toHex(bytes), txHash]] });
-    const indexed = chain.indexed.get(txHash)!;
-    const member = batch.receipts[0]!;
-    bundle = {
-      format: "orynq-midnight-batch-proof/v1", network: "mainnet", materiosGenesis: genesis,
-      receipt: { receiptId: member.receiptId, contentHash: member.contentHash, baseRootSha256: member.baseRootSha256, storageLocatorHash: member.storageLocatorHash, certFormat: member.certFormat.format, certChainId: member.certFormat.chainId },
-      batch: { index: 0, count: batch.receipts.length, path: merklePath(batch.leafHashes, 0).map((s) => s.slice(2)), rootHash: batch.rootHash.slice(2), manifest: batch.manifest },
-      set: { commitment, anchorIds },
-      midnight: { registry: fixture.registry.address, txHash, blockHeight: indexed.block.height, blockHash: indexed.block.hash },
-    };
+    const ready = await batchChain();
+    chain = ready.chain; key = ready.key; bundle = ready.proof;
   });
 
   it("recomputes every link and checks the batch author, registry, inclusion and GRANDPA finality", async () => {
