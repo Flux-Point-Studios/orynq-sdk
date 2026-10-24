@@ -398,6 +398,41 @@
       "status": "experimental"
     },
     {
+      "id": "authenticated-midnight-blocks",
+      "name": "Authenticated Midnight block reads",
+      "desc": "Composes body-root, GRANDPA and pinned-runtime proofs into network/policy-bound complete blocks. Bounded contiguous ranges share verified authority paths with per-original-root cumulative transition limits while retaining the original policy identity. Private SQLite retains observations, exact provenance and scoped commitment history. Atomic reservations enforce canonical kind-3 scope, current batch policy, serialized TTLs, complete accounting and fee caps. Process sessions retain startup, policy and admission watermarks; observed clock or history rollback latches restart. Local persistence is trusted; guarded delivery and the standing controller remain separate.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight/src/execution.ts",
+        "packages/anchors-midnight-submit/runner/follower-block.ts",
+        "packages/anchors-midnight-submit/runner/follower-state.ts",
+        "packages/anchors-midnight-submit/runner/standing-budget.ts",
+        "packages/anchors-midnight-submit/runner/standing-clock.ts",
+        "packages/anchors-midnight-submit/runner/standing-session.ts",
+        "packages/anchors-midnight-submit/runner/standing-transaction.ts",
+        "packages/anchors-midnight-submit/runner/FOLLOWER.md"
+      ],
+      "consumes": [
+        "anchors-midnight"
+      ],
+      "status": "experimental"
+    },
+    {
+      "id": "materios-certified-census",
+      "name": "Finalized certified receipt census",
+      "desc": "Reads every Materios receipt at one fixed finalized block through bounded storage RPC, validates Blake2_128Concat keys and exact SCALE values, classifies certificate provenance with shared core primitives, and preserves pending or contradicted entries. Re-enumeration observes late certification; independent coverage recount is required because RPC completeness is an operator trust boundary.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight-submit/runner/census.ts",
+        "packages/anchors-midnight-submit/runner/CENSUS.md"
+      ],
+      "consumes": [
+        "checkpoint-primitives",
+        "orinq-receipts-pallet"
+      ],
+      "status": "experimental"
+    },
+    {
       "id": "midnight-census-plan-state",
       "name": "Durable Midnight census plans",
       "desc": "Private versioned SQLite state atomically persists canonical census snapshots, kind-3 plans, receipt claims and publication outbox. Confirmation rechecks fresh certificates and publication acknowledgements; confirmed claims cannot be released by restart or abandonment. Landing and coverage require an external authenticated follower.",
@@ -430,21 +465,6 @@
       "status": "experimental"
     },
     {
-      "id": "materios-certified-census",
-      "name": "Finalized certified receipt census",
-      "desc": "Reads every Materios receipt at one fixed finalized block through bounded storage RPC, validates Blake2_128Concat keys and exact SCALE values, classifies certificate provenance with shared core primitives, and preserves pending or contradicted entries. Re-enumeration observes late certification; independent coverage recount is required because RPC completeness is an operator trust boundary.",
-      "kind": "toolkit",
-      "paths": [
-        "packages/anchors-midnight-submit/runner/census.ts",
-        "packages/anchors-midnight-submit/runner/CENSUS.md"
-      ],
-      "consumes": [
-        "checkpoint-primitives",
-        "orinq-receipts-pallet"
-      ],
-      "status": "experimental"
-    },
-    {
       "id": "midnight-retained-publisher",
       "name": "Midnight retained proof publisher",
       "desc": "Reads back every canonical member and recovery-plan object from two retained proof stores before durable acknowledgement, including previously acknowledged objects. Exact byte digests, member-before-plan ordering, bounded reads and deadlines, credential-free public reads and redirect refusal preserve recovery preconditions across restart. Independent storage ownership is an operator prerequisite.",
@@ -456,21 +476,6 @@
       "consumes": [
         "midnight-census-plan-state",
         "midnight-proof-candidates"
-      ],
-      "status": "experimental"
-    },
-    {
-      "id": "authenticated-midnight-blocks",
-      "name": "Authenticated Midnight block reads",
-      "desc": "Composes shared header, body-root, GRANDPA and pinned-runtime storage proofs to classify exact body-bound Midnight sends. The strict public anchor verifier still requires full success; the private operator accepts a new explicit network-matched ChainView while preserving its existing default. Durable coverage, fee union and standing admission remain separate.",
-      "kind": "toolkit",
-      "paths": [
-        "packages/anchors-midnight/src/execution.ts",
-        "packages/anchors-midnight-submit/runner/follower-block.ts",
-        "packages/anchors-midnight-submit/runner/FOLLOWER.md"
-      ],
-      "consumes": [
-        "anchors-midnight"
       ],
       "status": "experimental"
     }
