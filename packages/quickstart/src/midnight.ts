@@ -9,9 +9,10 @@
  * Anchoring takes only a user key file (orynq-midnight-user-key/v1), never a bare service key
  * file, and refuses any author key KNOWN_AUTHORS lists: those are Flux Point Studios keys.
  */
-import { readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { parseArgs, type ParseArgsConfig } from "node:util";
+import * as receiptMidnight from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import {
   MIDNIGHT_REGISTRIES,
   createUserKeyFile,
@@ -292,13 +293,46 @@ async function anchor(args: readonly string[], io: CliIo, deps: MidnightDeps): P
   return 0;
 }
 
-// Runs `orynq verify|keys|anchor ... midnight ...`; returns the exit code. A refusal or a bad
-// request prints one line to stderr and returns 1; a verification that is not valid returns 1.
+async function verifyReceipt(args: readonly string[], io: CliIo, deps: MidnightDeps): Promise<number> {
+  const { values, positionals } = parse(args, {
+    network: { type: "string", default: "mainnet" }, genesis: { type: "string" }, "content-hash": { type: "string" }, "certificate-hash": { type: "string" },
+    gateway: { type: "string" }, rpc: { type: "string" }, continuation: { type: "string" },
+  }, true);
+  if (positionals.length !== 1) fail("verify midnight-receipt takes one receipt ID");
+  const required = "Receipt verification needs --genesis, --content-hash and --certificate-hash from the submitted receipt.";
+  const materiosGenesis = values.genesis ?? fail(required), contentHash = values["content-hash"] ?? fail(required), certificateHash = values["certificate-hash"] ?? fail(required);
+  const endpointsRequired = "Set --gateway and --rpc, or ORYNQ_MIDNIGHT_PROOF_GATEWAY_URL and ORYNQ_MIDNIGHT_PROOF_RPC_URL.";
+  const gatewayUrl = values.gateway ?? io.env.ORYNQ_MIDNIGHT_PROOF_GATEWAY_URL ?? fail(endpointsRequired), nodeUrl = values.rpc ?? io.env.ORYNQ_MIDNIGHT_PROOF_RPC_URL ?? fail(endpointsRequired);
+  if (typeof receiptMidnight.discoverReceiptProof !== "function") fail("Receipt verification needs @fluxpointstudios/orynq-sdk-anchors-midnight version 0.3.0 or newer.");
+  let continuation: receiptMidnight.DiscoveryContinuation | undefined;
+  if (values.continuation) {
+    let fd: number | undefined;
+    try {
+      fd = openSync(values.continuation, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+      const stat = fstatSync(fd); if (!stat.isFile() || stat.size > 4096) throw new Error("Invalid continuation file");
+      const bytes = Buffer.alloc(4097), count = readSync(fd, bytes, 0, bytes.length, 0);
+      if (count > 4096) throw new Error("Oversized continuation");
+      const value: unknown = JSON.parse(bytes.subarray(0, count).toString("utf8"));
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid continuation object");
+      continuation = value as receiptMidnight.DiscoveryContinuation;
+    } catch { return fail("The continuation must be a regular JSON object file of at most 4096 bytes."); }
+    finally { if (fd !== undefined) closeSync(fd); }
+  }
+  const network = networkOf(values.network);
+  try {
+    const result = await receiptMidnight.discoverReceiptProof({ network, materiosGenesis, receiptId: positionals[0]!, contentHash, certificateHash },
+      { gatewayUrl, nodeUrl, registries: deps.registries[network], knownAuthors: deps.knownAuthors, ...(continuation === undefined ? {} : { continuation }) });
+    io.stdout.write(JSON.stringify(result.status === "valid" ? { ...result, verification: { ...result.verification, anchor: verifyReport(result.verification.anchor) } } : result, null, 2) + "\n");
+    return result.status === "valid" ? 0 : 1;
+  } catch { return fail("Midnight receipt verification refused the configuration, identity or continuation. Check the explicit proof endpoints and retry context."); }
+}
+
 export async function midnightCommand(argv: readonly string[], io: CliIo, deps: Partial<MidnightDeps> = {}): Promise<number> {
   const full: MidnightDeps = { registries: deps.registries ?? MIDNIGHT_REGISTRIES, knownAuthors: deps.knownAuthors ?? knownAuthors(), ...(deps.submit ? { submit: deps.submit } : {}) };
   const [verb, ...rest] = argv;
   try {
     if (verb === "verify" && rest[0] === "midnight") return await verify(rest.slice(1), io, full);
+    if (verb === "verify" && rest[0] === "midnight-receipt") return await verifyReceipt(rest.slice(1), io, full);
     if (verb === "anchor" && rest[0] === "midnight") return await anchor(rest.slice(1), io, full);
     if (verb === "keys" && rest[0] === "init" && rest[1] === "midnight") return initKey(rest.slice(2), io);
     return fail(`unknown command: orynq ${argv.slice(0, 3).join(" ")}; run \`orynq help\``);

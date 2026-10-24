@@ -31,12 +31,20 @@ The Midnight commands need `@fluxpointstudios/orynq-sdk-anchors-midnight`, an op
 dependency installed beside this package; without it they exit 1 naming it.
 
 Install it with `npm install @fluxpointstudios/orynq-sdk-anchors-midnight`. It pins the
-mainnet registry generation the commands verify against, and its KNOWN_AUTHORS document lists
-no author and no finality checkpoint yet. So an anchor's author reads `unknown` unless
-`--author` names the key, and, since the commands take no checkpoint, a mainnet anchor verifies
-at most to `unverified-finality`, or is `invalid` when another key wrote it than `--author`
-names (see that package's README).
+mainnet registry generation the commands verify against. Version 0.3.2 includes the signed
+Flux Point Studios author policy and original mainnet finality checkpoint. An anchor is valid
+only when inclusion, finality and expected fields pass. A different author than `--author`
+makes it invalid (see that package's README).
 `@fluxpointstudios/orynq-sdk-anchors-midnight-submit` is private and not on npm.
+
+To discover an anchor from a Materios receipt, use
+`orynq verify midnight-receipt <receiptId> --genesis <materiosGenesis> --content-hash <contentHash> --certificate-hash <certificateHash> --gateway <proofStoreUrl> --rpc <midnightRpcUrl>`.
+The expected hashes must come from the actual receipt and certificate; quickstart receipts use
+the bundle's `manifestHash` as their content hash. This command is read-only and prints JSON.
+It exits 0 only for a valid proof. An unresolved search is not evidence that an anchor is absent;
+save its continuation object and pass `--continuation <file>` to resume the same query.
+Receipt discovery needs anchors-midnight 0.3.0 or later; use 0.3.2 or later for the shipped
+hosted author policy. See [receipt verification](https://github.com/Flux-Point-Studios/orynq-sdk/blob/main/packages/orynq-mcp/MIDNIGHT-RECEIPTS.md).
 
 `orynq verify midnight` is read-only and needs no key and no DUST. It checks an anchor with
 `verifyMidnightAnchor` from `@fluxpointstudios/orynq-sdk-anchors-midnight` and prints its labels:
@@ -128,6 +136,8 @@ const urls = buildExplorerUrls({ contentHash, blockHash, gatewayBaseUrl: DEFAULT
 | `ORYNQ_SKIP_FAUCET` | `0` | Set to `1` to skip faucet drip |
 | `ORYNQ_VERBOSE` | `0` | Set to `1` for extra info on `whoami` |
 | `ORYNQ_MIDNIGHT_BLOCKFROST_FILE` | none | Blockfrost project id file for `orynq verify midnight` |
+| `ORYNQ_MIDNIGHT_PROOF_GATEWAY_URL` | none | Retained proof store for `orynq verify midnight-receipt` |
+| `ORYNQ_MIDNIGHT_PROOF_RPC_URL` | none | Read-only Midnight RPC for `orynq verify midnight-receipt` |
 
 ## Trust model
 

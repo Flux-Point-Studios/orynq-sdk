@@ -79,7 +79,7 @@ const report = async (client: Client, args: Record<string, unknown>) => {
 const entry = () => ({ rootHash: bundle.rootHash, manifestHash: bundle.manifestHash!, merkleRoot: bundle.merkleRoot });
 
 describe("orynq-mcp's tools", () => {
-  it("are the 11 it had plus verify_midnight_anchor, with no Midnight anchoring tool", async () => {
+  it("include both read-only Midnight verifiers with no Midnight anchoring tool", async () => {
     setEnv({});
     const client = await connect(createOrynqServer().server);
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
@@ -97,6 +97,7 @@ describe("orynq-mcp's tools", () => {
         "trace_summary",
         "verify_cardano_anchor",
         "verify_midnight_anchor",
+        "verify_midnight_receipt",
       ].sort(),
     );
     expect(names.filter((n) => n.includes("midnight") && !n.startsWith("verify_"))).toEqual([]);
@@ -133,6 +134,9 @@ describe("verify_midnight_anchor", () => {
         isError: true,
         text: `verify_midnight_anchor needs ${MIDNIGHT_PACKAGE}, an optional peer dependency of orynq-mcp that is not installed; install it beside orynq-mcp (npm install ${MIDNIGHT_PACKAGE}).`,
       });
+      const receipt = await client.callTool({ name: "verify_midnight_receipt", arguments: { receiptId: "00".repeat(32), materiosGenesis: "01".repeat(32), contentHash: "02".repeat(32), certificateHash: "03".repeat(32) } });
+      expect(receipt.isError).toBe(true);
+      expect((receipt.content as {text:string}[])[0]!.text).toContain("optional @fluxpointstudios/orynq-sdk-anchors-midnight");
     } finally {
       await client.close();
     }
