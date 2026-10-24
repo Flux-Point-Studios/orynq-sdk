@@ -192,6 +192,11 @@ export function openCensusState(path: string, scope: { network: "mainnet" | "pre
       const rows = db.prepare("select distinct o.* from objects o join plan_objects r using(key) join plans p using(commitment) where o.published=0 and p.state!='abandoned' order by o.kind,o.key").all() as unknown as ObjectRow[];
       return rows.map(row => ({ kind: row.kind, ...checkedObject(row) }));
     },
+    publicationObjects(commitment: string) {
+      if (getPlan(commitment).state === "abandoned") throw new Error("Abandoned plan is not publishable");
+      const rows = db.prepare("select o.* from objects o join plan_objects r using(key) where r.commitment=? order by o.kind,o.key").all(commitment) as unknown as ObjectRow[];
+      return rows.map(row => ({ kind: row.kind, ...checkedObject(row) }));
+    },
     acknowledgePublication(key: string, sha256: string) {
       const row = db.prepare("select * from objects where key=?").get(key) as unknown as ObjectRow | undefined;
       if (!row || checkedObject(row).sha256 !== sha256) throw new Error("Publication digest differs from durable object");
