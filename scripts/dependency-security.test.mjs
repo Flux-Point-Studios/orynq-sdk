@@ -31,6 +31,14 @@ test('both body-parser release lines include the compressed-body error fix', () 
   assertLockedFloor('body-parser', { 1: '1.20.9', 2: '2.4.0' }, 'GHSA-27r3-jxmh-p828');
 });
 
+test('locked Undici releases include the content-encoding and EventSource denial-of-service fixes', () => {
+  assertLockedFloor('undici', { 6: '6.29.1', 7: '7.30.1', 8: '8.12.2' }, 'GHSA-xjj6-f33q-929c / GHSA-4qv8-2p9j-2685');
+});
+
+test('both fast-uri release lines reject URI scheme and host confusion', () => {
+  assertLockedFloor('fast-uri', { 3: '3.1.9', 4: '4.2.3' }, 'GHSA-w74x-v6f9-j3xg / GHSA-wjr9-j795-jxcr');
+});
+
 for (const [name, floor, advisory] of [
   ['hono', '4.13.11', 'GHSA-5r4p-p66f-jhc7'],
   ['@vitest/mocker', '4.1.12', 'GHSA-qxg6-89mg-rqv8 / GHSA-xp26-3454-mjgp'],
