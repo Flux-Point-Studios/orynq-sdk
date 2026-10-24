@@ -43,7 +43,7 @@ function network(value: unknown): MidnightNetwork {
   return value;
 }
 
-function parseSet(value: unknown) {
+export function parseBatchSet(value: unknown) {
   const set = object(value, ["network", "materiosGenesis", "commitment", "anchorIds", "midnight"], "batch set");
   const midnight = object(set.midnight, ["registry", "txHash", "blockHeight", "blockHash"], "midnight");
   if (!Array.isArray(set.anchorIds) || set.anchorIds.length < 1 || set.anchorIds.length > 1024) throw new Error("Batch set must contain 1..1024 anchor ids");
@@ -58,7 +58,7 @@ const message = (error: unknown) => error instanceof Error ? error.message : Str
 
 export async function verifyBatchSet(value: unknown, options: VerifyOptions): Promise<BatchSetResult> {
   try {
-    const set = parseSet(value);
+    const set = parseBatchSet(value);
     if (toHex(batchSetCommitment(set)) !== set.commitment) throw new Error("Batch set commitment does not match its members");
     const anchor = await verifyMidnightAnchor({ network: set.network, txHash: set.midnight.txHash, expect: { kind: 3, commitment: set.commitment } }, options);
     if (anchor.status !== "valid") return { status: anchor.status, reason: anchor.checks.filter((check) => !check.ok).map((check) => check.name).join(", ") || anchor.status, anchor };
@@ -99,7 +99,7 @@ export async function verifyBatchProof(request: { proof: unknown; network: Midni
     if (manifest.cardano_network_id !== "" || manifest.count !== count || manifest.to_block !== height || manifest.materios_chain_id !== genesis || manifest.root !== rootHash) throw new Error("Manifest does not describe this census batch");
     const id = anchorId(rootHash, manifestHash({ cardano_network_id: "", count, from_block: height, materios_chain_id: genesis, root: rootHash, to_block: height })).slice(2);
     const members = object(proof.set, ["commitment", "anchorIds"], "set");
-    const set = parseSet({ network: request.network, materiosGenesis: genesis, ...members, midnight: proof.midnight });
+    const set = parseBatchSet({ network: request.network, materiosGenesis: genesis, ...members, midnight: proof.midnight });
     if (!set.anchorIds.includes(id)) throw new Error("Batch is not a member of the committed set");
     const result = await (options.setCache ? options.setCache.verify(set, options) : verifyBatchSet(set, options));
     if (result.status !== "valid") return result;
@@ -127,7 +127,7 @@ export class BatchSetCache {
   async verify(value: unknown, options: VerifyOptions): Promise<BatchSetResult> {
     try {
       if (options.maxSetChanges !== undefined && (!Number.isSafeInteger(options.maxSetChanges) || options.maxSetChanges < 0)) throw new Error("Finality budget must be a nonnegative safe integer");
-      const set = parseSet(value);
+      const set = parseBatchSet(value);
       const authors = options.knownAuthors ?? knownAuthors();
       const source = options.source;
       const sourcePolicy = [source.network ?? null, source.operator, ...[source.node, source.indexer, source.node.call, source.node.batch, source.indexer.transactions, source.verifyExecution].map((value) => this.identity(value))];

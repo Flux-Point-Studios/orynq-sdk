@@ -76,6 +76,7 @@ describe("singletonCopies", () => {
 describe("checkLayouts against a registry", () => {
   const packages: Record<string, Record<string, Buffer>> = {};
   let hidden = new Map<string, number>();
+  let refuseInstall = false;
   let server: Server;
   let url = "";
 
@@ -107,6 +108,7 @@ describe("checkLayouts against a registry", () => {
       if (tgz) return res.end(packages[tgz[1]!]![tgz[2]!]);
       const versioned = /^(@[^/]+\/[^/]+|[^@/][^/]*)\/(\d+\.\d+\.\d+)$/.exec(path);
       const name = versioned ? versioned[1]! : path;
+      if (refuseInstall && !versioned && name === "@f/good") return res.writeHead(404).end();
       const remaining = hidden.get(name) ?? 0;
       if (remaining > 0) {
         hidden.set(name, remaining - 1);
@@ -163,6 +165,15 @@ describe("checkLayouts against a registry", () => {
       problems: [],
       layouts: [{ specs: ["@f/good@1.0.0"], copies: { "@midnight-ntwrk/ledger-v8": ["8.1.3"] } }],
     });
+  });
+
+  it("reports the npm error code without echoing registry URLs or debug-log paths", async () => {
+    refuseInstall = true;
+    try {
+      expect((await checkLayouts(["@f/good@1.0.0"], options())).problems).toEqual([
+        "@f/good@1.0.0: npm install failed (exit=1, npm=E404)",
+      ]);
+    } finally { refuseInstall = false; }
   });
 
   it("flags two copies of a singleton when published packages are installed together", async () => {

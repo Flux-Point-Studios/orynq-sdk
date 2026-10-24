@@ -15,6 +15,8 @@ hash at the same height stops planning.
 The publisher must read back and hash each remote object before calling
 `acknowledgePublication(key, sha256)`. Acknowledgement records delivery evidence;
 it does not authenticate a remote store or establish on-chain coverage.
+`publicationObjects(commitment)` returns all bound objects, including acknowledged
+ones, so a publisher can repeat readback checks before a later confirmation.
 
 `confirm(commitment, freshCensus)` requires all publication acknowledgements and
 revalidates every claimed certificate. A planned plan may be abandoned and its

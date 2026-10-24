@@ -168,3 +168,12 @@ it("pins the network and labels preprod publication objects correctly", () => {
     expect(() => openCensusState(path, { ...scope, network: "mainnet" })).toThrow(/scope|network/i);
   } finally { state.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+it("returns every bound publication object even after delivery acknowledgements", () => fixtureState((_path, state) => {
+  const plan = state.prepare(census(), 10n)!;
+  const before = state.publicationObjects(plan.commitment);
+  expect(before).toEqual(state.pendingObjects());
+  for (const object of before) state.acknowledgePublication(object.key, object.sha256);
+  expect(state.pendingObjects()).toEqual([]);
+  expect(state.publicationObjects(plan.commitment)).toEqual(before);
+}));
