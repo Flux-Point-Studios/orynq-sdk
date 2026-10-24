@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "document": "{\"format\":\"orynq-known-authors/v1\",\"serial\":1,\"issued\":\"2026-10-24T04:57:21.053Z\",\"networks\":{\"mainnet\":{\"authors\":[{\"id\":\"fps-legacy-relay\",\"key\":\"6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08\",\"role\":\"relay\",\"validFrom\":3113819,\"validTo\":3113847},{\"id\":\"fps-hosted-batch\",\"key\":\"067513ff2f976554098feecb3555197255b71f26a48ad6b1828ade967b746a39\",\"role\":\"batch\",\"validFrom\":3149499,\"validTo\":null}],\"checkpoints\":[{\"setId\":\"10422\",\"startsAfter\":{\"height\":3113541,\"hash\":\"e131404d2a6ddd70f2f42a79a13c68bf446c1c45e093f0f24d8e93eb2dcf0c37\"},\"authorities\":[{\"key\":\"5c6c16299ac3f0f9063fee4ec0ba6ac677aea36c13dcb7815fd87724b82cb3f6\",\"weight\":\"10\"},{\"key\":\"38b6c38be64b7679316e80382fb01fa856c94bf979de233a7aaabfca4489293f\",\"weight\":\"10\"},{\"key\":\"794084b91735c1cbeb2a75e8e09abbb21433d71aa37e966d04702f21949f9ca5\",\"weight\":\"10\"},{\"key\":\"5fdcf2e2cb92dce223f789b88dc083d49696fc40e48fc6a8c5a4ed2026abc3f1\",\"weight\":\"10\"},{\"key\":\"ab44c485474457eb2cec355b60a9352c3ce39fd422deb885f1e5fd92dca04842\",\"weight\":\"10\"},{\"key\":\"1a2548519519879d0185ab5ea3c6a1b3675e9ec7f0f30ea858b7723102579a8d\",\"weight\":\"10\"},{\"key\":\"0f708bf4ff76ccee2ab2ddc6d7f7b9fd481a2aba724b6a37c43adefe321df824\",\"weight\":\"10\"},{\"key\":\"01e389e9ac23e585a43485029f89112544c76f397683fddbf37e5e1e30cce32f\",\"weight\":\"10\"},{\"key\":\"c34944dcec3c142b0d91bebdcaa3299a523ffd1a7d3f512ce2784398c9f4a64d\",\"weight\":\"10\"},{\"key\":\"5444ab183b0da5b25225628de0f5680960795bf16599a409c03177b3c92e8c5d\",\"weight\":\"10\"},{\"key\":\"366a577abd0e3f0d4230cad84cd7669870d2dd531dad81b9231f7ad3f2b75aa8\",\"weight\":\"10\"},{\"key\":\"c418c4c509d7a9e0eef88c061fc6ea4e392d881d2bc169be236065a3e5248d45\",\"weight\":\"10\"},{\"key\":\"27c5f1d94ffe4e559915e1ca0eaceb7d0d98954938f8ed438be33d48d7f978b7\",\"weight\":\"10\"}]}]}}}",
+    "signatures": [
+      {
+        "key": "ddddd25ed40d8396f74bdedcb94b4e7694a4c4734035568887bb1098c979e113",
+        "signature": "e5e8fee74c655fc6b0790800fa7ad7381b72bcf4cfe77c40bc5df723eae4b027f3f8706e89dd8a8cd02e23d65bf70a441c8d9d13e2fe912df02ff4b7d0c0bb0e"
+      }
+    ]
+  }
+]

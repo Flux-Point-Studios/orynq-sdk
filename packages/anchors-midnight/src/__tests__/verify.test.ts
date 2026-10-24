@@ -405,7 +405,7 @@ describe("golden: FPS's mainnet anchors against the pinned registry, replayed", 
   const FPS_AUTHOR = "6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08";
   const run = (name: string) => f.runs.find((r: { name: string }) => r.name === name);
   const replay = (r: { request: Omit<VerifyRequest, "network">; registries?: RegistryInfo[] }) =>
-    verifyMidnightAnchor({ network: "mainnet", ...r.request }, { source: replaySource(f.recording), checkpoints: [checkpoint], ...(r.registries ? { registries: r.registries } : {}) });
+    verifyMidnightAnchor({ network: "mainnet", ...r.request }, { source: replaySource(f.recording), knownAuthors: knownAuthors({ trustRoots: [] }), checkpoints: [checkpoint], ...(r.registries ? { registries: r.registries } : {}) });
 
   it("starts from the set the walk from mainnet-finality.json's checkpoint returned", () => {
     const finality = JSON.parse(readFileSync(new URL("./fixtures/mainnet-finality.json", import.meta.url), "utf8"));
@@ -497,14 +497,21 @@ describe("golden: FPS's mainnet anchors against the pinned registry, replayed", 
     expect(await detail("another contract's call", "anchor")).toBe("transaction 987c01eeee3fc7123b82cdcaa476c44927d283b5d6ab1e3d337ba7ea4bd013ec writes no anchor to a registry generation");
   });
 
-  // What orynq verify midnight and verify_midnight_anchor get: the shipped KNOWN_AUTHORS, which
-  // trusts no checkpoint, so neither anchor is shown final.
+  it("the shipped signed policy authenticates both historical relay anchors without caller pins", async () => {
+    for (const name of ["kind 1, no author key pinned", "kind 2, no author key pinned"]) {
+      const result = await verifyMidnightAnchor({ network: "mainnet", ...run(name).request }, { source: replaySource(f.recording) });
+      expect(result).toMatchObject({ status: "valid", assurance: "consensus-verified", knownAuthorsSerial: 1,
+        author: { status: "known", key: FPS_AUTHOR, id: "fps-legacy-relay", role: "relay" } });
+      expect(result.checks.filter(row => !row.ok)).toEqual([]);
+    }
+  });
+
   it("without a checkpoint, FPS's key and another key pinned differ in status and author, not only in a check", async () => {
     const other = "11".repeat(32);
     for (const name of ["kind 1, FPS key pinned", "kind 2, FPS key pinned"]) {
       const { request } = run(name);
       const [own, wrong] = await Promise.all(
-        [FPS_AUTHOR, other].map((expectedAuthor) => verifyMidnightAnchor({ network: "mainnet", ...request, expectedAuthor }, { source: replaySource(f.recording) })),
+        [FPS_AUTHOR, other].map((expectedAuthor) => verifyMidnightAnchor({ network: "mainnet", ...request, expectedAuthor }, { source: replaySource(f.recording), knownAuthors: knownAuthors({ trustRoots: [] }) })),
       );
       expect([own!.status, own!.assurance, own!.author]).toEqual(["unverified-finality", "multi-path", { status: "expected", key: FPS_AUTHOR }]);
       expect([wrong!.status, wrong!.assurance, wrong!.author]).toEqual(["invalid", "multi-path", { status: "mismatch", key: FPS_AUTHOR, expected: other }]);

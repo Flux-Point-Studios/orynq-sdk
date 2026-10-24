@@ -154,16 +154,18 @@ printable; the status and assurance are what to act on.
 
 ## Verifying an anchor on mainnet
 
-Until a signed KNOWN_AUTHORS document ships (below), three things come from the caller:
+The shipped signed KNOWN_AUTHORS policy supplies FPS author windows and the original
+mainnet GRANDPA checkpoint. The caller supplies a source and can explicitly pin its own
+author or checkpoint:
 
 - A source. Midnight decommissioned its public mainnet indexer on 2026-10-09, so the indexer is
   Blockfrost's (`sourceEndpoints("mainnet", { blockfrostProjectIdFile })`) or one you run
   (`sourceEndpoints("mainnet", { indexer, node })`).
-- A GRANDPA checkpoint you trust, in `checkpoints`. None ships, and without one an anchor verifies
-  at most to `unverified-finality`, never `valid`. Finality and inclusion (below) says what a
+- A different GRANDPA checkpoint you trust, in `checkpoints`. Without a trusted checkpoint below
+  its block, an anchor verifies at most to `unverified-finality`. Finality and inclusion says what a
   checkpoint is; a finalized result returns a newer one to keep.
-- The author key, in `expectedAuthor`. No author is known, so without it every mainnet anchor
-  reads `author: { status: "unknown" }` and is never `valid`. With it, an anchor that key wrote
+- An explicit author key, in `expectedAuthor`. Without it, the signed policy determines whether
+  an author is known at the anchor's height. With it, an anchor that key wrote
   reads `expected`, and one any other key wrote reads `mismatch` and is `invalid`. FPS's mainnet
   author key is `6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08`. This
   README and the package's tests name it, so pinning it trusts this package's publisher, as
@@ -257,7 +259,7 @@ retires nothing.
 
 Which author keys a verifier recognizes, over which block heights and in which role, and which
 GRANDPA checkpoints it trusts, come from a KNOWN_AUTHORS document (`orynq-known-authors/v1`)
-signed with Ed25519 by an offline trust-root key over `"orynq-known-authors/v1\n" ‖ document`.
+signed with Ed25519 by a pinned policy-root key over `"orynq-known-authors/v1\n" ‖ document`.
 The document is shipped as the exact string that was signed, in `known-authors.json`, so no
 JSON canonicalization sits between a signature and what it covers. Parsing is strict: unknown
 fields, networks and roles, malformed keys, and overlapping windows for one key are refused.
@@ -266,7 +268,7 @@ known-authors document carries no signature by a trust root` when no signature n
 `... is not 64 bytes of lowercase hex` when every trust-root signature is malformed, and `... does
 not verify` only after Ed25519 verification failed for every well-formed trust-root signature.
 
-Each author has a role (`relay`: an anchor the FPS service wrote for whoever asked it) and a
+Each author has a role (`relay` for individual anchors or `batch` for certified batch sets) and a
 window of block heights, `validFrom` to `validTo` inclusive. Revoking a key is a later document
 with a higher serial that closes its window at the height the compromise began; anchors below
 it stay valid and anchors above it read `outside-window`. A verifier learns of a revocation from
@@ -274,11 +276,23 @@ the documents it is given, never by scanning the permissionless registry. `known
 the highest serial among the shipped documents and any newer ones a caller passes, so an older
 document cannot roll a revocation back, and a document that fails to verify is an error.
 
-No trust root and no document ship yet: the first trust-root key is generated, and the first
-document signed, by deci on a machine no model drives, with
-`node --import tsx scripts/known-authors.ts new-root-key SEED_FILE` and
-`... sign DOCUMENT_FILE SEED_FILE`. Until then every author is `unknown` and no checkpoint is
-trusted, unless the caller pins a key and passes a checkpoint (Verifying an anchor on mainnet).
+Serial 1 ships with root `ddddd25ed40d8396f74bdedcb94b4e7694a4c4734035568887bb1098c979e113`.
+The legacy relay is authorized only at heights 3113819 through 3113847; the hosted batch
+author `067513ff2f976554098feecb3555197255b71f26a48ad6b1828ade967b746a39` starts at
+3149499. The original checkpoint at 3113541, set 10422, is unchanged. These are policy
+identities, not a claim that hosted anchoring is active or that receipts are covered.
+
+The initial deployment uses owner-only software keys on existing hosts, as authorized by
+the operator. Agent/root access is an accepted interim custody risk; hardware tokens and
+an isolated admin device remain a later hardening step. `scripts/known-authors.ts` creates
+owner-only root seeds and signs documents without printing seeds. Keep root signing separate
+from the online batch author.
+
+Default `knownAuthors()` strictly verifies every shipped document. Explicit `trustRoots`
+select a separate trust domain: only shipped documents naming one of those roots are included,
+while every caller-supplied document must verify. An explicit empty root list trusts no shipped
+author or checkpoint. Highest-serial and same-serial conflict checks still apply to all selected
+documents.
 
 ## Finality and inclusion
 
