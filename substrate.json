@@ -387,13 +387,28 @@
     {
       "id": "checkpoint-primitives",
       "name": "Receipt checkpoint primitives",
-      "desc": "Shared SCALE receipt decoding, canonical certificate encodings, daemon-compatible Merkle proofs, deterministic census batches and bounded compact member snapshots.",
+      "desc": "Shared SCALE receipt decoding, canonical certificate encodings, daemon-compatible Merkle proofs, deterministic census batches, bounded compact member snapshots and canonical Midnight batch-set commitments used by the public verifier, private writer and gateway proof store.",
       "kind": "toolkit",
       "paths": [
         "packages/core/src/checkpoint.ts"
       ],
       "consumes": [
         "orinq-receipts-pallet"
+      ],
+      "status": "experimental"
+    },
+    {
+      "id": "authenticated-midnight-blocks",
+      "name": "Authenticated Midnight block reads",
+      "desc": "Composes shared header, body-root, GRANDPA and pinned-runtime storage proofs to classify exact body-bound Midnight sends. The strict public anchor verifier still requires full success; the private operator accepts a new explicit network-matched ChainView while preserving its existing default. Durable coverage, fee union and standing admission remain separate.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight/src/execution.ts",
+        "packages/anchors-midnight-submit/runner/follower-block.ts",
+        "packages/anchors-midnight-submit/runner/FOLLOWER.md"
+      ],
+      "consumes": [
+        "anchors-midnight"
       ],
       "status": "experimental"
     }
