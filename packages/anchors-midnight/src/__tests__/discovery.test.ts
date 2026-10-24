@@ -8,6 +8,7 @@ import { batchChain } from "./batch-chain.js";
 let fixture: Awaited<ReturnType<typeof batchChain>>, gateway: Server, rpc: Server, gatewayUrl: string, nodeUrl: string;
 let objects: Map<string, string>, memberSha: string, sets: string[], calls: number, requests: number, corrupt: boolean, emptyFirst: boolean, nonadvancing: boolean;
 let stallProof: boolean, proofClosed: Promise<void>, notifyProof: () => void;
+let paddingBytes: number;
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 const listen = async (server: Server) => { server.listen(0, "127.0.0.1"); await new Promise<void>(resolve => server.once("listening", resolve)); return `http://127.0.0.1:${(server.address() as { port: number }).port}`; };
 const close = async (server: Server) => { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); };
@@ -39,7 +40,10 @@ beforeAll(async () => {
     let body = ""; req.on("data", chunk => { body += chunk; });
     req.on("end", async () => {
       const incoming = JSON.parse(body);
-      const answer = async (call: { id: number; method: string; params: unknown[] }) => { calls++; return { jsonrpc: "2.0", id: call.id, result: await fixture.chain.source.node.call(call.method, call.params) }; };
+      const answer = async (call: { id: number; method: string; params: unknown[] }) => {
+        calls++; const padding = paddingBytes ? " ".repeat(paddingBytes) : undefined; paddingBytes = 0;
+        return { jsonrpc: "2.0", id: call.id, result: await fixture.chain.source.node.call(call.method, call.params), ...(padding ? { padding } : {}) };
+      };
       if (stallProof && (Array.isArray(incoming) ? incoming : [incoming]).some(call => call.method === "state_getReadProof")) {
         res.on("close", notifyProof); return;
       }
@@ -53,7 +57,7 @@ afterAll(async () => { await close(gateway); await close(rpc); });
 beforeEach(() => {
   memberSha = digest(fixture.snapshot); const setText = JSON.stringify(fixture.set), setSha = digest(setText);
   objects = new Map([[memberSha, fixture.snapshot], [setSha, setText]]); sets = [setSha];
-  calls = 0; requests = 0; corrupt = false; emptyFirst = false; nonadvancing = false; stallProof = false;
+  calls = 0; requests = 0; corrupt = false; emptyFirst = false; nonadvancing = false; stallProof = false; paddingBytes = 0;
   proofClosed = new Promise(resolve => { notifyProof = resolve; });
 });
 
@@ -65,6 +69,12 @@ it("discovers the exact receipt with portable proof and real consensus verificat
   expect(result.verification.certificateHash).toBe(query().certificateHash);
   expect(result.verification.anchor.assurance).toBe("consensus-verified");
   expect(result.proof).toEqual(fixture.proof); expect(calls).toBeGreaterThan(10);
+});
+
+it("allows proof responses above eight MiB within the measured default budget", async () => {
+  paddingBytes = 9 * 1024 * 1024;
+  const result = await discoverReceiptProof(query(), { gatewayUrl, nodeUrl, registries: [fixture.chain.registry], knownAuthors: fixture.authors });
+  expect(result.status).toBe("valid");
 });
 
 it.each(["receiptId", "certificateHash", "contentHash"] as const)("rejects gateway identity substitution for %s before any RPC", async field => {

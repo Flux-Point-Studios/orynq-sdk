@@ -102,7 +102,7 @@ export async function discoverReceiptProof(request: ReceiptProofQuery, options: 
       cursor = { ...cursor, ...checkedPosition(supplied), retry };
     } catch { throw new Error("Continuation differs from the discovery query or policy"); }
   }
-  const budget = { requests: bounded(options.budget?.requests, 64, 256), bytes: bounded(options.budget?.bytes, 8 * 1024 * 1024, 64 * 1024 * 1024), abort: new AbortController() };
+  const budget = { requests: bounded(options.budget?.requests, 64, 256), bytes: bounded(options.budget?.bytes, 32 * 1024 * 1024, 64 * 1024 * 1024), abort: new AbortController() };
   const deadline = new AbortController(), milliseconds = bounded(options.budget?.milliseconds, 30_000, 90_000);
   const signal = AbortSignal.any([budget.abort.signal, deadline.signal, ...(options.signal ? [options.signal] : [])]);
   const timer = setTimeout(() => deadline.abort(), milliseconds);
