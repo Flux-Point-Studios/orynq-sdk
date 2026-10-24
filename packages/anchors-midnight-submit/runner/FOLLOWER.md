@@ -87,8 +87,8 @@ SQLite and its owning process are a trusted local persistence boundary. Reads do
 not cryptographically reauthenticate stored observations against retained proofs.
 Private permissions, atomic transactions and interval checks do not protect against
 an owner rewriting the database. Restoration must preserve provenance and all
-unresolved reservations. Wallet-bound delivery, one-process ownership, retained
-publication and standing execution remain separate integration work.
+unresolved reservations. One-process ownership and standing execution remain
+separate integration work.
 
 `reserveStandingAttempt` checks the current opened signed-author view, exact
 canonical kind-3 call, registry/author/commitment, runtime and every serialized
@@ -124,6 +124,23 @@ Before each delivery, the wallet boundary must require that record and re-run
 reservation checks with fresh clocks and the current authenticated author policy.
 It must also require fresh retained publication and confirmed membership under
 the controller's lifetime lock. This module does not authorize broadcast alone.
+
+`openStandingDelivery` composes the session, census, two retained stores and
+submission journal around the wallet's raw submission method. Each call copies
+its bytes, verifies pending journal provenance and serialized maximum TTLs, saves
+wallet state, freshly publishes both copies, and confirms membership against a
+fresh census. Only then does it mint a thirty-second, exact-byte, single-use
+permission. The callback consumes permission before awaiting, rechecks admission
+asynchronously and synchronously, and samples clocks after deserializing the
+transaction. Current policy, head freshness, host-clock continuity and every
+serialized TTL still apply at the final wallet handoff.
+
+Unknown delivery retains journal, claim and fee reservations. An explicit wallet
+refusal forbids reusing those bytes in that process. Failed wallet persistence
+latches restart. Reconciliation requires known provenance and the serialized
+journal TTL before consulting a fresh follower view. The caller must acquire a
+lifetime lock before opening the wallet and retain it through preparation,
+publication, delivery, persistence and close; this factory does not acquire it.
 
 Undecodable sends or ambiguous execution stop this reader. They must not be
 silently converted into missing transactions or coverage. Production transport

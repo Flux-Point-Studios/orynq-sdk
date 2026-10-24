@@ -400,7 +400,7 @@
     {
       "id": "authenticated-midnight-blocks",
       "name": "Authenticated Midnight block reads",
-      "desc": "Composes body-root, GRANDPA and pinned-runtime proofs into network/policy-bound complete blocks. Bounded contiguous ranges share verified authority paths with per-original-root cumulative transition limits while retaining the original policy identity. Private SQLite retains observations, exact provenance and scoped commitment history. Atomic reservations enforce canonical kind-3 scope, current batch policy, serialized TTLs, complete accounting and fee caps. Process sessions retain startup, policy and admission watermarks; observed clock or history rollback latches restart. Local persistence is trusted; guarded delivery and the standing controller remain separate.",
+      "desc": "Composes body-root, GRANDPA and pinned-runtime proofs into network/policy-bound complete blocks. Bounded contiguous ranges share verified authority paths with per-original-root cumulative transition limits while retaining the original policy identity. Private SQLite retains observations, exact provenance and scoped commitment history. Atomic reservations enforce canonical kind-3 scope, current batch policy, serialized TTLs, complete accounting and fee caps. Process sessions retain startup, policy and admission watermarks; observed clock or history rollback latches restart. Wallet delivery requires fresh two-copy publication and census confirmation before single-use exact-byte permission, with synchronous final admission and expiry checks. Local persistence is trusted; lifetime ownership and the standing controller remain separate.",
       "kind": "toolkit",
       "paths": [
         "packages/anchors-midnight/src/execution.ts",
@@ -409,6 +409,7 @@
         "packages/anchors-midnight-submit/runner/standing-budget.ts",
         "packages/anchors-midnight-submit/runner/standing-clock.ts",
         "packages/anchors-midnight-submit/runner/standing-session.ts",
+        "packages/anchors-midnight-submit/runner/standing-delivery.ts",
         "packages/anchors-midnight-submit/runner/standing-transaction.ts",
         "packages/anchors-midnight-submit/runner/FOLLOWER.md"
       ],

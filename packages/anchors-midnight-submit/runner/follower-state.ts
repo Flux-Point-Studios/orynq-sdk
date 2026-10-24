@@ -137,6 +137,7 @@ export function openFollowerState(path: string, input: Scope) {
     }
   }
   return {
+    scope: () => ({ ...scope }),
     head,
     observations,
     feeFacts: () => transaction(feeFacts),
