@@ -2,11 +2,13 @@ import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { decodeAnchorTransaction, type MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { checkpointId, decodeAnchorTransaction, type KnownAuthors, type MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { TTL_MARGIN_MILLIS, type ChainView } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { declaredFee, finalTransaction } from "../src/submission.js";
-import type { FollowerBlock } from "./follower-block.js";
-import type { ConfirmedFee, StandingFeeFacts } from "./standing-budget.js";
+import { followerPolicyDigest, type FollowerBlock } from "./follower-block.js";
+import { assertStandingFeeBudget, type ConfirmedFee, type StandingFeeFacts } from "./standing-budget.js";
+import { assertStandingClock, type StandingClockPoint } from "./standing-clock.js";
+import { assertStandingTransaction } from "./standing-transaction.js";
 
 interface Scope { network: MidnightNetwork; genesis: string; registry: string; author: string; policyDigest: string; runtimeSpecVersion: number }
 interface BlockRow { height: number; hash: string; parent_hash: string; timestamp: number; digest: string }
@@ -21,6 +23,13 @@ create table follower_observations(block_hash text not null references follower_
 create index follower_transactions on follower_observations(tx_hash);
 create index follower_policy_fees on follower_observations(policy_key,block_hash);
 create table follower_attempts(tx_hash text primary key,bytes blob not null,ttl integer not null,fee text not null,commitment text not null,boundary_height integer not null,boundary_hash text not null);
+`;
+const ADMISSION_SCHEMA = `
+alter table follower_blocks add column batch_indexed integer not null default 0 check(batch_indexed in (0,1));
+create table follower_batch_calls(block_hash text not null,extrinsic_index integer not null,commitment text not null,ttl integer not null,primary key(block_hash,extrinsic_index,commitment),foreign key(block_hash,extrinsic_index) references follower_observations(block_hash,extrinsic_index)) without rowid;
+create index follower_commitments on follower_batch_calls(commitment);
+create table follower_admissions(tx_hash text primary key references follower_attempts(tx_hash),policy_serial integer not null,head_height integer not null,head_hash text not null);
+create table follower_policies(id integer primary key check(id=1),serial integer not null,digest text not null,conflicted integer not null check(conflicted in (0,1)));
 `;
 
 // The caller records only complete results returned by verifyFollowerBlock.
@@ -42,10 +51,11 @@ export function openFollowerState(path: string, input: Scope) {
     const version = db.prepare("pragma user_version").get()!.user_version;
     if (version === 0) {
       if (db.prepare("select 1 from sqlite_master where type='table' and name not like 'sqlite_%'").get()) throw new Error("Existing follower database has no schema version");
-      db.exec(SCHEMA); db.prepare("insert into follower_scope(id,scope) values(1,?)").run(JSON.stringify(scope)); db.exec("pragma user_version=1");
-    } else if (version !== 1) throw new Error("Unsupported follower schema version");
+      db.exec(SCHEMA); db.prepare("insert into follower_scope(id,scope) values(1,?)").run(JSON.stringify(scope));
+    } else if (version !== 1 && version !== 2) throw new Error("Unsupported follower schema version");
+    if (version === 0 || version === 1) { db.exec(ADMISSION_SCHEMA); db.exec("pragma user_version=2"); }
     const tables = db.prepare("select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name").all().map(row => row.name).join(",");
-    if (tables !== "follower_attempts,follower_blocks,follower_observations,follower_scope") throw new Error("Follower schema tables differ");
+    if (tables !== "follower_admissions,follower_attempts,follower_batch_calls,follower_blocks,follower_observations,follower_policies,follower_scope") throw new Error("Follower schema tables differ");
     if (db.prepare("select scope from follower_scope where id=1").get()?.scope !== JSON.stringify(scope)) throw new Error("Follower scope differs");
     db.exec("commit"); initializing = false; db.exec("pragma journal_mode=wal");
     const directory = openSync(dirname(path), constants.O_RDONLY | constants.O_DIRECTORY);
@@ -86,10 +96,36 @@ export function openFollowerState(path: string, input: Scope) {
     const paid = db.prepare("select o.tx_hash,o.fee,b.timestamp from follower_observations o join follower_blocks b on b.hash=o.block_hash where o.policy_key=1 and b.height<=? and b.timestamp>=? order by b.height,o.extrinsic_index").all(snapshot.height, snapshot.timestamp - 24 * 60 * 60_000);
     return { chainTime: snapshot.timestamp, confirmations, observations: paid.map(row => ({ txHash: String(row.tx_hash), fee: BigInt(String(row.fee)), atMillis: Number(row.timestamp) })) };
   }
+  function recordProvenance(bytes: Uint8Array, facts: { txHash: string; ttl: number; fee: bigint; commitment: string }) {
+    const previous = attemptRow(facts.txHash), fee = facts.fee.toString();
+    if (previous) {
+      if (!Buffer.from(previous.bytes).equals(bytes) || previous.ttl !== facts.ttl || previous.fee !== fee || previous.commitment !== facts.commitment) throw new Error("Immutable attempt provenance differs");
+      return;
+    }
+    const boundary = headRow(); if (!boundary) throw new Error("Attempt needs a verified prebroadcast boundary");
+    db.prepare("insert into follower_attempts(tx_hash,bytes,ttl,fee,commitment,boundary_height,boundary_hash) values(?,?,?,?,?,?,?)").run(facts.txHash, bytes, facts.ttl, fee, facts.commitment, boundary.height, boundary.hash);
+  }
+  function observePolicy(authors: KnownAuthors) {
+    if (!Number.isSafeInteger(authors.serial) || authors.serial < 1) throw new Error("Invalid standing author policy serial");
+    const digest = hash(JSON.stringify([authors.serial, authors.authors(scope.network), authors.checkpoints(scope.network).map(checkpointId)]));
+    const previous = db.prepare("select serial,digest,conflicted from follower_policies where id=1").get();
+    if (previous && Number(previous.serial) > authors.serial) return "Standing author policy serial rewound";
+    if (previous && previous.serial === authors.serial && (previous.digest !== digest || previous.conflicted === 1)) {
+      db.prepare("update follower_policies set conflicted=1 where id=1").run();
+      return "Standing author policy conflict requires a newer authoritative serial";
+    }
+    db.prepare("insert into follower_policies(id,serial,digest,conflicted) values(1,?,?,0) on conflict(id) do update set serial=excluded.serial,digest=excluded.digest,conflicted=0").run(authors.serial, digest);
+    return null;
+  }
+  function retainPolicy(authors: KnownAuthors) {
+    const failure = transaction(() => observePolicy(authors));
+    if (failure) throw new Error(failure);
+  }
   return {
     head,
     observations,
     feeFacts: () => transaction(feeFacts),
+    observeStandingPolicy: retainPolicy,
     recordVerifiedBlock(block: FollowerBlock) {
       if (block.network !== scope.network || block.policyDigest !== scope.policyDigest) throw new Error("Verified follower block scope differs from the durable trust policy");
       if (!Number.isSafeInteger(block.block.height) || block.block.height < 1 || !isHash(block.block.hash) || !isHash(block.parentHash) || !Number.isSafeInteger(block.timestamp) || block.timestamp < 0 || block.runtimeSpecVersion !== scope.runtimeSpecVersion || !Array.isArray(block.sends) || block.sends.length > 65_536) throw new Error("Invalid follower block facts");
@@ -99,19 +135,27 @@ export function openFollowerState(path: string, input: Scope) {
         indices.add(send.extrinsicIndex);
         const decoded = decodeAnchorTransaction(send.bytes, []), final = finalTransaction(send.bytes);
         if (decoded.txHash !== send.txHash) throw new Error("Follower send hash differs");
-        let policyKey = false;
-        try { policyKey = decodeAnchorTransaction(send.bytes, [scope.registry]).calls.some(call => call.author === scope.author && call.kind === 3 && call.entryPoint === "anchor"); }
-        catch { policyKey = false; }
-        return { ...send, bytes: new Uint8Array(send.bytes), fee: declaredFee(final), policyKey };
+        let commitments: string[] = [];
+        try { commitments = decodeAnchorTransaction(send.bytes, [scope.registry]).calls.filter(call => call.author === scope.author && call.kind === 3 && call.entryPoint === "anchor").map(call => call.commitment); }
+        catch { commitments = []; }
+        const deadlines = [...(final.intents?.values() ?? [])].map(intent => intent.ttl.getTime());
+        if (commitments.length && (!deadlines.length || deadlines.some(ttl => !Number.isSafeInteger(ttl) || ttl < 0))) throw new Error("Observed batch has invalid serialized TTL");
+        return { ...send, bytes: new Uint8Array(send.bytes), fee: declaredFee(final), policyKey: commitments.length !== 0, commitments: [...new Set(commitments)], ttl: Math.max(...deadlines) };
       });
       const digest = hash(JSON.stringify({ height: block.block.height, hash: block.block.hash, parent: block.parentHash, timestamp: block.timestamp, runtime: block.runtimeSpecVersion, sends: sends.map(send => [send.extrinsicIndex, send.txHash, hash(send.bytes), send.status, send.fee.toString(), send.policyKey]) }));
       transaction(() => {
         const previous = headRow();
-        if (previous?.height === block.block.height && previous.hash === block.block.hash && previous.digest === digest) return;
-        if (previous && (block.block.height !== previous.height + 1 || block.parentHash !== previous.hash || block.timestamp < previous.timestamp)) throw new Error("Follower block is not contiguous with its durable cursor");
-        db.prepare("insert into follower_blocks(height,hash,parent_hash,timestamp,digest) values(?,?,?,?,?)").run(block.block.height, block.block.hash, block.parentHash, block.timestamp, digest);
-        const insert = db.prepare("insert into follower_observations(block_hash,extrinsic_index,tx_hash,status,fee,policy_key) values(?,?,?,?,?,?)");
-        for (const send of sends) insert.run(block.block.hash, send.extrinsicIndex, send.txHash, send.status, send.fee.toString(), Number(send.policyKey));
+        const existing = db.prepare("select hash,digest from follower_blocks where height=?").get(block.block.height);
+        if (existing && (existing.hash !== block.block.hash || existing.digest !== digest)) throw new Error("Verified replay differs from its durable block");
+        if (!existing) {
+          if (previous && (block.block.height !== previous.height + 1 || block.parentHash !== previous.hash || block.timestamp < previous.timestamp)) throw new Error("Follower block is not contiguous with its durable cursor");
+          db.prepare("insert into follower_blocks(height,hash,parent_hash,timestamp,digest) values(?,?,?,?,?)").run(block.block.height, block.block.hash, block.parentHash, block.timestamp, digest);
+          const insert = db.prepare("insert into follower_observations(block_hash,extrinsic_index,tx_hash,status,fee,policy_key) values(?,?,?,?,?,?)");
+          for (const send of sends) insert.run(block.block.hash, send.extrinsicIndex, send.txHash, send.status, send.fee.toString(), Number(send.policyKey));
+        }
+        const insertCall = db.prepare("insert into follower_batch_calls(block_hash,extrinsic_index,commitment,ttl) values(?,?,?,?) on conflict do nothing");
+        for (const send of sends) for (const commitment of send.commitments) insertCall.run(block.block.hash, send.extrinsicIndex, commitment, send.ttl);
+        db.prepare("update follower_blocks set batch_indexed=1 where height=?").run(block.block.height);
       });
     },
     // Never assign new provenance to an unregistered restored journal row.
@@ -120,16 +164,38 @@ export function openFollowerState(path: string, input: Scope) {
       if (decoded.touches.length || decoded.calls.length !== 1 || call!.kind !== 3 || call!.entryPoint !== "anchor" || call!.author !== scope.author) throw new Error("Attempt is outside the standing batch scope");
       const deadlines = [...(final.intents?.values() ?? [])].map(intent => intent.ttl.getTime());
       if (!deadlines.length || deadlines.some(value => !Number.isSafeInteger(value) || value < 0)) throw new Error("Attempt has no valid serialized TTL");
-      const ttl = Math.max(...deadlines), fee = declaredFee(final).toString();
-      transaction(() => {
-        const previous = attemptRow(decoded.txHash);
-        if (previous) {
-          if (!Buffer.from(previous.bytes).equals(bytes) || previous.ttl !== ttl || previous.fee !== fee || previous.commitment !== call!.commitment) throw new Error("Immutable attempt provenance differs");
-          return;
+      transaction(() => recordProvenance(bytes, { txHash: decoded.txHash, ttl: Math.max(...deadlines), fee: declaredFee(final), commitment: call!.commitment }));
+    },
+    reserveStandingAttempt(inputBytes: Uint8Array, policy: { commitment: string; authors: KnownAuthors; started: StandingClockPoint; current: StandingClockPoint }) {
+      const bytes = new Uint8Array(inputBytes);
+      // A newer revocation must survive refusal of this admission.
+      retainPolicy(policy.authors);
+      return transaction(() => {
+        const policyFailure = observePolicy(policy.authors); if (policyFailure) throw new Error(policyFailure);
+        const snapshot = headRow(); if (!snapshot || policy.current.chainTime !== snapshot.timestamp) throw new Error("Standing clock evidence differs from the durable head");
+        assertStandingClock(policy.started, policy.current);
+        if (followerPolicyDigest(policy.authors.checkpoints(scope.network)) !== scope.policyDigest) throw new Error("Standing author checkpoints differ from the follower finality policy");
+        const admitted = assertStandingTransaction(bytes, { ...scope, commitment: policy.commitment }, { height: snapshot.height, timestamp: snapshot.timestamp, runtimeSpecVersion: scope.runtimeSpecVersion }, policy.authors);
+        if (admitted.earliestTtl <= policy.current.wallTime) throw new Error("Standing serialized TTL has passed on the host clock");
+        const floor = db.prepare("select height from follower_blocks order by height limit 1").get()!;
+        const windows = policy.authors.authors(scope.network).filter(author => author.key === scope.author && author.role === "batch");
+        if (!windows.length || Number(floor.height) > Math.max(1, Math.min(...windows.map(author => author.validFrom)))) throw new Error("Standing author commitment history is incomplete");
+        if (db.prepare("select 1 from follower_blocks where batch_indexed<>1 limit 1").get()) throw new Error("Standing batch history requires authenticated indexing replay");
+        const facts = feeFacts(), states = new Map(facts.confirmations.map(row => [row.txHash, row.state]));
+        for (const row of db.prepare("select tx_hash from follower_attempts where commitment=? and tx_hash<>?").all(admitted.commitment, admitted.txHash)) {
+          if (states.get(String(row.tx_hash)) !== "absent") throw new Error("Standing commitment has an unresolved or landed claim");
         }
-        const boundary = headRow(); if (!boundary) throw new Error("Attempt needs a verified prebroadcast boundary");
-        db.prepare("insert into follower_attempts(tx_hash,bytes,ttl,fee,commitment,boundary_height,boundary_hash) values(?,?,?,?,?,?,?)").run(decoded.txHash, bytes, ttl, fee, call!.commitment, boundary.height, boundary.hash);
+        const observed = db.prepare("select o.tx_hash,o.status,c.ttl from follower_batch_calls c join follower_observations o on o.block_hash=c.block_hash and o.extrinsic_index=c.extrinsic_index where c.commitment=?").all(admitted.commitment);
+        if (observed.some(row => row.status !== "FAILURE" || (row.tx_hash !== admitted.txHash && snapshot.timestamp <= Number(row.ttl) + TTL_MARGIN_MILLIS))) throw new Error("Standing commitment is held by an observed chain claim");
+        assertStandingFeeBudget(facts, admitted);
+        recordProvenance(bytes, admitted);
+        db.prepare("insert into follower_admissions(tx_hash,policy_serial,head_height,head_hash) values(?,?,?,?) on conflict(tx_hash) do update set policy_serial=excluded.policy_serial,head_height=excluded.head_height,head_hash=excluded.head_hash").run(admitted.txHash, policy.authors.serial, snapshot.height, snapshot.hash);
+        return admitted;
       });
+    },
+    assertAdmitted(bytes: Uint8Array) {
+      const decoded = decodeAnchorTransaction(bytes, []), row = attemptRow(decoded.txHash);
+      if (!row || !Buffer.from(row.bytes).equals(bytes) || !db.prepare("select 1 from follower_admissions where tx_hash=?").get(decoded.txHash)) throw new Error("Exact broadcast bytes have no standing admission");
     },
     assertRecorded(bytes: Uint8Array) {
       const decoded = decodeAnchorTransaction(bytes, []), row = attemptRow(decoded.txHash);

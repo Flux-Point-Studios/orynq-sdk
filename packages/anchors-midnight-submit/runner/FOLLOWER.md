@@ -54,8 +54,43 @@ SQLite and its owning process are a trusted local persistence boundary. Reads do
 not cryptographically reauthenticate stored observations against retained proofs.
 Private permissions, atomic transactions and interval checks do not protect against
 an owner rewriting the database. Restoration must preserve provenance and all
-unresolved reservations. Admission, serialized broadcast guards, one-process
-ownership, current author policy and standing execution remain separate work.
+unresolved reservations. Wallet-bound delivery, one-process ownership, retained
+publication and standing execution remain separate integration work.
+
+`reserveStandingAttempt` checks the current opened signed-author view, exact
+canonical kind-3 call, registry/author/commitment, runtime and every serialized
+intent TTL. It rejects unrelated contract actions, rewards, asset offers and DUST
+registrations. The maximum TTL is fifteen authenticated chain minutes; the
+earliest TTL must also remain ahead of host UTC. A standing preparer uses a
+ten-minute TTL to allow for normal finalized-head delay.
+
+Reservation checks and exact provenance/admission insertion share one immediate
+transaction. Fee history covers a complete day. Commitment history must start no
+later than the configured author's earliest retained batch window. Observed
+success or partial execution retains its commitment beyond the fee window;
+unresolved other bytes retain their claim. An identical live retry shares its
+reservation. Only complete strict TTL-plus-margin absence permits replacement.
+This is one author/registry scope; rotations must preserve historical windows,
+fees and commitments across authors rather than creating an empty counter.
+
+Schema two migrates provenance without granting old admissions. Earlier blocks
+are unindexed until their complete authenticated results are replayed with the
+same durable digest. Historical replay fills commitment indexes without moving
+the head backward. No admission is possible while any retained block needs replay.
+
+`observeStandingPolicy` takes an already authenticated `KnownAuthors` view.
+The highest serial and scoped author/checkpoint digest persist even when a newer
+revocation refuses admission. Conflicting views at one serial latch a durable
+hold; only a strictly newer authoritative serial can resolve it. Admission also
+requires its checkpoint identities and default transition budget to match the
+durable follower policy. Scope/checkpoint changes require a reviewed migration
+that retains prior accounting; they never reset it automatically.
+
+`assertAdmitted` proves only that the exact bytes have a historical admission.
+Before each delivery, the wallet boundary must require that record and re-run
+reservation checks with fresh clocks and the current authenticated author policy.
+It must also require fresh retained publication and confirmed membership under
+the controller's lifetime lock. This module does not authorize broadcast alone.
 
 Undecodable sends or ambiguous execution stop this reader. They must not be
 silently converted into missing transactions or coverage. Production transport
