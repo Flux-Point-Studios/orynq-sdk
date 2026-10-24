@@ -18,6 +18,9 @@ interface Admission { txHash: string; policySerial: number; head: { height: numb
 export class StandingHistoryLost extends Error {
   constructor() { super("Standing admitted reservation history was lost"); }
 }
+export class StandingHeadAdvanced extends Error {
+  constructor() { super("Standing follower advanced during the check; retry with its new head"); }
+}
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
 const isHash = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 const SCHEMA = `
@@ -207,7 +210,12 @@ export function openFollowerState(path: string, input: Scope) {
       return transaction(() => {
         assertAdmissionHistory(policy.retainedAdmissions ?? []);
         const policyFailure = observePolicy(policy.authors); if (policyFailure) throw new Error(policyFailure);
-        const snapshot = headRow(); if (!snapshot || policy.current.height !== snapshot.height || policy.current.hash !== snapshot.hash || policy.current.chainTime !== snapshot.timestamp) throw new Error("Standing clock evidence differs from the durable head");
+        const snapshot = headRow();
+        if (!snapshot || policy.current.height !== snapshot.height || policy.current.hash !== snapshot.hash || policy.current.chainTime !== snapshot.timestamp) {
+          const previous = db.prepare("select hash,timestamp from follower_blocks where height=?").get(policy.current.height);
+          if (snapshot && snapshot.height > policy.current.height && previous?.hash === policy.current.hash && previous.timestamp === policy.current.chainTime && snapshot.timestamp >= policy.current.chainTime) throw new StandingHeadAdvanced();
+          throw new Error("Standing clock evidence differs from the durable head");
+        }
         assertStandingClock(policy.started, policy.current);
         if (followerPolicyDigest(policy.authors.checkpoints(scope.network)) !== scope.policyDigest) throw new Error("Standing author checkpoints differ from the follower finality policy");
         const admitted = assertStandingTransaction(bytes, { ...scope, commitment: policy.commitment }, { height: snapshot.height, timestamp: snapshot.timestamp, runtimeSpecVersion: scope.runtimeSpecVersion }, policy.authors);

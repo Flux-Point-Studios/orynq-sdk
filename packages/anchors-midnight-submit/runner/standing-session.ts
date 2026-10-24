@@ -1,6 +1,6 @@
 import type { KnownAuthors } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { followerPolicyDigest, type FollowerBlock } from "./follower-block.js";
-import { StandingHistoryLost, type openFollowerState } from "./follower-state.js";
+import { StandingHeadAdvanced, StandingHistoryLost, type openFollowerState } from "./follower-state.js";
 import { assertStandingClock, assertStandingFreshClock, assertStandingHostClock, type StandingClockPoint } from "./standing-clock.js";
 
 export function openStandingSession(options: { state: ReturnType<typeof openFollowerState>; verifiedStart: FollowerBlock; authors: () => KnownAuthors; clock?: () => Pick<StandingClockPoint, "wallTime" | "monotonicMillis"> }) {
@@ -40,14 +40,17 @@ export function openStandingSession(options: { state: ReturnType<typeof openFoll
   }
   async function currentPoint() {
     readClock();
-    const view = state.chainView(), indexed = await view.indexedThrough();
+    const snapshot = state.head(), view = state.chainView(), indexed = await view.indexedThrough();
     checkHead(state.head());
     if (!indexed && lastHead) hold("Standing follower history disappeared");
     if (!indexed) throw new Error("Standing warmup needs follower history");
     const startupHash = await view.finalHash(start.height), previousHash = lastHead ? await view.finalHash(lastHead.height) : null, head = state.head();
     checkHead(head);
     if (lastHead && previousHash !== lastHead.hash) hold("Standing follower snapshot rewound");
-    if (!head || head.hash !== indexed.hash) throw new Error("Standing follower advanced during the check; retry with its new head");
+    if (!head || head.hash !== indexed.hash) {
+      if (head && snapshot && indexed.hash === snapshot.hash && head.height > snapshot.height && await view.finalHash(snapshot.height) === snapshot.hash) throw new StandingHeadAdvanced();
+      return hold("Standing follower snapshot changed without a verified extension");
+    }
     if (lastHead && (head.height < lastHead.height || (head.height === lastHead.height && head.hash !== lastHead.hash) || indexed.time.getTime() < lastHead.timestamp)) hold("Standing follower rewound");
     if (head.height < start.height) throw new Error("Standing warmup awaits startup block catch-up");
     if (startupHash !== start.hash) hold("Standing startup checkpoint is absent from durable history");
@@ -61,8 +64,11 @@ export function openStandingSession(options: { state: ReturnType<typeof openFoll
     return { ...current, ...head };
   }
   async function ready() {
-    readClock(); observeAuthors();
-    return currentPoint();
+    for (let attempt = 0; ; attempt++) {
+      readClock(); observeAuthors();
+      try { return await currentPoint(); }
+      catch (error) { if (!(error instanceof StandingHeadAdvanced) || attempt === 2) throw error; }
+    }
   }
   function reserveNow(bytes: Uint8Array, commitment: string) {
     const exact = new Uint8Array(bytes), current = lastReady;
@@ -82,7 +88,11 @@ export function openStandingSession(options: { state: ReturnType<typeof openFoll
     reserveNow,
     async reserve(bytes: Uint8Array, commitment: string) {
       const exact = new Uint8Array(bytes);
-      await ready(); return reserveNow(exact, commitment);
+      for (let attempt = 0; ; attempt++) {
+        readClock(); observeAuthors();
+        try { await currentPoint(); return reserveNow(exact, commitment); }
+        catch (error) { if (!(error instanceof StandingHeadAdvanced) || attempt === 2) throw error; }
+      }
     },
   };
 }

@@ -5,6 +5,8 @@ export interface ObservedFee { txHash: string; fee: bigint; atMillis: number }
 export interface ConfirmedFee { txHash: string; fee: bigint; confirmedAt: number; validUntil: number; state: "unknown" | "landed" | "absent" }
 export interface StandingFeeFacts { chainTime: number; observations: readonly ObservedFee[]; confirmations: readonly ConfirmedFee[] }
 
+export class StandingFeeCap extends Error {}
+
 const time = (value: number) => { if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid authenticated accounting time"); return value; };
 function feeFact(row: { txHash: string; fee: bigint }) {
   if (!/^[a-f0-9]{64}$/.test(row.txHash) || typeof row.fee !== "bigint" || row.fee < 0n) throw new Error("Invalid fee identity or amount");
@@ -34,9 +36,9 @@ export function assertStandingFeeBudget(facts: StandingFeeFacts, candidate: { tx
   feeFact(candidate);
   const perTransaction = parseDust(LIMITS.maxFeeDustPerTransaction), perDay = parseDust(LIMITS.maxDustPer24Hours);
   if (perTransaction === null || perDay === null) throw new Error("Standing DUST caps are invalid");
-  if (candidate.fee > perTransaction) throw new Error("Standing transaction fee exceeds its approved cap");
+  if (candidate.fee > perTransaction) throw new StandingFeeCap("Standing transaction fee exceeds its approved cap");
   const result = standingFeeUnion({ ...facts, confirmations: [...facts.confirmations, { ...candidate, confirmedAt: facts.chainTime, validUntil: facts.chainTime, state: "unknown" }] });
   if (result.conflicts.length) throw new Error("Standing fee integrity conflict requires reconciliation");
-  if (result.total > perDay) throw new Error("Standing daily fee cap has no headroom");
+  if (result.total > perDay) throw new StandingFeeCap("Standing daily fee cap has no headroom");
   return result;
 }

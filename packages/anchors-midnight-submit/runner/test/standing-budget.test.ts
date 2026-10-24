@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { parseDust } from "../../src/preflight.js";
-import { assertStandingFeeBudget, standingFeeUnion } from "../standing-budget.js";
+import { assertStandingFeeBudget, standingFeeUnion, StandingFeeCap } from "../standing-budget.js";
 
 const h = (n: number) => n.toString(16).padStart(64, "0"), dust = (value: string) => parseDust(value)!;
 const day = 24 * 60 * 60_000, now = day + 10_000;
@@ -37,6 +37,14 @@ it("allows the exact approved caps and deduplicates an identical pending retry",
   expect(assertStandingFeeBudget(facts, { txHash: h(0), fee: dust("0.01") }).total).toBe(dust("0.1"));
   expect(() => assertStandingFeeBudget(facts, { txHash: h(11), fee: 1n })).toThrow(/daily/i);
   expect(() => assertStandingFeeBudget({ ...facts, observations: [] }, { txHash: h(11), fee: dust("0.010000000000001") })).toThrow(/transaction/i);
+});
+
+it("distinguishes approved cap holds from integrity failures for durable alerts", () => {
+  expect(() => assertStandingFeeBudget({ chainTime: now, observations: [], confirmations: [] }, { txHash: h(20), fee: dust("0.02") })).toThrow(StandingFeeCap);
+  expect(() => assertStandingFeeBudget({ chainTime: now, observations: Array.from({length:10},(_,n)=>observed(n)), confirmations: [] }, { txHash:h(20),fee:1n })).toThrow(StandingFeeCap);
+  try { assertStandingFeeBudget({chainTime:now,observations:[observed(1)],confirmations:[local(1,"0.002")]},{txHash:h(20),fee:0n}); }
+  catch(error) { expect(error).not.toBeInstanceOf(StandingFeeCap); expect(error).toBeInstanceOf(Error); return; }
+  throw new Error("Conflicting accounting was accepted");
 });
 
 it.each([NaN, Infinity, -1, 0.5])("rejects invalid authenticated chain time %s", chainTime => {

@@ -484,6 +484,33 @@
         "midnight-proof-candidates"
       ],
       "status": "experimental"
+    },
+    {
+      "id": "midnight-standing-service",
+      "name": "Hosted Midnight standing service",
+      "desc": "Owns the canonical shared execution lock through wallet sync, authenticated catch-up, serial batch preparation, guarded delivery and final persistence. Observe mode loads no spending or writer secrets; agent-driven mainnet anchor mode refuses before shared mutations. The bounded follower runs during slow proofs; typed verified forward-head races retry identical bytes at most three times while restore and policy faults remain refusals. Cancellation unsubscribes wallet sync, drains both loops and closes storage before releasing the lock. Supplies a user unit and explicit private configuration; activation and coverage verification remain operator tasks. Existing wallet endpoint selection is unchanged.",
+      "kind": "pipeline",
+      "paths": [
+        "packages/anchors-midnight-submit/runner/standing-service.ts",
+        "packages/anchors-midnight-submit/runner/standing-status.ts",
+        "packages/anchors-midnight-submit/runner/standing-watch.py",
+        "packages/anchors-midnight-submit/runner/standing_accounting.py",
+        "packages/anchors-midnight-submit/runner/STANDING.md",
+        "packages/anchors-midnight-submit/runner/systemd/orynq-midnight-standing.service",
+        "packages/anchors-midnight-submit/runner/systemd/orynq-midnight-watch.service",
+        "packages/anchors-midnight-submit/runner/systemd/orynq-midnight-watch.timer"
+      ],
+      "consumes": [
+        "authenticated-midnight-blocks",
+        "midnight-census-plan-state",
+        "materios-certified-census",
+        "midnight-retained-publisher",
+        "anchors-midnight-submit",
+        "known-authors-document",
+        "midnight-mainnet-runner",
+        "anchor-submission-journal"
+      ],
+      "status": "experimental"
     }
   ]
 }

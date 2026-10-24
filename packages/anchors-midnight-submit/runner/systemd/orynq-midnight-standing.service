@@ -1,0 +1,20 @@
+[Unit]
+Description=Orynq hosted Midnight standing anchors
+Documentation=https://github.com/Flux-Point-Studios/orynq-sdk/blob/main/packages/anchors-midnight-submit/runner/STANDING.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+Environment=PATH=%h/.local/lib/orynq-midnight-standing/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/.local/lib/orynq-midnight-standing/checkout/packages/anchors-midnight-submit
+ExecStart=%h/.local/lib/orynq-midnight-standing/bin/node --import tsx runner/standing-service.ts --config %h/.config/orynq-midnight-standing/config.json
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=infinity
+Nice=10
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

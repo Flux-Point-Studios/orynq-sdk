@@ -359,6 +359,25 @@ describe("standing delivery after retained publication", () => {
     expect(prepare).not.toHaveBeenCalled(); expect(submit).not.toHaveBeenCalled();
   });
 
+  it("retains one preparation and sends once when the follower advances after preparation", async () => {
+    const { loop, prepare } = controller(), original = follower.chainView.bind(follower); let advanced = false;
+    const spy = vi.spyOn(follower, "chainView").mockImplementation(() => {
+      const view = original(); return { ...view, async indexedThrough() {
+        const indexed = await view.indexedThrough();
+        if (prepare.mock.calls.length && !advanced) {
+          advanced = true; clock.wallTime += 1000; clock.monotonicMillis += 1000;
+          follower.recordVerifiedBlock(block(13, clock.wallTime));
+        }
+        return indexed;
+      } };
+    });
+    try {
+      await expect(loop.turn()).resolves.toMatchObject({ state: "pending" });
+      expect(advanced).toBe(true); expect(prepare).toHaveBeenCalledTimes(1); expect(submit).toHaveBeenCalledTimes(1);
+      expect(Buffer.from(submit.mock.calls[0]![0].serialize())).toEqual(Buffer.from((await prepare.mock.results[0]!.value).bytes));
+    } finally { spy.mockRestore(); }
+  });
+
   it("waits for the session and prevents overlapping controller cycles", async () => {
     const { loop, prepare } = controller();
     const reserve = vi.spyOn(session, "ready").mockRejectedValueOnce(new Error("fixture warmup hold"));

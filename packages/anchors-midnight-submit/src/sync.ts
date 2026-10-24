@@ -7,6 +7,7 @@ export interface SyncWatch {
   progressMs: number;
   checkpointMs: number;
   write(line: string): void;
+  signal?: AbortSignal;
 }
 
 const toTheSecond = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -24,7 +25,9 @@ function progressLine({ shielded, unshielded, dust, synced }: SyncProgress): str
 // replaying every event from genesis. A save reads the DUST state back, which holds the event loop
 // for tens of seconds once that state runs to megabytes, so saves are spaced to take at most a
 // tenth of the wait.
-export async function syncWithCheckpoints(wallet: OperatorWallet, { timeoutMs, progressMs, checkpointMs, write }: SyncWatch): Promise<void> {
+export async function syncWithCheckpoints(wallet: OperatorWallet, { timeoutMs, progressMs, checkpointMs, write, signal: externalSignal }: SyncWatch): Promise<void> {
+  const cancellation = new AbortController();
+  const signal = externalSignal ? AbortSignal.any([externalSignal, cancellation.signal]) : cancellation.signal;
   const started = Date.now();
   const report = async () => write(`wallet sync at ${toTheSecond(Date.now())}, ${Math.round((Date.now() - started) / 1000)} s in: ${progressLine(await wallet.progress())}`);
   const checkpoint = async () => {
@@ -33,10 +36,15 @@ export async function syncWithCheckpoints(wallet: OperatorWallet, { timeoutMs, p
     return saved;
   };
   // Settles once the wait ends: null once synced, or why it failed.
-  const ended = wallet.waitForSync(timeoutMs).then(
+  const ended = wallet.waitForSync(timeoutMs, signal).then(
     () => null,
     (failure: unknown) => ({ failure }),
   );
+  let onAbort: (() => void) | undefined;
+  const interrupted = signal && new Promise<{ failure: Error }>(resolve => {
+    onAbort = () => resolve({ failure: new Error("Wallet sync interrupted") });
+    if (signal.aborted) onAbort(); else signal.addEventListener("abort", onAbort, { once: true });
+  });
   let timer: NodeJS.Timeout | undefined;
   const tick = () => new Promise<"tick">((resolve) => (timer = setTimeout(resolve, progressMs, "tick")));
   let outcome: { failure: unknown } | null;
@@ -44,7 +52,7 @@ export async function syncWithCheckpoints(wallet: OperatorWallet, { timeoutMs, p
     await report();
     let nextCheckpoint = Date.now() + checkpointMs;
     for (;;) {
-      const next = await Promise.race([ended, tick()]);
+      const next = await Promise.race([ended, tick(), ...(interrupted ? [interrupted] : [])]);
       clearTimeout(timer);
       if (next !== "tick") {
         outcome = next;
@@ -61,7 +69,10 @@ export async function syncWithCheckpoints(wallet: OperatorWallet, { timeoutMs, p
     outcome = { failure };
   } finally {
     clearTimeout(timer);
+    if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+    cancellation.abort();
   }
+  if (externalSignal?.aborted) outcome = { failure: new Error("Wallet sync interrupted") };
   if (outcome === null) {
     await report();
     await checkpoint();

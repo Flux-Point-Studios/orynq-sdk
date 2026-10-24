@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as L from "@midnight-ntwrk/ledger-v8";
-import { FacadeState } from "@midnight-ntwrk/wallet-sdk-facade";
+import { FacadeState, WalletFacade } from "@midnight-ntwrk/wallet-sdk-facade";
+import { Subject, finalize } from "rxjs";
 import { createWalletMnemonicFile } from "../src/keys.js";
 import { openWallet, readWalletState, writeWalletState, type WalletSnapshot } from "../src/wallet.js";
 
@@ -220,6 +221,18 @@ describe("saving a wallet's sync state", () => {
     vi.spyOn(L.ZswapLocalState.prototype, "serialize").mockImplementation(() => {
       throw new WebAssembly.RuntimeError("unreachable");
     });
+
+  it("cancels the actual timed sync subscription when the service aborts", async () => {
+    const { wallet } = await open("cancel-sync"); let unsubscribed = false;
+    const source = new Subject<FacadeState>();
+    const state = vi.spyOn(WalletFacade.prototype, "state").mockReturnValue(source.pipe(finalize(() => { unsubscribed = true; })));
+    const abort = new AbortController(); let failed = false;
+    const pending = wallet.waitForSync(180 * 60_000, abort.signal); pending.catch(() => { failed = true; });
+    try {
+      abort.abort(); await new Promise(resolve => setImmediate(resolve));
+      expect(failed).toBe(true); await expect(pending).rejects.toThrow(/interrupted/i); expect(unsubscribed).toBe(true);
+    } finally { source.complete(); state.mockRestore(); await wallet.close(); }
+  });
   const TRAPPED = { saved: false, failures: [{ part: "shielded", error: "ParseError: Could not serialize local state: RuntimeError: unreachable" }] };
   const trappedLine = (stateFile: string) =>
     `${stateFile}: the preprod wallet's sync state was not saved (shielded: ParseError: Could not serialize local state: RuntimeError: unreachable); the file keeps its last good save, and the next open resumes from it and replays the events since`;
