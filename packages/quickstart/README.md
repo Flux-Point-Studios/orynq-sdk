@@ -30,18 +30,13 @@ orynq anchor midnight --network mainnet --key ~/.orynq/midnight-key.json --bundl
 The Midnight commands need `@fluxpointstudios/orynq-sdk-anchors-midnight`, an optional peer
 dependency installed beside this package; without it they exit 1 naming it.
 
-Midnight support is prerelease: `@fluxpointstudios/orynq-sdk-anchors-midnight` and
-`@fluxpointstudios/orynq-sdk-anchors-midnight-submit` remain private and are not on npm.
-An npm install of this package does not enable the Midnight commands. Until the D-10
-release gate opens, run them from a built source checkout, where pnpm links the private peer:
-
-```bash
-git clone https://github.com/Flux-Point-Studios/orynq-sdk.git
-cd orynq-sdk
-pnpm install --frozen-lockfile
-pnpm --filter @fluxpointstudios/orynq-sdk-quickstart... build
-node packages/quickstart/bin/orynq.mjs verify midnight <txHash>
-```
+Install it with `npm install @fluxpointstudios/orynq-sdk-anchors-midnight`. It pins the
+mainnet registry generation the commands verify against, and its KNOWN_AUTHORS document lists
+no author and no finality checkpoint yet. So an anchor's author reads `unknown` unless
+`--author` names the key, and, since the commands take no checkpoint, a mainnet anchor verifies
+at most to `unverified-finality`, or is `invalid` when another key wrote it than `--author`
+names (see that package's README).
+`@fluxpointstudios/orynq-sdk-anchors-midnight-submit` is private and not on npm.
 
 `orynq verify midnight` is read-only and needs no key and no DUST. It checks an anchor with
 `verifyMidnightAnchor` from `@fluxpointstudios/orynq-sdk-anchors-midnight` and prints its labels:
@@ -50,11 +45,14 @@ node packages/quickstart/bin/orynq.mjs verify midnight <txHash>
   `unverified-finality`, `unauthenticated` and `author-revoked` (exit 1).
 - `assurance`: how far inclusion is shown. `consensus-verified` means the transaction is in a block
   GRANDPA finalized; `multi-path` and `single-path` mean sources agree, or one source says so.
-- `author`: the anchor's author key, as KNOWN_AUTHORS lists it, or as you named it with `--author`.
+- `author`: the key that wrote the anchor, and how it was judged. Without `--author` it is
+  `known`, `outside-window` or `unknown`, as KNOWN_AUTHORS lists it. With `--author` it is
+  `expected` when that key wrote the anchor, or `mismatch`, naming both keys, when another key
+  did; a mismatch makes the status `invalid`, so it never reads like the key you named.
 - `matched`: what the anchor's commitment binds that your bundle supplied. Kind 1 binds the
   bundle's `rootHash`, `manifestHash` and `merkleRoot`; kind 2 (`--hidden`) binds only the
-  attribute, the bundle's model manifest hash. A bare transaction hash matches nothing: the
-  commitment is printed, not checked.
+  attribute, the bundle's model manifest hash. A bare transaction hash matches nothing; the
+  command prints the commitment without checking it.
 - every check, with what it found. `--json` prints the same report as JSON.
 
 A bundle must be intact (its events and model manifest hash to its own `rootHash` and
@@ -73,9 +71,10 @@ a dry run that prints the plan (network, registry, kind, commitment, attribute, 
 and sends nothing. `--submit` needs a person at a terminal: stdin and stderr must both be a TTY, or
 it stops before reading any file, and you must type the commitment's first 8 characters to send.
 Sending also needs a registry generation deployed on the network and a Midnight submitter. This
-release has neither, so `--submit` stops before it asks you to confirm. The TTY check stops scripts and models that run commands through a pipe. It is not
-proof of a person: a program that wraps the command in a pseudo-terminal can type the confirmation
-too.
+release pins a registry generation on mainnet only and has no submitter, so `--submit` stops
+before it asks you to confirm. The TTY check stops scripts and models that run commands through a
+pipe. It is not proof of a person: a program that wraps the command in a pseudo-terminal can type
+the confirmation too.
 
 ## Programmatic API
 

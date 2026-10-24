@@ -166,7 +166,7 @@ export function honestRehearsal(): Rehearsal {
       "kind 1 against another bundle's entry": negative("invalid", "consensus-verified", "expectation"),
       "kind 2 against another attribute": negative("invalid", "consensus-verified", "expectation"),
       "a kind-1 anchor read as kind 2": negative("invalid", "consensus-verified", "expectation"),
-      "a stranger as the expected author": negative("unauthenticated", "consensus-verified", "author"),
+      "a stranger as the expected author": negative("invalid", "consensus-verified", "author"),
       "a transaction hash no chain holds": negative("invalid", "none", "indexer"),
       "the registry deploy read as an anchor": negative("invalid", "consensus-verified", "anchor"),
       "the DUST registration read as an anchor": negative("invalid", "consensus-verified", "anchor"),

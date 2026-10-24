@@ -19,6 +19,7 @@ import {
 import type { TraceBundle } from "@fluxpointstudios/orynq-sdk-process-trace";
 import { midnightCommand, type MidnightDeps } from "../midnight.js";
 import { fixture } from "../../../anchors-midnight/src/__tests__/anchor-chain.js";
+import { replaySource } from "../../../anchors-midnight/src/__tests__/recorded-source.js";
 import { serveSource, traceBundle, userChain } from "../../../anchors-midnight/src/__tests__/surface-chain.js";
 
 type Served = Awaited<ReturnType<typeof serveSource>>;
@@ -84,11 +85,32 @@ describe("orynq verify midnight", () => {
     expect(r.code).toBe(0);
     expect(line(r.stdout, "status")).toBe("valid");
     expect(line(r.stdout, "assurance")).toBe("consensus-verified");
-    expect(line(r.stdout, "author")).toBe(`expected: ${author()} (given with --author)`);
+    expect(line(r.stdout, "author")).toBe(`expected: written by ${author()}, the key given with --author`);
     expect(line(r.stdout, "matched")).toBe("nothing: no bundle was given, so the commitment is reported, not checked");
     expect(line(r.stdout, "commitment")).toBe(user.anchors.public.commitment);
     expect(r.stdout).toMatch(/^ {2}ok {4}finality +GRANDPA set \d+ justified block \d+ after \d+ set changes$/m);
     expect(new Set(served.requests)).toEqual(new Set(["/graphql", "/rpc"]));
+  });
+
+  it("is invalid, exit 1, when another key wrote the anchor than the one --author names, and prints both keys", async () => {
+    const other = "11".repeat(32);
+    const r = await run(["verify", "midnight", user.anchors.public.txHash, ...at(served), "--author", other]);
+    expect([r.code, line(r.stdout, "status"), line(r.stdout, "assurance")]).toEqual([1, "invalid", "consensus-verified"]);
+    expect(line(r.stdout, "author")).toBe(`mismatch: written by ${author()}, not by ${other}, the key given with --author`);
+  });
+
+  // The mainnet recording, verified as a user runs it: the registries and KNOWN_AUTHORS this
+  // build ships, which trust no finality checkpoint, so no mainnet anchor is shown final.
+  it("on mainnet, where no checkpoint is trusted, --author FPS's key and another key print a different status and author", async () => {
+    const recorded = JSON.parse(readFileSync(new URL("../../../anchors-midnight/src/__tests__/fixtures/mainnet-anchors.json", import.meta.url), "utf8"));
+    const FPS_AUTHOR = "6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08";
+    const other = "11".repeat(32);
+    const mainnet = await serve(replaySource(recorded.recording));
+    const verify = (key: string) => run(["verify", "midnight", "e273d480e57b3315937c8929fbc3c11ab798d42b4ff6c0b88172856dec6b7d58", ...at(mainnet), "--author", key], {});
+    const [own, wrong] = [await verify(FPS_AUTHOR), await verify(other)];
+    const rows = (r: Awaited<ReturnType<typeof run>>) => [r.code, line(r.stdout, "status"), line(r.stdout, "assurance"), line(r.stdout, "author")];
+    expect(rows(own)).toEqual([1, "unverified-finality", "multi-path", `expected: written by ${FPS_AUTHOR}, the key given with --author`]);
+    expect(rows(wrong)).toEqual([1, "invalid", "multi-path", `mismatch: written by ${FPS_AUTHOR}, not by ${other}, the key given with --author`]);
   });
 
   it("is unauthenticated, exit 1, for an author KNOWN_AUTHORS does not list and no --author names", async () => {
@@ -152,11 +174,15 @@ describe("orynq verify midnight", () => {
     expect(r.stdout).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f]/);
   });
 
-  it("with the registries this build ships (none deployed), answers invalid without asking a source", async () => {
+  it("verifies against the registries this build ships: mainnet's pinned generation, and on preprod, where none is deployed, without asking a source", async () => {
+    const mainnet = await run(["verify", "midnight", user.anchors.public.txHash, ...at(served)], { knownAuthors: user.chain.authors() });
+    expect([mainnet.code, line(mainnet.stdout, "status")]).toEqual([1, "invalid"]);
+    expect(mainnet.stdout).toContain("1 registry generation on mainnet");
+    expect(mainnet.stdout).toContain(`transaction ${user.anchors.public.txHash} writes no anchor to a registry generation`);
     served.requests.length = 0;
-    const r = await run(["verify", "midnight", user.anchors.public.txHash, ...at(served)], { knownAuthors: user.chain.authors() });
-    expect([r.code, line(r.stdout, "status")]).toEqual([1, "invalid"]);
-    expect(r.stdout).toContain("no registry generation is deployed on mainnet");
+    const preprod = await run(["verify", "midnight", user.anchors.public.txHash, "--network", "preprod", ...at(served)], { knownAuthors: user.chain.authors() });
+    expect([preprod.code, line(preprod.stdout, "status")]).toEqual([1, "invalid"]);
+    expect(preprod.stdout).toContain("no registry generation is deployed on preprod");
     expect(served.requests).toEqual([]);
   });
 
@@ -310,9 +336,10 @@ describe("the orynq bin", () => {
     const path = join(dir, "bin-key.json");
     const keys = orynq("keys", "init", "midnight", "--out", path);
     expect([keys.status, readUserKey(path).authorKey]).toEqual([0, line(keys.stdout, "author key")]);
-    const verify = orynq("verify", "midnight", user.anchors.public.txHash, "--indexer", served.indexer, "--rpc", served.node);
+    // spawnSync blocks this process, which serves the source, so the verify asks it nothing.
+    const verify = orynq("verify", "midnight", user.anchors.public.txHash, "--network", "preprod", "--indexer", served.indexer, "--rpc", served.node);
     expect([verify.status, line(verify.stdout, "status")]).toEqual([1, "invalid"]);
-    expect(verify.stdout).toContain("no registry generation is deployed on mainnet");
+    expect(verify.stdout).toContain("no registry generation is deployed on preprod");
   });
 
   // The Midnight package is an optional peer: an install without it gets the bin and both
@@ -328,7 +355,7 @@ describe("the orynq bin", () => {
     const r = spawnSync(process.execPath, [join(pkg, "bin", "orynq.mjs"), "verify", "midnight", "00".repeat(32)], { encoding: "utf8", input: "" });
     expect([r.status, r.stderr]).toEqual([
       1,
-      expect.stringContaining("the Midnight commands need @fluxpointstudios/orynq-sdk-anchors-midnight, an optional peer dependency that is not installed. Midnight is not yet published on npm; use a built orynq-sdk source checkout (see the package README)."),
+      expect.stringContaining("the Midnight commands need @fluxpointstudios/orynq-sdk-anchors-midnight, an optional peer dependency that is not installed; install it beside this package (npm install @fluxpointstudios/orynq-sdk-anchors-midnight)."),
     ]);
     expect(r.stderr).not.toContain(pkg);
   });

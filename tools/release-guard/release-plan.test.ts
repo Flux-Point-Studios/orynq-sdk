@@ -12,8 +12,12 @@ const packages = projects.filter(({ path }) => relative(root, path) !== "").map(
   manifest: JSON.parse(readFileSync(join(path, "package.json"), "utf8")),
 }));
 
-describe("private package release plans", () => {
-  it.each(packages.filter(({ manifest }) => manifest.private).map(({ manifest }) => manifest.name as string))(
+// A peer of a public package counts too: changesets major-bumps a package whose peer dependency
+// gets any release unless onlyUpdatePeerDependentsWhenOutOfRange holds it to out-of-range ones.
+const peerOfPublic = (name: string) => packages.some(({ manifest }) => !manifest.private && manifest.peerDependencies?.[name] !== undefined);
+
+describe("release plans of private packages and of public packages' peers", () => {
+  it.each(packages.filter(({ manifest }) => manifest.private || peerOfPublic(manifest.name)).map(({ manifest }) => manifest.name as string))(
     "a minor release of %s does not major-bump public packages",
     (name) => {
       const scratch = mkdtempSync(join(tmpdir(), "orynq-release-plan-"));

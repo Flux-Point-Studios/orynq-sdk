@@ -40,7 +40,9 @@ export async function verifyMidnightAnchor(request, options) {
   const skipped = options.finality === "skip";
   if (skipped || options.maxSetChanges === 0 || authors.serial === 0) failed.push(["finality", "unverified-finality"]);
   if (request.expectedAuthor !== undefined) {
-    if (request.expectedAuthor !== anchor.author) failed.push(["author", "unauthenticated"]);
+    const match = request.expectedAuthor === anchor.author;
+    author = match ? { status: "expected", key: anchor.author } : { status: "mismatch", key: anchor.author, expected: request.expectedAuthor };
+    if (!match) failed.push(["author", "invalid"]);
   } else {
     author = { ...authors.author(request.network, anchor.author, tx.height), key: anchor.author };
     if (author.status === "unknown") failed.push(["author", "unauthenticated"]);

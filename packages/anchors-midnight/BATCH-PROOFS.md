@@ -1,0 +1,17 @@
+`verifyBatchProof` checks a public `orynq-midnight-batch-proof/v1` bundle against the caller's expected content hash, Materios genesis and Midnight network. It reconstructs the allowed certificate, checkpoint leaf, shape-bound Merkle path, census manifest, anchor identity and batch-set commitment before verifying the Midnight anchor's registry, transaction inclusion, author and GRANDPA finality.
+
+Kind 3 requires a signed known-author entry with role `batch` whose window includes the block. An expected-author key alone cannot establish that role. `verifyBatchSet` returns the verified author, block, checkpoint identity and known-authors serial so a store can revalidate an author's window without chain access after a document update.
+
+A valid result establishes that the requested content hash belongs to the receipt batch committed by that finalized Midnight transaction. The batch role records the operator's claim that it observed certification on the stated Materios chain and block. Committee approval and content correctness require separate checks.
+
+`batchSetCommitment` accepts 1–1,024 strictly ascending, unique anchor identifiers. Its SHA-256 input is the zero-padded 32-byte `orynq:anchor-batches:v1` tag, Materios genesis and the raw identifiers. A bundle is a hint: its field names, member ordering, counts, proof shape, registry and block hint are checked.
+
+`auditCheckpoints` rejects edits or removals from a checkpoint prefix. `knownAuthors` applies this guard between signed serials in increasing order. Newly appended derived checkpoints still need a verified chain from an existing trusted checkpoint; an append-only list alone does not authenticate them.
+
+`rpcOnlySource({network, node, hints})` reads a public HTTP JSON-RPC URL or supplied node transport. Each hint pins a transaction hash, block height and block hash. Registry generations must also pin the deploy block hash. Existing indexer sources and endpoint defaults are unchanged. RPC-only discovery and subscriptions require separate discovery; the source never scans the chain.
+
+After GRANDPA finality, execution verification proves `System.Events` and `Timestamp.Now` against the target state root and `:code` against the parent state root. The supported code hash is `39568eeb0802fa59d74ac0bc5c7ab62fc05c23ea947937458a4b011558516138` (runtime1000300). Packaged metadata is SHA256-pinned, and metadata returned by the node is never used. Full success requires the same extrinsic's `System.ExtrinsicSuccess` and matching Midnight `TxApplied`, with failed dispatch and partial success refused. Read proofs are capped at2,048nodes/4MiB.
+
+Create a `BatchSetCache` and pass it as `setCache` to `verifyBatchProof` to share finalized set verification across receipt bundles. The cache stores only valid results, caps entries per source, separates registry/checkpoint/finality policies, and rechecks the current batch-author role/window on every hit. Returned objects are copied. Changing the author document can revoke an already cached result without another chain read.
+
+The runtime profile was captured from public mainnet RPC. Its event interpretation is checked against Midnight's Apache-2.0 [node-1.0.400 pallet source](https://github.com/midnightntwrk/midnight-node/blob/node-1.0.400/pallets/midnight/src/lib.rs); trie and metadata decoding use the MIT-licensed Polkadot API substrate-bindings and metadata-builders packages. A runtime code upgrade needs an explicit reviewed profile update.

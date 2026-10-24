@@ -3,7 +3,7 @@
  *
  * This package provides the core types, interfaces, and utilities for the
  * orynq-sdk dual-protocol commerce layer. It supports both Flux and x402
- * payment protocols with zero external dependencies.
+ * payment protocols.
  *
  * Key features:
  * - Protocol-neutral payment request/proof types
@@ -232,4 +232,6 @@ export {
  * Package version.
  * Updated automatically during build.
  */
-export const VERSION = "0.1.0";
+export const VERSION = "0.3.0";
+
+export * from "./checkpoint.js";

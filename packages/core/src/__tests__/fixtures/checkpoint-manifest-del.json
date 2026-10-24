@@ -1,0 +1,11 @@
+{
+  "manifest": {
+    "cardano_network_id": "\u007f",
+    "count": 1,
+    "from_block": 0,
+    "materios_chain_id": "0e46e33f639a56cc8780fd871d9a15e16d99af248526f907cb560cb40849f7bf",
+    "root": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+    "to_block": 0
+  },
+  "hash": "0c9ab587dd30f58eeb912fe2a547af108cf60c05500ed7a5cf536b5fb24c84fb"
+}

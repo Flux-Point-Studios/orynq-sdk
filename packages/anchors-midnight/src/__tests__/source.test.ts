@@ -4,26 +4,37 @@ import type { AddressInfo } from "node:net";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { verifyFinality } from "../grandpa.js";
+import { toHex } from "../scale.js";
 import { blockfrostEndpoints, contractStateOnNode, finalityRpc, midnightSource, sourceEndpoints } from "../source.js";
+import { syntheticChain } from "./grandpa-chain.js";
 import { ledgerNode, type NodeVersion } from "./ledger-node.js";
 
 // The shape of a Blockfrost project id: a lowercase prefix, then 32 letters and digits.
 const TOKEN = "mainnetSECRETtoken0123456789abcdefABCDE";
 
 // A node and indexer that answer from `handlers`, and echo every request header back in their
-// error bodies, the way a misconfigured proxy might.
+// error bodies, the way a misconfigured proxy might. Like rpc.mainnet.midnight.network's proxy,
+// they refuse a request body over 8 KiB with 403.
+const MAX_BODY = 8192;
 let server: Server;
 let base = "";
-const seen: Array<{ url: string; headers: IncomingMessage["headers"]; body: unknown }> = [];
-let handler: (body: any) => { status?: number; json?: unknown; text?: string } = () => ({ status: 404 });
+const seen: Array<{ url: string; headers: IncomingMessage["headers"]; body: unknown; bytes: number }> = [];
+type Answer = { status?: number; json?: unknown; text?: string };
+let handler: (body: any) => Answer | Promise<Answer> = () => ({ status: 404 });
 beforeAll(async () => {
   server = createServer((req, res) => {
     let data = "";
     req.on("data", (c) => (data += c));
-    req.on("end", () => {
+    req.on("end", async () => {
+      const bytes = Buffer.byteLength(data);
+      if (bytes > MAX_BODY) {
+        res.writeHead(403, { "content-type": "text/html" });
+        return res.end("<html><head><title>403 Forbidden</title></head></html>");
+      }
       const body = data ? JSON.parse(data) : undefined;
-      seen.push({ url: req.url ?? "", headers: req.headers, body });
-      const out = handler(body);
+      seen.push({ url: req.url ?? "", headers: req.headers, body, bytes });
+      const out = await handler(body);
       res.writeHead(out.status ?? 200, { "content-type": "application/json" });
       res.end(out.text ?? JSON.stringify(out.json ?? { echoed: req.headers }));
     });
@@ -122,6 +133,22 @@ describe("midnightSource", () => {
     expect(await rpc.proveFinality([1, 2])).toEqual([new Uint8Array([10, 11]), null]);
     expect(await rpc.headers(["0x" + "aa".repeat(32)])).toEqual([{ number: "0x1" }]);
     expect(seen.at(-1)!.body).toMatchObject([{ method: "chain_getHeader", params: ["0x" + "aa".repeat(32)] }]);
+  });
+
+  it("keeps every request of a long finality walk within the 8 KiB body rpc.mainnet.midnight.network accepts", async () => {
+    const chain = syntheticChain({ firstSetId: 1n, genesisEnd: 1000, setLengths: () => 300, setCount: 72 });
+    const answer = async (c: { method: string; params: [never] }) => {
+      if (c.method === "chain_getHeader") return (await chain.rpc.headers(c.params))[0];
+      const [proof] = await chain.rpc.proveFinality(c.params);
+      return proof ? `0x${toHex(proof)}` : null;
+    };
+    handler = async (b) => ({ json: await Promise.all(b.map(async (c: any) => ({ jsonrpc: "2.0", id: c.id, result: await answer(c) }))) });
+    const before = seen.length;
+    const r = await verifyFinality({ rpc: finalityRpc(source()), block: chain.block(chain.endOf(70) + 5), checkpoints: [chain.checkpoint(0)] });
+    expect(r).toMatchObject({ finalized: true, setChanges: 71 });
+    const sent = seen.slice(before);
+    expect(Math.max(...sent.map((s) => (s.body as unknown[]).length))).toBeGreaterThan(1);
+    expect(Math.max(...sent.map((s) => s.bytes))).toBeLessThanOrEqual(MAX_BODY);
   });
 });
 

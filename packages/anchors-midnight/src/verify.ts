@@ -2,17 +2,18 @@ import * as L from "@midnight-ntwrk/ledger-v8";
 import { decodeAnchorTransaction, type AnchorCall, type AnchorTransaction } from "./anchor-transaction.js";
 import { entryCommitment, hash32, hiddenDigest, hidingCommitment, type EntryHashes, type Hash32 } from "./commitment.js";
 import { verifyFinality, type BlockRef, type FinalityCheckpoint, type FinalityResult } from "./grandpa.js";
-import { knownAuthors as shippedKnownAuthors, type AuthorStatus, type KnownAuthors } from "./known-authors.js";
+import { knownAuthors as shippedKnownAuthors, authorStatusAt, type AuthorStatus, type KnownAuthors } from "./known-authors.js";
 import { KNOWN_RUNTIME_SPEC_VERSIONS, MIDNIGHT_REGISTRIES, assertRegistryGenerations, type MidnightNetwork, type RegistryInfo } from "./registries.js";
 import { assertRegistryDeployBytes, assertRegistryState } from "./registry.js";
 import { fromHex, toHex } from "./scale.js";
-import { finalityRpc, type IndexedTransaction, type MidnightSource } from "./source.js";
+import { SourceConflict, finalityRpc, type IndexedTransaction, type MidnightSource } from "./source.js";
 import { headerFromRpc, headerHash, includedTransactionIndex, orderedTrieRoot, type RpcHeader } from "./substrate.js";
 
-// Status, most to least severe: a check failed outright (invalid), sources disagree with each
-// other or with consensus (conflict), a source could not answer (unavailable), the block is not
-// shown final (unverified-finality), the author is not a known one (unauthenticated) or is
-// outside its window (author-revoked). valid needs every check to pass at consensus-verified.
+// Status, most to least severe: a check failed outright (invalid), as when another key wrote the
+// anchor than the one the caller pinned; sources disagree with each other or with consensus
+// (conflict), a source could not answer (unavailable), the block is not shown final
+// (unverified-finality), the author is not a known one (unauthenticated) or is outside its window
+// (author-revoked). valid needs every check to pass at consensus-verified.
 export type AnchorStatus = "valid" | "invalid" | "conflict" | "unavailable" | "unverified-finality" | "unauthenticated" | "author-revoked";
 const SEVERITY: readonly Exclude<AnchorStatus, "valid">[] = ["invalid", "conflict", "unavailable", "unverified-finality", "unauthenticated", "author-revoked"];
 
@@ -27,6 +28,7 @@ export type Assurance = "consensus-verified" | "multi-path" | "single-path" | "n
 export type Expectation =
   | { kind: 1; entry: EntryHashes }
   | { kind: 1; commitment: Hash32 }
+  | { kind: 3; commitment: Hash32 }
   | { kind: 2; attribute: Hash32; opening?: EntryHashes & { salt: Hash32 } }
   | { kind: "any" };
 
@@ -34,7 +36,8 @@ export interface VerifyRequest {
   network: MidnightNetwork;
   txHash: string;
   expect: Expectation;
-  // An author key the caller trusts in place of the KNOWN_AUTHORS document.
+  // An author key the caller trusts in place of the KNOWN_AUTHORS document; an anchor any other
+  // key wrote is invalid.
   expectedAuthor?: Hash32;
 }
 
@@ -63,7 +66,8 @@ export interface VerifyResult {
   registry: { generation: number; address: string } | null;
   block: BlockRef | null;
   anchor: AnchorCall | null;
-  author: ((AuthorStatus | { status: "expected" }) & { key: string }) | null;
+  // key is always the key that wrote the anchor; expected, the key the caller pinned.
+  author: ((AuthorStatus | { status: "expected" } | { status: "mismatch"; expected: string }) & { key: string }) | null;
   // The fields the anchor's commitment binds that matched the request.
   verifiedFields: string[];
   notes: string[];
@@ -92,6 +96,7 @@ class Checks {
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 interface Included {
+  executionVerified: boolean;
   raw: Uint8Array;
   decoded: AnchorTransaction;
   indexed: IndexedTransaction;
@@ -120,7 +125,7 @@ async function include(
   try {
     found = (await source.indexer.transactions(txHash)).filter((t) => t.hash === txHash);
   } catch (error) {
-    checks.fail(`${label}indexer`, "unavailable", message(error));
+    checks.fail(`${label}indexer`, error instanceof SourceConflict ? "conflict" : "unavailable", message(error));
     return null;
   }
   if (found.length !== 1) {
@@ -142,10 +147,11 @@ async function include(
     return null;
   }
   checks.pass(`${label}transaction-hash`, "the transaction's own bytes hash to the requested hash");
-  const out: Included = { raw, decoded, indexed, block: { height: indexed.block.height, hash: indexed.block.hash }, runtime: null, assurance: "single-path", finality: null };
+  const out: Included = { executionVerified: false, raw, decoded, indexed, block: { height: indexed.block.height, hash: indexed.block.hash }, runtime: null, assurance: "single-path", finality: null };
   const { block } = out;
 
   let included: boolean;
+  let execution: { header: ReturnType<typeof headerFromRpc>; extrinsicIndex: number } | undefined;
   try {
     const blockHash = (await source.node.call<string>("chain_getBlockHash", [block.height])).replace(/^0x/, "");
     if (blockHash !== block.hash) {
@@ -166,16 +172,21 @@ async function include(
       return out;
     }
     checks.pass(`${label}extrinsics-root`, `the body's ${extrinsics.length} extrinsics match the header's extrinsicsRoot`);
-    out.runtime = (await source.node.call<{ specVersion: number }>("state_getRuntimeVersion", [`0x${block.hash}`])).specVersion;
-    if (!(KNOWN_RUNTIME_SPEC_VERSIONS as readonly number[]).includes(out.runtime)) {
-      checks.fail(`${label}runtime`, "invalid", `block ${block.height} runs runtime ${out.runtime}, whose extrinsic layout the decoder does not know`);
-      return out;
+    if (!source.verifyExecution) {
+      out.runtime = (await source.node.call<{ specVersion: number }>("state_getRuntimeVersion", [`0x${block.hash}`])).specVersion;
+      if (!(KNOWN_RUNTIME_SPEC_VERSIONS as readonly number[]).includes(out.runtime)) {
+        checks.fail(`${label}runtime`, "invalid", `block ${block.height} runs runtime ${out.runtime}, whose extrinsic layout the decoder does not know`);
+        return out;
+      }
+      checks.pass(`${label}runtime`, `the node reports runtime ${out.runtime}, whose extrinsic layout the decoder knows`);
     }
-    checks.pass(`${label}runtime`, `the node reports runtime ${out.runtime}, whose extrinsic layout the decoder knows`);
     const index = includedTransactionIndex(extrinsics, out.raw);
     included = index !== null;
     if (index === null) checks.fail(`${label}inclusion`, "conflict", `no extrinsic of block ${block.height} is exactly a bare Midnight.send_mn_transaction of this transaction`);
-    else checks.pass(`${label}inclusion`, `extrinsic ${index} of block ${block.height} is Midnight.send_mn_transaction of exactly these bytes`);
+    else {
+      checks.pass(`${label}inclusion`, `extrinsic ${index} of block ${block.height} is Midnight.send_mn_transaction of exactly these bytes`);
+      execution = { header, extrinsicIndex: index };
+    }
   } catch (error) {
     checks.fail(`${label}node`, "unavailable", message(error));
     return out;
@@ -197,6 +208,19 @@ async function include(
     return out;
   }
   checks.pass(`${label}finality`, `GRANDPA set ${out.finality.checkpoint.setId} justified block ${out.finality.justified.height} after ${out.finality.setChanges} set changes`);
+  if (included && source.verifyExecution && execution) {
+    try {
+      const proven = await source.verifyExecution({ ...execution, blockHash: block.hash, txHash });
+      out.runtime = proven.runtimeSpecVersion;
+      if (!(KNOWN_RUNTIME_SPEC_VERSIONS as readonly number[]).includes(proven.runtimeSpecVersion)) throw new SourceConflict("The executing runtime is not supported");
+      out.executionVerified = true;
+      out.indexed = { ...out.indexed, block: { ...out.indexed.block, timestamp: proven.timestamp }, status: "SUCCESS" };
+      checks.pass(`${label}execution`, "finalized state proofs authenticate the executing runtime, full transaction execution and timestamp");
+    } catch (error) {
+      checks.fail(`${label}execution`, error instanceof SourceConflict ? "conflict" : "unavailable", message(error));
+      return out;
+    }
+  }
   if (included) out.assurance = "consensus-verified";
   return out;
 }
@@ -214,9 +238,9 @@ const stateCheck = (checks: Checks, name: string, stateHex: string | undefined, 
 // The fields a commitment binds that match the request, or why the request does not match.
 function expectation(expect: Expectation, anchor: AnchorCall): { fields: string[] } | { error: string } {
   if (expect.kind === "any") return { fields: [] };
-  if (!("kind" in expect) || (expect.kind !== 1 && expect.kind !== 2)) return { error: `kind ${String((expect as { kind: unknown }).kind)} is not one the registry writes` };
+  if (!("kind" in expect) || (expect.kind !== 1 && expect.kind !== 2 && expect.kind !== 3)) return { error: `kind ${String((expect as { kind: unknown }).kind)} is not one the SDK recognizes` };
   if (anchor.kind !== expect.kind) return { error: `the anchor is kind ${anchor.kind}, not kind ${expect.kind}` };
-  if (expect.kind === 1) {
+  if (expect.kind === 1 || expect.kind === 3) {
     if ("entry" in expect) {
       const want = toHex(entryCommitment(expect.entry));
       return want === anchor.commitment ? { fields: ["rootHash", "manifestHash", "merkleRoot"] } : { error: `the anchor commits to ${anchor.commitment}, not to the entry (${want})` };
@@ -264,6 +288,7 @@ export async function verifyMidnightAnchor(request: VerifyRequest, options: Veri
 
   const registries = options.registries ?? MIDNIGHT_REGISTRIES[request.network];
   try {
+    if (options.source.network !== undefined && options.source.network !== request.network) throw new Error("Source network differs from the requested network");
     if (registries.length === 0) throw new Error(`no registry generation is deployed on ${request.network}`);
     assertRegistryGenerations(registries);
     checks.pass("registry", `${registries.length} registry generation${registries.length === 1 ? "" : "s"} on ${request.network}`);
@@ -283,6 +308,7 @@ export async function verifyMidnightAnchor(request: VerifyRequest, options: Veri
   result.block = indexed.block;
   result.assurance = indexed.assurance;
   result.finality = indexed.finality;
+  if (options.source.verifyExecution && !indexed.executionVerified) return done();
 
   let anchor: AnchorCall;
   try {
@@ -290,6 +316,7 @@ export async function verifyMidnightAnchor(request: VerifyRequest, options: Veri
     if (decoded.touches.length) throw new Error(`transaction ${txHash} also carries a ${decoded.touches[0]!.action === "deploy" ? "deploy" : "maintenance update"} aimed at registry ${decoded.touches[0]!.address}`);
     if (decoded.calls.length !== 1) throw new Error(decoded.calls.length === 0 ? `transaction ${txHash} writes no anchor to a registry generation` : `transaction ${txHash} writes ${decoded.calls.length} anchors`);
     anchor = decoded.calls[0]!;
+    if (![1, 2, 3].includes(anchor.kind)) throw new Error(`anchor kind ${anchor.kind} is not one the SDK recognizes`);
     checks.pass("anchor", `${anchor.entryPoint}() wrote kind ${anchor.kind} to registry ${anchor.address}`);
   } catch (error) {
     checks.fail("anchor", "invalid", message(error));
@@ -302,7 +329,8 @@ export async function verifyMidnightAnchor(request: VerifyRequest, options: Veri
     checks.fail("registry-runtime", "invalid", `block ${indexed.block.height} runs runtime ${indexed.runtime}, not registry generation ${registry.generation}'s ${registry.runtimeSpecVersion}`);
   }
 
-  if (indexed.indexed.status !== "SUCCESS") checks.fail("indexer-status", "invalid", `the indexer reports ${indexed.indexed.status}`);
+  if (options.source.verifyExecution) checks.pass("execution-status", "authenticated finalized events prove SUCCESS");
+  else if (indexed.indexed.status !== "SUCCESS") checks.fail("indexer-status", "invalid", `the indexer reports ${indexed.indexed.status}`);
   else checks.pass("indexer-status", "the indexer reports SUCCESS");
   stateCheck(checks, "indexer-state", indexed.indexed.contractActions.find((a) => a.address === anchor.address)?.state, "the indexer");
   if (indexed.runtime !== null) {
@@ -338,15 +366,25 @@ export async function verifyMidnightAnchor(request: VerifyRequest, options: Veri
 
   if (request.expectedAuthor !== undefined) {
     const expected = toHex(hash32(request.expectedAuthor, "expectedAuthor"));
-    result.author = { status: "expected", key: anchor.author };
-    if (expected === anchor.author) checks.pass("author", "the caller's expected author wrote it");
-    else checks.fail("author", "unauthenticated", `written by ${anchor.author}, not the expected ${expected}`);
+    if (expected === anchor.author) {
+      result.author = { status: "expected", key: anchor.author };
+      checks.pass("author", "the caller's expected author wrote it");
+    } else {
+      result.author = { status: "mismatch", key: anchor.author, expected };
+      checks.fail("author", "invalid", `written by ${anchor.author}, not the expected ${expected}`);
+    }
   } else {
-    const status = authors.author(request.network, anchor.author, indexed.block.height);
+    const status = authorStatusAt(authors, request.network, anchor.author, indexed.block.height);
     result.author = { ...status, key: anchor.author };
     if (status.status === "known") checks.pass("author", `${status.id} (${status.role}) within its window`);
     else if (status.status === "outside-window") checks.fail("author", "author-revoked", `${status.id}'s window is ${status.validFrom} to ${status.validTo ?? "open"}; block ${indexed.block.height} lies outside it`);
     else checks.fail("author", "unauthenticated", `KNOWN_AUTHORS serial ${authors.serial} does not list ${anchor.author}`);
+  }
+  if (anchor.kind === 3) {
+    const status = authorStatusAt(authors, request.network, anchor.author, indexed.block.height);
+    if (status.status === "outside-window") checks.fail("batch-author", "author-revoked", "the batch author's window excludes this block");
+    else if (status.status !== "known" || status.role !== "batch") checks.fail("batch-author", "unauthenticated", "kind 3 requires a known author with role batch at this block");
+    else checks.pass("batch-author", "a known batch author within its window wrote the set");
   }
   return done();
 }

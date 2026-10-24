@@ -113,7 +113,8 @@ function writeReport(io: CliIo, report: VerifyReport, bundleGiven: boolean) {
   row("assurance", report.assurance);
   const a = report.author;
   if (a) {
-    if (a.status === "expected") row("author", `expected: ${a.key} (given with --author)`);
+    if (a.status === "expected") row("author", `expected: written by ${a.key}, the key given with --author`);
+    else if (a.status === "mismatch") row("author", `mismatch: written by ${a.key}, not by ${a.expected}, the key given with --author`);
     else if (a.status === "unknown") row("author", `unknown: ${a.key} is not in KNOWN_AUTHORS serial ${report.knownAuthorsSerial}`);
     else row("author", `${a.status}: ${a.id} (${a.role}), blocks ${a.validFrom} to ${a.validTo ?? "open"}, key ${a.key}`);
   }

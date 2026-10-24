@@ -7,6 +7,7 @@ export default defineConfig({
   resolve: {
     alias: {
       // Subpath exports (must come before main package aliases)
+      '@fluxpointstudios/orynq-sdk-core/checkpoint': resolve(root, 'packages/core/src/checkpoint.ts'),
       '@fluxpointstudios/orynq-sdk-core/utils': resolve(root, 'packages/core/src/utils/index.ts'),
       '@fluxpointstudios/orynq-sdk-core/types': resolve(root, 'packages/core/src/types/index.ts'),
       '@fluxpointstudios/orynq-sdk-core/chains': resolve(root, 'packages/core/src/chains.ts'),
