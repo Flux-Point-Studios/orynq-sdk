@@ -21,6 +21,8 @@ export interface Config {
   midnightBlockfrostProjectIdFile: string | undefined;
   midnightIndexerUrl: string | undefined;
   midnightRpcUrl: string | undefined;
+  midnightProofGatewayUrl?: string | undefined;
+  midnightProofRpcUrl?: string | undefined;
   transport: "stdio";
   port: number;
 }
@@ -40,6 +42,8 @@ export function loadConfig(): Config {
     midnightBlockfrostProjectIdFile: process.env["MIDNIGHT_BLOCKFROST_PROJECT_ID_FILE"],
     midnightIndexerUrl: process.env["MIDNIGHT_INDEXER_URL"],
     midnightRpcUrl: process.env["MIDNIGHT_RPC_URL"],
+    midnightProofGatewayUrl: process.env["MIDNIGHT_PROOF_GATEWAY_URL"],
+    midnightProofRpcUrl: process.env["MIDNIGHT_PROOF_RPC_URL"],
     transport: "stdio",
     port: Number(process.env["ORYNQ_MCP_PORT"] ?? "3100"),
   };

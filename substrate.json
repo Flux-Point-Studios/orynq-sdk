@@ -216,7 +216,7 @@
     {
       "id": "orynq-mcp",
       "name": "Orynq MCP server",
-      "desc": "MCP server exposing process tracing, Cardano and Materios anchoring and verification as agent tools. verify_midnight_anchor (read-only) verifies a Midnight anchor with anchors-midnight, an optional peer dependency loaded on first use (without it the server starts and the tool returns an error naming the package), and returns its verifyReport; its schema is strict (txHash, network, one of entry, commitment or attribute, expectedAuthor), so a model can pass it no key, file or URL, and the source comes from the server's environment as a file path or URLs. There is no Midnight anchoring tool and no tool takes a Flux Point Studios key: anchoring with the user's own key goes through the quickstart CLI's terminal confirmation.",
+      "desc": "MCP server exposing process tracing, Cardano and Materios anchoring and verification as agent tools. verify_midnight_anchor (read-only) verifies a Midnight anchor with anchors-midnight, an optional peer dependency loaded on first use (without it the server starts and the tool returns an error naming the package), and returns its verifyReport; its schema is strict (txHash, network, one of entry, commitment or attribute, expectedAuthor), so a model can pass it no key, file or URL, and the source comes from the server's environment as a file path or URLs. There is no Midnight anchoring tool and no tool takes a Flux Point Studios key: anchoring with the user's own key goes through the quickstart CLI's terminal confirmation. Adds verify_midnight_receipt for caller-bound genesis, receipt, content and certificate identities, using dedicated explicit read-only proof endpoints and bounded resumable discovery. Valid evidence includes a portable proof; unresolved/exhausted hints never prove absence. Optional older peers receive an actionable upgrade error.",
       "kind": "agent",
       "paths": [
         "packages/orynq-mcp"
@@ -225,7 +225,8 @@
         "anchors-cardano",
         "anchors-materios",
         "anchors-midnight",
-        "process-trace"
+        "process-trace",
+        "midnight-receipt-discovery"
       ],
       "status": "live"
     },
@@ -288,7 +289,7 @@
     {
       "id": "orynq-quickstart",
       "name": "Orynq quickstart",
-      "desc": "Solo-developer quickstart: generates an identity, faucet-drips MATRA and anchors a first trace in minutes. For Midnight, with anchors-midnight installed as an optional peer dependency (without it the Midnight commands exit 1 naming it): `orynq verify midnight <txHash|bundle>` verifies an anchor read-only and prints its status, assurance, author, matched fields and every check (Blockfrost project id file or any indexer and node URL); `orynq keys init midnight` writes the user's own key file; `orynq anchor midnight` plans an anchor with that key only, refusing bare service key files and every KNOWN_AUTHORS key, as a dry run unless --submit is confirmed at a TTY by typing the commitment's first 8 characters (no registry or submitter in this build, so it stops before asking).",
+      "desc": "Solo-developer quickstart: generates an identity, faucet-drips MATRA and anchors a first trace in minutes. For Midnight, with anchors-midnight installed as an optional peer dependency (without it the Midnight commands exit 1 naming it): `orynq verify midnight <txHash|bundle>` verifies an anchor read-only and prints its status, assurance, author, matched fields and every check (Blockfrost project id file or any indexer and node URL); `orynq keys init midnight` writes the user's own key file; `orynq anchor midnight` plans an anchor with that key only, refusing bare service key files and every KNOWN_AUTHORS key, as a dry run unless --submit is confirmed at a TTY by typing the commitment's first 8 characters (no registry or submitter in this build, so it stops before asking). Adds orynq verify midnight-receipt with expected genesis/content/certificate identities, explicit new proof endpoints, bounded regular-file continuations and JSON portable evidence. Exit0 requires valid consensus-verified coverage; unresolved remains exit1 without an absence claim.",
       "kind": "toolkit",
       "paths": [
         "packages/quickstart"
@@ -297,7 +298,8 @@
         "anchors-materios",
         "anchors-midnight",
         "gateway-faucet",
-        "process-trace"
+        "process-trace",
+        "midnight-receipt-discovery"
       ],
       "status": "live"
     },

@@ -2,7 +2,7 @@
 
 MCP server for Orynq SDK — process tracing, Cardano and Materios anchoring, and verification tools.
 
-Exposes 12 high-level MCP tools for the full trace-to-anchor lifecycle:
+Exposes 13 high-level MCP tools for the full trace-to-anchor lifecycle:
 create traces, add spans/events, finalize, prepare and submit anchors, verify Cardano and Midnight
 anchors, and estimate costs.
 
@@ -20,13 +20,12 @@ node packages/orynq-mcp/dist/index.js
 Midnight verification needs the optional peer `@fluxpointstudios/orynq-sdk-anchors-midnight`,
 installed beside this package (`npm install @fluxpointstudios/orynq-sdk-anchors-midnight`); the
 source-checkout quick start above links it. Without it the server still starts, and
-`verify_midnight_anchor` returns an error naming the package to install. The tool verifies
-against the registry generations that package pins (generation 1 on mainnet) and its
-KNOWN_AUTHORS document, which lists no author and no finality checkpoint yet. So an anchor's
-author reads `unknown` unless the `expectedAuthor` input names the key, and, since the tool
-takes no checkpoint, a mainnet anchor verifies at most to `unverified-finality`. An anchor
-another key wrote than `expectedAuthor` names reads `author: { status: "mismatch" }`, with both
-keys, and is `invalid` (see that package's README).
+the Midnight tools return an error naming the package to install. Version 0.3.2 includes the
+signed Flux Point Studios author policy and original mainnet finality checkpoint. Verification
+still requires the transaction's inclusion, finality and expected fields to pass; a known
+author alone does not establish validity. A different author than `expectedAuthor` makes an
+anchor invalid. Receipt discovery needs version 0.3.0 or later; use 0.3.2 or later for the
+shipped hosted author policy. See [receipt verification](MIDNIGHT-RECEIPTS.md).
 
 ### Claude Desktop config
 
@@ -58,8 +57,10 @@ keys, and is `invalid` (see that package's README).
 | `MIDNIGHT_NETWORK` | No | `mainnet` | `mainnet` or `preprod`, for `verify_midnight_anchor` |
 | `MIDNIGHT_BLOCKFROST_PROJECT_ID_FILE` | No | — | Path to a file, readable only by its owner, holding a Blockfrost Midnight project id |
 | `MIDNIGHT_INDEXER_URL`, `MIDNIGHT_RPC_URL` | No | — | Any Midnight indexer (GraphQL) and node (JSON-RPC), in place of Blockfrost |
+| `MIDNIGHT_PROOF_GATEWAY_URL` | For receipt discovery | — | Retained proof store for `verify_midnight_receipt` |
+| `MIDNIGHT_PROOF_RPC_URL` | For receipt discovery | — | Read-only Midnight JSON-RPC source for `verify_midnight_receipt` |
 
-## Tools (12)
+## Tools (13)
 
 ### Trace lifecycle
 
@@ -91,6 +92,7 @@ keys, and is `invalid` (see that package's README).
 |------|-------------|------|
 | `verify_cardano_anchor` | Verify on-chain anchor by tx hash | Safe |
 | `verify_midnight_anchor` | Verify a Midnight anchor by tx hash: status, assurance, author, matched fields, checks | Safe |
+| `verify_midnight_receipt` | Discover and verify a receipt's batch inclusion and finalized Midnight anchor | Safe |
 | `estimate_cost` | Estimate ADA fee for anchoring | Safe |
 
 ## Safety model
@@ -99,7 +101,7 @@ keys, and is `invalid` (see that package's README).
 - `anchor_cardano_prepare` computes hashes but never signs or submits
 - `anchor_cardano_submit` requires `confirm: true` and `CARDANO_SIGNER_KEY`; in v1 it returns serialized metadata for manual CLI submission
 - `anchor_materios_submit` is a dry run unless `confirm: true`. The model supplies that argument, so it proves no person approved; the tool needs `MATERIOS_RPC_URL` and `MATERIOS_SIGNER_URI`
-- `verify_cardano_anchor`, `verify_midnight_anchor` and `estimate_cost` are read-only
+- `verify_cardano_anchor`, `verify_midnight_anchor`, `verify_midnight_receipt` and `estimate_cost` are read-only
 - `verify_midnight_anchor` takes a transaction hash and at most one expectation (a bundle's `entry`
   hashes, a kind-1 `commitment` or a kind-2 `attribute`), plus an optional `expectedAuthor`. It
   refuses any other argument, so a model can pass it no key, file or URL; the source comes from

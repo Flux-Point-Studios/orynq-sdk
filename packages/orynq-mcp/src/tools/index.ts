@@ -25,6 +25,7 @@ import { registerAnchorCardanoSubmit } from "./anchor-cardano-submit.js";
 import { registerAnchorMateriosSubmit } from "./anchor-materios-submit.js";
 import { registerVerifyCardanoAnchor } from "./verify-cardano-anchor.js";
 import { registerVerifyMidnightAnchor } from "./verify-midnight-anchor.js";
+import { registerVerifyMidnightReceipt } from "./verify-midnight-receipt.js";
 import { registerEstimateCost } from "./estimate-cost.js";
 
 export function registerAllTools(
@@ -50,5 +51,6 @@ export function registerAllTools(
   // Verification & cost estimation tools
   registerVerifyCardanoAnchor(server, store, config);
   registerVerifyMidnightAnchor(server, store, config);
+  registerVerifyMidnightReceipt(server, config);
   registerEstimateCost(server, store, config);
 }

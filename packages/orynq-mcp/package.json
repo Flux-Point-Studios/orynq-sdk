@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-mcp",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "MCP server for Orynq SDK — process tracing, Cardano anchoring, and verification tools",
   "type": "module",
   "main": "./dist/index.js",
@@ -16,7 +16,8 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "MIDNIGHT-RECEIPTS.md"
   ],
   "scripts": {
     "build": "tsup",
