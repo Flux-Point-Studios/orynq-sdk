@@ -198,5 +198,7 @@ A read-only mainnet acceptance sequence verified three consecutive blocks with
 the range reader. Its cold block used 27 HTTP requests and 16,702,494 decoded
 bytes; two warm blocks used five requests and 2,259,340 bytes in 1.747 seconds.
 Every block retained the original policy identity and exact parent links.
-This sample establishes neither sustained catch-up speed nor complete history.
-Raw runtime-code witnesses still account for about 1.078 MB per block.
+That earlier sample fetched full runtime code. A later compact-witness acceptance
+authenticated a 32-block range using 69 HTTP requests, 1,889,668 decoded bytes and
+14.032 seconds, retaining the same finality and execution checks. Neither sample
+establishes sustained catch-up speed or complete historical coverage.
