@@ -19,7 +19,7 @@ function setup() {
   state.recordVerifiedBlock(block(10, now - day)); state.recordVerifiedBlock(block(11, now));
   return { state, path };
 }
-const policy = (time = now, commitment = batchScope.commitment) => ({ commitment, authors: batchAuthors(), started: { chainTime: now - 20 * minute, wallTime: now - 20 * minute, monotonicMillis: 10 }, current: { chainTime: time, wallTime: time, monotonicMillis: 10 + time - (now - 20 * minute) } });
+const policy = (time = now, commitment = batchScope.commitment, height = 11) => ({ commitment, authors: batchAuthors(), started: { chainTime: now - 20 * minute, wallTime: now - 20 * minute, monotonicMillis: 10 }, current: { chainTime: time, wallTime: time, monotonicMillis: 10 + time - (now - 20 * minute), height, hash: h(height) } });
 afterEach(() => { for (const state of handles.splice(0)) state.close(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 it("atomically records a policy-checked reservation before exact bytes can be sent", async () => {
@@ -47,6 +47,11 @@ it("requires clock evidence for the actual durable head and a complete restart h
   const { state } = setup(), raw = await batchBytes({ ttl: now + 10 * minute });
   expect(() => state.reserveStandingAttempt(raw, { ...policy(), current: { ...policy().current, chainTime: now - 1 } })).toThrow(/head/i);
   expect(() => state.reserveStandingAttempt(raw, { ...policy(), started: policy().current })).toThrow(/twenty/i);
+});
+
+it("binds admission to the exact head even when adjacent blocks share a timestamp", async () => {
+  const { state } = setup(), raw = await batchBytes({ ttl: now + 10 * minute }); state.recordVerifiedBlock(block(12, now));
+  expect(() => state.reserveStandingAttempt(raw, policy())).toThrow(/head/i);
 });
 
 it("requires batch-call history from the author's first authorized block", async () => {
@@ -90,7 +95,7 @@ it("retains one commitment across unknown bytes and allows only an identical ret
 it("releases an unobserved commitment only after complete strict TTL-plus-margin coverage", async () => {
   const { state } = setup(), raw = await batchBytes({ ttl: now + 10 * minute }); state.reserveStandingAttempt(raw, policy());
   const later = now + 15 * minute + 1, replacement = await batchBytes({ ttl: later + 10 * minute }); state.recordVerifiedBlock(block(12, later));
-  expect(() => state.reserveStandingAttempt(replacement, policy(later))).not.toThrow();
+  expect(() => state.reserveStandingAttempt(replacement, policy(later, batchScope.commitment, 12))).not.toThrow();
 });
 
 it.each(["SUCCESS", "PARTIAL_SUCCESS"] as const)("keeps observed %s commitments beyond the fee window", async status => {
@@ -98,7 +103,7 @@ it.each(["SUCCESS", "PARTIAL_SUCCESS"] as const)("keeps observed %s commitments 
   included.sends = [{ bytes: raw, txHash: finalTransaction(raw).transactionHash(), extrinsicIndex: 1, status }]; state.recordVerifiedBlock(included);
   const later = now + 2 * day; state.recordVerifiedBlock(block(13, later));
   const replacement = await batchBytes({ ttl: later + 10 * minute });
-  expect(() => state.reserveStandingAttempt(replacement, policy(later))).toThrow(/commitment|claim|partial/i);
+  expect(() => state.reserveStandingAttempt(replacement, policy(later, batchScope.commitment, 13))).toThrow(/commitment|claim|partial/i);
 });
 
 it("reserves the exact serialized paid fee and rolls back a daily-cap refusal", async () => {

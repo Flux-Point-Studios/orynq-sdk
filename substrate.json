@@ -400,7 +400,7 @@
     {
       "id": "authenticated-midnight-blocks",
       "name": "Authenticated Midnight block reads",
-      "desc": "Composes body-root, GRANDPA and pinned-runtime proofs into network/policy-bound complete blocks. Private SQLite retains observations, exact provenance and scoped commitment history. Atomic standing reservations enforce canonical kind-3 scope, current signed batch policy, serialized TTLs, complete accounting history, restart clocks and existing fee caps. Policy rollback and same-serial forks hold durably; migration requires authenticated historical replay. Local persistence is trusted; guarded delivery and the standing controller remain separate.",
+      "desc": "Composes body-root, GRANDPA and pinned-runtime proofs into network/policy-bound complete blocks. Private SQLite retains observations, exact provenance and scoped commitment history. Atomic standing reservations enforce canonical kind-3 scope, current signed batch policy, serialized TTLs, complete accounting history, restart clocks and existing fee caps. Process sessions retain startup, policy and admission watermarks; observed clock or history rollback latches restart. Policy forks hold durably; migration requires authenticated historical replay. Local persistence is trusted; guarded delivery and the standing controller remain separate.",
       "kind": "toolkit",
       "paths": [
         "packages/anchors-midnight/src/execution.ts",
@@ -408,6 +408,7 @@
         "packages/anchors-midnight-submit/runner/follower-state.ts",
         "packages/anchors-midnight-submit/runner/standing-budget.ts",
         "packages/anchors-midnight-submit/runner/standing-clock.ts",
+        "packages/anchors-midnight-submit/runner/standing-session.ts",
         "packages/anchors-midnight-submit/runner/standing-transaction.ts",
         "packages/anchors-midnight-submit/runner/FOLLOWER.md"
       ],
