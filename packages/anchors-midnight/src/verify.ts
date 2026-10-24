@@ -6,7 +6,7 @@ import { knownAuthors as shippedKnownAuthors, authorStatusAt, type AuthorStatus,
 import { KNOWN_RUNTIME_SPEC_VERSIONS, MIDNIGHT_REGISTRIES, assertRegistryGenerations, type MidnightNetwork, type RegistryInfo } from "./registries.js";
 import { assertRegistryDeployBytes, assertRegistryState } from "./registry.js";
 import { fromHex, toHex } from "./scale.js";
-import { finalityRpc, type IndexedTransaction, type MidnightSource } from "./source.js";
+import { SourceConflict, finalityRpc, type IndexedTransaction, type MidnightSource } from "./source.js";
 import { headerFromRpc, headerHash, includedTransactionIndex, orderedTrieRoot, type RpcHeader } from "./substrate.js";
 
 // Status, most to least severe: a check failed outright (invalid), as when another key wrote the
@@ -96,6 +96,7 @@ class Checks {
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 interface Included {
+  executionVerified: boolean;
   raw: Uint8Array;
   decoded: AnchorTransaction;
   indexed: IndexedTransaction;
@@ -124,7 +125,7 @@ async function include(
   try {
     found = (await source.indexer.transactions(txHash)).filter((t) => t.hash === txHash);
   } catch (error) {
-    checks.fail(`${label}indexer`, "unavailable", message(error));
+    checks.fail(`${label}indexer`, error instanceof SourceConflict ? "conflict" : "unavailable", message(error));
     return null;
   }
   if (found.length !== 1) {
@@ -146,10 +147,11 @@ async function include(
     return null;
   }
   checks.pass(`${label}transaction-hash`, "the transaction's own bytes hash to the requested hash");
-  const out: Included = { raw, decoded, indexed, block: { height: indexed.block.height, hash: indexed.block.hash }, runtime: null, assurance: "single-path", finality: null };
+  const out: Included = { executionVerified: false, raw, decoded, indexed, block: { height: indexed.block.height, hash: indexed.block.hash }, runtime: null, assurance: "single-path", finality: null };
   const { block } = out;
 
   let included: boolean;
+  let execution: { header: ReturnType<typeof headerFromRpc>; extrinsicIndex: number } | undefined;
   try {
     const blockHash = (await source.node.call<string>("chain_getBlockHash", [block.height])).replace(/^0x/, "");
     if (blockHash !== block.hash) {
@@ -170,16 +172,21 @@ async function include(
       return out;
     }
     checks.pass(`${label}extrinsics-root`, `the body's ${extrinsics.length} extrinsics match the header's extrinsicsRoot`);
-    out.runtime = (await source.node.call<{ specVersion: number }>("state_getRuntimeVersion", [`0x${block.hash}`])).specVersion;
-    if (!(KNOWN_RUNTIME_SPEC_VERSIONS as readonly number[]).includes(out.runtime)) {
-      checks.fail(`${label}runtime`, "invalid", `block ${block.height} runs runtime ${out.runtime}, whose extrinsic layout the decoder does not know`);
-      return out;
+    if (!source.verifyExecution) {
+      out.runtime = (await source.node.call<{ specVersion: number }>("state_getRuntimeVersion", [`0x${block.hash}`])).specVersion;
+      if (!(KNOWN_RUNTIME_SPEC_VERSIONS as readonly number[]).includes(out.runtime)) {
+        checks.fail(`${label}runtime`, "invalid", `block ${block.height} runs runtime ${out.runtime}, whose extrinsic layout the decoder does not know`);
+        return out;
+      }
+      checks.pass(`${label}runtime`, `the node reports runtime ${out.runtime}, whose extrinsic layout the decoder knows`);
     }
-    checks.pass(`${label}runtime`, `the node reports runtime ${out.runtime}, whose extrinsic layout the decoder knows`);
     const index = includedTransactionIndex(extrinsics, out.raw);
     included = index !== null;
     if (index === null) checks.fail(`${label}inclusion`, "conflict", `no extrinsic of block ${block.height} is exactly a bare Midnight.send_mn_transaction of this transaction`);
-    else checks.pass(`${label}inclusion`, `extrinsic ${index} of block ${block.height} is Midnight.send_mn_transaction of exactly these bytes`);
+    else {
+      checks.pass(`${label}inclusion`, `extrinsic ${index} of block ${block.height} is Midnight.send_mn_transaction of exactly these bytes`);
+      execution = { header, extrinsicIndex: index };
+    }
   } catch (error) {
     checks.fail(`${label}node`, "unavailable", message(error));
     return out;
@@ -201,6 +208,19 @@ async function include(
     return out;
   }
   checks.pass(`${label}finality`, `GRANDPA set ${out.finality.checkpoint.setId} justified block ${out.finality.justified.height} after ${out.finality.setChanges} set changes`);
+  if (included && source.verifyExecution && execution) {
+    try {
+      const proven = await source.verifyExecution({ ...execution, blockHash: block.hash, txHash });
+      out.runtime = proven.runtimeSpecVersion;
+      if (!(KNOWN_RUNTIME_SPEC_VERSIONS as readonly number[]).includes(proven.runtimeSpecVersion)) throw new SourceConflict("The executing runtime is not supported");
+      out.executionVerified = true;
+      out.indexed = { ...out.indexed, block: { ...out.indexed.block, timestamp: proven.timestamp }, status: "SUCCESS" };
+      checks.pass(`${label}execution`, "finalized state proofs authenticate the executing runtime, full transaction execution and timestamp");
+    } catch (error) {
+      checks.fail(`${label}execution`, error instanceof SourceConflict ? "conflict" : "unavailable", message(error));
+      return out;
+    }
+  }
   if (included) out.assurance = "consensus-verified";
   return out;
 }
@@ -268,6 +288,7 @@ export async function verifyMidnightAnchor(request: VerifyRequest, options: Veri
 
   const registries = options.registries ?? MIDNIGHT_REGISTRIES[request.network];
   try {
+    if (options.source.network !== undefined && options.source.network !== request.network) throw new Error("Source network differs from the requested network");
     if (registries.length === 0) throw new Error(`no registry generation is deployed on ${request.network}`);
     assertRegistryGenerations(registries);
     checks.pass("registry", `${registries.length} registry generation${registries.length === 1 ? "" : "s"} on ${request.network}`);
@@ -287,6 +308,7 @@ export async function verifyMidnightAnchor(request: VerifyRequest, options: Veri
   result.block = indexed.block;
   result.assurance = indexed.assurance;
   result.finality = indexed.finality;
+  if (options.source.verifyExecution && !indexed.executionVerified) return done();
 
   let anchor: AnchorCall;
   try {
@@ -307,7 +329,8 @@ export async function verifyMidnightAnchor(request: VerifyRequest, options: Veri
     checks.fail("registry-runtime", "invalid", `block ${indexed.block.height} runs runtime ${indexed.runtime}, not registry generation ${registry.generation}'s ${registry.runtimeSpecVersion}`);
   }
 
-  if (indexed.indexed.status !== "SUCCESS") checks.fail("indexer-status", "invalid", `the indexer reports ${indexed.indexed.status}`);
+  if (options.source.verifyExecution) checks.pass("execution-status", "authenticated finalized events prove SUCCESS");
+  else if (indexed.indexed.status !== "SUCCESS") checks.fail("indexer-status", "invalid", `the indexer reports ${indexed.indexed.status}`);
   else checks.pass("indexer-status", "the indexer reports SUCCESS");
   stateCheck(checks, "indexer-state", indexed.indexed.contractActions.find((a) => a.address === anchor.address)?.state, "the indexer");
   if (indexed.runtime !== null) {

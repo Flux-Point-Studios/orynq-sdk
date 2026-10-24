@@ -171,6 +171,12 @@ importers:
       '@noble/hashes':
         specifier: ^2.4.0
         version: 2.4.0
+      '@polkadot-api/metadata-builders':
+        specifier: 0.15.2
+        version: 0.15.2
+      '@polkadot-api/substrate-bindings':
+        specifier: 0.21.2
+        version: 0.21.2
     devDependencies:
       '@fluxpointstudios/orynq-sdk-process-trace':
         specifier: workspace:*
@@ -3104,6 +3110,13 @@ packages:
     dev: false
     optional: true
 
+  /@polkadot-api/metadata-builders@0.15.2:
+    resolution: {integrity: sha512-V8drZbzvu6Aa1EKQs4x/jOLFO05uATuEZagSqQ76ZF4skb0T8qhFmFrXnYpIiwkPndxo0mbY73cfz7rRdpshvw==}
+    dependencies:
+      '@polkadot-api/substrate-bindings': 0.21.2
+      '@polkadot-api/utils': 0.4.0
+    dev: false
+
   /@polkadot-api/metadata-builders@0.3.2:
     resolution: {integrity: sha512-TKpfoT6vTb+513KDzMBTfCb/ORdgRnsS3TDFpOhAhZ08ikvK+hjHMt5plPiAX/OWkm1Wc9I3+K6W0hX5Ab7MVg==}
     requiresBuild: true
@@ -3127,6 +3140,15 @@ packages:
       rxjs: 7.8.2
     dev: false
     optional: true
+
+  /@polkadot-api/substrate-bindings@0.21.2:
+    resolution: {integrity: sha512-YjQnmS1dfoQky3Qoddm59CCK+5jxl57uvXtGt0qwbgJ7y0zHHznBCDPv8lU4iUzQKS4dn7aSwIi5j7CE3DGAbQ==}
+    dependencies:
+      '@noble/hashes': 2.4.0
+      '@polkadot-api/utils': 0.4.0
+      '@scure/base': 2.4.0
+      scale-ts: 1.6.1
+    dev: false
 
   /@polkadot-api/substrate-bindings@0.6.0:
     resolution: {integrity: sha512-lGuhE74NA1/PqdN7fKFdE5C1gNYX357j1tWzdlPXI0kQ7h3kN0zfxNOpPUN7dIrPcOFZ6C0tRRVrBylXkI6xPw==}
@@ -3153,6 +3175,10 @@ packages:
     requiresBuild: true
     dev: false
     optional: true
+
+  /@polkadot-api/utils@0.4.0:
+    resolution: {integrity: sha512-9b/hwRM0UloLWV7SfpNaSD/4k8UQAHoaACAk7Xe+1MlfAm2JtnmPiB1GfGrfTyBlsrJVUIBCZpEmbmxVMaIqBA==}
+    dev: false
 
   /@polkadot/api-augment@14.3.1:
     resolution: {integrity: sha512-PE6DW+8kRhbnGKn7qCF7yM6eEt/kqrY8bh1i0RZcPY9QgwXW4bZZrtMK4WssX6Z70NTEoOW6xHYIjc7gFZuz8g==}
@@ -7874,7 +7900,6 @@ packages:
     resolution: {integrity: sha512-PBMc2AWc6wSEqJYBDPcyCLUj9/tMKnLX70jLOSndMtcUoLQucP/DM0vnQo1wJAYjTrQiq8iG9rD0q6wFzgjH7g==}
     requiresBuild: true
     dev: false
-    optional: true
 
   /scalus@0.14.2:
     resolution: {integrity: sha512-dobDMIUDUVhtxoX3ceGlaykKQGkph4HOE9hjkLsmwVgYf24fIik6YrZzVFrZSNCTvI2WN7hjEknehIrEJo1CMQ==}

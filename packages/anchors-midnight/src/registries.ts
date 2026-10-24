@@ -12,6 +12,7 @@ export interface RegistryInfo {
   address: string;
   deployTxHash: string;
   deployHeight: number;
+  deployBlockHash?: string;
   runtimeSpecVersion: number;
   circuits: Record<RegistryCircuit, { vkSha256: string }>;
 }
@@ -27,6 +28,7 @@ export const MIDNIGHT_REGISTRIES: Readonly<Record<MidnightNetwork, readonly Regi
       address: "438b1ea134e760e8b4e87409d663f36561f15341880c118dc41e4fc2b224c736",
       deployTxHash: "1bb33baad6eff44f9f485fef1a83b7f2200f09174d286936081574a3221535e8",
       deployHeight: 3113819,
+      deployBlockHash: "29533edab5c2ac5777cbdf5c4d0a8b467666a308142c9e2418f13d5b2f06f27b",
       runtimeSpecVersion: 1000300,
       circuits: {
         anchor: { vkSha256: "85dc57a4269dd3aceb82867ecc6c145ef5f679c6f51767f200250e7c075777c5" },
@@ -47,6 +49,7 @@ export function assertRegistryGenerations(generations: readonly RegistryInfo[]):
     for (const field of ["address", "deployTxHash"] as const) {
       if (!HEX64.test(info[field])) throw new Error(`${at}: ${field} must be 64 lowercase hex characters`);
     }
+    if (info.deployBlockHash !== undefined && !HEX64.test(info.deployBlockHash)) throw new Error(`${at}: deployBlockHash must be 64 lowercase hex characters`);
     if (addresses.has(info.address)) throw new Error(`${at} repeats address ${info.address}`);
     addresses.add(info.address);
     if (!(KNOWN_RUNTIME_SPEC_VERSIONS as readonly number[]).includes(info.runtimeSpecVersion)) {

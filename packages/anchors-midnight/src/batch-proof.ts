@@ -1,7 +1,9 @@
 import { anchorId, certHash, checkpointLeaf, manifestHash, rootFromPath, type CertFormat } from "@fluxpointstudios/orynq-sdk-core/checkpoint";
 import { batchSetCommitment, hash32, type Hash32 } from "./commitment.js";
 import { checkpointId } from "./checkpoints.js";
-import type { MidnightNetwork } from "./registries.js";
+import { MIDNIGHT_REGISTRIES, type MidnightNetwork } from "./registries.js";
+import { authorStatusAt, knownAuthors } from "./known-authors.js";
+import type { MidnightSource } from "./source.js";
 import { toHex } from "./scale.js";
 import { verifyMidnightAnchor, type AnchorStatus, type VerifyOptions, type VerifyResult } from "./verify.js";
 
@@ -69,7 +71,9 @@ export async function verifyBatchSet(value: unknown, options: VerifyOptions): Pr
   }
 }
 
-export async function verifyBatchProof(request: { proof: unknown; network: MidnightNetwork; materiosGenesis: Hash32; contentHash: Hash32 }, options: VerifyOptions): Promise<BatchProofResult> {
+export type BatchProofOptions = VerifyOptions & { setCache?: BatchSetCache };
+
+export async function verifyBatchProof(request: { proof: unknown; network: MidnightNetwork; materiosGenesis: Hash32; contentHash: Hash32 }, options: BatchProofOptions): Promise<BatchProofResult> {
   try {
     const proof = object(request.proof, ["format", "network", "materiosGenesis", "receipt", "batch", "set", "midnight"], "proof");
     if (proof.format !== BATCH_PROOF_FORMAT) throw new Error("Unknown batch proof format");
@@ -97,10 +101,63 @@ export async function verifyBatchProof(request: { proof: unknown; network: Midni
     const members = object(proof.set, ["commitment", "anchorIds"], "set");
     const set = parseSet({ network: request.network, materiosGenesis: genesis, ...members, midnight: proof.midnight });
     if (!set.anchorIds.includes(id)) throw new Error("Batch is not a member of the committed set");
-    const result = await verifyBatchSet(set, options);
+    const result = await (options.setCache ? options.setCache.verify(set, options) : verifyBatchSet(set, options));
     if (result.status !== "valid") return result;
     return { ...result, anchorId: id, receiptId, certificateHash: certificateHash.slice(2), rootHash };
   } catch (error) {
     return { status: "invalid", reason: message(error) };
+  }
+}
+
+export class BatchSetCache {
+  private readonly identities = new WeakMap<object, number>();
+  private nextIdentity = 1;
+  private readonly sources = new WeakMap<MidnightSource, Map<string, Extract<BatchSetResult, { status: "valid" }>>>();
+  constructor(private readonly capacity = 128) {
+    if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 4096) throw new Error("Cache capacity must be 1..4096");
+  }
+
+  private identity(value: object | undefined): number {
+    if (value === undefined) return 0;
+    let identity = this.identities.get(value);
+    if (identity === undefined) { identity = this.nextIdentity++; this.identities.set(value, identity); }
+    return identity;
+  }
+
+  async verify(value: unknown, options: VerifyOptions): Promise<BatchSetResult> {
+    try {
+      if (options.maxSetChanges !== undefined && (!Number.isSafeInteger(options.maxSetChanges) || options.maxSetChanges < 0)) throw new Error("Finality budget must be a nonnegative safe integer");
+      const set = parseSet(value);
+      const authors = options.knownAuthors ?? knownAuthors();
+      const source = options.source;
+      const sourcePolicy = [source.network ?? null, source.operator, ...[source.node, source.indexer, source.node.call, source.node.batch, source.indexer.transactions, source.verifyExecution].map((value) => this.identity(value))];
+      const policy = JSON.stringify({ set, sourcePolicy, registries: options.registries ?? MIDNIGHT_REGISTRIES[set.network],
+        checkpoints: [...authors.checkpoints(set.network), ...(options.checkpoints ?? [])].map(checkpointId),
+        maxSetChanges: options.maxSetChanges ?? null, finality: options.finality ?? "verify" });
+      let entries = this.sources.get(options.source);
+      if (!entries) { entries = new Map(); this.sources.set(options.source, entries); }
+      const cached = entries.get(policy);
+      if (cached) {
+        const author = authorStatusAt(authors, set.network, cached.facts.authorKey, cached.facts.blockHeight);
+        if (author.status === "outside-window") return { status: "author-revoked", reason: "The current author window excludes the anchored block" };
+        if (author.status !== "known" || author.role !== "batch") return { status: "unauthenticated", reason: "The current author document does not authorize this batch author" };
+        const result = structuredClone(cached);
+        result.facts.knownAuthorsSerial = authors.serial;
+        result.anchor.knownAuthorsSerial = authors.serial;
+        result.anchor.author = { ...author, key: result.facts.authorKey };
+        for (const check of result.anchor.checks) {
+          if (check.name === "author") check.detail = `${author.id} (${author.role}) within its window`;
+        }
+        return result;
+      }
+      const result = await verifyBatchSet(set, options);
+      if (result.status === "valid") {
+        if (entries.size >= this.capacity) entries.delete(entries.keys().next().value!);
+        entries.set(policy, structuredClone(result));
+      }
+      return result;
+    } catch (error) {
+      return { status: "invalid", reason: message(error) };
+    }
   }
 }
