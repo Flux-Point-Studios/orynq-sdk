@@ -16,6 +16,7 @@ export interface ChainSpec {
   forcedAt?: number;
   bodies?: Map<number, Uint8Array[]>;
   extrinsicsRootOf?: (height: number) => Uint8Array;
+  stateRootOf?: (height: number) => Uint8Array | undefined;
 }
 
 const seed = (label: string) => blake2b256(new Uint8Array(Buffer.from(label)));
@@ -108,7 +109,7 @@ export function syntheticChain(spec: ChainSpec) {
         const header: BlockHeader = {
           parentHash: parent,
           number: n,
-          stateRoot: seed(`state-${n}`),
+          stateRoot: spec.stateRootOf?.(n) ?? seed(`state-${n}`),
           extrinsicsRoot: spec.extrinsicsRootOf?.(n) ?? seed(`extrinsics-${n}`),
           digest: n === endOf(i) && i < spec.setCount - 1 ? [frnk(i)] : [],
         };

@@ -2,13 +2,13 @@ import { decodeAnchorTransaction } from "./anchor-transaction.js";
 import { verifyExecution } from "./execution.js";
 import { MIDNIGHT_REGISTRIES, assertRegistryGenerations, type MidnightNetwork, type RegistryInfo } from "./registries.js";
 import { fromHex, toHex } from "./scale.js";
-import { SourceConflict, contractStateOnNode, midnightSource, type IndexedTransaction, type MidnightSource } from "./source.js";
+import { SourceConflict, contractStateOnNode, midnightSource, type IndexedTransaction, type MidnightSource, type SourceEndpoints } from "./source.js";
 import { headerFromRpc, headerHash, midnightTransactionIn, type RpcHeader } from "./substrate.js";
 
 export interface BlockHint { txHash: string; blockHeight: number; blockHash: string }
 
 // Hints locate bytes. The verifier still proves the body, finality and execution independently.
-export function rpcOnlySource(options: { network: MidnightNetwork; node: string | MidnightSource["node"]; hints: readonly BlockHint[]; registries?: readonly RegistryInfo[]; operator?: string }): MidnightSource {
+export function rpcOnlySource(options: { network: MidnightNetwork; node: string | MidnightSource["node"]; hints: readonly BlockHint[]; registries?: readonly RegistryInfo[]; operator?: string; signal?: AbortSignal; httpBudget?: SourceEndpoints["httpBudget"] }): MidnightSource {
   const registries = options.registries ?? MIDNIGHT_REGISTRIES[options.network];
   assertRegistryGenerations(registries);
   const hints = new Map<string, BlockHint>();
@@ -30,7 +30,7 @@ export function rpcOnlySource(options: { network: MidnightNetwork; node: string 
     if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error("RPC URL must be HTTP(S) without credentials, query or fragment");
     operator = options.operator ?? url.host;
     // Only the existing transport's node half is used; no GraphQL request is made.
-    node = midnightSource({ operator, node: url.href, indexer: url.href, indexerWs: url.href.replace(/^http/, "ws"), headers: {} }).node;
+    node = midnightSource({ operator, node: url.href, indexer: url.href, indexerWs: url.href.replace(/^http/, "ws"), headers: {}, ...(options.signal ? { httpSignal: options.signal } : {}), ...(options.httpBudget ? { httpBudget: options.httpBudget } : {}) }).node;
   }
   const rpc = node;
   const unavailable = () => { throw new Error("RPC-only verification requires transaction block hints; indexer discovery is unavailable"); };
