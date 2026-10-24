@@ -152,6 +152,11 @@ export function openFollowerState(path: string, input: Scope) {
     observations,
     feeFacts: () => transaction(feeFacts),
     admissions,
+    commitments: () => {
+      const rows = db.prepare("select commitment from follower_attempts union select commitment from follower_batch_calls order by commitment limit 262145").all();
+      if (rows.length > 262144) throw new Error("Follower commitment history exceeds repair bounds");
+      return rows.map(row => String(row.commitment));
+    },
     assertAdmissionHistory,
     observeStandingPolicy: (authors: KnownAuthors) => retainPolicy(authors),
     rememberStandingPolicy: (authors: KnownAuthors) => retainPolicy(authors, true),

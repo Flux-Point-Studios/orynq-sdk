@@ -177,3 +177,11 @@ it("returns every bound publication object even after delivery acknowledgements"
   expect(state.pendingObjects()).toEqual([]);
   expect(state.publicationObjects(plan.commitment)).toEqual(before);
 }));
+
+it("holds planning when follower history names a missing retained plan", () => fixtureState((_path, state) => {
+  expect(() => state.prepare(census(), 10n, [hash(900)])).toThrow(/retained|plan|repair/i);
+  expect(state.currentPlan()).toBeNull(); expect(state.pendingObjects()).toEqual([]);
+  const retained = state.prepare(census(), 10n)!;
+  expect(state.prepare(census(4, 101), 11n, [retained.commitment])).toEqual(retained);
+  expect(() => state.prepare(census(4, 102), 12n, [hash(901)])).toThrow(/retained|plan|repair/i);
+}));

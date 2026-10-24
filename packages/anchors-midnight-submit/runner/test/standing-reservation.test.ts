@@ -142,3 +142,11 @@ it("migrates provenance without inventing indexed history or old admissions", as
   expect(resumed.head()).toEqual({ height: 11, hash: h(11) });
   expect(() => resumed.reserveStandingAttempt(raw, policy())).not.toThrow();
 });
+
+it("retains commitment identities from both unsent attempts and observed history", async () => {
+  const { state } = setup(), raw = await batchBytes({ ttl: now + 10 * minute });
+  state.recordAttempt(raw); expect(state.commitments()).toEqual([batchScope.commitment]);
+  const other = h(300), observed = await batchBytes({ ttl: now + 10 * minute, commitment: other });
+  state.recordVerifiedBlock({ ...block(12, now + 1000), sends: [{ bytes: observed, txHash: finalTransaction(observed).transactionHash(), extrinsicIndex: 0, status: "SUCCESS" }] });
+  expect(state.commitments()).toEqual([batchScope.commitment, other].sort());
+});

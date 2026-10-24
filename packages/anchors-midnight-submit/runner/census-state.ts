@@ -192,9 +192,13 @@ export function openCensusState(path: string, input: { network: "mainnet" | "pre
       });
       return published;
     },
-    prepare(census: Census, nowMillis: bigint): CensusPlan | null {
+    prepare(census: Census, nowMillis: bigint, requiredCommitments: readonly string[] = []): CensusPlan | null {
       if (typeof nowMillis !== "bigint" || nowMillis < 0n) throw new Error("Invalid planning chain time");
+      if (!Array.isArray(requiredCommitments) || requiredCommitments.length > 262144 || requiredCommitments.some(value => !HASH.test(value))) throw new Error("Invalid retained commitment history");
       return transaction(() => {
+        for (const commitment of requiredCommitments) {
+          if (getPlan(commitment).state === "abandoned") throw new Error("Follower commitment requires retained-plan repair");
+        }
         observe(census);
         const active = currentPlan();
         if (active) return active;

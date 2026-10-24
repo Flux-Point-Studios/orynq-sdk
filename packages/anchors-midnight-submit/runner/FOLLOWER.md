@@ -167,6 +167,19 @@ journal TTL before consulting a fresh follower view. The caller must acquire a
 lifetime lock before opening the wallet and retain it through preparation,
 publication, delivery, persistence and close; this factory does not acquire it.
 
+`openStandingController.turn()` prepares at most one canonical batch attempt.
+It publishes and confirms retained objects before paying for fresh bytes, resumes
+exact unsent journal bytes, and waits on successfully delivered attempts until
+authenticated reconciliation settles them. Landed and staged proof publication
+always uses the public verifier under the current policy. A staged publication
+can recover without reopening the wallet permission path.
+
+Before planning, every commitment retained in follower provenance or observed
+history must have an intact census plan. Missing or abandoned plans require
+retained-plan repair; the loop never replaces lost receipt claims with a new fee.
+Prepared bytes that fail before journal ownership latch restart, retaining wallet
+reservations through recovery. The service must still own the wallet lifetime lock.
+
 Undecodable sends or ambiguous execution stop this reader. They must not be
 silently converted into missing transactions or coverage. Production transport
 must separately bound decoded responses, deadlines and catch-up work.

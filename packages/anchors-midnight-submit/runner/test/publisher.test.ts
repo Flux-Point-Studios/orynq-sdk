@@ -13,6 +13,9 @@ import { openFollowerState } from "../follower-state.js";
 import { followerPolicyDigest, type FollowerBlock } from "../follower-block.js";
 import { openStandingSession } from "../standing-session.js";
 import { openStandingDelivery } from "../standing-delivery.js";
+import { openStandingController } from "../standing-controller.js";
+import { rpcOnlySource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import type { RegistryOperator } from "../../src/operator.js";
 import { openJournal } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { finalTransaction } from "../../src/submission.js";
 import * as Submission from "../../src/submission.js";
@@ -157,6 +160,17 @@ describe("standing delivery after retained publication", () => {
   let submit: ReturnType<typeof vi.fn<OperatorWallet["submit"]>>, save: ReturnType<typeof vi.fn<OperatorWallet["saveState"]>>;
   const block = (height: number, timestamp: number): FollowerBlock => ({ network: "preprod", policyDigest: followerPolicyDigest([]), block: { height, hash: h(height) }, parentHash: h(height - 1), timestamp, runtimeSpecVersion: 1000300, sends: [] });
   const bytes = () => batchBytes({ commitment: state.currentPlan()!.commitment, ttl: clock.wallTime + 10 * minute });
+  function controller() {
+    const prepare = vi.fn<RegistryOperator["prepare"]>(async request => {
+      expect(request.kind).toBe(3); expect(state.currentPlan()!.state).toBe("confirmed");
+      for (const copy of stored) expect(copy.size).toBe(2);
+      const raw = await bytes(), tx = finalTransaction(raw);
+      return { network: "preprod", registry, author: batchScope.author, kind: 3, commitment: state.currentPlan()!.commitment,
+        attribute: "00".repeat(32), bytes: raw, ttl: new Date(clock.wallTime + 10 * minute), txHash: tx.transactionHash(), declaredFee: Submission.declaredFee(tx) };
+    });
+    return { prepare, loop: openStandingController({ census: state, follower, session, delivery, journal, operator: { prepare },
+      readCensus: async () => currentCensus, publication: options(), verify: () => ({ source: rpcOnlySource({ network: "preprod", node: urls[0]!, hints: [] }) }), clock: () => clock.wallTime }) };
+  }
   beforeEach(() => {
     follower = openFollowerState(join(directory, "follower.sqlite"), { network: "preprod", genesis, registry, author: batchScope.author, policyDigest: followerPolicyDigest([]), runtimeSpecVersion: 1000300 });
     follower.recordVerifiedBlock(block(10, start - 24 * 60 * minute)); follower.recordVerifiedBlock(block(11, start));
@@ -313,5 +327,50 @@ describe("standing delivery after retained publication", () => {
     await expect(journal.submitOnce({ ...batchScope, commitment, kind: 3, attribute: "00".repeat(32) }, { prepare: async () => ({ bytes: raw, ttl: new Date(clock.wallTime + 10 * minute) }), chain: follower.chainView(), broadcast: async () => { throw new Error("fixture unknown delivery"); } })).rejects.toThrow();
     await expect(delivery.reconcile()).rejects.toThrow(/unknown|provenance/i);
     expect(journal.pending()[0]!.state).toBe("pending"); expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("runs a real census/publication/journal cycle once and waits for authenticated landing", async () => {
+    const { loop, prepare } = controller(), first = await loop.turn();
+    expect(first.state).toBe("pending"); expect(prepare).toHaveBeenCalledTimes(1); expect(submit).toHaveBeenCalledTimes(1);
+    await expect(loop.turn()).resolves.toMatchObject(first); expect(prepare).toHaveBeenCalledTimes(1); expect(submit).toHaveBeenCalledTimes(1);
+    const key = { ...batchScope, kind: 3, attribute: "00".repeat(32), commitment: state.currentPlan()!.commitment }, held = journal.live(key)!;
+    follower.recordVerifiedBlock({ ...block(13, clock.wallTime), sends: [{ bytes: held.bytes, txHash: held.txHash, extrinsicIndex: 0, status: "SUCCESS" }] });
+    const land = vi.spyOn(state, "publishLandedSet").mockResolvedValue({ objects: 3, readbacks: 6 });
+    await expect(loop.turn()).resolves.toMatchObject({ state: "landed", txHash: held.txHash });
+    expect(land.mock.calls[0]![0]).toMatchObject({ midnight: { txHash: held.txHash, blockHeight: 13, blockHash: h(13) } });
+    expect(prepare).toHaveBeenCalledTimes(1); expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes retained objects before proving and retries journal-owned bytes after a later store fault", async () => {
+    const { loop, prepare } = controller(); rejectSecond = true;
+    await expect(loop.turn()).rejects.toThrow(/publication|store/i); expect(prepare).not.toHaveBeenCalled();
+    rejectSecond = false;
+    const original = prepare.getMockImplementation()!; prepare.mockImplementationOnce(async request => { const prepared = await original(request); corruptSecond = true; return prepared; });
+    await expect(loop.turn()).rejects.toThrow(/digest|readback/i);
+    expect(journal.pending()).toHaveLength(1); expect(journal.pending()[0]!.broadcasts).toBe(0); expect(submit).not.toHaveBeenCalled();
+    corruptSecond = false; await expect(loop.turn()).resolves.toMatchObject({ state: "pending" });
+    expect(prepare).toHaveBeenCalledTimes(1); expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds a missing retained census plan before paying any new fee", async () => {
+    follower.recordAttempt(await batchBytes({ commitment: "ef".repeat(32), ttl: clock.wallTime + 10 * minute }));
+    const { loop, prepare } = controller();
+    await expect(loop.turn()).rejects.toThrow(/plan|retained|repair/i);
+    expect(prepare).not.toHaveBeenCalled(); expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("waits for the session and prevents overlapping controller cycles", async () => {
+    const { loop, prepare } = controller();
+    const reserve = vi.spyOn(session, "ready").mockRejectedValueOnce(new Error("fixture warmup hold"));
+    await expect(loop.turn()).rejects.toThrow(/warmup/i); expect(prepare).not.toHaveBeenCalled(); reserve.mockRestore();
+    const first = loop.turn(); await expect(loop.turn()).rejects.toThrow(/active/i); await first;
+    expect(prepare).toHaveBeenCalledTimes(1); expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("latches restart if preparation completed but no retry journal owns its bytes", async () => {
+    const { loop, prepare } = controller(), send = vi.spyOn(delivery, "submit").mockRejectedValue(new Error("fixture pre-journal refusal"));
+    await expect(loop.turn()).rejects.toThrow(/journalled|restart/i);
+    await expect(loop.turn()).rejects.toThrow(/restart/i);
+    expect(prepare).toHaveBeenCalledTimes(1); expect(journal.pending()).toEqual([]); expect(submit).not.toHaveBeenCalled(); send.mockRestore();
   });
 });
