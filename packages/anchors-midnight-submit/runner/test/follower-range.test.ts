@@ -22,6 +22,38 @@ it("verifies one finalized range across a handoff and yields complete blocks in 
   } finally { spy.mockRestore(); }
 });
 
+it("shares bounded HTTP proof batches across a complete 32-block range", async () => {
+  const f = setup(), batches: [string, unknown[]][][] = [], original = f.source.node.batch;
+  f.source.node.batch = async function<T>(calls: [string, unknown[]][]) {
+    if (calls.some(([method]) => method === "state_getReadProof")) batches.push(structuredClone(calls));
+    return original<T>(calls);
+  };
+  const reader = openFollowerReader({ source: f.source, checkpoints: [f.checkpoint] });
+  const blocks = await collect(reader.range({ after: f.ref(1599), end: f.ref(1631) }));
+  expect(blocks.map(block => block.block.height)).toEqual(Array.from({ length: 32 }, (_, index) => 1600 + index));
+  expect(blocks.flatMap(block => block.sends)).toMatchObject([{ txHash: fixture.anchor.txHash, status: "SUCCESS" }]);
+  expect(batches.map(calls => calls.length)).toEqual([21, 20, 20, 4]);
+  expect(batches.flat().filter(([method]) => method === "chain_getHeader")).toHaveLength(1);
+  expect(batches.flat().filter(([method]) => method === "state_getReadProof")).toHaveLength(64);
+  for (const calls of batches) {
+    expect(Buffer.byteLength(JSON.stringify(calls.map(([method, params], id) => ({ jsonrpc: "2.0", id, method, params }))))).toBeLessThanOrEqual(8192);
+  }
+});
+
+it("keeps only the verified prefix when a later shared proof request fails", async () => {
+  const f = setup(), original = f.source.node.batch;
+  let batches = 0;
+  f.source.node.batch = async function<T>(calls: [string, unknown[]][]) {
+    if (calls.some(([method]) => method === "state_getReadProof") && ++batches === 2) throw new Error("proof transport failed");
+    return original<T>(calls);
+  };
+  const reader = openFollowerReader({ source: f.source, checkpoints: [f.checkpoint] }), seen: number[] = [];
+  await expect((async () => {
+    for await (const block of reader.range({ after: f.ref(1599), end: f.ref(1631) })) seen.push(block.block.height);
+  })()).rejects.toThrow("proof transport failed");
+  expect(seen).toEqual(Array.from({ length: 10 }, (_, index) => 1600 + index));
+});
+
 it("never reads effects or promotes a cache for a range outside its exact durable parent", async () => {
   const f = setup(), reader = openFollowerReader({ source: f.source, checkpoints: [f.checkpoint], maxSetChanges: 3 }), spy = vi.spyOn(Midnight, "verifyFinality");
   try {

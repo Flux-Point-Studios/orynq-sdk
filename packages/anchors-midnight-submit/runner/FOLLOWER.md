@@ -15,6 +15,12 @@ authenticates an endpoint once and walks each exact parent/body back to the dura
 contains at most 32 blocks and sixteen MiB of decoded bodies. Every block,
 including an empty one, still requires runtime, execution-event and time witnesses.
 An effects failure preserves only earlier complete blocks already yielded.
+Execution reads share one HTTP batch per ten blocks, with at most 32 calls and
+8 KiB of encoded requests. Parent headers already bound to the authenticated range
+are reused; their runtime proofs and every block's event/time proofs remain
+independently checked by the existing execution verifier. Responses stay within
+the caller's shared byte/deadline budget. A failed shared request yields none of
+its blocks; verified blocks from earlier groups remain retained.
 
 The reader keeps at most 64 verified derived authority checkpoints in memory.
 It selects the nearest original input root first, then a cached path belonging to
