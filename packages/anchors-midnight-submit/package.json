@@ -36,7 +36,8 @@
     "@midnight-ntwrk/zkir-v2": "2.1.1",
     "@scure/bip39": "2.0.1",
     "effect": "3.21.4",
-    "rxjs": "7.8.2"
+    "rxjs": "7.8.2",
+    "@fluxpointstudios/orynq-sdk-core": "workspace:^"
   },
   "devDependencies": {
     "@fluxpointstudios/orynq-sdk-anchors-cardano": "workspace:*",

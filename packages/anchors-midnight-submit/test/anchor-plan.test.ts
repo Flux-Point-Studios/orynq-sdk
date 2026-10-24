@@ -28,7 +28,9 @@ describe("readAnchorPlan", () => {
 
   it("takes hashes in the forms process-trace and anchors-cardano write them", () => {
     const entries = [{ ...kind1, rootHash: `sha256:${H(1)}`, manifestHash: `0x${H(2)}` }];
-    expect(readAnchorPlan(plan({ registry: REGISTRY, entries })).entries[0]!.entry).toEqual({ rootHash: `sha256:${H(1)}`, manifestHash: `0x${H(2)}`, merkleRoot: H(3) });
+    const first = readAnchorPlan(plan({ registry: REGISTRY, entries })).entries[0]!;
+    if (first.kind === 3) throw new Error("Expected a legacy entry");
+    expect(first.entry).toEqual({ rootHash: `sha256:${H(1)}`, manifestHash: `0x${H(2)}`, merkleRoot: H(3) });
   });
 
   it("says why a plan is not JSON without echoing what it holds", () => {
@@ -53,7 +55,7 @@ describe("readAnchorPlan", () => {
     ["a registry that is not 64 lowercase hex", { registry: REGISTRY.toUpperCase(), entries: [kind1] }, /plan\.json: registry must be 64 lowercase hex characters/],
     ["no entries", { registry: REGISTRY, entries: [] }, /plan\.json: entries must be a non-empty array/],
     ["an entry that is not an object", { registry: REGISTRY, entries: ["git-head"] }, /plan\.json: entries\[0\] must be an object/],
-    ["a kind the registry does not write", { registry: REGISTRY, entries: [{ ...kind1, kind: 3 }] }, /plan\.json: entries\[0\]: kind must be 1 or 2/],
+    ["a kind the registry does not write", { registry: REGISTRY, entries: [{ ...kind1, kind: 4 }] }, /plan\.json: entries\[0\]: kind must be 1, 2 or 3/],
     ["a kind-2 entry without its attribute", { registry: REGISTRY, entries: [{ ...kind2, attribute: undefined }] }, /plan\.json: entries\[0\]: a kind-2 entry needs an attribute/],
     ["a kind-1 entry with an attribute", { registry: REGISTRY, entries: [{ ...kind1, attribute: H(7) }] }, /plan\.json: entries\[0\]: a kind-1 entry takes no attribute/],
     ["a hash that is not 32 bytes", { registry: REGISTRY, entries: [{ ...kind1, manifestHash: "ab" }] }, /plan\.json: entries\[0\]: manifestHash must be 32 bytes/],

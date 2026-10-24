@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import {
   authorKey,
+  batchSetCommitment,
   createAuthorKeyFile,
   decodeAnchorTransaction,
   deriveSalt,
@@ -18,6 +19,7 @@ import { encodedWindows, windowHits } from "../../anchors-midnight/src/__tests__
 import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS } from "../src/custody.js";
 import { registryOperator, type OperatorOptions } from "../src/operator.js";
 import { bytes32, chain, deployed, fresh, hex, wallet } from "./fakes.js";
+import { batch } from "./batch-fixture.js";
 import { prover } from "./prover.js";
 
 let authorKeyFile: string;
@@ -49,6 +51,38 @@ function setup(overrides: Partial<OperatorOptions> & { tamper?: (tx: L.Finalized
 }
 
 const entry = () => ({ rootHash: bytes32(), manifestHash: bytes32(), merkleRoot: bytes32() });
+
+describe("batch author role and exact kind-3 submissions", () => {
+  const request = { kind: 3 as const, materiosGenesis: batch.materiosGenesis, batches: batch.batches };
+  it("prepares and journals one exact batch commitment, then reuses the landed attempt", async () => {
+    const { operator, wallet: w } = setup({ authorRole: "batch" });
+    try {
+      const prepared = await operator.prepare(request);
+      expect(prepared).toMatchObject({ kind: 3, commitment: batch.label, attribute: "00".repeat(32) });
+      expect(hex(batchSetCommitment({ materiosGenesis: batch.materiosGenesis, anchorIds: batch.batches.map((member) => member.anchorId) }))).toBe(batch.label);
+      expect(decodeAnchorTransaction(prepared.bytes, [deployed.address]).calls[0]).toMatchObject({ kind: 3, entryPoint: "anchor", commitment: batch.label });
+      expect(w.submitted).toHaveLength(0);
+      expect((await operator.submit(prepared)).kind).toBe(3);
+      expect((await operator.anchorBatch(request)).txHash).toBe(prepared.txHash);
+      expect(w.submitted).toHaveLength(1);
+    } finally { operator.close(); }
+  });
+  it("refuses per-trace kinds under a batch role before preparing or broadcasting", async () => {
+    const { operator, wallet: w } = setup({ authorRole: "batch" });
+    try {
+      await expect(operator.anchor(entry())).rejects.toThrow(/batch.*kind 3/);
+      await expect(operator.anchorHiding(entry(), bytes32())).rejects.toThrow(/batch.*kind 3/);
+      expect(w.submitted).toHaveLength(0);
+    } finally { operator.close(); }
+  });
+  it("refuses kind 3 under the default relay role", async () => {
+    const { operator, wallet: w } = setup();
+    try {
+      await expect(operator.prepare(request)).rejects.toThrow(/relay.*kind/);
+      expect(w.submitted).toHaveLength(0);
+    } finally { operator.close(); }
+  });
+});
 
 describe("registryOperator.anchor", () => {
   it("journals the final bytes' hash before submitting them, and returns once the indexer shows the anchor landed", async () => {

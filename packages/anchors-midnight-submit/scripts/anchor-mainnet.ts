@@ -60,7 +60,7 @@ const { option, run, requireDustFloor, confirm } = mainnetScript({
 
 interface Recorded {
   label: string;
-  kind: 1 | 2;
+  kind: 1 | 2 | 3;
   txHash: string;
   block: number;
   blockHash: string;
@@ -119,6 +119,8 @@ async function finalOnNode(source: MidnightSource, operator: RegistryOperator, l
 
 await run(async (connect) => {
   const plan = readAnchorPlan(option("plan"), option("plan-sha256") || undefined);
+  const batchPlan = plan.entries.some((entry) => entry.kind === 3);
+  if (batchPlan && plan.entries.some((entry) => entry.kind !== 3)) throw new Error("A plan cannot mix batch and relay author roles");
   assertFpsRegistry("mainnet", plan.registry, option("deploy-journal"));
   const resultsPath = option("results");
   // The results file as it stands now: another run may have added to it since this one started.
@@ -155,7 +157,8 @@ await run(async (connect) => {
     prover: provingService(option("zk")),
     journalPath: option("journal"),
     authorKeyFile: option("author-key"),
-    saltKeyFile: option("salt-key"),
+    authorRole: batchPlan ? "batch" : "relay",
+    saltKeyFile: batchPlan ? undefined : option("salt-key"),
     registry: plan.registry,
   });
   try {
@@ -172,7 +175,7 @@ await run(async (connect) => {
       const { dust } = await wallet.balances();
       requireDustFloor(dust, resumed);
       const prepared = resumed ?? (await operator.prepare(planned));
-      await confirm(prepared, anchorSummary({ entry: planned.entry, chain, wallet: wallet.addresses, dust, label: planned.label, prepared }), () => operator.discard(prepared));
+      await confirm(prepared, anchorSummary({ ...(planned.kind === 3 ? { batch: planned } : { entry: planned.entry }), chain, wallet: wallet.addresses, dust, label: planned.label, prepared }), () => operator.discard(prepared));
       const receipt = await finalOnNode(source, operator, planned.label, prepared, await operator.submit(prepared));
       record({
         label: planned.label,

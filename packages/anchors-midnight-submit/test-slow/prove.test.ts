@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { buildRegistryDeploy, decodeAnchorTransaction, unprovenRegistryCall } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { batchAnchorCommitment } from "../src/batch-plan.js";
+import { batch } from "../test/batch-fixture.js";
 import { provingService } from "../src/zk.js";
 
 const zkDir = process.env.MIDNIGHT_PP;
@@ -10,17 +12,19 @@ const random32 = () => crypto.getRandomValues(new Uint8Array(32));
 // The operator's proving path end to end: zkir-v2 in the wallet SDK's worker thread, asking this
 // process for key material, which keyMaterial serves only as pinned.
 describe("provingService", () => {
-  it("proves a registry anchor in a worker thread, and the bound bytes decode as exactly that anchor", async () => {
+  it.each([1, 3])("proves a kind-%d registry anchor in a worker thread, and the bound bytes decode exactly", async (kind) => {
     const ttl = new Date(Date.now() + 3600e3);
     const deploy = buildRegistryDeploy({ networkId: "preprod", ttl });
     const state = ([...deploy.tx.intents!.values()][0]!.actions[0] as L.ContractDeploy).initialState;
-    const commitment = random32();
-    const { tx } = unprovenRegistryCall({ networkId: "preprod", address: deploy.address, state, call: { circuit: "anchor", args: [commitment, 1n] }, witnesses: { authorSecret: random32() }, ttl });
+    const commitment = kind === 3 ? batchAnchorCommitment(batch) : random32();
+    const { tx, after } = unprovenRegistryCall({ networkId: "preprod", address: deploy.address, state, call: { circuit: "anchor", args: [commitment, BigInt(kind)] }, witnesses: { authorSecret: random32() }, ttl });
+    expect(after.last_kind).toBe(BigInt(kind));
+    expect(Buffer.from(after.last_commitment)).toEqual(Buffer.from(commitment));
     const proven = await provingService(zkDir).prove(tx);
     const bytes = proven.bind().serialize();
     const { calls } = decodeAnchorTransaction(bytes, [deploy.address]);
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({ entryPoint: "anchor", kind: 1, commitment: Buffer.from(commitment).toString("hex") });
+    expect(calls[0]).toMatchObject({ entryPoint: "anchor", kind, commitment: Buffer.from(commitment).toString("hex") });
     expect(bytes.length).toBeGreaterThan(4000);
   });
 });

@@ -22,3 +22,5 @@ export type { SyncWatch } from "./sync.js";
 export { DEFAULT_COST_PARAMETERS, openWallet } from "./wallet.js";
 export type { CostParameters, OperatorWallet, StateSave, StateSaveFailure, SyncProgress, WalletBalances, WalletOptions } from "./wallet.js";
 export { ZK_PINS, keyMaterial, provingService } from "./zk.js";
+export { batchAnchorCommitment } from "./batch-plan.js";
+export type { BatchAnchorData, BatchMember } from "./batch-plan.js";

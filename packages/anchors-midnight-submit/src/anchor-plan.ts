@@ -1,3 +1,4 @@
+import { batchAnchorCommitment, type BatchMember } from "./batch-plan.js";
 import { readJsonFile } from "./json-file.js";
 import { hash32, type EntryHashes } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import type { AnchorRequest } from "./operator.js";
@@ -41,20 +42,31 @@ export function readAnchorPlan(path: string, expectedSha256?: string): AnchorPla
   const entries = json.entries.map((value: unknown, i): PlannedAnchor => {
     const at = `${path}: entries[${i}]: `;
     if (!isObject(value)) throw new Error(`${path}: entries[${i}] must be an object`);
-    onlyFields(value, ENTRY_FIELDS, at);
     const { label, kind } = value;
+    onlyFields(value, kind === 3 ? ["label", "kind", "materiosGenesis", "batches"] : ENTRY_FIELDS, at);
     if (typeof label !== "string" || !LABEL.test(label)) throw new Error(`${at}label must be 1 to 64 letters, digits, ".", "_" or "-", starting with a letter or digit`);
-    if (kind !== 1 && kind !== 2) throw new Error(`${at}kind must be 1 or 2`);
-    const entry: EntryHashes = { rootHash: hashField(value, "rootHash", at), manifestHash: hashField(value, "manifestHash", at) };
-    if (value.merkleRoot !== undefined) entry.merkleRoot = hashField(value, "merkleRoot", at);
-    if (kind === 1 && value.attribute !== undefined) throw new Error(`${at}a kind-1 entry takes no attribute`);
-    if (kind === 2 && value.attribute === undefined) throw new Error(`${at}a kind-2 entry needs an attribute`);
-    const planned: PlannedAnchor = kind === 1 ? { label, kind, entry } : { label, kind, entry, attribute: hashField(value, "attribute", at) };
+    if (kind !== 1 && kind !== 2 && kind !== 3) throw new Error(`${at}kind must be 1, 2 or 3`);
+    let planned: PlannedAnchor;
+    let anchor: string;
+    if (kind === 3) {
+      if (typeof value.materiosGenesis !== "string" || !HEX64.test(value.materiosGenesis)) throw new Error(`${at}materiosGenesis must be 64 lowercase hex characters`);
+      const batches = value.batches as BatchMember[];
+      const commitment = Buffer.from(batchAnchorCommitment({ materiosGenesis: value.materiosGenesis, batches })).toString("hex");
+      if (label !== commitment) throw new Error(`${at}batch label must equal its commitment`);
+      planned = { label, kind, materiosGenesis: value.materiosGenesis, batches };
+      anchor = `3/${commitment}`;
+    } else {
+      const entry: EntryHashes = { rootHash: hashField(value, "rootHash", at), manifestHash: hashField(value, "manifestHash", at) };
+      if (value.merkleRoot !== undefined) entry.merkleRoot = hashField(value, "merkleRoot", at);
+      if (kind === 1 && value.attribute !== undefined) throw new Error(`${at}a kind-1 entry takes no attribute`);
+      if (kind === 2 && value.attribute === undefined) throw new Error(`${at}a kind-2 entry needs an attribute`);
+      planned = kind === 1 ? { label, kind, entry } : { label, kind, entry, attribute: hashField(value, "attribute", at) };
+      const words = [entry.rootHash, entry.manifestHash, entry.merkleRoot ?? "00".repeat(32), kind === 2 ? value.attribute : "00".repeat(32)];
+      anchor = [kind, ...words.map((word) => Buffer.from(hash32(word as string, "hash")).toString("hex"))].join("/");
+    }
     const repeated = labels.get(label);
     if (repeated !== undefined) throw new Error(`${at}label ${JSON.stringify(label)} repeats entries[${repeated}]`);
     labels.set(label, i);
-    const words = [entry.rootHash, entry.manifestHash, entry.merkleRoot ?? "00".repeat(32), kind === 2 ? value.attribute : "00".repeat(32)];
-    const anchor = [kind, ...words.map((word) => Buffer.from(hash32(word as string, "hash")).toString("hex"))].join("/");
     const same = anchors.get(anchor);
     if (same !== undefined) throw new Error(`${at}the same anchor as entries[${same}]`);
     anchors.set(anchor, i);
