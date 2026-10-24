@@ -1,5 +1,5 @@
-// The offline trust-root holder's tool for KNOWN_AUTHORS documents. Run on a machine no model
-// drives; neither command prints a seed.
+// Policy-root signing tool. Keep its owner-only seed separate from the online batch author;
+// neither command prints a seed.
 //   new-root-key SEED_FILE        writes a fresh owner-only Ed25519 seed, prints its public key
 //   sign DOCUMENT_FILE SEED_FILE  prints the signed document as known-authors.json holds it
 import { readFileSync } from "node:fs";

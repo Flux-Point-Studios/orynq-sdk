@@ -149,14 +149,36 @@ describe("the newest valid document wins, and a revocation needs no registry sca
 });
 
 describe("what this package ships", () => {
-  it("no trust root and no document until deci's offline key signs the first one, so no author is known yet", () => {
-    expect(KNOWN_AUTHORS_TRUST_ROOTS).toEqual([]);
-    expect(SHIPPED_KNOWN_AUTHORS).toEqual([]);
+  it("authenticates the hosted batch window and retains the original finality checkpoint", () => {
+    expect(KNOWN_AUTHORS_TRUST_ROOTS).toEqual(["ddddd25ed40d8396f74bdedcb94b4e7694a4c4734035568887bb1098c979e113"]);
+    expect(SHIPPED_KNOWN_AUTHORS).toHaveLength(1);
     const k = knownAuthors();
-    expect(k.serial).toBe(0);
-    for (const network of ["mainnet", "preprod"] as const) {
-      expect(k.authors(network)).toEqual([]);
-      expect(k.checkpoints(network)).toEqual([]);
-    }
+    expect(k.serial).toBe(1);
+    const batch = "067513ff2f976554098feecb3555197255b71f26a48ad6b1828ade967b746a39";
+    expect(k.author("mainnet", batch, 3149498).status).toBe("outside-window");
+    expect(k.author("mainnet", batch, 3149499)).toMatchObject({ status: "known", role: "batch" });
+    expect(k.author("mainnet", "6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08", 3113847).status).toBe("known");
+    expect(k.author("mainnet", "6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08", 3113848).status).toBe("outside-window");
+    expect(k.checkpoints("mainnet")[0]).toMatchObject({ setId: 10422n, startsAfter: { height: 3113541, hash: "e131404d2a6ddd70f2f42a79a13c68bf446c1c45e093f0f24d8e93eb2dcf0c37" } });
+    expect(k.checkpoints("mainnet")[0]!.authorities).toHaveLength(13); expect(k.authors("preprod")).toEqual([]);
+  });
+
+  it("keeps explicitly chosen trust domains separate and never filters caller documents", () => {
+    expect(knownAuthors({ documents: [signed(doc())], trustRoots: [root] }).author("mainnet", relay, 100).status).toBe("known");
+    const empty = knownAuthors({ trustRoots: [] }); expect(empty.serial).toBe(0);
+    expect(empty.authors("mainnet")).toEqual([]); expect(empty.checkpoints("mainnet")).toEqual([]);
+    expect(() => knownAuthors({ documents: [signed(doc())], trustRoots: [] })).toThrow(/trust root/i);
+    expect(() => knownAuthors({ documents: [signed(doc())], trustRoots: [...KNOWN_AUTHORS_TRUST_ROOTS, root] })).toThrow(/different documents.*serial/i);
+  });
+
+  it.each(["document", "signature", "key"] as const)("strictly refuses a damaged shipped %s under default trust roots", field => {
+    const shipped = SHIPPED_KNOWN_AUTHORS[0]!, original = structuredClone(shipped);
+    try {
+      if (field === "document") shipped.document += " ";
+      else if (field === "signature") shipped.signatures[0]!.signature = "00".repeat(64);
+      else shipped.signatures[0]!.key = "ab".repeat(32);
+      expect(() => knownAuthors()).toThrow(/signature|trust root/i);
+      if (field !== "key") expect(() => knownAuthors({ trustRoots: [...KNOWN_AUTHORS_TRUST_ROOTS] })).toThrow(/signature|verify/i);
+    } finally { shipped.document = original.document; shipped.signatures = original.signatures; }
   });
 });

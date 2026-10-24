@@ -7,6 +7,7 @@ import { fromHex, toHex } from "../scale.js";
 import { midnightTransactionIn } from "../substrate.js";
 import { anchorChain, fixture } from "./anchor-chain.js";
 import { replaySource } from "./recorded-source.js";
+import { knownAuthors } from "../known-authors.js";
 
 const registry = anchorChain().registry;
 const at = (height: number, transactionId: number, name: "anchor" | "hiding" | "stranger"): IndexedAction => ({
@@ -122,7 +123,7 @@ describe("findMidnightAnchors", () => {
     await expect(find(source, { fromHeight: 1000, toHeight: 1000 + MAX_FIND_WINDOW + 1 })).rejects.toThrow(/at most 20000 blocks/);
     await expect(find(source, { fromHeight: 45_000, toHeight: 50_001 })).rejects.toThrow(/above the indexer's head 50000/);
     await expect(find(source, { authors: [] })).rejects.toThrow(/no author to filter by/);
-    await expect(find(source, { authors: undefined })).rejects.toThrow(/no author to filter by/);
+    await expect(find(source, { authors: undefined, knownAuthors: knownAuthors({ trustRoots: [] }) })).rejects.toThrow(/no author to filter by/);
   });
 
   it("finds the synthetic chain's anchors, and each one then verifies on its own", async () => {

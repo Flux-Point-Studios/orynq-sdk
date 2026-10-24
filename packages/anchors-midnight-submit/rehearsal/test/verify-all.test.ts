@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, cpSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
+import { KNOWN_AUTHORS_TRUST_ROOTS } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { FAKE_TARBALL, VERIFY_DIST, fakeChain, fakeConsumer, honestRehearsal, removeScratch, scratch, writeRehearsal, type Rehearsal } from "./fixture.js";
 
 const HERE = new URL("..", import.meta.url).pathname;
@@ -76,7 +77,7 @@ describe("verify-all.mjs", () => {
     expect(reopened).toMatchObject({ signatures: r.documents[2]!.signatures, trustRoots: [r.root] });
     expect(reopened.document).not.toBe(r.documents[2]!.document);
     expect(out.forgedDocuments["that document signed by a stranger, under the trust root's key"]).toMatchObject({ document: reopened.document, trustRoots: [r.root], signatures: [{ key: r.root }] });
-    expect(out).toMatchObject({ trustRoot: r.root, shippedTrustRoots: [], knownAuthorsDocuments: [1, 2, 3].map((serial) => ({ serial, networks: ["preprod"] })) });
+    expect(out).toMatchObject({ trustRoot: r.root, shippedTrustRoots: [...KNOWN_AUTHORS_TRUST_ROOTS], knownAuthorsDocuments: [1, 2, 3].map((serial) => ({ serial, networks: ["preprod"] })) });
   });
 
   it("records the tarball npm installed the verify package from, with the integrity npm checked", () => {

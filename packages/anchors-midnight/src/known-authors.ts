@@ -6,7 +6,7 @@ import shipped from "../known-authors.json" with { type: "json" };
 import { auditCheckpoints } from "./checkpoints.js";
 
 // The authors a verifier recognizes, and the GRANDPA checkpoints it trusts, as a JSON document
-// signed by an offline trust-root key. A revocation is a later document (a higher serial) that
+// signed by a pinned policy-root key. A revocation is a later document (a higher serial) that
 // closes a key's window, so no verifier scans the permissionless registry to learn of one.
 export const KNOWN_AUTHORS_FORMAT = "orynq-known-authors/v1";
 const SIGNING_DOMAIN = `${KNOWN_AUTHORS_FORMAT}\n`;
@@ -43,9 +43,8 @@ export interface SignedKnownAuthors {
   signatures: Array<{ key: string; signature: string }>;
 }
 
-// Ed25519 public keys whose signature makes a document authoritative. The first is deci's
-// offline key, added with the first signed document; until then no document is accepted.
-export const KNOWN_AUTHORS_TRUST_ROOTS: readonly string[] = [];
+// Public policy-signing identities; custody policy does not replace signature verification.
+export const KNOWN_AUTHORS_TRUST_ROOTS: readonly string[] = ["ddddd25ed40d8396f74bdedcb94b4e7694a4c4734035568887bb1098c979e113"];
 // The signed documents this package ships, as `scripts/known-authors.ts sign` prints them.
 export const SHIPPED_KNOWN_AUTHORS: readonly SignedKnownAuthors[] = shipped;
 
@@ -172,10 +171,12 @@ export function openKnownAuthors(signed: SignedKnownAuthors, trustRoots: readonl
   return view(serial, networks);
 }
 
-// The newest of the shipped documents and `documents`: every one must open, so a document
-// that fails is an error rather than something to skip, and an older serial never wins.
-export function knownAuthors({ documents = [], trustRoots = KNOWN_AUTHORS_TRUST_ROOTS }: { documents?: readonly SignedKnownAuthors[]; trustRoots?: readonly string[] } = {}): KnownAuthors {
-  const all = [...SHIPPED_KNOWN_AUTHORS, ...documents];
+// Defaults verify every shipped document. Explicit trust roots select their shipped signers;
+// caller documents always verify strictly, and an older serial never wins.
+export function knownAuthors(options: { documents?: readonly SignedKnownAuthors[]; trustRoots?: readonly string[] } = {}): KnownAuthors {
+  const trustRoots = options.trustRoots ?? KNOWN_AUTHORS_TRUST_ROOTS;
+  const selected = options.trustRoots === undefined ? SHIPPED_KNOWN_AUTHORS : SHIPPED_KNOWN_AUTHORS.filter(document => document.signatures.some(signature => trustRoots.includes(signature.key)));
+  const all = [...selected, ...(options.documents ?? [])];
   const bySerial = new Map<number, { document: string; opened: KnownAuthors }>();
   for (const signed of all) {
     const opened = openKnownAuthors(signed, trustRoots);
