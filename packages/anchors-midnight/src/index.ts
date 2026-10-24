@@ -65,7 +65,7 @@ export {
 export type { DeployStage, RegistryCircuit, VerifierKeys } from "./registry.js";
 export { unprovenRegistryCall } from "./registry-call.js";
 export type { HiddenEntry, RegistryCallArgs, RegistryWitnesses } from "./registry-call.js";
-export { BatchSetCache, BATCH_PROOF_FORMAT, verifyBatchProof, verifyBatchSet } from "./batch-proof.js";
+export { BatchSetCache, BATCH_PROOF_FORMAT, parseBatchSet, verifyBatchProof, verifyBatchSet } from "./batch-proof.js";
 export type { BatchProofOptions, BatchProofResult, BatchSetFacts, BatchSetResult } from "./batch-proof.js";
 export { auditCheckpoints, checkpointId } from "./checkpoints.js";
 export { ed25519Verify } from "./ed25519.js";
