@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server } from "node:http";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -9,9 +9,18 @@ import { certHash, decodeReceiptRecord } from "@fluxpointstudios/orynq-sdk-core/
 import { openCensusState } from "../census-state.js";
 import { publishCensusPlan } from "../publisher.js";
 import type { Census } from "../census.js";
+import { openFollowerState } from "../follower-state.js";
+import { followerPolicyDigest, type FollowerBlock } from "../follower-block.js";
+import { openStandingSession } from "../standing-session.js";
+import { openStandingDelivery } from "../standing-delivery.js";
+import { openJournal } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
+import { finalTransaction } from "../../src/submission.js";
+import * as Submission from "../../src/submission.js";
+import type { OperatorWallet } from "../../src/wallet.js";
+import { batchAuthors, batchBytes, batchScope } from "./batch-fixture.js";
 
 const fixture = JSON.parse(readFileSync(new URL("../../../core/src/__tests__/fixtures/checkpoint-receipts.json", import.meta.url), "utf8"));
-const genesis = fixture.genesis as string, registry = "43".repeat(32), receiptId = "ab".repeat(32);
+const genesis = fixture.genesis as string, registry = batchScope.registry, receiptId = "ab".repeat(32);
 const record = decodeReceiptRecord(Buffer.from(fixture.receipts[0].raw, "hex"));
 record.availabilityCertHash = certHash({ format: "scale-v1", chainId: null }, genesis, receiptId, record);
 const census: Census = { genesis, finalizedHash: "0x" + "bb".repeat(32), finalizedHeight: 100, entries: [{ receiptId, status: "certified", record }] };
@@ -139,4 +148,160 @@ it("reads bounded member groups concurrently and finishes every member before th
   expect(result.objects).toBe(3); expect(state.pendingObjects()).toEqual([]);
   const firstPlan = calls.findIndex(call => call.includes("/plans/"));
   for (const call of calls.slice(firstPlan)) expect(call).not.toContain("/members/");
+});
+
+describe("standing delivery after retained publication", () => {
+  const h = (height: number) => height.toString(16).padStart(64, "0"), minute = 60_000, start = 1_800_000_000_000;
+  let follower: ReturnType<typeof openFollowerState>, journal: ReturnType<typeof openJournal>, session: ReturnType<typeof openStandingSession>;
+  let delivery: ReturnType<typeof openStandingDelivery>, clock: { wallTime: number; monotonicMillis: number }, policy: ReturnType<typeof batchAuthors>, currentCensus: Census;
+  let submit: ReturnType<typeof vi.fn<OperatorWallet["submit"]>>, save: ReturnType<typeof vi.fn<OperatorWallet["saveState"]>>;
+  const block = (height: number, timestamp: number): FollowerBlock => ({ network: "preprod", policyDigest: followerPolicyDigest([]), block: { height, hash: h(height) }, parentHash: h(height - 1), timestamp, runtimeSpecVersion: 1000300, sends: [] });
+  const bytes = () => batchBytes({ commitment: state.currentPlan()!.commitment, ttl: clock.wallTime + 10 * minute });
+  beforeEach(() => {
+    follower = openFollowerState(join(directory, "follower.sqlite"), { network: "preprod", genesis, registry, author: batchScope.author, policyDigest: followerPolicyDigest([]), runtimeSpecVersion: 1000300 });
+    follower.recordVerifiedBlock(block(10, start - 24 * 60 * minute)); follower.recordVerifiedBlock(block(11, start));
+    clock = { wallTime: start, monotonicMillis: 0 }; policy = batchAuthors(); currentCensus = census;
+    session = openStandingSession({ state: follower, verifiedStart: block(11, start), authors: () => policy, clock: () => ({ ...clock }) });
+    clock.wallTime += 20 * minute + 1000; clock.monotonicMillis += 20 * minute + 1000; follower.recordVerifiedBlock(block(12, clock.wallTime));
+    journal = openJournal(join(directory, "attempts.sqlite")); submit = vi.fn<OperatorWallet["submit"]>(async () => {}); save = vi.fn<OperatorWallet["saveState"]>(async () => ({ saved: true as const }));
+    delivery = openStandingDelivery({ wallet: { network: "preprod", addresses: { unshielded: "fixture-payer", shielded: "fixture-shielded", dust: "fixture-dust" }, submit, saveState: save }, follower, session, census: state, journal, readCensus: async () => currentCensus, publication: options(), clock: () => ({ ...clock }) });
+  });
+  afterEach(() => { journal?.close(); follower?.close(); vi.restoreAllMocks(); });
+
+  it("hands copied exact bytes to the wallet only after fresh readbacks, certification and admission", async () => {
+    const raw = await bytes(), exact = new Uint8Array(raw), commitment = state.currentPlan()!.commitment;
+    const pending = delivery.submit(raw, commitment); raw.fill(0); const row = await pending;
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(Buffer.from(submit.mock.calls[0]![0].serialize())).toEqual(Buffer.from(exact));
+    expect(row.txHash).toBe(finalTransaction(exact).transactionHash()); expect(row.broadcasts).toBe(1);
+    expect(row.ttl.getTime()).toBe(clock.wallTime + 10 * minute);
+    expect(state.currentPlan()!.state).toBe("confirmed"); expect(save.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls.filter(call => call.includes(":GET:")).length).toBeGreaterThanOrEqual(8);
+    follower.assertAdmitted(exact);
+  });
+
+  it("refuses delivery when either copy or the fresh certificate is unavailable", async () => {
+    const raw = await bytes(), commitment = state.currentPlan()!.commitment; rejectSecond = true;
+    await expect(delivery.submit(raw, commitment)).rejects.toThrow(/store|publication/i);
+    expect(submit).not.toHaveBeenCalled(); expect(journal.pending()).toEqual([]);
+    rejectSecond = false; currentCensus = { ...census, entries: [{ receiptId, status: "pending", reason: "missing" }] };
+    await expect(delivery.submit(raw, commitment)).rejects.toThrow(/member|certif/i);
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("requires fresh copies again when a previous journal call returned without sending", async () => {
+    const raw = await bytes(), commitment = state.currentPlan()!.commitment;
+    const spy = vi.spyOn(journal, "submitOnce").mockResolvedValueOnce({ txHash: finalTransaction(raw).transactionHash(), state: "pending", broadcasts: 1, ttl: new Date(clock.wallTime + 10 * minute) });
+    await delivery.submit(raw, commitment); spy.mockRestore(); expect(submit).not.toHaveBeenCalled();
+    corruptSecond = true; await expect(delivery.submit(raw, commitment)).rejects.toThrow(/digest|readback/i);
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("consumes a permit before an awaited guard so a second callback cannot send", async () => {
+    const raw = await bytes(), commitment = state.currentPlan()!.commitment;
+    const spy = vi.spyOn(journal, "submitOnce").mockImplementation(async (_key, how) => {
+      const results = await Promise.allSettled([how.broadcast(new Uint8Array(raw)), how.broadcast(new Uint8Array(raw))]);
+      const failed = results.find(result => result.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
+      throw new Error("Both callbacks incorrectly delivered");
+    });
+    try { await expect(delivery.submit(raw, commitment)).rejects.toThrow(/permission|permit/i); } finally { spy.mockRestore(); }
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("rechecks exact expiry after the final asynchronous reservation returns", async () => {
+    const raw = await bytes(), commitment = state.currentPlan()!.commitment, reserve = session.reserve.bind(session); let checks = 0;
+    const spy = vi.spyOn(session, "reserve").mockImplementation(async (...args) => {
+      const result = await reserve(...args);
+      if (++checks === 3) { clock.wallTime += 11 * minute; clock.monotonicMillis += 11 * minute; }
+      return result;
+    });
+    try { await expect(delivery.submit(raw, commitment)).rejects.toThrow(/expiry|expired|TTL|permit|stale/i); } finally { spy.mockRestore(); }
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("latches a host-clock step after the final awaited reservation", async () => {
+    const raw = await bytes(), commitment = state.currentPlan()!.commitment, reserve = session.reserve.bind(session); let checks = 0;
+    const spy = vi.spyOn(session, "reserve").mockImplementation(async (...args) => { const result = await reserve(...args); if (++checks === 3) clock.wallTime -= 2000; return result; });
+    try { await expect(delivery.submit(raw, commitment)).rejects.toThrow(/clock|restart/i); } finally { spy.mockRestore(); }
+    expect(submit).not.toHaveBeenCalled(); clock.wallTime += 2000;
+    await expect(delivery.submit(raw, commitment)).rejects.toThrow(/restart/i);
+  });
+
+  it("observes a revocation delivered after the final asynchronous reservation", async () => {
+    const raw = await bytes(), commitment = state.currentPlan()!.commitment, reserve = session.reserve.bind(session); let checks = 0;
+    const spy = vi.spyOn(session, "reserve").mockImplementation(async (...args) => { const result = await reserve(...args); if (++checks === 3) policy = batchAuthors({ role: "relay" }, 2); return result; });
+    try { await expect(delivery.submit(raw, commitment)).rejects.toThrow(/author|policy/i); } finally { spy.mockRestore(); }
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("holds new authenticated partial execution observed after the final await", async () => {
+    const raw = await bytes(), commitment = state.currentPlan()!.commitment, reserve = session.reserve.bind(session); let checks = 0;
+    const spy = vi.spyOn(session, "reserve").mockImplementation(async (...args) => {
+      const result = await reserve(...args);
+      if (++checks === 3) follower.recordVerifiedBlock({ ...block(13, clock.wallTime), sends: [{ bytes: raw, txHash: finalTransaction(raw).transactionHash(), extrinsicIndex: 1, status: "PARTIAL_SUCCESS" }] });
+      return result;
+    });
+    try { await expect(delivery.submit(raw, commitment)).rejects.toThrow(/head|claim|partial/i); } finally { spy.mockRestore(); }
+    expect(submit).not.toHaveBeenCalled();
+    await expect(delivery.submit(raw, commitment)).rejects.toThrow(/claim|partial/i);
+  });
+
+  it("checks head freshness again after synchronous reservation work", async () => {
+    clock.wallTime += 100_000; clock.monotonicMillis += 100_000;
+    const raw = await bytes(), commitment = state.currentPlan()!.commitment, reserve = follower.reserveStandingAttempt.bind(follower); let checks = 0;
+    const spy = vi.spyOn(follower, "reserveStandingAttempt").mockImplementation((...args) => {
+      const result = reserve(...args); if (++checks === 4) { clock.wallTime += 21_000; clock.monotonicMillis += 21_000; } return result;
+    });
+    try { await expect(delivery.submit(raw, commitment)).rejects.toThrow(/stale|fresh/i); } finally { spy.mockRestore(); }
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("checks freshness after deserializing bytes for the final wallet handoff", async () => {
+    clock.wallTime += 100_000; clock.monotonicMillis += 100_000;
+    const raw = await bytes(), commitment = state.currentPlan()!.commitment, reserve = follower.reserveStandingAttempt.bind(follower), parse = Submission.finalTransaction;
+    let checks = 0, insideReservation = false, delayed = false;
+    vi.spyOn(follower, "reserveStandingAttempt").mockImplementation((...args) => {
+      insideReservation = true;
+      try { return reserve(...args); } finally { insideReservation = false; checks++; }
+    });
+    vi.spyOn(Submission, "finalTransaction").mockImplementation(value => {
+      const result = parse(value);
+      if (checks >= 3 && !insideReservation && !delayed) { delayed = true; clock.wallTime += 21_000; clock.monotonicMillis += 21_000; }
+      return result;
+    });
+    await expect(delivery.submit(raw, commitment)).rejects.toThrow(/stale|fresh/i);
+    expect(delayed).toBe(true); expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("retains unknown delivery and only retries identical bytes after fresh prerequisites", async () => {
+    const raw = await bytes(), commitment = state.currentPlan()!.commitment; submit.mockRejectedValueOnce(new Error("fixture transport failure"));
+    await expect(delivery.submit(raw, commitment)).rejects.toThrow(/transport/);
+    expect(journal.pending()).toHaveLength(1); follower.assertAdmitted(raw);
+    const before = calls.length; await delivery.submit(raw, commitment);
+    expect(submit).toHaveBeenCalledTimes(2); expect(calls.length).toBeGreaterThan(before);
+    expect(journal.pending()).toHaveLength(1); expect(follower.admissions()).toHaveLength(1);
+  });
+
+  it("never retries bytes explicitly refused and freed by the wallet", async () => {
+    const raw = await bytes(), commitment = state.currentPlan()!.commitment;
+    submit.mockRejectedValueOnce(new Error('preprod node: author_submitExtrinsic failed: {"code":1002,"message":"fixture refusal"}'));
+    await expect(delivery.submit(raw, commitment)).rejects.toThrow(/refusal/);
+    await expect(delivery.submit(raw, commitment)).rejects.toThrow(/refus|freed|retry/i);
+    expect(submit).toHaveBeenCalledTimes(1); expect(journal.pending()).toHaveLength(1);
+  });
+
+  it("latches failed wallet persistence before delivery", async () => {
+    const raw = await bytes(), commitment = state.currentPlan()!.commitment;
+    save.mockResolvedValueOnce({ saved: false, failures: [{ part: "file", error: "fixture failure" }] });
+    await expect(delivery.submit(raw, commitment)).rejects.toThrow(/save|persist|restart/i);
+    await expect(delivery.submit(raw, commitment)).rejects.toThrow(/restart/i); expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("holds unknown recovered journal rows before reconciliation can invent absence", async () => {
+    const raw = await bytes(), commitment = state.currentPlan()!.commitment;
+    await expect(journal.submitOnce({ ...batchScope, commitment, kind: 3, attribute: "00".repeat(32) }, { prepare: async () => ({ bytes: raw, ttl: new Date(clock.wallTime + 10 * minute) }), chain: follower.chainView(), broadcast: async () => { throw new Error("fixture unknown delivery"); } })).rejects.toThrow();
+    await expect(delivery.reconcile()).rejects.toThrow(/unknown|provenance/i);
+    expect(journal.pending()[0]!.state).toBe("pending"); expect(submit).not.toHaveBeenCalled();
+  });
 });
