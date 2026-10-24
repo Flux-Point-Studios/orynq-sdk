@@ -254,13 +254,13 @@ function runMainnet(script: string, env: NodeJS.ProcessEnv, terminal: "pipe" | "
 const deployMainnet = (env: NodeJS.ProcessEnv, terminal: "pipe" | "pty") => runMainnet("deploy-mainnet", env, terminal, NOWHERE);
 
 describe("scripts/deploy-mainnet.ts", () => {
-  it.each(["deploy-mainnet", "anchor-mainnet"])("refuses Codex before any file read in %s", async (script) => {
-    for (const name of ["CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_CI", "CODEX_MANAGED_BY_NPM", "CODEX_MANAGED_BY_OTHER"]) {
-      const r = await runMainnet(script, { ...humanEnvironment(), [name]: "" }, "pty", NOWHERE);
-      expect(r.code).toBe(1);
-      expect(r.out).toContain("Claude Code or Codex environment");
-      expect(r.out).not.toContain("nonexistent");
-    }
+  it.each(["deploy-mainnet", "anchor-mainnet"].flatMap(script =>
+    ["CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_CI", "CODEX_MANAGED_BY_NPM", "CODEX_MANAGED_BY_OTHER"].map(name => [script, name] as const),
+  ))("refuses Codex before any file read in %s with %s", async (script, name) => {
+    const r = await runMainnet(script, { ...humanEnvironment(), [name]: "" }, "pty", NOWHERE);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Claude Code or Codex environment");
+    expect(r.out).not.toContain("nonexistent");
   });
 
   it("refuses before reading anything when its input and output are not a terminal", async () => {
@@ -819,17 +819,7 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
 
   it("records nothing while the node does not show the anchor's block final, and a rerun reads it back without sending again", async ({ expect }) => {
     const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
-    let late = false;
-    const failed = await m.run(
-      (token) => token,
-      "unfinal",
-      (output) => {
-        if (!late && output.includes("waiting until the node finalizes it")) {
-          late = true;
-          m.advance(11 * MINUTE);
-        }
-      },
-    );
+    const failed = await m.run((token) => token, "unfinal,expire-finality-poll");
     expect(failed.status, failed.output).toBe(1);
     const [sent] = m.sent();
     expect(failed.output).toContain(`anchor-mainnet: block 501 is not final on the node after 10 minutes; anchor ${sent} landed, and a rerun reads it back`);
@@ -880,17 +870,7 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
   // which leaves the journal holding the anchor landed in block 501 of BLOCK, as the indexer
   // placed it then.
   const landedUnfinal = async (m: ReturnType<typeof offlineAnchors>) => {
-    let late = false;
-    const failed = await m.run(
-      (token) => token,
-      "unfinal",
-      (output) => {
-        if (!late && output.includes("waiting until the node finalizes it")) {
-          late = true;
-          m.advance(11 * MINUTE);
-        }
-      },
-    );
+    const failed = await m.run((token) => token, "unfinal,expire-finality-poll");
     expect(failed.output).toContain("block 501 is not final on the node after 10 minutes");
     expect(m.journal()).toEqual([{ tx_hash: m.sent()[0], state: "landed" }]);
     return m.sent()[0]!;

@@ -430,6 +430,21 @@
         "orinq-receipts-pallet"
       ],
       "status": "experimental"
+    },
+    {
+      "id": "midnight-census-plan-state",
+      "name": "Durable Midnight census plans",
+      "desc": "Private versioned SQLite state atomically persists canonical census snapshots, kind-3 plans, receipt claims and publication outbox. Confirmation rechecks fresh certificates and publication acknowledgements; confirmed claims cannot be released by restart or abandonment. Landing and coverage require an external authenticated follower.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight-submit/runner/census-state.ts",
+        "packages/anchors-midnight-submit/runner/CENSUS-STATE.md"
+      ],
+      "consumes": [
+        "materios-certified-census",
+        "checkpoint-primitives"
+      ],
+      "status": "experimental"
     }
   ]
 }
