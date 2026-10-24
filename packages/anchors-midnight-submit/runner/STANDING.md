@@ -18,7 +18,7 @@ The configuration file must be private and owner-controlled. Its exact fields ar
   "author": "067513ff2f976554098feecb3555197255b71f26a48ad6b1828ade967b746a39",
   "stateRoot": "/home/deci/.local/state/orynq-midnight/standing",
   "materiosRpcUrl": "https://materios.fluxpointstudios.com/rpc",
-  "midnightReadRpcUrl": "https://rpc.mainnet.midnight.network",
+  "midnightReadRpcUrl": "https://midnight-proofs-a.fluxpointstudios.com/midnight/mainnet/rpc",
   "knownAuthorsFile": "/home/deci/.config/orynq-midnight-standing/known-authors.json",
   "wallet": {
     "mnemonic": "/home/deci/.secrets/orynq-midnight-mainnet/mnemonic.txt",
@@ -44,6 +44,8 @@ Observe mode loads no wallet, author secret, policy-root seed or proof-writer cr
 It authenticates a fresh startup point, obtains the complete accounting/author-history floor
 and catches up under bounded HTTP work. `midnightReadRpcUrl` is an explicit read-only source;
 wallet submission and sync continue to use the existing Blockfrost endpoint selection.
+The hosted read proxy keeps the provider credential server-side. Midnight's former public
+mainnet RPC is retired; activate the restricted proxy before using this configuration.
 
 Anchor mode remains operator-terminal-only on mainnet. Agent-driven processes refuse before
 shared state or credential access. Acquire the canonical shared execution lock before wallet
