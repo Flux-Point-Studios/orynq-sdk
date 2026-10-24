@@ -238,6 +238,9 @@ importers:
       '@midnight-ntwrk/zkir-v2':
         specifier: 2.1.1
         version: 2.1.1
+      '@noble/hashes':
+        specifier: ^2.4.0
+        version: 2.4.0
       '@scure/bip39':
         specifier: 2.0.1
         version: 2.0.1
@@ -247,6 +250,9 @@ importers:
       rxjs:
         specifier: 7.8.2
         version: 7.8.2
+      undici:
+        specifier: ^6.29.1
+        version: 6.29.1
     devDependencies:
       '@fluxpointstudios/orynq-sdk-anchors-cardano':
         specifier: workspace:*
@@ -8438,7 +8444,6 @@ packages:
   /undici@6.29.1:
     resolution: {integrity: sha512-EvRlUt/QqAEvXdQeRMYUfwOQsfzpDztykrG2owGEE/rBOBoYv9uF39ZzsNDh4lTFHhTr2XOZjKkYgueD12ZmGA==}
     engines: {node: '>=18.17'}
-    dev: true
 
   /universalify@0.1.2:
     resolution: {integrity: sha512-rBJeI5CXAlmy1pV+617WB9J63U6XcazHHF2f2dbJix4XzpUF0RS3Zbj0FGIOCAva5P/d/GBOYaACQ1w+0azUkg==}
