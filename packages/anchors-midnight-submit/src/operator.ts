@@ -18,7 +18,7 @@ import {
   type RegistryWitnesses,
 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { batchAnchorCommitment, type BatchAnchorData } from "./batch-plan.js";
-import { chainView, openJournal, type AnchorKey, type JournalRow, type Submission } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
+import { chainView, openJournal, type AnchorKey, type ChainView, type JournalRow, type Submission } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { MAINNET_AUTHOR_KEYS, MAINNET_BATCH_AUTHOR_KEYS, RETIRED_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS, agentDriven, refuseMainnetSecretsPath } from "./custody.js";
 import {
   assertConfirmedHash,
@@ -72,6 +72,7 @@ export interface OperatorOptions {
   source: MidnightSource;
   prover: Prover;
   journalPath: string;
+  chain?: ChainView;
   // The author secret's file, which only its owner may read; the key itself is never an argument.
   authorKeyFile: string;
   authorRole?: "relay" | "batch";
@@ -116,6 +117,7 @@ const ZERO = "00".repeat(32);
 // prepare (or journalled) and submit let a human confirm the exact bytes in between.
 export function registryOperator(options: OperatorOptions): RegistryOperator {
   const { network, wallet, source, prover } = options;
+  if (options.chain && options.chain.network !== network) throw new Error(`The ${options.chain.network} chain view cannot settle the ${network} operator`);
   const role = options.authorRole ?? "relay";
   if (role !== "relay" && role !== "batch") throw new Error("Author role must be relay or batch");
   if (network === "mainnet" && agentDriven()) throw new Error("registryOperator refuses to load a mainnet author key in a process that carries Claude Code or Codex environment");
@@ -139,7 +141,7 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
     if (network !== "mainnet" && MAINNET_SALT_KEY_IDS.includes(id)) throw new Error(`${options.saltKeyFile} holds the FPS mainnet salt key ${id}; a ${network} operator never uses it`);
   }
   const journal = openJournal(options.journalPath);
-  const chain = chainView(source, network);
+  const chain = options.chain ?? chainView(source, network);
   const ttlMillis = (options.ttlMinutes ?? 15) * 60_000;
   const journalling = { journal, chain, wallet, network, pollMillis: options.pollMillis ?? 3_000 };
   const assertKindRole = (kind: number) => {

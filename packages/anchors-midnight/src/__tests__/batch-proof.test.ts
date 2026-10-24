@@ -197,3 +197,8 @@ describe("portable receipt-to-Midnight proofs", () => {
     expect((await verifyBatchProof(request(), { ...options(), finality: "skip" })).status).toBe("unverified-finality");
   });
 });
+
+it("rejects oversized batch sets before iterating untrusted members", () => {
+  const ids = new Proxy(Array(1025).fill(h(1)), { get(target, key) { if (key === Symbol.iterator) throw new Error("Oversized input was iterated"); return Reflect.get(target, key); } });
+  expect(() => batchSetCommitment({ materiosGenesis: genesis, anchorIds: ids })).toThrow(/1\.\.1024/);
+});
