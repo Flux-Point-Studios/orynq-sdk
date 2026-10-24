@@ -29,6 +29,26 @@ including endpoint discovery and execution proofs. Eviction can repeat work; a
 cold prefix exceeding that budget needs an explicit recovery or policy migration.
 It must never reset transition accounting or trust serialized cache metadata.
 
+`openFollowerCatchup({state, node, authors, signal?, clock?})` retains one reader
+for the process lifetime. `start()` authenticates a fresh startup block without
+writing that tip ahead of earlier history. Each `turn()` either probes an earlier
+floor, records that floor, replays migrated indexes or appends at most 32 complete
+blocks from the actual durable head. Only authenticated timestamps decide whether
+the floor covers a day before startup and every retained author window. Existing
+insufficient history requires repair; the loop never replaces accounting storage.
+
+Each turn shares 256 HTTP requests, 64 MiB of decoded responses and a ninety-second
+deadline across hints, finality and execution reads. Completed blocks survive a
+later failure. All tracked requests settle after cancellation before the next
+turn replaces its budget. The caller's cancellation signal remains lifetime-bound.
+Observed history rollback and authenticated policy-continuity faults latch restart.
+Initial and later signed policy views are retained before scope refusals; changing
+checkpoints requires retained-history migration rather than a fresh reader.
+
+`state.coverage()` reads floor, head, earliest attempt boundary and the next
+bounded migration replay range in one transaction. It includes provenance without
+admission. Coverage progress alone grants no wallet permission or session readiness.
+
 The public `verifyBlockEffects(node, {blockHash, header})` shares execution proofs
 across a block. Its header must already be authenticated. Its `outcome(index,
 txHash)` requires an independently verified body/index/hash binding: System
