@@ -33,6 +33,9 @@ Midnight coverage.
 
 The caller must stop before confirmation or broadcast when publication fails.
 After publication it must obtain a fresh census and use the existing state
-confirmation checks. An authenticated durable follower, transaction-byte TTL
+confirmation checks. Hold one standing process lock across publication, fresh
+census, confirmation and admission. A durable acknowledgement records a past
+readback; neither it nor a successful invocation before restart authorizes a later
+broadcast without fresh readbacks. An authenticated durable follower, transaction-byte TTL
 checks, fee accounting and the standing controller remain separate requirements.
 This module neither loads wallet keys nor broadcasts transactions.
