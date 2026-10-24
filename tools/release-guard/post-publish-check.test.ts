@@ -77,6 +77,7 @@ describe("checkLayouts against a registry", () => {
   const packages: Record<string, Record<string, Buffer>> = {};
   let hidden = new Map<string, number>();
   let refuseInstall = false;
+  let staleInstallMetadata = 0;
   let server: Server;
   let url = "";
 
@@ -97,6 +98,7 @@ describe("checkLayouts against a registry", () => {
     });
     publish("@f/broken", "1.0.0", { "package.json": manifest("@f/broken", "1.0.0", { exports: "./i.js" }), "i.js": 'throw new Error("boom");' });
     publish("@f/cli-only", "1.0.0", { "package.json": manifest("@f/cli-only", "1.0.0", { bin: { x: "./x.js" } }), "x.js": "" });
+    for (const version of ["0.9.0", "1.0.0"]) publish("@f/eventually-visible", version, { "package.json": manifest("@f/eventually-visible", version, { exports: "./i.js" }), "i.js": "" });
     publish("@f/serve-on-import", "1.0.0", {
       "package.json": manifest("@f/serve-on-import", "1.0.0", { exports: "./i.js" }),
       "i.js": "setInterval(() => {}, 1000);",
@@ -108,7 +110,7 @@ describe("checkLayouts against a registry", () => {
       if (tgz) return res.end(packages[tgz[1]!]![tgz[2]!]);
       const versioned = /^(@[^/]+\/[^/]+|[^@/][^/]*)\/(\d+\.\d+\.\d+)$/.exec(path);
       const name = versioned ? versioned[1]! : path;
-      if (refuseInstall && !versioned && name === "@f/good") return res.writeHead(404).end();
+      if (refuseInstall && !versioned && name === "@f/good" && /\bnpm\//.test(req.headers["user-agent"] ?? "")) return res.writeHead(404).end();
       const remaining = hidden.get(name) ?? 0;
       if (remaining > 0) {
         hidden.set(name, remaining - 1);
@@ -125,7 +127,8 @@ describe("checkLayouts against a registry", () => {
       });
       res.writeHead(200, { "content-type": "application/json" });
       if (versioned) return res.end(JSON.stringify(meta(versioned[2]!)));
-      const all = Object.keys(versions);
+      const all = Object.keys(versions).filter(version => name !== "@f/eventually-visible" || !staleInstallMetadata || version !== "1.0.0");
+      if (name === "@f/eventually-visible" && staleInstallMetadata) staleInstallMetadata--;
       res.end(JSON.stringify({ name, "dist-tags": { latest: all.sort().at(-1) }, versions: Object.fromEntries(all.map((v) => [v, meta(v)])) }));
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -165,6 +168,16 @@ describe("checkLayouts against a registry", () => {
       problems: [],
       layouts: [{ specs: ["@f/good@1.0.0"], copies: { "@midnight-ntwrk/ledger-v8": ["8.1.3"] } }],
     });
+  });
+
+  it("waits for resolver metadata even when the exact version endpoint is already visible", async () => {
+    expect((await fetch(`${url}/@f/eventually-visible/1.0.0`)).status).toBe(200);
+    staleInstallMetadata = 2;
+    try {
+      const result = await checkLayouts(["@f/eventually-visible@1.0.0"], options());
+      expect(result.problems).toEqual([]); expect(result.layouts).toHaveLength(1);
+      expect(staleInstallMetadata).toBe(0);
+    } finally { staleInstallMetadata = 0; }
   });
 
   it("reports the npm error code without echoing registry URLs or debug-log paths", async () => {
