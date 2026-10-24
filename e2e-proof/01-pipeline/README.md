@@ -100,8 +100,12 @@ Anyone can inspect the resulting `cardano_anchor_tx`:
    `{"map": [{"k": {"string": "p"}, "v": {"string": "materios"}}, ...]}`.
    Only the anchors a second, Lucid-based worker wrote from 2026-04-18 to
    2026-06-29 hold the record above as it stands.
-3. The `chain` field equals the Materios preprod genesis hash:
-   `0e46e33f639a56cc8780fd871d9a15e16d99af248526f907cb560cb40849f7bf`.
+3. The `chain` field names the Materios preprod genesis,
+   `0e46e33f639a56cc8780fd871d9a15e16d99af248526f907cb560cb40849f7bf`,
+   but only as a label: in two windows genuine anchors name another chain
+   than the genesis their root and manifest commit to, as
+   [the anchors-cardano README](../../packages/anchors-cardano/README.md#the-chain-field-is-a-label)
+   lists.
 
 The label alone proves little: anyone can write a label 8746 record naming
 any root. `verifyMateriosCheckpointAnchor` from

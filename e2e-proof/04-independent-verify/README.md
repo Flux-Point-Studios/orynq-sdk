@@ -8,8 +8,10 @@ non-public endpoint is contacted at any step.
 record, which no checkpoint anchor has used since 2026-06-29: the live
 anchor worker writes the detailed-schema encoding, so `verify.py` matches
 none of its anchors. It also never checks the receipt's leaf against the
-anchored root, nor the wallet that funded the anchor, so a match does not
-prove inclusion. `verifyMateriosCheckpointAnchor` in
+anchored root, nor the wallet that funded the anchor, and it selects
+anchors by their `chain` field, a label that genuine anchors of
+[two windows](../../packages/anchors-cardano/README.md#the-chain-field-is-a-label)
+get wrong; a match does not prove inclusion. `verifyMateriosCheckpointAnchor` in
 `@fluxpointstudios/orynq-sdk-anchors-cardano` makes every check; its
 [README](../../packages/anchors-cardano/README.md#verifying-a-receipts-anchor)
 lists its inputs and trust assumptions.
@@ -50,7 +52,7 @@ Input:  content_hash  (sha256 of canonical observation pre-image)
      the receipt's submission block (from OrinqReceipts.ReceiptSubmittedAt).
 ```
 
-If step 8 returns a tx hash, a flat label 8746 record for this chain
+If step 8 returns a tx hash, a flat label 8746 record naming this chain
 covers the receipt's block; the limits above say what that leaves
 unproven.
 

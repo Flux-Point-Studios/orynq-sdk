@@ -20,8 +20,10 @@ The cert-daemon rolls every certified Materios receipt into a checkpoint batch, 
 Every anchor carries one logical record, with its hashes as 64 lowercase hex characters and no `0x`:
 
 ```json
-{ "p": "materios", "v": 2, "chain": "<genesis>", "root": "<root>", "manifest": "<manifest_hash>", "blocks": [from, to], "leaves": count }
+{ "p": "materios", "v": 2, "chain": "<chain label>", "root": "<root>", "manifest": "<manifest_hash>", "blocks": [from, to], "leaves": count }
 ```
+
+`chain` names a Materios genesis, but as a label: [it is not always the genesis the batch commits to](#the-chain-field-is-a-label).
 
 Two encodings of it are on Cardano mainnet, as Koios renders the label's value:
 
@@ -31,6 +33,17 @@ Two encodings of it are on Cardano mainnet, as Koios renders the label's value:
 | flat | a second, Lucid-based worker, through `attachMetadata`, from 2026-04-18 to 2026-06-29 | the record itself |
 
 `buildMateriosAnchorV2` builds the flat form. `decodeMateriosAnchorRecord` reads both and refuses a record that mixes them, any other `p` or `v` (the Lucid-based worker's wallet also wrote a `v: 3` finality record under this label), and any missing, extra, duplicated or malformed field.
+
+### The `chain` field is a label
+
+`chain` is whatever the worker that wrote the record was told; anchor-worker-materios takes it from the job, else from its `MATERIOS_CHAIN_ID` setting, else from a hard-coded `5663079a…`. Nothing hashes it: the genesis a batch commits to is the one in its leaves and its manifest, which is the genesis the cert-daemon was given. In two windows, genuine anchors from the pinned wallets name another chain than that one:
+
+| Cardano blocks (UTC) | Anchors | Written by | `chain` names | Leaves and manifest commit to |
+|---|---|---|---|---|
+| 13350325 to 13406781 (2026-04-28 17:07 to 2026-05-12 00:17) | 291 | the Lucid-based worker, flat | `0e46e33f639a56cc8780fd871d9a15e16d99af248526f907cb560cb40849f7bf`, the chain the receipts are on, whose anchored block ranges start again near zero on 2026-04-28 | `bc0531cb311281565036fb397a376f0e0fa37005589655f97a7924b2729a164c`, the previous chain's genesis, which the cert-daemon kept until 2026-05-12 |
+| 13618944 to 13941551 (2026-06-30 23:43 to 2026-09-14 22:26) | 1672 | anchor-worker-materios, detailed-schema | `5663079a485b93fdc9e386b862b4cf8d25499427df6b8c5f018535acfd2e5020`, the worker's hard-coded fallback | `0e46e33f639a56cc8780fd871d9a15e16d99af248526f907cb560cb40849f7bf`, the chain the receipts are on |
+
+So the verifier does not compare `chain`. The leaf and the manifest hash already commit to `genesis`, and a pinned wallet's record that carries the claim's root and manifest proves the batch, whatever its label. For a receipt the cert-daemon batched in the first window, claim `genesis` `bc0531cb…`; if its Cert is dcbor-v1, give `certHash`, because the Cert rebuild accepts a dcbor-v1 Cert only on genesis `0e46e33f…`.
 
 ### Verifying a receipt's anchor
 
@@ -61,7 +74,7 @@ What a caller supplies:
 
 | Input | Source |
 |---|---|
-| `genesis`, `receiptId` | The Materios chain and the receipt. |
+| `genesis`, `receiptId` | The Materios genesis the receipt's leaf and its batch's manifest commit to, and the receipt. The genesis is that of the chain the receipt is on, except in the [window](#the-chain-field-is-a-label) in which the cert-daemon still used the previous chain's. |
 | `cert`, or `certHash` | `OrinqReceipts.Receipts[receipt_id]`. With `cert`, the verifier rebuilds the availability Cert from the receipt's fields, which binds the leaf to its `content_hash`; `certHash` alone (the record's `availability_cert_hash`) leaves that binding unchecked. |
 | `certifiedBlock` | The block of the receipt's first `AvailabilityCertified` event, as an events indexer reports it. |
 | `inclusion` | The batch's `leafHashes`, or the leaf's `index`, the batch's `count` and the Merkle `path`. The gateway's batch record (`GET /batches/{anchorId}` or `GET /batches/by-leaf/{leaf}`) lists the leaves. |
@@ -81,8 +94,7 @@ The result names the first check that failed in `refusal`, lists every check run
 | `anchor_id` | `sha256(root ‖ manifest_hash)` differs from the claimed anchor id. |
 | `tx` | The tx is not in a Cardano block, or a scan finds no pinned-wallet tx anchoring the root. |
 | `wallet` | The tx spends an input from an address outside `anchorWallets`, or spends none. |
-| `record` | Label 8746 is absent or decodes to no `p: "materios"`, `v: 2` record. |
-| `chain` | The record names another chain than `genesis`. |
+| `record` | Label 8746 is absent or decodes to no `p: "materios"`, `v: 2` record. The verifier reports its `chain` label and does not compare it. |
 | `anchored_root` | The record's root is not the root. |
 | `leaves` | The record's leaf count is not `count`, as with `[a, b, c, c]` claimed for `[a, b, c]`. |
 | `blocks` | The record's block range is not the manifest's, or does not hold `certifiedBlock`. |

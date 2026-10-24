@@ -17,13 +17,18 @@
  *   wallet         every input the tx spends belongs to a pinned anchor wallet
  *   record         its label 8746 value decodes, in either encoding, to a
  *                  p "materios", v 2 record
- *   chain          the record's chain is the receipt's Materios genesis
  *   anchored_root  the record's root is the root
  *   leaves         the record's leaf count is `count`
  *   blocks         the record's blocks are the manifest's range, which covers
  *                  the block the receipt was certified in
  *   manifest       the record's manifest is manifest_hash
  *   confirmations  the tx's block is at least `minConfirmations` deep
+ *
+ * The record's `chain` field is not compared. It is a label the anchor worker
+ * fills in from its job or its configuration, and genuine anchors of two
+ * windows name another chain than the genesis their leaves and manifest commit
+ * to (the package README lists them). The leaf and manifest_hash commit to the
+ * genesis.
  *
  * Trust assumptions:
  * - The chain source reports truthfully which block holds the tx and how deep
@@ -86,7 +91,6 @@ export type MateriosCheckpointCheck =
   | "tx"
   | "wallet"
   | "record"
-  | "chain"
   | "anchored_root"
   | "leaves"
   | "blocks"
@@ -95,7 +99,11 @@ export type MateriosCheckpointCheck =
 
 /** What the caller holds about a certified receipt and the batch that anchors it. */
 export interface MateriosCheckpointClaim {
-  /** Genesis hash of the Materios chain the receipt is on. */
+  /**
+   * The Materios genesis the receipt's leaf and its batch's manifest commit
+   * to: that of the chain the receipt is on, except in the window the package
+   * README names, when the cert-daemon still bound the previous chain's.
+   */
   genesis: string;
   receiptId: string;
   /** The receipt's availability_cert_hash. Give this or `cert`. */
@@ -344,9 +352,8 @@ async function checkAnchoring(tx: CheckpointTransaction, input: Input, claimed: 
     if (!decoded.ok) throw new Refusal("record", `its label ${LABEL} value: ${decoded.reason}`);
     const { record } = decoded;
     out.encoding = decoded.encoding;
-    pass("record", `a ${decoded.encoding} p "materios", v 2 record under label ${LABEL}`);
+    pass("record", `a ${decoded.encoding} p "materios", v 2 record under label ${LABEL}, labelled chain ${record.chain}`);
 
-    check("chain", record.chain === input.genesis, `Materios genesis ${record.chain}`, `the record names chain ${record.chain}, not the receipt's ${input.genesis}`);
     check("anchored_root", record.root === bare(claimed.root), `the record anchors root ${record.root}`, `the record anchors root ${record.root}, not ${bare(claimed.root)}`);
     check("leaves", record.leaves === claimed.count, `${record.leaves} leaves`, `the record anchors ${record.leaves} leaves, not ${claimed.count}`);
     const [from, to] = record.blocks;
@@ -354,7 +361,7 @@ async function checkAnchoring(tx: CheckpointTransaction, input: Input, claimed: 
       throw new Refusal("blocks", `the record covers Materios blocks ${from}-${to}, not the manifest's ${input.fromBlock}-${input.toBlock}`);
     }
     check("blocks", input.certifiedBlock >= from && input.certifiedBlock <= to, `Materios blocks ${from}-${to}, which hold the certification in block ${input.certifiedBlock}`, `Materios blocks ${from}-${to} do not hold the certification in block ${input.certifiedBlock}`);
-    check("manifest", record.manifest === bare(claimed.manifestHash), `manifest ${record.manifest}`, `the record anchors manifest ${record.manifest}, not ${bare(claimed.manifestHash)}`);
+    check("manifest", record.manifest === bare(claimed.manifestHash), `manifest ${record.manifest}, which commits to Materios genesis ${input.genesis}`, `the record anchors manifest ${record.manifest}, not ${bare(claimed.manifestHash)}`);
 
     out.confirmations = (await source.tipHeight()) - height + 1;
     check("confirmations", out.confirmations >= input.minConfirmations, `${out.confirmations} confirmations`, `${out.confirmations} confirmations, fewer than the ${input.minConfirmations} required`);

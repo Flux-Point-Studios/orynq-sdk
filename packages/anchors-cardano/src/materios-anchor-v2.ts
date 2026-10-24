@@ -5,7 +5,7 @@
  *   {
  *     "p": "materios",
  *     "v": 2,
- *     "chain": "<materios_genesis_hash_hex_no_0x>",
+ *     "chain": "<materios_genesis_hash_hex_no_0x, as labelled>",
  *     "blocks": [<from>, <to>],
  *     "leaves": <count>,
  *     "root": "<rootHash_hex_no_0x>",
@@ -27,6 +27,11 @@
  * label 2222 (`POI_METADATA_LABEL`) used by direct Orynq→Cardano POI anchors
  * via `anchor_cardano_submit`. Other records share the label (an anchor wallet
  * has written a `v: 3` finality record), so a reader must check `p` and `v`.
+ *
+ * `chain` is a label: the worker writes the genesis it was told, which in two
+ * windows of genuine anchors is not the genesis their root and manifest commit
+ * to (the package README lists them). A genesis is checked by recomputing the
+ * manifest hash, as verifyMateriosCheckpointAnchor does.
  *
  * All hash fields are 64-char lowercase hex with no `0x` prefix, so they
  * fit Cardano's 64-byte metadata string limit without chunking.

@@ -31,8 +31,9 @@ Steps:
        advertised `[blocks_from, blocks_to]` window. Return the first
        candidate that covers the receipt's block range.
 
-The result is a JSON document with the full lineage. If the chain
-through every step matches, the lineage is independently verified.
+The result is a JSON document with the full lineage. A match is a lead,
+not a proof of inclusion: README.md lists what this script leaves
+unchecked.
 """
 from __future__ import annotations
 

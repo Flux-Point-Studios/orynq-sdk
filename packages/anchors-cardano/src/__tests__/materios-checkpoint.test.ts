@@ -13,7 +13,12 @@ import { createKoiosCheckpointSource, createKoiosProvider, KoiosError } from "..
 
 // Recorded from Cardano mainnet through api.koios.rest by scripts/record-materios-checkpoint.mjs.
 const fixture = JSON.parse(readFileSync(new URL("./fixtures/materios-checkpoint-mainnet.json", import.meta.url), "utf8"));
-const { genesis, wallets, batches, koios } = fixture;
+const { wallets, batches, koios } = fixture;
+type Batch = "wrapped5" | "wrapped3" | "flat1" | "fallbackLabel1" | "legacyGenesis1";
+const genesis = batches.wrapped5.genesis;
+// anchor-worker-materios's hard-coded chain id, which it writes when neither the job nor its
+// MATERIOS_CHAIN_ID setting names one.
+const FALLBACK_CHAIN = "5663079a485b93fdc9e386b862b4cf8d25499427df6b8c5f018535acfd2e5020";
 const SCALE: CertFormat = { format: "scale-v1", chainId: null };
 const LABEL = "8746";
 // The verifier compares addresses as strings, so any string outside the pinned set stands in for a
@@ -54,10 +59,10 @@ function receiptFields(receiptId: string) {
   return { record, cert: { certFormat: SCALE, contentHash: record.contentHash, baseRootSha256: record.baseRootSha256, storageLocatorHash: record.storageLocatorHash } };
 }
 
-function claimFor(name: "wrapped5" | "wrapped3" | "flat1", over: Partial<MateriosCheckpointClaim> = {}): MateriosCheckpointClaim {
+function claimFor(name: Batch, over: Partial<MateriosCheckpointClaim> = {}): MateriosCheckpointClaim {
   const b = batches[name];
   return {
-    genesis,
+    genesis: b.genesis,
     receiptId: b.receiptId,
     cert: receiptFields(b.receiptId).cert,
     certifiedBlock: b.certifiedBlock,
@@ -67,6 +72,10 @@ function claimFor(name: "wrapped5" | "wrapped3" | "flat1", over: Partial<Materio
     ...over,
   };
 }
+
+// The core encoder rebuilds a dcbor-v1 Cert only for the live genesis, so legacyGenesis1's receipt is
+// claimed by its cert hash.
+const byCertHash = (name: Batch) => ({ cert: undefined, certHash: receiptFields(batches[name].receiptId).record.availabilityCertHash });
 
 function wrappedEntry(row: Record<string, any>, field: string): Record<string, any> {
   return row.metadata[LABEL].map.find((e: any) => e.k.string === field);
@@ -125,6 +134,13 @@ describe("label 8746 decoding of mainnet records", () => {
     const quoted = structuredClone(recordedRow(batches.wrapped5.txHash).metadata[LABEL]);
     quoted.map.find((e: any) => e.k.string === "leaves").v = { int: "5" };
     expect(decodeMateriosAnchorRecord(quoted)).toEqual({ ok: false, reason: expect.stringMatching(/leaves.*detailed-schema/) });
+
+    const twoTyped = structuredClone(recordedRow(batches.wrapped5.txHash).metadata[LABEL]);
+    twoTyped.map.find((e: any) => e.k.string === "p").v = { string: "materios", int: 2 };
+    expect(decodeMateriosAnchorRecord(twoTyped)).toEqual({ ok: false, reason: expect.stringMatching(/"p".*detailed-schema/) });
+
+    const beside = { ...structuredClone(recordedRow(batches.wrapped5.txHash).metadata[LABEL]), p: "materios", v: 2 };
+    expect(decodeMateriosAnchorRecord(beside)).toEqual({ ok: false, reason: expect.stringMatching(/unexpected field "map"/) });
   });
 
   it("refuses duplicated, unknown, missing and malformed fields", () => {
@@ -155,16 +171,28 @@ describe("label 8746 decoding of mainnet records", () => {
 });
 
 describe("manifest hash golden vectors from mainnet", () => {
-  for (const name of ["wrapped5", "wrapped3", "flat1"] as const) {
+  const onChain = (name: Batch) => {
+    const decoded = decodeMateriosAnchorRecord(recordedRow(batches[name].txHash).metadata[LABEL]);
+    if (!decoded.ok) throw new Error(decoded.reason);
+    return decoded.record;
+  };
+  for (const name of Object.keys(batches) as Batch[]) {
     it(`reproduces the daemon's Python json.dumps preimage byte for byte (${name})`, () => {
       const b = batches[name];
-      const onChain = decodeMateriosAnchorRecord(recordedRow(b.txHash).metadata[LABEL]);
-      if (!onChain.ok) throw new Error(onChain.reason);
-      expect(createHash("sha256").update(b.manifestPreimage, "utf8").digest("hex")).toBe(onChain.record.manifest);
-      const fields = { cardano_network_id: "", count: b.leafHashes.length, from_block: b.fromBlock, materios_chain_id: genesis, root: onChain.record.root, to_block: b.toBlock };
-      expect(bare(manifestHash(fields))).toBe(onChain.record.manifest);
+      const record = onChain(name);
+      expect(createHash("sha256").update(b.manifestPreimage, "utf8").digest("hex")).toBe(record.manifest);
+      const fields = { cardano_network_id: "", count: b.leafHashes.length, from_block: b.fromBlock, materios_chain_id: b.genesis, root: record.root, to_block: b.toBlock };
+      expect(bare(manifestHash(fields))).toBe(record.manifest);
     });
   }
+
+  it("commits to the genesis that two windows of genuine records name wrongly in their chain field", () => {
+    expect([onChain("fallbackLabel1").chain, batches.fallbackLabel1.genesis]).toEqual([FALLBACK_CHAIN, genesis]);
+    expect([onChain("legacyGenesis1").chain, batches.legacyGenesis1.genesis]).toEqual([genesis, "bc0531cb311281565036fb397a376f0e0fa37005589655f97a7924b2729a164c"]);
+    for (const name of ["fallbackLabel1", "legacyGenesis1"] as const) {
+      expect(batches[name].manifestPreimage).toContain(`"materios_chain_id": "${batches[name].genesis}"`);
+    }
+  });
 });
 
 describe("verifyMateriosCheckpointAnchor against mainnet anchors", () => {
@@ -182,7 +210,7 @@ describe("verifyMateriosCheckpointAnchor against mainnet anchors", () => {
     expect(r.blockHeight).toBe(recordedRow(batches.wrapped5.txHash).block_height);
     expect(r.confirmations).toBe(tip - r.blockHeight! + 1);
     expect(r.confirmations).toBeGreaterThanOrEqual(15);
-    expect(r.checks.map((c) => c.name)).toEqual(["input", "leaf", "root", "anchor_id", "tx", "wallet", "record", "chain", "anchored_root", "leaves", "blocks", "manifest", "confirmations"]);
+    expect(r.checks.map((c) => c.name)).toEqual(["input", "leaf", "root", "anchor_id", "tx", "wallet", "record", "anchored_root", "leaves", "blocks", "manifest", "confirmations"]);
     expect(r.checks.every((c) => c.ok)).toBe(true);
   });
 
@@ -213,10 +241,37 @@ describe("verifyMateriosCheckpointAnchor against mainnet anchors", () => {
     expect(r.rootHash).toBe(`0x${batches.flat1.leafHashes[0]}`);
   });
 
+  it("verifies a receipt in a detailed-schema anchor whose chain field names the worker's fallback chain id", async () => {
+    const r = await verifyMateriosCheckpointAnchor(claimFor("fallbackLabel1"), options());
+    expect(r.refusal).toBeNull();
+    expect(r.encoding).toBe("detailed-schema");
+    expect(r.checks.find((c) => c.name === "record")?.detail).toContain(`chain ${FALLBACK_CHAIN}`);
+    expect(r.checks.find((c) => c.name === "manifest")?.detail).toContain(`genesis ${genesis}`);
+  });
+
+  it("verifies a receipt whose leaf and manifest commit to the earlier genesis, in a flat anchor naming the live one", async () => {
+    const b = batches.legacyGenesis1;
+    const r = await verifyMateriosCheckpointAnchor(claimFor("legacyGenesis1", byCertHash("legacyGenesis1")), options());
+    expect(r.refusal).toBeNull();
+    expect(r.encoding).toBe("flat");
+    expect(r.checks.find((c) => c.name === "manifest")?.detail).toContain(`genesis ${b.genesis}`);
+  });
+
   it("finds the anchor by scanning the pinned wallets from a Cardano height", async () => {
     const r = await verifyMateriosCheckpointAnchor(claimFor("wrapped5", { cardano: { scanFromBlockHeight: fixture.scanFromBlockHeight } }), options());
     expect(r.refusal).toBeNull();
     expect(r.txHash).toBe(batches.wrapped5.txHash);
+    const reordered = await verifyMateriosCheckpointAnchor(claimFor("wrapped5", { cardano: { scanFromBlockHeight: fixture.scanFromBlockHeight } }), options({ anchorWallets: [wallets.lucid, wallets.worker] }));
+    expect(reordered.txHash).toBe(batches.wrapped5.txHash);
+  });
+
+  it("reads hashes in either case, with or without 0x", async () => {
+    const b = batches.wrapped5;
+    const upper = (hex: string) => `0x${bare(hex).toUpperCase()}`;
+    const claim = claimFor("wrapped5", { genesis: upper(genesis), receiptId: upper(b.receiptId), anchorId: upper(b.anchorId), cardano: { txHash: upper(b.txHash) } });
+    const r = await verifyMateriosCheckpointAnchor(claim, options());
+    expect(r.refusal).toBeNull();
+    expect(r.txHash).toBe(b.txHash);
   });
 
   it("takes the earliest scanned anchor that passes every check, and the earliest refusal when none does", async () => {
@@ -277,6 +332,7 @@ describe("refusals", () => {
     const padded = [...b.leafHashes, b.leafHashes[2]];
     const byList = await verifyMateriosCheckpointAnchor(claimFor("wrapped3", { inclusion: { leafHashes: padded } }), options());
     expect(byList.rootHash).toBe(`0x${b.rootHash}`);
+    expect(byList.checks.find((c) => c.name === "leaf")?.detail).toMatch(/is leaf 2 of 4$/);
     expect(byList.refusal?.check).toBe("leaves");
     const byPath = claimFor("wrapped3", { cert: undefined, certHash: record.availabilityCertHash, inclusion: { index: 2, count: 4, path: merklePath(padded, 2) } });
     expect(await refusedBy(byPath)).toBe("leaves");
@@ -290,6 +346,10 @@ describe("refusals", () => {
     expect(await refusedBy(claimFor("wrapped5"), options({}, forged))).toBe("wallet");
     const unfunded = editTx(wrapped5.txHash, (row) => row.inputs = []);
     expect(await refusedBy(claimFor("wrapped5"), options({}, unfunded))).toBe("wallet");
+    const flat1 = batches.flat1.txHash;
+    expect(recordedRow(flat1).inputs).toHaveLength(2);
+    const coFunded = editTx(flat1, (row) => row.inputs[1].payment_addr.bech32 = FOREIGN_WALLET);
+    expect(await refusedBy(claimFor("flat1"), options({}, coFunded))).toBe("wallet");
   });
 
   it("a v:3 record, an absent label and a flat vs wrapped mismatch", async () => {
@@ -301,14 +361,24 @@ describe("refusals", () => {
     expect(await refusedBy(claimFor("wrapped5"), options({}, mixed))).toBe("record");
   });
 
-  it("an anchor record that differs from the claim in any one field", async () => {
+  it("an anchor record that differs from the claim in any one field but its chain label", async () => {
     const field = (name: string, value: unknown) => editTx(wrapped5.txHash, (row) => wrappedEntry(row, name).v = value);
-    expect(await refusedBy(claimFor("wrapped5"), options({}, field("chain", { string: flip(genesis) })))).toBe("chain");
+    const relabelled = await verifyMateriosCheckpointAnchor(claimFor("wrapped5"), options({}, field("chain", { string: flip(genesis) })));
+    expect([relabelled.verified, relabelled.checks.find((c) => c.name === "record")?.detail]).toEqual([true, expect.stringContaining(`chain ${flip(genesis)}`)]);
     expect(await refusedBy(claimFor("wrapped5"), options({}, field("root", { string: flip(batches.wrapped5.rootHash) })))).toBe("anchored_root");
     expect(await refusedBy(claimFor("wrapped5"), options({}, field("leaves", { int: 6 })))).toBe("leaves");
     expect(await refusedBy(claimFor("wrapped5"), options({}, field("blocks", { list: [{ int: wrapped5.fromBlock }, { int: wrapped5.toBlock + 1 }] })))).toBe("blocks");
     expect(await refusedBy(claimFor("wrapped5", { certifiedBlock: wrapped5.toBlock + 1 }))).toBe("blocks");
     expect(await refusedBy(claimFor("wrapped5", { manifest: { fromBlock: wrapped5.fromBlock, toBlock: wrapped5.toBlock, cardanoNetworkId: "mainnet" } }))).toBe("manifest");
+  });
+
+  it("a record whose manifest commits to the chain its label names, and a receipt claimed for that chain", async () => {
+    const b = batches.fallbackLabel1;
+    const labelled = { cardano_network_id: "", count: 1, from_block: b.fromBlock, materios_chain_id: FALLBACK_CHAIN, root: b.rootHash, to_block: b.toBlock };
+    const rebound = editTx(b.txHash, (row) => wrappedEntry(row, "manifest").v = { string: bare(manifestHash(labelled)) });
+    expect(await refusedBy(claimFor("fallbackLabel1"), options({}, rebound))).toBe("manifest");
+    expect(await refusedBy(claimFor("fallbackLabel1", { genesis: FALLBACK_CHAIN, ...byCertHash("fallbackLabel1") }))).toBe("leaf");
+    expect(await refusedBy(claimFor("legacyGenesis1", { genesis, ...byCertHash("legacyGenesis1") }))).toBe("leaf");
   });
 
   it("a claimed anchor id that the root and manifest do not produce", async () => {
