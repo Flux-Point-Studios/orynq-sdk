@@ -819,17 +819,7 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
 
   it("records nothing while the node does not show the anchor's block final, and a rerun reads it back without sending again", async ({ expect }) => {
     const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
-    let late = false;
-    const failed = await m.run(
-      (token) => token,
-      "unfinal",
-      (output) => {
-        if (!late && output.includes("waiting until the node finalizes it")) {
-          late = true;
-          m.advance(11 * MINUTE);
-        }
-      },
-    );
+    const failed = await m.run((token) => token, "unfinal,expire-finality-poll");
     expect(failed.status, failed.output).toBe(1);
     const [sent] = m.sent();
     expect(failed.output).toContain(`anchor-mainnet: block 501 is not final on the node after 10 minutes; anchor ${sent} landed, and a rerun reads it back`);
@@ -880,17 +870,7 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
   // which leaves the journal holding the anchor landed in block 501 of BLOCK, as the indexer
   // placed it then.
   const landedUnfinal = async (m: ReturnType<typeof offlineAnchors>) => {
-    let late = false;
-    const failed = await m.run(
-      (token) => token,
-      "unfinal",
-      (output) => {
-        if (!late && output.includes("waiting until the node finalizes it")) {
-          late = true;
-          m.advance(11 * MINUTE);
-        }
-      },
-    );
+    const failed = await m.run((token) => token, "unfinal,expire-finality-poll");
     expect(failed.output).toContain("block 501 is not final on the node after 10 minutes");
     expect(m.journal()).toEqual([{ tx_hash: m.sent()[0], state: "landed" }]);
     return m.sent()[0]!;
