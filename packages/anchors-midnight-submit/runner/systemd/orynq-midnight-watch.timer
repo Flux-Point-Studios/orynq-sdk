@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll the independent Orynq Midnight watch every minute
+
+[Timer]
+OnBootSec=60
+OnUnitInactiveSec=60
+AccuracySec=5
+Unit=orynq-midnight-watch.service
+
+[Install]
+WantedBy=timers.target

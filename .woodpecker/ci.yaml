@@ -77,6 +77,8 @@ steps:
     commands:
       - pip install -e "python/.[dev]"
       - pytest python/tests/
+      - python packages/anchors-midnight-submit/runner/test/standing_watch_test.py
+      - python packages/anchors-midnight-submit/runner/test/standing_accounting_test.py
       - python scripts/verify-hash-vectors.py
 
   # The registry contract is immutable once deployed: its committed build must be exactly what

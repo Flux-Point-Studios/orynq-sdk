@@ -64,6 +64,25 @@ const HALFWAY_LINE = "shielded applied 5000 of 9000, connected; unshielded appli
 const SYNCED_LINE = "shielded applied 9000 of 9000, connected; unshielded applied 41 of 41, connected; dust applied 9100 of 9100, connected; synced";
 
 describe("syncWithCheckpoints", () => {
+  it("cancels its underlying sync subscription when the progress reader fails", async () => {
+    const w = syncingWallet(); let cancelled = false;
+    w.wallet.waitForSync = (_timeout, signal) => new Promise<void>((_resolve, reject) => {
+      signal?.addEventListener("abort", () => { cancelled = true; reject(new Error("Wallet sync interrupted")); }, { once: true });
+    });
+    w.report(new Error("progress unavailable"));
+    await expect(syncWithCheckpoints(w.wallet, { timeoutMs: HOURS_3, progressMs: MINUTE, checkpointMs: 5 * MINUTE, write() {} })).rejects.toThrow(/progress unavailable/);
+    expect(cancelled).toBe(true);
+  });
+  it("checkpoints and stops promptly when the service is cancelled during sync", async () => {
+    vi.useFakeTimers({ now: new Date(START) });
+    const w = syncingWallet(), abort = new AbortController();
+    let failed = false;
+    const done = syncWithCheckpoints(w.wallet, { timeoutMs: HOURS_3, progressMs: MINUTE, checkpointMs: 5 * MINUTE, write() {}, signal: abort.signal });
+    done.catch(() => { failed = true; });
+    await vi.advanceTimersByTimeAsync(0); abort.abort(); await vi.advanceTimersByTimeAsync(0);
+    expect(failed).toBe(true); await expect(done).rejects.toThrow(/interrupted.*saved/i);
+    expect(w.saveState).toHaveBeenCalledTimes(1); expect(vi.getTimerCount()).toBe(0);
+  });
   it("writes the wallet's progress as the wait starts and every minute, and saves its sync state every five minutes", async () => {
     const w = syncingWallet();
     const { lines } = watch(w);

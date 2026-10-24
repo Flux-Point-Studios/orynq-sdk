@@ -12,7 +12,7 @@ import { WalletEntrySchema, WalletFacade, mergeWalletEntries, type BalancingReci
 import { ShieldedWallet } from "@midnight-ntwrk/wallet-sdk-shielded";
 import { PublicKey, UnshieldedWallet } from "@midnight-ntwrk/wallet-sdk-unshielded-wallet";
 import { Either } from "effect";
-import { filter, firstValueFrom, map, of, take, timeout } from "rxjs";
+import { Observable, filter, firstValueFrom, map, of, take, takeUntil, timeout } from "rxjs";
 import { readPrivateFile, writePrivateFile, type MidnightNetwork, type MidnightSource, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { broadcast, nodeRefusal } from "./broadcast.js";
 import { refuseMainnetSecretsPath } from "./custody.js";
@@ -74,7 +74,7 @@ export function costParametersOf(given: CostParameters | undefined): CostParamet
 export interface OperatorWallet {
   readonly network: MidnightNetwork;
   readonly addresses: WalletAddresses;
-  waitForSync(timeoutMs?: number): Promise<void>;
+  waitForSync(timeoutMs?: number, signal?: AbortSignal): Promise<void>;
   progress(): Promise<SyncProgress>;
   // Saves the sync state to the wallet's state file, so the next open resumes from here. It
   // installs only a state each sub-wallet reads back, and starts once the wallet's previous save
@@ -294,7 +294,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
 
   // The first wallet state `ready` accepts, or after `timeoutMs` the error `late` writes from the
   // state then.
-  const until = (ready: (s: FacadeState) => boolean, timeoutMs: number, late: (s: FacadeState) => string) =>
+  const until = (ready: (s: FacadeState) => boolean, timeoutMs: number, late: (s: FacadeState) => string, signal?: AbortSignal) =>
     firstValueFrom(
       facade.state().pipe(
         filter(ready),
@@ -308,9 +308,15 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
               }),
             ),
         }),
+        takeUntil(new Observable<never>(subscriber => {
+          if (!signal) return;
+          const abort = () => subscriber.error(new Error("Wallet sync interrupted"));
+          if (signal.aborted) abort(); else signal.addEventListener("abort", abort, { once: true });
+          return () => signal.removeEventListener("abort", abort);
+        })),
       ),
     );
-  const synced = (timeoutMs: number) => until((s) => s.isSynced, timeoutMs, () => `the ${network} wallet did not sync within ${timeoutMs / 1000} s`);
+  const synced = (timeoutMs: number, signal?: AbortSignal) => until((s) => s.isSynced, timeoutMs, () => `the ${network} wallet did not sync within ${timeoutMs / 1000} s`, signal);
   const nightToken = L.unshieldedToken().raw;
   const keys = { shieldedSecretKeys: secrets.zswap, dustSecretKey: secrets.dust };
   // Bytes this wallet balanced and has not handed to a node, and bytes whose DUST it freed.
@@ -374,8 +380,8 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
   return {
     network,
     addresses,
-    async waitForSync(timeoutMs = 600_000) {
-      await synced(timeoutMs);
+    async waitForSync(timeoutMs = 600_000, signal?: AbortSignal) {
+      await synced(timeoutMs, signal);
     },
     async progress() {
       const s = await firstValueFrom(facade.state());

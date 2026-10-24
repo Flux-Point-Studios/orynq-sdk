@@ -83,6 +83,39 @@ it("captures exact transaction bytes before asynchronous session checks yield", 
   await expect(pending).resolves.toMatchObject({ txHash });
 });
 
+it("retries a coherent snapshot when the live follower advances during readiness", async () => {
+  const f = setup(); advance(f, 20 * minute + 1000);
+  const original = f.state.chainView.bind(f.state); let reads = 0;
+  const spy = vi.spyOn(f.state, "chainView").mockImplementation(() => {
+    const view = original(); return { ...view, async indexedThrough() {
+      const indexed = await view.indexedThrough(); if (++reads === 1) advance(f, 1000, 13); return indexed;
+    } };
+  });
+  try { await expect(f.session.ready()).resolves.toMatchObject({ height: 13, chainTime: f.clock.wallTime + 1000 }); expect(reads).toBe(2); }
+  finally { spy.mockRestore(); }
+});
+
+it("rechecks the same bytes after a forward head change inside atomic reservation", async () => {
+  const f = setup(); advance(f, 20 * minute + 1000);
+  const raw = await batchBytes({ ttl: f.clock.wallTime + 10 * minute }), reserve = f.state.reserveStandingAttempt.bind(f.state); let calls = 0;
+  const spy = vi.spyOn(f.state, "reserveStandingAttempt").mockImplementation((bytes, policy) => { if (++calls === 1) advance(f, 1000, 13); return reserve(bytes, policy); });
+  try { await expect(f.session.reserve(raw, batchScope.commitment)).resolves.toMatchObject({ txHash: finalTransaction(raw).transactionHash() }); expect(calls).toBe(2); expect(f.state.admissions()).toHaveLength(1); }
+  finally { spy.mockRestore(); }
+});
+
+it("bounds repeated forward snapshot races without admitting or poisoning a later stable read", async () => {
+  const f = setup(); advance(f, 20 * minute + 1000);
+  const original = f.state.chainView.bind(f.state); let reads = 0;
+  const spy = vi.spyOn(f.state, "chainView").mockImplementation(() => {
+    const view = original(); return { ...view, async indexedThrough() {
+      const indexed = await view.indexedThrough(); advance(f, 1000, 13 + reads++); return indexed;
+    } };
+  });
+  try { await expect(f.session.ready()).rejects.toThrow(/advanced/); expect(reads).toBe(3); expect(f.state.admissions()).toHaveLength(0); }
+  finally { spy.mockRestore(); }
+  await expect(f.session.ready()).resolves.toMatchObject({ height: 15 });
+});
+
 it("latches a follower restore that rewinds after this process caught up", async () => {
   const f = setup(); advance(f, 20 * minute + 1000); await f.session.ready();
   const db = new DatabaseSync(f.path); db.prepare("delete from follower_blocks where height=12").run(); db.close();
