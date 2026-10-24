@@ -22,12 +22,40 @@ partial success to the legacy journal would mark a non-deployment attempt failed
 returning null could instead reach its TTL-based absence path.
 
 A single verified block establishes neither source freshness nor continuous
-coverage. The durable follower must check hash-linked ancestry, persist each
-complete block atomically, bind state to network/policy/checkpoints and retain
-unresolved attempts. Absence retirement requires exhaustive authenticated bodies
-from before the attempt's first possible broadcast through its TTL plus margin.
-An adapter without that interval must return no absence head. Rolling fee union,
-restore continuity, policy admission and standing execution are separate work.
+coverage. `openFollowerState` stores hash-linked complete blocks and observations
+atomically in private owner-only SQLite with FULL synchronous WAL. Its immutable
+scope includes network, genesis, registry, author, runtime and the digest of the
+input finality policy. That digest binds checkpoint identities and the captured
+authority-transition budget, rather than a derived checkpoint after a transition.
+
+Attempt provenance binds exact bytes, their maximum serialized intent TTL, fee,
+commitment and first prebroadcast block. Register only newly prepared bytes or an
+already registered retry; never assign a new boundary to an unknown restored
+journal row. `assertRecorded` checks provenance, not permission to broadcast.
+The reconciliation view snapshots its authenticated head. Authenticated success
+proves positive inclusion. Absence requires recorded provenance and complete
+ancestry; partial execution always holds. Explicit failure retains its reservation
+through strict TTL plus margin; later success remains observable.
+
+`feeFacts()` requires a complete authenticated day and checks the shared retained
+interval once. Each attempt must have its exact boundary inside that interval.
+`standingFeeUnion` deduplicates paid observations and local reservations by hash,
+uses the maximum conflicting amount and prevents admission on a conflict.
+Unresolved reservations never age out; paid observations remain counted after a
+local absence decision. `assertStandingFeeBudget` applies the existing approved
+per-transaction and rolling-day caps.
+
+`assertStandingClock` requires fresh chain time, twenty minutes of both chain and
+process-monotonic progress after every start, and agreement between wall and
+monotonic elapsed time. The controller must capture a new start point for each
+process, preserve it through retries and latch clock faults until restart.
+
+SQLite and its owning process are a trusted local persistence boundary. Reads do
+not cryptographically reauthenticate stored observations against retained proofs.
+Private permissions, atomic transactions and interval checks do not protect against
+an owner rewriting the database. Restoration must preserve provenance and all
+unresolved reservations. Admission, serialized broadcast guards, one-process
+ownership, current author policy and standing execution remain separate work.
 
 Undecodable sends or ambiguous execution stop this reader. They must not be
 silently converted into missing transactions or coverage. Production transport

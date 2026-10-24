@@ -400,11 +400,14 @@
     {
       "id": "authenticated-midnight-blocks",
       "name": "Authenticated Midnight block reads",
-      "desc": "Composes shared header, body-root, GRANDPA and pinned-runtime storage proofs to classify exact body-bound Midnight sends. The strict public anchor verifier still requires full success; the private operator accepts a new explicit network-matched ChainView while preserving its existing default. Durable coverage, fee union and standing admission remain separate.",
+      "desc": "Composes body-root, GRANDPA and pinned-runtime proofs into network/policy-bound complete blocks. Private atomic SQLite retains contiguous observations and exact prebroadcast provenance; reconciliation holds partial or unproven absence. Rolling fee union deduplicates paid and pending fees under existing caps. Chain/wall/monotonic clock checks require a fresh restart hold. Local persistence is trusted; admission and guarded standing execution remain separate.",
       "kind": "toolkit",
       "paths": [
         "packages/anchors-midnight/src/execution.ts",
         "packages/anchors-midnight-submit/runner/follower-block.ts",
+        "packages/anchors-midnight-submit/runner/follower-state.ts",
+        "packages/anchors-midnight-submit/runner/standing-budget.ts",
+        "packages/anchors-midnight-submit/runner/standing-clock.ts",
         "packages/anchors-midnight-submit/runner/FOLLOWER.md"
       ],
       "consumes": [

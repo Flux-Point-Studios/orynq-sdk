@@ -1,6 +1,9 @@
-import { DEFAULT_MAX_SET_CHANGES, decodeAnchorTransaction, finalityRpc, headerFromRpc, headerHash, midnightTransactionIn, orderedTrieRoot, verifyBlockEffects, verifyFinality, type BlockRef, type ExecutionOutcome, type FinalityCheckpoint, type MidnightSource, type RpcHeader } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { createHash } from "node:crypto";
+import { DEFAULT_MAX_SET_CHANGES, checkpointId, decodeAnchorTransaction, finalityRpc, headerFromRpc, headerHash, midnightTransactionIn, orderedTrieRoot, verifyBlockEffects, verifyFinality, type BlockRef, type ExecutionOutcome, type FinalityCheckpoint, type MidnightNetwork, type MidnightSource, type RpcHeader } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 
 export interface FollowerBlock {
+  network: MidnightNetwork;
+  policyDigest: string;
   block: BlockRef;
   parentHash: string;
   timestamp: number;
@@ -9,10 +12,18 @@ export interface FollowerBlock {
 }
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");
 
+export function followerPolicyDigest(checkpoints: readonly FinalityCheckpoint[], maxSetChanges = DEFAULT_MAX_SET_CHANGES): string {
+  if (!Number.isSafeInteger(maxSetChanges) || maxSetChanges < 0 || maxSetChanges > DEFAULT_MAX_SET_CHANGES) throw new Error("Invalid follower finality budget");
+  return createHash("sha256").update(JSON.stringify([checkpoints.map(checkpointId), maxSetChanges])).digest("hex");
+}
+
 export async function verifyFollowerBlock(options: { source: MidnightSource; block: BlockRef; checkpoints: readonly FinalityCheckpoint[]; maxSetChanges?: number }): Promise<FollowerBlock> {
   const block = { ...options.block };
+  const network = options.source.network;
+  if (network !== "mainnet" && network !== "preprod") throw new Error("Follower source must name its network");
+  const checkpoints = structuredClone(options.checkpoints), maxSetChanges = options.maxSetChanges ?? DEFAULT_MAX_SET_CHANGES;
+  const policyDigest = followerPolicyDigest(checkpoints, maxSetChanges);
   if (!/^[a-f0-9]{64}$/.test(block.hash) || !Number.isSafeInteger(block.height) || block.height < 1) throw new Error("Invalid follower block reference");
-  if (options.maxSetChanges !== undefined && (!Number.isSafeInteger(options.maxSetChanges) || options.maxSetChanges < 0 || options.maxSetChanges > DEFAULT_MAX_SET_CHANGES)) throw new Error("Invalid follower finality budget");
   const response = await options.source.node.call<{ block: { header: RpcHeader; extrinsics: string[] } } | null>("chain_getBlock", [`0x${block.hash}`]);
   if (!response?.block) throw new Error("Follower block is unavailable");
   const header = headerFromRpc(response.block.header);
@@ -27,7 +38,7 @@ export async function verifyFollowerBlock(options: { source: MidnightSource; blo
     return new Uint8Array(Buffer.from(encoded.slice(2), "hex"));
   });
   if (hex(orderedTrieRoot(extrinsics)) !== hex(header.extrinsicsRoot)) throw new Error("Follower block body differs from its extrinsics root");
-  const finality = await verifyFinality({ rpc: finalityRpc(options.source), block, checkpoints: options.checkpoints, ...(options.maxSetChanges === undefined ? {} : { maxSetChanges: options.maxSetChanges }) });
+  const finality = await verifyFinality({ rpc: finalityRpc(options.source), block, checkpoints, maxSetChanges });
   if (!finality.finalized) throw new Error(`Follower block finality is unverified: ${finality.reason}`);
   const effects = await verifyBlockEffects(options.source.node, { blockHash: block.hash, header });
   const sends: FollowerBlock["sends"] = [];
@@ -38,5 +49,5 @@ export async function verifyFollowerBlock(options: { source: MidnightSource; blo
     sends.push({ extrinsicIndex, bytes, txHash, status: effects.outcome(extrinsicIndex, txHash) });
   }
   effects.assertApplications(sends);
-  return { block, parentHash: hex(header.parentHash), timestamp: effects.timestamp, runtimeSpecVersion: effects.runtimeSpecVersion, sends };
+  return { network, policyDigest, block, parentHash: hex(header.parentHash), timestamp: effects.timestamp, runtimeSpecVersion: effects.runtimeSpecVersion, sends };
 }

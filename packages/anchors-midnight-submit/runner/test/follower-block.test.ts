@@ -1,7 +1,8 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import * as Midnight from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import fixture from "../../../anchors-midnight/src/__tests__/fixtures/rpc-mainnet-execution.json";
 import { rpcOnlySource, type FinalityCheckpoint, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { verifyFollowerBlock } from "../follower-block.js";
+import { followerPolicyDigest, verifyFollowerBlock } from "../follower-block.js";
 
 const checkpoint: FinalityCheckpoint = { ...fixture.checkpoint, setId: BigInt(fixture.checkpoint.setId), authorities: fixture.checkpoint.authorities.map(author => ({ ...author, weight: BigInt(author.weight) })) };
 const block = { height: fixture.hints[0]!.blockHeight, hash: fixture.hints[0]!.blockHash };
@@ -68,4 +69,14 @@ it("rejects unbounded finality budgets before reading the source", async () => {
     await expect(verifyFollowerBlock({ ...opts, maxSetChanges })).rejects.toThrow(/budget/i);
     expect(opts.calls).toEqual([]);
   }
+});
+
+it("uses the same captured finality budget for its policy identity and verification", async () => {
+  const opts = { ...options((method, _, answer) => { if (method === "chain_getBlock") opts.maxSetChanges = NaN; return answer; }), maxSetChanges: 0 };
+  const observed = vi.spyOn(Midnight, "verifyFinality");
+  try {
+    const result = await verifyFollowerBlock(opts);
+    expect(observed.mock.calls[0]![0].maxSetChanges).toBe(0);
+    expect(result.policyDigest).toBe(followerPolicyDigest(opts.checkpoints, 0));
+  } finally { observed.mockRestore(); }
 });
