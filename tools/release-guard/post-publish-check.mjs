@@ -55,20 +55,28 @@ const nameOf = (spec) => spec.slice(0, spec.lastIndexOf("@"));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function served(spec, registry, { attempts, delayMs }) {
-  const url = `${registry.replace(/\/$/, "")}/${nameOf(spec).replace("/", "%2f")}/${spec.slice(spec.lastIndexOf("@") + 1)}`;
+  const name = nameOf(spec), version = spec.slice(spec.lastIndexOf("@") + 1);
+  const url = `${registry.replace(/\/$/, "")}/${name.replace("/", "%2f")}`;
   for (let i = 1; i <= attempts; i++) {
-    let res;
+    let res, metadata;
     try {
-      res = await fetch(url);
-      await res.body?.cancel();
+      res = await fetch(url, { headers: { accept: "application/vnd.npm.install-v1+json", "cache-control": "no-cache" } });
+      if (res.ok) {
+        const body = await res.text();
+        try { metadata = JSON.parse(body); } catch { throw new Error(`${spec}: unreadable registry install metadata`); }
+      } else await res.body?.cancel();
     } catch (error) {
       const code = error?.cause?.code ?? error?.code;
       if (!["ECONNRESET", "UND_ERR_SOCKET"].includes(code) || i === attempts) throw error;
       await sleep(delayMs);
       continue;
     }
-    if (res.ok) return true;
-    if (res.status !== 404) throw new Error(`${spec}: registry answered HTTP ${res.status}`);
+    if (res.ok) {
+      if (metadata?.name !== name || !metadata.versions || typeof metadata.versions !== "object" || Array.isArray(metadata.versions)) throw new Error(`${spec}: invalid registry install metadata`);
+      const target = metadata.versions[version];
+      if (target?.name === name && target.version === version) return true;
+      if (target !== undefined) throw new Error(`${spec}: inconsistent registry version metadata`);
+    } else if (res.status !== 404) throw new Error(`${spec}: registry answered HTTP ${res.status}`);
     if (i < attempts) await sleep(delayMs);
   }
   return false;
@@ -101,7 +109,7 @@ async function checkLayout(specs, { registry, singletons }, importsToCheck) {
   try {
     writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "post-publish-probe", private: true, type: "module" }));
     try {
-      await exec("npm", ["i", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error", `--registry=${registry}`, ...specs], {
+      await exec("npm", ["i", "--ignore-scripts", "--prefer-online", "--no-audit", "--no-fund", "--loglevel=error", `--registry=${registry}`, ...specs], {
         cwd: dir,
         maxBuffer: 64 << 20,
       });

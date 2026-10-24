@@ -47,7 +47,7 @@ describe("public RPC-only verification replays real finalized mainnet execution"
     for (const target of ["parent", "anchor", "deploy"]) {
       const opts = options((method, params, answer) => {
         if (method !== "state_getReadProof") return answer;
-        const code = (params[0] as string[]).includes("0x3a636f6465");
+        const code = (params[0] as string[]).includes("0x3a636f646500");
         if ((target === "parent" && code) || (target === "anchor" && !code && params[1] === `0x${fixture.hints[0]!.blockHash}`) || (target === "deploy" && !code && params[1] !== `0x${fixture.hints[0]!.blockHash}`)) return { ...answer, proof: [] };
         return answer;
       });
