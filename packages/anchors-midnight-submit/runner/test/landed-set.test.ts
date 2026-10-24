@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { decodeReceiptRecord } from "@fluxpointstudios/orynq-sdk-core/checkpoint";
+import { certHash, decodeReceiptRecord } from "@fluxpointstudios/orynq-sdk-core/checkpoint";
 import { batchChain } from "../../../anchors-midnight/src/__tests__/batch-chain.js";
 import { openCensusState } from "../census-state.js";
 import { publishCensusPlan } from "../publisher.js";
@@ -129,4 +129,29 @@ it("requires the exact staged set link to survive the final proof read", async (
   };
   await expect(state.publishLandedSet(fixture.set, { ...options(), verify })).rejects.toThrow(/set|mapping|evidence/i);
   expect(state.currentPlan()!.state).toBe("confirmed");
+});
+
+it("does not repeatedly parse unchanged historical snapshots and invalidates after external writes", async () => {
+  await confirm(); await state.publishLandedSet(fixture.set, options());
+  expect(state.prepare(census, 0n, [fixture.set.commitment])).toBeNull();
+  const sql = vi.spyOn(DatabaseSync.prototype, "prepare");
+  try {
+    expect(state.prepare(census, 0n, [fixture.set.commitment])).toBeNull();
+    expect(sql.mock.calls.filter(([query]) => query.includes("o.kind='members'"))).toHaveLength(0);
+    const changed = new DatabaseSync(path); changed.exec("delete from claims"); changed.close();
+    expect(() => state.prepare(census, 0n, [fixture.set.commitment])).toThrow(/claim/i);
+  } finally { sql.mockRestore(); }
+});
+
+it("validates at most one previously unchecked retained plan per turn and resumes safely", async () => {
+  await confirm(); await state.publishLandedSet(fixture.set, options());
+  const original = census.entries[0]!; if (original.status === "pending") throw new Error("Invalid fixture");
+  const receiptId = "ef".repeat(32), record = { ...original.record };
+  record.availabilityCertHash = certHash({ format: "scale-v1", chainId: null }, census.genesis, receiptId, record);
+  const later = { ...census, finalizedHeight: census.finalizedHeight + 1, finalizedHash: "0x" + "cd".repeat(32), entries: [...census.entries, { receiptId, status: "certified" as const, record }] };
+  const current = state.prepare(later, 0n)!, required = [fixture.set.commitment, current.commitment];
+  expect(() => state.prepare(later, 0n, required)).toThrow(/validation.*incomplete|bounded.*turn/i);
+  expect(state.prepare(later, 0n, required)).toEqual(current);
+  const changed = new DatabaseSync(path); changed.exec("update objects set body=body || ' ' where kind='members'"); changed.close();
+  expect(() => state.prepare(later, 0n, required)).toThrow(/digest/i);
 });

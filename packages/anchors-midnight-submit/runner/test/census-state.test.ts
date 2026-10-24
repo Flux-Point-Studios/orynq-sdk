@@ -184,4 +184,6 @@ it("holds planning when follower history names a missing retained plan", () => f
   const retained = state.prepare(census(), 10n)!;
   expect(state.prepare(census(4, 101), 11n, [retained.commitment])).toEqual(retained);
   expect(() => state.prepare(census(4, 102), 12n, [hash(901)])).toThrow(/retained|plan|repair/i);
+  state.abandon(retained.commitment);
+  expect(() => state.prepare(census(4, 102), 12n, [retained.commitment])).toThrow(/retained|repair/i);
 }));

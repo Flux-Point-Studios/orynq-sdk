@@ -160,6 +160,8 @@ export function openCensusState(path: string, input: { network: "mainnet" | "pre
     if (!row || checkedObject(row).sha256 !== sha256) throw new Error("Publication digest differs from durable object");
     db.prepare("update objects set published=1 where key=?").run(key);
   }
+  const retainedPlans = new Set<string>();
+  let retainedVersion: unknown;
 
   return {
     currentPlan,
@@ -196,8 +198,15 @@ export function openCensusState(path: string, input: { network: "mainnet" | "pre
       if (typeof nowMillis !== "bigint" || nowMillis < 0n) throw new Error("Invalid planning chain time");
       if (!Array.isArray(requiredCommitments) || requiredCommitments.length > 262144 || requiredCommitments.some(value => !HASH.test(value))) throw new Error("Invalid retained commitment history");
       return transaction(() => {
+        // Other SQLite connections invalidate remembered checks; local abandonment does too.
+        const version = db.prepare("pragma data_version").get()!.data_version;
+        if (version !== retainedVersion) { retainedPlans.clear(); retainedVersion = version; }
+        let validated = false;
         for (const commitment of requiredCommitments) {
+          if (retainedPlans.has(commitment)) continue;
+          if (validated) throw new Error("Retained-plan validation is incomplete; retry the next bounded turn");
           if (getPlan(commitment).state === "abandoned") throw new Error("Follower commitment requires retained-plan repair");
+          retainedPlans.add(commitment); validated = true;
         }
         observe(census);
         const active = currentPlan();
@@ -271,6 +280,7 @@ export function openCensusState(path: string, input: { network: "mainnet" | "pre
         db.prepare("update plans set state='abandoned' where commitment=?").run(commitment);
         db.prepare("delete from claims where commitment=?").run(commitment);
       });
+      retainedPlans.delete(commitment);
     },
     close() { db.close(); },
   };

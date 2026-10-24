@@ -177,6 +177,12 @@ can recover without reopening the wallet permission path.
 Before planning, every commitment retained in follower provenance or observed
 history must have an intact census plan. Missing or abandoned plans require
 retained-plan repair; the loop never replaces lost receipt claims with a new fee.
+Each turn deeply validates at most one previously unchecked retained plan and
+holds until the rest have been checked. Validated identities remain in memory;
+another SQLite connection's commit invalidates them through
+[`PRAGMA data_version`](https://www.sqlite.org/pragma.html#pragma_data_version),
+and local abandonment removes the identity. A process restart validates again.
+Current plan and publication checks still load their exact objects afresh.
 Prepared bytes that fail before journal ownership latch restart, retaining wallet
 reservations through recovery. The service must still own the wallet lifetime lock.
 
