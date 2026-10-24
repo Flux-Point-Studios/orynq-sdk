@@ -30,12 +30,14 @@ export function anchorChain({
   node = {},
   indexer = {},
   place = [],
+  stateRootOf,
 }: {
   bodies?: Map<number, Uint8Array[]>;
   node?: Record<string, (params: unknown[], honest: () => unknown) => unknown>;
   indexer?: Record<string, (honest: IndexedTransaction[]) => IndexedTransaction[]>;
   // More transactions, each alone in a block: [height, "deploy" | "anchor", tx hex, tx hash].
   place?: Array<[number, "deploy" | "anchor", string, string]>;
+  stateRootOf?: (height: number) => Uint8Array | undefined;
 } = {}) {
   const placed = new Map<number, { name: string; tx: string; txHash: string }>([
     [DEPLOY_HEIGHT, { name: "deploy", tx: fixture.registry.tx, txHash: fixture.registry.txHash }],
@@ -46,7 +48,7 @@ export function anchorChain({
   ]);
   const bodyAt = (h: number) =>
     bodies.get(h) ?? [inherent(h), ...(placed.has(h) ? [sendMnTransaction(fromHex(placed.get(h)!.tx, "tx"))] : [])];
-  const chain = syntheticChain({ firstSetId: 40n, genesisEnd: 1000, setLengths: () => 300, setCount: 6, extrinsicsRootOf: (h) => orderedTrieRoot(bodyAt(h)) });
+  const chain = syntheticChain({ firstSetId: 40n, genesisEnd: 1000, setLengths: () => 300, setCount: 6, extrinsicsRootOf: (h) => orderedTrieRoot(bodyAt(h)), ...(stateRootOf ? { stateRootOf } : {}) });
   const stateHex = toHex(registryInitialState().serialize());
   const indexed = new Map<string, IndexedTransaction>(
     [...placed].map(([height, p]) => [
@@ -76,8 +78,7 @@ export function anchorChain({
       const [proof] = await chain.rpc.proveFinality([params[0] as number]);
       return proof ? `0x${toHex(proof)}` : null;
     }
-    const base = honest[method];
-    if (!base) throw new Error(`synthetic node: no ${method}`);
+    const base = honest[method] ?? (() => { throw new Error(`synthetic node: no ${method}`); });
     return node[method] ? node[method]!(params, () => base(params)) : base(params);
   };
   const source: MidnightSource = {
