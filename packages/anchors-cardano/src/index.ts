@@ -5,13 +5,15 @@
  *
  * This is the main entry point for the anchors-cardano package. It re-exports
  * all public types, functions, and constants for anchoring cryptographic
- * commitments to the Cardano blockchain using transaction metadata label 2222.
+ * commitments to the Cardano blockchain using transaction metadata label 2222,
+ * and for verifying Materios checkpoint anchors under label 8746.
  *
  * The package provides:
  * - Types for anchor entries, metadata, and verification results
  * - Builder functions to create anchor metadata from trace bundles
  * - Verifier functions to parse and verify anchors from on-chain data
  * - Provider implementations for Blockfrost and Koios APIs
+ * - The label 8746 record builder and decoder, and verifyMateriosCheckpointAnchor
  * - A chained submit queue that lets one wallet submit anchors back to back
  *
  * Used by:
@@ -135,9 +137,10 @@ export {
   BlockfrostError,
 } from "./providers/blockfrost.js";
 
-// Koios provider
+// Koios provider, and the Koios source for verifyMateriosCheckpointAnchor
 export {
   createKoiosProvider,
+  createKoiosCheckpointSource,
   getKoiosBaseUrl,
   KoiosError,
 } from "./providers/koios.js";
@@ -154,13 +157,26 @@ export {
   MATERIOS_ANCHOR_PROTOCOL,
   MATERIOS_ANCHOR_VERSION,
   buildMateriosAnchorV2,
+  decodeMateriosAnchorRecord,
   looksLikeBip39,
   scanForSeedPhrase,
 } from "./materios-anchor-v2.js";
 export type {
+  MateriosAnchorDecoding,
+  MateriosAnchorEncoding,
   MateriosAnchorV2Input,
   MateriosAnchorV2Metadata,
 } from "./materios-anchor-v2.js";
+
+export { verifyMateriosCheckpointAnchor } from "./materios-checkpoint-verifier.js";
+export type {
+  CheckpointTransaction,
+  MateriosCheckpointCheck,
+  MateriosCheckpointClaim,
+  MateriosCheckpointOptions,
+  MateriosCheckpointSource,
+  MateriosCheckpointVerification,
+} from "./materios-checkpoint-verifier.js";
 
 // =============================================================================
 // CHAINED SUBMISSION

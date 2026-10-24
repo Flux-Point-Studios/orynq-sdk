@@ -4,6 +4,16 @@ Take a `content_hash` (as emitted by [demo 1](../01-pipeline)) and
 reconstruct the full lineage **using only public RPCs**. No FPS-controlled
 non-public endpoint is contacted at any step.
 
+**Limits.** `verify.py` reads only the flat encoding of the label 8746
+record, which no checkpoint anchor has used since 2026-06-29: the live
+anchor worker writes the detailed-schema encoding, so `verify.py` matches
+none of its anchors. It also never checks the receipt's leaf against the
+anchored root, nor the wallet that funded the anchor, so a match does not
+prove inclusion. `verifyMateriosCheckpointAnchor` in
+`@fluxpointstudios/orynq-sdk-anchors-cardano` makes every check; its
+[README](../../packages/anchors-cardano/README.md#verifying-a-receipts-anchor)
+lists its inputs and trust assumptions.
+
 ## What "public" means here
 
 | Endpoint | Operator | Public? |
@@ -40,9 +50,9 @@ Input:  content_hash  (sha256 of canonical observation pre-image)
      the receipt's submission block (from OrinqReceipts.ReceiptSubmittedAt).
 ```
 
-If step 8 returns a tx hash, the lineage is verified — FPS has no path
-to forge this proof, because Blockfrost reports what's on Cardano L1,
-and the Materios public RPC reports what's in the consensus state.
+If step 8 returns a tx hash, a flat label 8746 record for this chain
+covers the receipt's block; the limits above say what that leaves
+unproven.
 
 ## Run
 

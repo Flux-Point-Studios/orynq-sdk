@@ -43,9 +43,10 @@ export {
   BlockfrostError,
 } from "./blockfrost.js";
 
-// Koios provider
+// Koios provider, and the Koios source for verifyMateriosCheckpointAnchor
 export {
   createKoiosProvider,
+  createKoiosCheckpointSource,
   getKoiosBaseUrl,
   KoiosError,
 } from "./koios.js";

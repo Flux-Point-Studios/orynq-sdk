@@ -1,0 +1,5 @@
+---
+"@fluxpointstudios/orynq-sdk-anchors-cardano": minor
+---
+
+Verify a Materios receipt's checkpoint anchor on Cardano end to end with `verifyMateriosCheckpointAnchor`: it recomputes the receipt's leaf (from its cert hash or the receipt fields that rebuild the Cert), the root through the count-bound `rootFromPath`, the daemon's manifest hash and the anchor id, then requires a label 8746 record carrying them in a tx in a block, funded only by pinned anchor wallets and at least 15 confirmations deep (configurable; 2160 for an anchor no rollback can reach). It finds the tx by hash or by scanning the pinned wallets from a Cardano height, and names the check that refused. `decodeMateriosAnchorRecord` reads the record in both encodings on mainnet, the detailed-schema map the live anchor worker writes and the flat record a Lucid-based worker wrote until 2026-06-29, and refuses mixed encodings and any other `p`/`v`. `createKoiosCheckpointSource` reads the chain through Koios, and `KoiosConfig.baseUrl` points it, and `createKoiosProvider`, at any Koios-compatible API.
