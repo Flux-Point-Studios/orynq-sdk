@@ -449,3 +449,30 @@ describe("the author key", () => {
     expect(() => setup({ authorKeyFile: open })).toThrow(/open\.key can be read or written by group or others/);
   });
 });
+
+describe("explicit reconciliation chain views", () => {
+  it("uses an explicitly supplied view without reading indexer status", async () => {
+    const net = chain();
+    net.source.indexer.transactions = async () => { throw new Error("Indexer status must not settle this attempt"); };
+    const seen: string[] = [];
+    const chainView = {
+      network: "preprod",
+      async lookup(txHash: string) { seen.push(txHash); return { status: "SUCCESS" as const, height: 777, blockHash: "ca".repeat(32) }; },
+      async indexedThrough() { return null; },
+      async holdsContract() { throw new Error("No deployment reconciliation is allowed"); },
+      async finalHash() { return "ca".repeat(32); },
+    };
+    const { operator, wallet: w } = setup({ net, chain: chainView });
+    try {
+      const receipt = await operator.anchor(entry());
+      expect(receipt.blockHeight).toBe(777);
+      expect(receipt.blockHash).toBe("ca".repeat(32));
+      expect(seen).toContain(receipt.txHash);
+      expect(w.submitted).toHaveLength(1);
+    } finally { operator.close(); }
+  });
+
+  it("refuses a view for another network before opening the operator", () => {
+    expect(() => setup({ chain: { network: "mainnet", async lookup() { return null; }, async indexedThrough() { return null; }, async holdsContract() { return false; }, async finalHash() { return null; } } })).toThrow(/chain view.*network|mainnet.*preprod/i);
+  });
+});

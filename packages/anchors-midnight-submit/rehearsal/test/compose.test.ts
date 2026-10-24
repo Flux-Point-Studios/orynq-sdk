@@ -15,6 +15,10 @@ function compose(edit: (r: Rehearsal) => void = () => {}, afterWrite: (home: str
   afterWrite(`${root}/home`, `${root}/rehearsal`);
   const out = `${root}/pack.json`;
   const run = spawnSync(process.execPath, ["--import", "tsx", "compose.ts", `${root}/rehearsal`, out], { cwd: HERE, encoding: "utf8", env: { ...process.env, HOME: `${root}/home` }, timeout: 60_000 });
+  if (run.status !== 0) {
+    const counts = [...run.stdout.matchAll(/"(secretsScanned|windowsOfSecretsInPack|openingWindowsInPrivateReceipts|attributeWindowsInPack)":(\d+)/g)].map(match => `${match[1]}=${match[2]}`).join(" ");
+    if (counts) run.stderr += `Privacy counts: ${counts}\n`;
+  }
   return { r, run, out, pack: existsSync(out) ? JSON.parse(readFileSync(out, "utf8")) : null };
 }
 
