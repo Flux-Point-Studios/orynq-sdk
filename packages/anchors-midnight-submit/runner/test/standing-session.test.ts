@@ -44,6 +44,18 @@ it("starts a new hold even when admissions and history already survived restart"
   await expect(restarted.reserve(raw, batchScope.commitment)).rejects.toThrow(/twenty|warmup/i);
 });
 
+it("requires a successful asynchronous readiness check before synchronous reservation", async () => {
+  const f = setup(); advance(f, 20 * minute + 1000); const raw = await batchBytes({ ttl: f.clock.wallTime + 10 * minute });
+  expect(() => f.session.reserveNow(raw, batchScope.commitment)).toThrow(/ready|readiness/i);
+  await f.session.ready(); expect(f.session.reserveNow(raw, batchScope.commitment)).toMatchObject({ commitment: batchScope.commitment, checkedAt: f.clock });
+});
+
+it("cannot bypass the strict restore margin through synchronous reservation", async () => {
+  const f = setup(); advance(f, 20 * minute); const raw = await batchBytes({ ttl: f.clock.wallTime + 10 * minute });
+  await expect(f.session.ready()).rejects.toThrow(/margin|warmup/i);
+  expect(() => f.session.reserveNow(raw, batchScope.commitment)).toThrow(/ready|readiness|margin|warmup/i);
+});
+
 it("latches a host-clock step even if the clock is corrected before retry", async () => {
   const f = setup(); f.clock.wallTime += 1001;
   await expect(f.session.ready()).rejects.toThrow(/restart/i);
@@ -148,6 +160,14 @@ it("accepts a legitimate policy advance during the final read without poisoning 
   advance(f, 20 * minute + 1000); const raw = await batchBytes({ ttl: f.clock.wallTime + 10 * minute });
   await expect(session.reserve(raw, batchScope.commitment)).resolves.toMatchObject({ commitment: batchScope.commitment });
   await expect(session.ready()).resolves.toMatchObject({ chainTime: f.clock.wallTime });
+});
+
+it("accepts a sibling observer's legitimate policy advance while still refusing a stale reload", async () => {
+  const f = setup(); let policy = batchAuthors();
+  const session = openStandingSession({ ...f.options, authors: () => policy }); advance(f, 20 * minute + 1000);
+  policy = batchAuthors({}, 2); f.state.observeStandingPolicy(policy);
+  await expect(session.ready()).resolves.toMatchObject({ chainTime: f.clock.wallTime });
+  policy = batchAuthors(); await expect(session.ready()).rejects.toThrow(/serial|policy|continuity/i);
 });
 
 it("requires the durable interval to contain the exact verified startup block", async () => {

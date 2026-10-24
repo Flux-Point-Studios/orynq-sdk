@@ -25,7 +25,17 @@ never-confirmed plan may be reactivated. Confirmed claims cannot be released, an
 later recertification requires reconciliation rather than permission for another
 fee.
 
-The module does not load a wallet, prepare final transaction bytes, broadcast,
-verify a Midnight landing, or count coverage. The standing controller must use the
-existing submission journal and an authenticated follower for those operations.
+`publishLandedSet(set, {verify, publication})` parses and copies exact set evidence,
+requires the complete confirmed plan membership and performs the public consensus
+verifier before staging immutable set bytes. It freshly publishes every member,
+plan and set to both retained stores, re-runs verification under the current
+policy returned by `verify()`, then atomically lands the exact retained set.
+No separate acknowledgement-only landing API exists. All claims remain retained.
+An interrupted publication leaves a confirmed plan and staged set; recovery repeats
+proof verification and readbacks without requesting another transaction.
+
+Plan landing proves coverage of its fixed certificates. It does not settle another
+prepared or uncertain transaction, release fee reservations or free wallet inputs.
+The controller must retain those in its authenticated follower and submission journal.
+This module does not load a wallet, prepare final transaction bytes or broadcast.
 The independent coverage watch must obtain a fresh census and verify proofs.

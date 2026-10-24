@@ -356,6 +356,14 @@ invalid unless the transaction is, so inclusion in a final block means consensus
 proof. A transaction carried inside another call, another pallet, a signed or general extrinsic,
 or another transaction's bytes is not included.
 
+Execution authenticates the parent runtime's actual `:code` value hash. Its RPC
+request uses the strict extension `:code + 00`, which retains the committed code
+leaf while avoiding the large external Wasm value. The existing trie verifier
+still checks the actual `:code` key against the pinned hash under the authenticated
+parent state root. This follows [Substrate's trie lookup](https://github.com/paritytech/trie/blob/master/trie-db/src/lookup.rs#L714-L752);
+extension absence alone is never accepted as runtime evidence. A sampled mainnet
+code witness used 1,385 JSON bytes versus 1,078,240 for the exact-value request.
+
 `midnightSource` reads a Midnight indexer (GraphQL) and node (JSON-RPC); `blockfrostEndpoints`
 points it at Blockfrost, with the project id read from a file only its owner can read and sent
 as a header. No error, status or echoed body carries the project id, and a file that does not

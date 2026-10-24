@@ -50,7 +50,8 @@ export async function verifyBlockEffects(node: MidnightSource["node"], request: 
   const parentAt = `0x${toHex(header.parentHash)}`;
   const [parentJson, parentProof, targetProof] = await node.batch([
     ["chain_getHeader", [parentAt]],
-    ["state_getReadProof", [["0x3a636f6465"], parentAt]],
+    // A strict extension exposes the committed code hash without fetching the Wasm value.
+    ["state_getReadProof", [["0x3a636f646500"], parentAt]],
     ["state_getReadProof", [[SYSTEM_EVENTS, TIMESTAMP_NOW], at]],
   ]) as [RpcHeader, ReadProof, ReadProof];
   try {

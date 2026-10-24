@@ -109,11 +109,11 @@ export function openFollowerState(path: string, input: Scope) {
     const boundary = headRow(); if (!boundary) throw new Error("Attempt needs a verified prebroadcast boundary");
     db.prepare("insert into follower_attempts(tx_hash,bytes,ttl,fee,commitment,boundary_height,boundary_hash) values(?,?,?,?,?,?,?)").run(facts.txHash, bytes, facts.ttl, fee, facts.commitment, boundary.height, boundary.hash);
   }
-  function observePolicy(authors: KnownAuthors) {
+  function observePolicy(authors: KnownAuthors, remembered = false) {
     if (!Number.isSafeInteger(authors.serial) || authors.serial < 1) throw new Error("Invalid standing author policy serial");
     const digest = hash(JSON.stringify([authors.serial, authors.authors(scope.network), authors.checkpoints(scope.network).map(checkpointId)]));
     const previous = db.prepare("select serial,digest,conflicted from follower_policies where id=1").get();
-    if (previous && Number(previous.serial) > authors.serial) return "Standing author policy serial rewound";
+    if (previous && Number(previous.serial) > authors.serial) return remembered && previous.conflicted !== 1 ? null : "Standing author policy serial rewound or conflicted";
     if (previous && previous.serial === authors.serial && (previous.digest !== digest || previous.conflicted === 1)) {
       db.prepare("update follower_policies set conflicted=1 where id=1").run();
       return "Standing author policy conflict requires a newer authoritative serial";
@@ -121,8 +121,8 @@ export function openFollowerState(path: string, input: Scope) {
     db.prepare("insert into follower_policies(id,serial,digest,conflicted) values(1,?,?,0) on conflict(id) do update set serial=excluded.serial,digest=excluded.digest,conflicted=0").run(authors.serial, digest);
     return null;
   }
-  function retainPolicy(authors: KnownAuthors) {
-    const failure = transaction(() => observePolicy(authors));
+  function retainPolicy(authors: KnownAuthors, remembered = false) {
+    const failure = transaction(() => observePolicy(authors, remembered));
     if (failure) throw new Error(failure);
   }
   function admissions(): Admission[] {
@@ -137,12 +137,29 @@ export function openFollowerState(path: string, input: Scope) {
     }
   }
   return {
+    scope: () => ({ ...scope }),
+    coverage: () => transaction(() => {
+      const floor = db.prepare("select * from follower_blocks order by height limit 1").get() as unknown as BlockRow | undefined;
+      const snapshot = headRow(), boundary = db.prepare("select boundary_height,boundary_hash from follower_attempts order by boundary_height limit 1").get();
+      const first = db.prepare("select * from follower_blocks where batch_indexed<>1 order by height limit 1").get() as unknown as BlockRow | undefined;
+      const end = first && db.prepare("select height,hash from follower_blocks where height=?").get(Math.min(first.height + 31, snapshot!.height));
+      if (first && !end) throw new Error("Follower replay interval is incomplete");
+      const point = (row: BlockRow | undefined) => row ? { height: row.height, hash: row.hash, parentHash: row.parent_hash, timestamp: row.timestamp } : null;
+      return { floor: point(floor), head: point(snapshot), earliestAttempt: boundary ? { height: Number(boundary.boundary_height), hash: String(boundary.boundary_hash) } : null,
+        replay: first ? { after: { height: first.height - 1, hash: first.parent_hash }, end: { height: Number(end!.height), hash: String(end!.hash) } } : null };
+    }),
     head,
     observations,
     feeFacts: () => transaction(feeFacts),
     admissions,
+    commitments: () => {
+      const rows = db.prepare("select commitment from follower_attempts union select commitment from follower_batch_calls order by commitment limit 262145").all();
+      if (rows.length > 262144) throw new Error("Follower commitment history exceeds repair bounds");
+      return rows.map(row => String(row.commitment));
+    },
     assertAdmissionHistory,
-    observeStandingPolicy: retainPolicy,
+    observeStandingPolicy: (authors: KnownAuthors) => retainPolicy(authors),
+    rememberStandingPolicy: (authors: KnownAuthors) => retainPolicy(authors, true),
     recordVerifiedBlock(block: FollowerBlock) {
       if (block.network !== scope.network || block.policyDigest !== scope.policyDigest) throw new Error("Verified follower block scope differs from the durable trust policy");
       if (!Number.isSafeInteger(block.block.height) || block.block.height < 1 || !isHash(block.block.hash) || !isHash(block.parentHash) || !Number.isSafeInteger(block.timestamp) || block.timestamp < 0 || block.runtimeSpecVersion !== scope.runtimeSpecVersion || !Array.isArray(block.sends) || block.sends.length > 65_536) throw new Error("Invalid follower block facts");

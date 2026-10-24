@@ -370,7 +370,7 @@
     {
       "id": "npm-release",
       "name": "npm release",
-      "desc": "Dependency tests require patched Zod, body-parser, Hono, Vitest mocker, Fastify and IPv6 address parsing releases; MCP metadata schemas accept Zod 4 records. Post-publication metadata probes retry ECONNRESET and UND_ERR_SOCKET within the existing visibility attempt/delay budget; exhaustion and nontransient errors still fail. Publishes every workspace package version npm lacks on a push to main: a token-less step installs, runs release-guard (refuses a public package with a runtime dependency on a private one, named directly, through an npm: or workspace: alias or by a workspace: path resolved through symlinks, or on a local path (link:, file: or bare) or a spec npm-package-arg cannot classify, a version npm would record differently, and a version below one npm already has by npm's semver order, prereleases included), then builds and packs them (scripts/pack-unpublished.mjs, the choice changeset publish makes); only the digest-pinned npm-publish plugin, named by the npm_token secret's image filter, holds the token; post-publish-check then installs each published version from npm, alone and together, imports it and requires one copy of each WASM singleton. CI dry-runs changeset version in isolated manifest copies with a minor probe for each private package and refuses public major bumps.",
+      "desc": "Dependency tests require patched Zod, body-parser, Hono, Vitest mocker, Fastify and IPv6 address parsing releases; MCP metadata schemas accept Zod 4 records. Post-publication probes require the exact version in npm's installation metadata and revalidate the installer cache; propagation and transient ECONNRESET or UND_ERR_SOCKET failures share the existing visibility attempt/delay budget. Exhaustion, malformed metadata, nontransient errors and failed installs still fail. Publishes every workspace package version npm lacks on a push to main: a token-less step installs, runs release-guard (refuses a public package with a runtime dependency on a private one, named directly, through an npm: or workspace: alias or by a workspace: path resolved through symlinks, or on a local path (link:, file: or bare) or a spec npm-package-arg cannot classify, a version npm would record differently, and a version below one npm already has by npm's semver order, prereleases included), then builds and packs them (scripts/pack-unpublished.mjs, the choice changeset publish makes); only the digest-pinned npm-publish plugin, named by the npm_token secret's image filter, holds the token; post-publish-check then installs each published version from npm, alone and together, imports it and requires one copy of each WASM singleton. CI dry-runs changeset version in isolated manifest copies with a minor probe for each private package and refuses public major bumps.",
       "kind": "pipeline",
       "paths": [
         ".woodpecker/release.yaml",
@@ -400,50 +400,24 @@
     {
       "id": "authenticated-midnight-blocks",
       "name": "Authenticated Midnight block reads",
-      "desc": "Composes body-root, GRANDPA and pinned-runtime proofs into network/policy-bound complete blocks. Bounded contiguous ranges share verified authority paths with per-original-root cumulative transition limits while retaining the original policy identity. Private SQLite retains observations, exact provenance and scoped commitment history. Atomic reservations enforce canonical kind-3 scope, current batch policy, serialized TTLs, complete accounting and fee caps. Process sessions retain startup, policy and admission watermarks; observed clock or history rollback latches restart. Local persistence is trusted; guarded delivery and the standing controller remain separate.",
+      "desc": "Composes body-root, GRANDPA and pinned-runtime proofs into network/policy-bound complete blocks. Strict-extension runtime queries authenticate the actual code-key hash without fetching external Wasm. Bounded contiguous ranges share verified authority paths with per-original-root cumulative transition limits while retaining the original policy identity. Catch-up authenticates a complete-day and author-window floor before appending, resumes the exact durable cursor and replays migrated indexes under shared per-turn HTTP bounds. Private SQLite retains observations, exact provenance and scoped commitment history. Atomic reservations enforce canonical kind-3 scope, current batch policy, serialized TTLs, complete accounting and fee caps. Process sessions retain startup, policy and admission watermarks. Remembered policy floors compose across observers while fresh reloads still reject rollback and conflicts; observed clock, policy or history rollback latches restart. Wallet delivery journals exact unsent bytes before fresh two-copy publication and census confirmation, then grants single-use exact-byte permission with synchronous final admission and expiry checks. Publication failures retry the retained bytes. The serial standing controller confirms both copies before preparing, resumes exact journal bytes, waits for authenticated settlement and publishes proof-backed landing. Planning requires intact retained plans for every follower commitment. Retained history validation checks one new plan per turn, remembers unchanged identities and invalidates on external SQLite commits or local abandonment. Local persistence is trusted; service lifetime ownership remains separate.",
       "kind": "toolkit",
       "paths": [
         "packages/anchors-midnight/src/execution.ts",
         "packages/anchors-midnight-submit/runner/follower-block.ts",
+        "packages/anchors-midnight-submit/runner/follower-catchup.ts",
         "packages/anchors-midnight-submit/runner/follower-state.ts",
         "packages/anchors-midnight-submit/runner/standing-budget.ts",
         "packages/anchors-midnight-submit/runner/standing-clock.ts",
         "packages/anchors-midnight-submit/runner/standing-session.ts",
+        "packages/anchors-midnight-submit/runner/standing-delivery.ts",
         "packages/anchors-midnight-submit/runner/standing-transaction.ts",
-        "packages/anchors-midnight-submit/runner/FOLLOWER.md"
+        "packages/anchors-midnight-submit/runner/FOLLOWER.md",
+        "packages/anchors-midnight/src/storage-proof.ts",
+        "packages/anchors-midnight-submit/runner/standing-controller.ts"
       ],
       "consumes": [
         "anchors-midnight"
-      ],
-      "status": "experimental"
-    },
-    {
-      "id": "materios-certified-census",
-      "name": "Finalized certified receipt census",
-      "desc": "Reads every Materios receipt at one fixed finalized block through bounded storage RPC, validates Blake2_128Concat keys and exact SCALE values, classifies certificate provenance with shared core primitives, and preserves pending or contradicted entries. Re-enumeration observes late certification; independent coverage recount is required because RPC completeness is an operator trust boundary.",
-      "kind": "toolkit",
-      "paths": [
-        "packages/anchors-midnight-submit/runner/census.ts",
-        "packages/anchors-midnight-submit/runner/CENSUS.md"
-      ],
-      "consumes": [
-        "checkpoint-primitives",
-        "orinq-receipts-pallet"
-      ],
-      "status": "experimental"
-    },
-    {
-      "id": "midnight-census-plan-state",
-      "name": "Durable Midnight census plans",
-      "desc": "Private versioned SQLite state atomically persists canonical census snapshots, kind-3 plans, receipt claims and publication outbox. Confirmation rechecks fresh certificates and publication acknowledgements; confirmed claims cannot be released by restart or abandonment. Landing and coverage require an external authenticated follower.",
-      "kind": "toolkit",
-      "paths": [
-        "packages/anchors-midnight-submit/runner/census-state.ts",
-        "packages/anchors-midnight-submit/runner/CENSUS-STATE.md"
-      ],
-      "consumes": [
-        "materios-certified-census",
-        "checkpoint-primitives"
       ],
       "status": "experimental"
     },
@@ -465,9 +439,39 @@
       "status": "experimental"
     },
     {
+      "id": "materios-certified-census",
+      "name": "Finalized certified receipt census",
+      "desc": "Reads every Materios receipt at one fixed finalized block through bounded storage RPC, validates Blake2_128Concat keys and exact SCALE values, classifies certificate provenance with shared core primitives, and preserves pending or contradicted entries. Re-enumeration observes late certification; independent coverage recount is required because RPC completeness is an operator trust boundary.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight-submit/runner/census.ts",
+        "packages/anchors-midnight-submit/runner/CENSUS.md"
+      ],
+      "consumes": [
+        "checkpoint-primitives",
+        "orinq-receipts-pallet"
+      ],
+      "status": "experimental"
+    },
+    {
+      "id": "midnight-census-plan-state",
+      "name": "Durable Midnight census plans",
+      "desc": "Private versioned SQLite state atomically persists canonical census snapshots, kind-3 plans, permanent receipt claims and publication outbox. Confirmation rechecks fresh certificates. Combined landing requires current public consensus verification before immutable set staging and after fresh two-copy member/plan/set readbacks, then atomically retains the exact landed set. Interrupted publication resumes without another transaction; landing does not settle uncertain attempts or release their fees.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/anchors-midnight-submit/runner/census-state.ts",
+        "packages/anchors-midnight-submit/runner/CENSUS-STATE.md"
+      ],
+      "consumes": [
+        "materios-certified-census",
+        "checkpoint-primitives"
+      ],
+      "status": "experimental"
+    },
+    {
       "id": "midnight-retained-publisher",
       "name": "Midnight retained proof publisher",
-      "desc": "Reads back every canonical member and recovery-plan object from two retained proof stores before durable acknowledgement, including previously acknowledged objects. Exact byte digests, member-before-plan ordering, bounded reads and deadlines, credential-free public reads and redirect refusal preserve recovery preconditions across restart. Independent storage ownership is an operator prerequisite.",
+      "desc": "Reads back every canonical member, recovery-plan and optional landed-set object from two retained proof stores before durable acknowledgement, including previously acknowledged objects. Exact byte digests, member-before-plan-before-set ordering, bounded reads and deadlines, credential-free public reads and redirect refusal preserve recovery preconditions across restart. Independent storage ownership is an operator prerequisite.",
       "kind": "toolkit",
       "paths": [
         "packages/anchors-midnight-submit/runner/publisher.ts",

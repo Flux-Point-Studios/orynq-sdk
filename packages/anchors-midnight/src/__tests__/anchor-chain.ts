@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { FinalityCheckpoint } from "../grandpa.js";
 import { signKnownAuthors, knownAuthors, type KnownAuthor } from "../known-authors.js";
-import type { RegistryInfo } from "../registries.js";
+import type { MidnightNetwork, RegistryInfo } from "../registries.js";
 import { REGISTRY_VERIFIER_KEY_SHA256, registryInitialState } from "../registry.js";
 import { concatBytes, encodeCompact, fromHex, toHex } from "../scale.js";
 import type { IndexedTransaction, MidnightSource } from "../source.js";
@@ -124,7 +124,7 @@ export function anchorChain({
   };
   const checkpoint: FinalityCheckpoint = chain.checkpoint(0);
   const rootSeed = random32();
-  const authors = (entries: Array<Partial<KnownAuthor>> = [{}]) =>
+  const authors = (entries: Array<Partial<KnownAuthor>> = [{}], network: MidnightNetwork = "mainnet") =>
     knownAuthors({
       trustRoots: [toHex(ed25519PublicKey(rootSeed))],
       documents: [
@@ -134,7 +134,7 @@ export function anchorChain({
             serial: 1,
             issued: "2026-10-04T00:00:00Z",
             networks: {
-              mainnet: {
+              [network]: {
                 authors: entries.map((e) => ({ key: fixture.author.key, id: "fluxpoint-relay", role: "relay", validFrom: DEPLOY_HEIGHT, validTo: null, ...e })),
                 checkpoints: [
                   {

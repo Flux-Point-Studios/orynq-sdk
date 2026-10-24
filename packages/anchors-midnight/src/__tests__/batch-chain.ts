@@ -12,11 +12,13 @@ import storage from "./fixtures/storage-proof-mainnet.json";
 import { anchorChain, DEPLOY_HEIGHT, fixture } from "./anchor-chain.js";
 import { finalBytes, unprovenRegistryCall } from "./registry-call.js";
 import { replaceProofValue } from "./proof-node.js";
+import type { MidnightNetwork } from "../registries.js";
 
-export async function batchChain() {
+export async function batchChain(options: { singleBatch?: boolean; network?: MidnightNetwork } = {}) {
+  const network = options.network ?? "mainnet";
   const receipts = JSON.parse(readFileSync(new URL("../../../core/src/__tests__/fixtures/checkpoint-receipts.json", import.meta.url), "utf8"));
   const batch = censusBatch({ genesis: receipts.genesis, finalizedHeight: 2416892, receipts: receipts.receipts.map((r: { receiptId: string; raw: string }) => ({ receiptId: r.receiptId, ...decodeReceiptRecord(Buffer.from(r.raw, "hex")) })) });
-  const anchorIds = ["00".repeat(32), batch.anchorId.slice(2), "ff".repeat(32)].sort();
+  const anchorIds = (options.singleBatch ? [batch.anchorId.slice(2)] : ["00".repeat(32), batch.anchorId.slice(2), "ff".repeat(32)]).sort();
   const commitment = toHex(batchSetCommitment({ materiosGenesis: batch.genesis, anchorIds })), secret = new Uint8Array(32).fill(19), key = toHex(authorKey(secret));
   const { tx } = unprovenRegistryCall({ address: fixture.registry.address, state: registryInitialState(), call: { circuit: "anchor", args: [Buffer.from(commitment, "hex"), 3n] }, witnesses: { authorSecret: secret } });
   const bytes = await finalBytes(tx), txHash = L.Transaction.deserialize("signature", "proof", "binding", bytes).transactionHash();
@@ -43,9 +45,9 @@ export async function batchChain() {
   chain.source.verifyExecution = request => verifyExecution(chain.source.node, request);
   const indexed = chain.indexed.get(txHash)!, member = batch.receipts[0]!;
   const midnight = { registry: chain.registry.address, txHash, blockHeight: indexed.block.height, blockHash: indexed.block.hash };
-  const proof = { format: "orynq-midnight-batch-proof/v1", network: "mainnet", materiosGenesis: batch.genesis,
+  const proof = { format: "orynq-midnight-batch-proof/v1", network, materiosGenesis: batch.genesis,
     receipt: { receiptId: member.receiptId, contentHash: member.contentHash, baseRootSha256: member.baseRootSha256, storageLocatorHash: member.storageLocatorHash, certFormat: member.certFormat.format, certChainId: member.certFormat.chainId },
     batch: { index: 0, count: batch.receipts.length, path: merklePath(batch.leafHashes, 0).map(node => node.slice(2)), rootHash: batch.rootHash.slice(2), manifest: batch.manifest },
     set: { commitment, anchorIds }, midnight };
-  return { batch, snapshot: memberSnapshot(batch), proof, set: { network: "mainnet", materiosGenesis: batch.genesis, commitment, anchorIds, midnight }, key, chain, authors: chain.authors([{ key, id: "fluxpoint-batch", role: "batch" }]) };
+  return { batch, snapshot: memberSnapshot(batch), proof, set: { network, materiosGenesis: batch.genesis, commitment, anchorIds, midnight }, key, chain, authors: chain.authors([{ key, id: "fluxpoint-batch", role: "batch" }], network) };
 }

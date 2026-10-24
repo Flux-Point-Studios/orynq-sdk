@@ -34,6 +34,19 @@ it("persists complete block observations with an exact contiguous cursor across 
   resumed.recordVerifiedBlock(block(12)); expect(resumed.head()).toEqual(block(12).block);
 });
 
+it("summarizes coherent coverage and every attempt boundary without granting admission", async () => {
+  const { state, path } = setup();
+  expect(state.coverage()).toEqual({ floor: null, head: null, earliestAttempt: null, replay: null });
+  state.recordVerifiedBlock(block(10)); state.recordVerifiedBlock(block(11));
+  state.recordAttempt(await bytes()); state.recordVerifiedBlock(block(12));
+  const result = state.coverage();
+  expect(result).toMatchObject({ floor: { ...block(10).block, parentHash: h(9), timestamp: 60_000 }, head: { ...block(12).block, timestamp: 72_000 }, earliestAttempt: block(11).block, replay: null });
+  expect(state.admissions()).toEqual([]);
+  result.floor!.hash = h(99); expect(state.coverage().floor!.hash).toBe(h(10));
+  const db = new DatabaseSync(path); db.exec("update follower_blocks set batch_indexed=0 where height=10"); db.close();
+  expect(state.coverage().replay).toEqual({ after: { height: 9, hash: h(9) }, end: block(12).block });
+});
+
 it.each(["gap", "parent", "clock", "runtime"])("holds on a %s without advancing durable coverage", mode => {
   const { state } = setup(); state.recordVerifiedBlock(block(10)); const next = block(11);
   if (mode === "gap") next.block.height++;

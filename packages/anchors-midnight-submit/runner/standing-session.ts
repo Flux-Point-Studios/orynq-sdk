@@ -12,12 +12,13 @@ export function openStandingSession(options: { state: ReturnType<typeof openFoll
   const started = { ...clock(), chainTime: start.timestamp };
   assertStandingFreshClock(started);
   let lastClock = started, lastHead: { height: number; hash: string; timestamp: number } | null = null, fatal: Error | null = null;
+  let lastReady: { height: number; hash: string; chainTime: number } | null = null;
   let rememberedAuthors = authors;
   const rememberedAdmissions = new Map<string, ReturnType<typeof state.admissions>[number]>();
   const hold: (message: string) => never = message => { fatal = new Error(`${message}; standing process restart required`); throw fatal; };
   function observeAuthors() {
     try {
-      state.observeStandingPolicy(rememberedAuthors);
+      state.rememberStandingPolicy(rememberedAuthors);
       const current = loadAuthors(); state.observeStandingPolicy(current); rememberedAuthors = current;
       return current;
     } catch { return hold("Standing authenticated policy continuity failed"); }
@@ -56,25 +57,32 @@ export function openStandingSession(options: { state: ReturnType<typeof openFoll
     assertStandingClock(started, current);
     // At equality a lost attempt can still be exactly at its strict retirement margin.
     if (current.chainTime <= started.chainTime + 20 * 60_000) throw new Error("Standing warmup must pass the full restore TTL margin");
+    lastReady = { ...head, chainTime: current.chainTime };
     return { ...current, ...head };
   }
   async function ready() {
     readClock(); observeAuthors();
     return currentPoint();
   }
+  function reserveNow(bytes: Uint8Array, commitment: string) {
+    const exact = new Uint8Array(bytes), current = lastReady;
+    if (!current) throw new Error("Standing synchronous reservation requires successful readiness");
+    const authors = observeAuthors(), time = readClock();
+    checkHead(state.head());
+    let admitted;
+    try { admitted = state.reserveStandingAttempt(exact, { commitment, authors, started, current: { ...time, chainTime: current.chainTime, height: current.height, hash: current.hash }, retainedAdmissions: [...rememberedAdmissions.values()] }); }
+    catch (error) { if (error instanceof StandingHistoryLost) hold(error.message); throw error; }
+    const recorded = state.admissions().find(row => row.txHash === admitted.txHash);
+    if (!recorded) hold("Standing admitted reservation was not retained");
+    rememberedAdmissions.set(admitted.txHash, recorded);
+    return { ...admitted, checkedAt: { wallTime: time.wallTime, monotonicMillis: time.monotonicMillis, chainTime: current.chainTime } };
+  }
   return {
     ready,
+    reserveNow,
     async reserve(bytes: Uint8Array, commitment: string) {
       const exact = new Uint8Array(bytes);
-      const current = await ready(), authors = observeAuthors(), time = readClock();
-      checkHead(state.head());
-      let admitted;
-      try { admitted = state.reserveStandingAttempt(exact, { commitment, authors, started, current: { ...time, chainTime: current.chainTime, height: current.height, hash: current.hash }, retainedAdmissions: [...rememberedAdmissions.values()] }); }
-      catch (error) { if (error instanceof StandingHistoryLost) hold(error.message); throw error; }
-      const recorded = state.admissions().find(row => row.txHash === admitted.txHash);
-      if (!recorded) hold("Standing admitted reservation was not retained");
-      rememberedAdmissions.set(admitted.txHash, recorded);
-      return admitted;
+      await ready(); return reserveNow(exact, commitment);
     },
   };
 }

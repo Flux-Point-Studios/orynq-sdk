@@ -17,6 +17,15 @@ The overall deadline scales with these bounded groups (at most 13 minutes
 15 seconds for 64 members). A failed request aborts sibling requests, and every
 started request settles before the invocation returns.
 
+Landed publication shares the same bounded HTTP path. It reads all members and the
+recovery plan before publishing the immutable set, adding one bounded phase
+(at most fourteen minutes for 64 members). The combined census-state workflow
+requires current consensus verification both before staging and after these fresh
+readbacks before atomically marking the plan landed. Previously acknowledged set
+bytes do not skip either verification or readback. Ordinary plan publication
+excludes linked sets so a confirmed plan with interrupted set publication remains
+recoverable.
+
 Each target supplies an HTTPS base URL and an enabled gateway API key authorized
 for this network. URL userinfo, query strings and fragments are refused. Targets
 must have distinct origins and hostnames. Mainnet requires HTTPS DNS hostnames and rejects literal IP addresses,

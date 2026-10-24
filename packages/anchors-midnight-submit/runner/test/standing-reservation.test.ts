@@ -85,6 +85,18 @@ it("binds current author-policy checkpoints to the follower's verification polic
   expect(() => state.reserveStandingAttempt(raw, policy())).toThrow(/serial|rewound/i);
 });
 
+it("restores remembered policy floors without accepting stale reloads or clearing conflicts", () => {
+  const { state, path } = setup();
+  state.observeStandingPolicy(batchAuthors({}, 2));
+  expect(() => state.rememberStandingPolicy(batchAuthors())).not.toThrow();
+  expect(() => state.observeStandingPolicy(batchAuthors())).toThrow(/rewound/i);
+  expect(() => state.observeStandingPolicy(batchAuthors({ role: "relay" }, 2))).toThrow(/conflict/i);
+  expect(() => state.rememberStandingPolicy(batchAuthors())).toThrow(/conflict/i);
+  const db = new DatabaseSync(path); db.exec("delete from follower_policies"); db.close();
+  state.rememberStandingPolicy(batchAuthors({}, 2));
+  expect(() => state.observeStandingPolicy(batchAuthors())).toThrow(/rewound/i);
+});
+
 it("retains one commitment across unknown bytes and allows only an identical retry", async () => {
   const { state } = setup(), raw = await batchBytes({ ttl: now + 10 * minute }); state.reserveStandingAttempt(raw, policy());
   expect(() => state.reserveStandingAttempt(raw, policy())).not.toThrow();
@@ -129,4 +141,12 @@ it("migrates provenance without inventing indexed history or old admissions", as
   resumed.recordVerifiedBlock(block(10, now - day)); resumed.recordVerifiedBlock(block(11, now));
   expect(resumed.head()).toEqual({ height: 11, hash: h(11) });
   expect(() => resumed.reserveStandingAttempt(raw, policy())).not.toThrow();
+});
+
+it("retains commitment identities from both unsent attempts and observed history", async () => {
+  const { state } = setup(), raw = await batchBytes({ ttl: now + 10 * minute });
+  state.recordAttempt(raw); expect(state.commitments()).toEqual([batchScope.commitment]);
+  const other = h(300), observed = await batchBytes({ ttl: now + 10 * minute, commitment: other });
+  state.recordVerifiedBlock({ ...block(12, now + 1000), sends: [{ bytes: observed, txHash: finalTransaction(observed).transactionHash(), extrinsicIndex: 0, status: "SUCCESS" }] });
+  expect(state.commitments()).toEqual([batchScope.commitment, other].sort());
 });
