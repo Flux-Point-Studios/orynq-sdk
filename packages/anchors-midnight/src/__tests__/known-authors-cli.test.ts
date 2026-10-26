@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,7 +47,10 @@ describe("the known-authors CLI an offline trust-root holder runs", () => {
     expect((await run("new-root-key", seedFile)).status).not.toBe(0);
     expect(readFileSync(seedFile, "utf8")).toBe("keep\n");
     const open = join(dir, "open.seed");
-    writeFileSync(open, `${"ab".repeat(32)}\n`, { mode: 0o644 });
+    writeFileSync(open, `${"ab".repeat(32)}\n`, { mode: 0o600 });
+    // Creation modes are filtered by umask; make this throwaway fixture readable explicitly.
+    chmodSync(open, 0o644);
+    expect(statSync(open).mode & 0o777).toBe(0o644);
     const r = await run("sign", join(dir, "document.json"), open);
     expect(r.status).not.toBe(0);
     expect(r.stderr).toMatch(/open\.seed can be read or written by group or others/);
