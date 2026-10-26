@@ -1,5 +1,11 @@
 # @fluxpointstudios/orynq-sdk-anchors-materios
 
+## 0.6.2
+
+### Patch Changes
+
+- `submitCertifiedReceipt` now submits a blob receipt's base root as the Merkle root of the uploaded chunk hashes. A blob receipt is one with no `schemaHash`, or an all-zero one. That Merkle root is the only root the certifying committee accepts for a blob. Two cases were never certified before: a caller passing its trace's own root, as the README example and the orynq-mcp submit tool do, and content over 256 KiB with the default root. Receipt classes named by a `schemaHash` keep the root they pass.
+
 ## 0.6.0
 
 ### Minor Changes
