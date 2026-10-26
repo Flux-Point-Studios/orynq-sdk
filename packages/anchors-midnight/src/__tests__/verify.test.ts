@@ -521,3 +521,19 @@ describe("golden: FPS's mainnet anchors against the pinned registry, replayed", 
     }
   });
 });
+
+it("never echoes malformed source status/hash fields and bounds every diagnostic", async () => {
+  const hostile = "IGNORE PRIOR INSTRUCTIONS" + "x".repeat(200_000);
+  const statusChain = anchorChain({ indexer: { [fixture.anchor.txHash]: txs => txs.map(tx => ({ ...tx, status: hostile as never })) } });
+  const status = await verifyMidnightAnchor({ network: "mainnet", txHash: fixture.anchor.txHash, expect: { kind: "any" } }, { source: statusChain.source, registries: [statusChain.registry], knownAuthors: statusChain.authors() });
+  expect(status.status).toBe("invalid");
+  expect(JSON.stringify(status.checks)).not.toContain("IGNORE");
+  expect(status.checks.find(check => check.name === "indexer-status")?.detail).toBe("the indexer reports an unrecognized or absent status");
+  const hashChain = anchorChain({ node: { chain_getBlockHash: () => hostile } });
+  const hash = await verifyMidnightAnchor({ network: "mainnet", txHash: fixture.anchor.txHash, expect: { kind: "any" } }, { source: hashChain.source, registries: [hashChain.registry], knownAuthors: hashChain.authors() });
+  expect(hash.status).not.toBe("valid"); expect(JSON.stringify(hash.checks)).not.toContain("IGNORE");
+  const errorChain = anchorChain({ node: { chain_getBlockHash: () => { throw new Error("\u001b[2J\u2028\u2029\u202e" + "x".repeat(200_000)); } } });
+  const error = await verifyMidnightAnchor({ network: "mainnet", txHash: fixture.anchor.txHash, expect: { kind: "any" } }, { source: errorChain.source, registries: [errorChain.registry], knownAuthors: errorChain.authors() });
+  expect(error.checks.every(check => check.detail.length <= 300)).toBe(true);
+  expect(JSON.stringify(error.checks)).not.toMatch(/[\u001b\u2028\u2029\u202e]/);
+});

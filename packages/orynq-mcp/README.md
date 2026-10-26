@@ -23,8 +23,8 @@ source-checkout quick start above links it. Without it the server still starts, 
 the Midnight tools return an error naming the package to install. Version 0.3.2 includes the
 signed Flux Point Studios author policy and original mainnet finality checkpoint. Verification
 still requires the transaction's inclusion, finality and expected fields to pass; a known
-author alone does not establish validity. A different author than `expectedAuthor` makes an
-anchor invalid. Receipt discovery needs version 0.3.0 or later; use 0.3.2 or later for the
+author alone does not establish validity. Author trust comes from the server's signed
+policy; the model cannot supply `expectedAuthor` to turn an unknown key into a trusted one. Receipt discovery needs version 0.3.0 or later; use 0.3.2 or later for the
 shipped hosted author policy. See [receipt verification](MIDNIGHT-RECEIPTS.md).
 
 ### Claude Desktop config
@@ -103,8 +103,8 @@ shipped hosted author policy. See [receipt verification](MIDNIGHT-RECEIPTS.md).
 - `anchor_materios_submit` is a dry run unless `confirm: true`. The model supplies that argument, so it proves no person approved; the tool needs `MATERIOS_RPC_URL` and `MATERIOS_SIGNER_URI`
 - `verify_cardano_anchor`, `verify_midnight_anchor`, `verify_midnight_receipt` and `estimate_cost` are read-only
 - `verify_midnight_anchor` takes a transaction hash and at most one expectation (a bundle's `entry`
-  hashes, a kind-1 `commitment` or a kind-2 `attribute`), plus an optional `expectedAuthor`. It
-  refuses any other argument, so a model can pass it no key, file or URL; the source comes from
+  hashes, a kind-1 `commitment` or a kind-2 `attribute`). It
+  refuses any other argument, including a caller-chosen trust key, so a model can pass it no key, file or URL; the source comes from
   the server's environment. Its result is the anchors-midnight `verifyReport`: `valid` only at
   `consensus-verified` assurance, with every source's text made printable and cut at 300 characters.
   It needs `@fluxpointstudios/orynq-sdk-anchors-midnight`, an optional peer dependency; without it

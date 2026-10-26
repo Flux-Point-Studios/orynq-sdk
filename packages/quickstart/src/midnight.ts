@@ -91,7 +91,8 @@ async function readBundle(path: string): Promise<TraceBundle> {
   try {
     bundle = JSON.parse(readFileSync(path, "utf8")) as TraceBundle;
   } catch (error) {
-    return fail(`${path} is not a trace bundle: ${(error as Error).message}`);
+    if (error instanceof SyntaxError) return fail(`${path} is not JSON`);
+    return fail(`${path} could not be read as a trace bundle`);
   }
   const intact = await verifyBundle(bundle).catch((error: Error) => ({ valid: false, errors: [error.message] }));
   if (!intact.valid) fail(`${path} is not an intact trace bundle: ${intact.errors[0]}`);
@@ -249,6 +250,7 @@ async function anchor(args: readonly string[], io: CliIo, deps: MidnightDeps): P
   });
   // Checked first, so a submit from a pipe (a script, or a model) never reads a key.
   if (values.submit && !(io.stdin.isTTY && io.stderr.isTTY)) fail("--submit needs a person at a terminal (stdin and stderr must both be a TTY); nothing was read or sent");
+  if (values.submit && deps.knownAuthors.serial === 0) fail("--submit requires an authenticated KNOWN_AUTHORS policy to protect service keys; nothing was read or sent");
   const network = networkOf(values.network);
   if (values.key === undefined) fail("--key <file> is required: your own key file, from `orynq keys init midnight --out <file>`");
   if (values.bundle === undefined) fail("--bundle <file> is required: the trace bundle to anchor");

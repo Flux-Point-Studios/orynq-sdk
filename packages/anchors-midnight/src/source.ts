@@ -95,6 +95,7 @@ const httpUrl = (value: string, name: string) => {
     throw new Error(`the ${name} URL must be http or https`);
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`the ${name} URL must be http or https`);
+  if (url.username || url.password) throw new Error(`the ${name} URL must not include credentials`);
   return url;
 };
 
@@ -183,24 +184,25 @@ export function midnightSource(endpoints: SourceEndpoints): MidnightSource {
       if (error instanceof HttpUnavailable) throw error;
       throw new HttpUnavailable(redact(`${endpoints.operator} ${what}: HTTP request unavailable`));
     } finally { clearTimeout(timer); }
-    if (!res.ok) throw new Error(redact(`${endpoints.operator} ${what}: HTTP ${res.status}: ${redact(text).slice(0, 300)}`));
+    if (!res.ok) throw new Error(redact(`${endpoints.operator} ${what}: HTTP ${res.status}: <redacted>`));
     try {
       return JSON.parse(text);
     } catch {
-      throw new Error(redact(`${endpoints.operator} ${what}: answered with something other than JSON: ${redact(text).slice(0, 120)}`));
+      throw new Error(redact(`${endpoints.operator} ${what}: answered with something other than JSON: <redacted>`));
     }
   };
   const answer = (method: string, a: RpcAnswer | undefined) => {
     if (!a) throw new Error(`${endpoints.operator} node: no answer to ${method}`);
     if (a.error !== undefined) {
       const code = (a.error as { code?: unknown } | null)?.code;
-      throw new NodeError(redact(`${endpoints.operator} node: ${method} failed: ${JSON.stringify(a.error)}`), method, typeof code === "number" ? code : undefined);
+      const numeric = typeof code === "number" && Number.isSafeInteger(code) ? code : undefined;
+      throw new NodeError(redact(`${endpoints.operator} node: ${method} failed${numeric === undefined ? "" : ` (code ${numeric})`}`), method, numeric);
     }
     return a.result;
   };
   const graphql = async <T>(query: string, variables: Record<string, unknown>): Promise<T> => {
     const out = (await post(endpoints.indexer, "indexer", { query, variables })) as { data?: T; errors?: unknown };
-    if (out.errors !== undefined || !out.data) throw new Error(redact(`${endpoints.operator} indexer: ${redact(JSON.stringify(out.errors ?? out)).slice(0, 300)}`));
+    if (out.errors !== undefined || !out.data) throw new Error(redact(`${endpoints.operator} indexer: GraphQL error response: <redacted>`));
     return out.data;
   };
   return {
@@ -274,10 +276,10 @@ function subscribe(endpoints: SourceEndpoints, redact: (s: string) => string, ad
     waiting = failed = null;
   };
   socket.onopen = () => socket.send(JSON.stringify({ type: "connection_init" }));
-  socket.onerror = (e: Event) => settle(new Error(redact(`${fail}: ${(e as Event & { message?: string }).message ?? "socket error"}`)));
+  socket.onerror = () => settle(new Error(redact(`${fail}: socket error`)));
   socket.onclose = (e: CloseEvent) => {
     open = false;
-    settle(e.code === 1000 ? "done" : new Error(redact(`${fail}: closed ${e.code} ${e.reason}`)));
+    settle(e.code === 1000 ? "done" : new Error(redact(`${fail}: closed ${Number.isSafeInteger(e.code) && e.code >= 0 && e.code <= 65535 ? e.code : "with an invalid close code"}`)));
   };
   // Node treats a throw from a WebSocket handler as an uncaught exception and ends the process,
   // so every frame either yields an action or ends the iteration with the reason.
@@ -292,7 +294,7 @@ function subscribe(endpoints: SourceEndpoints, redact: (s: string) => string, ad
       socket.send(JSON.stringify({ id: "1", type: "subscribe", payload: { query: CONTRACT_ACTIONS, variables: { address, height: fromHeight } } }));
       subscribed = true;
     } else if (message.type === "next") {
-      if (message.payload?.errors !== undefined) return close(new Error(redact(`${fail}: ${JSON.stringify(message.payload.errors).slice(0, 300)}`)), true);
+      if (message.payload?.errors !== undefined) return close(new Error(redact(`${fail}: GraphQL error response: <redacted>`)), true);
       const t = message.payload?.data?.contractActions?.transaction;
       if (typeof t?.hash !== "string" || !Number.isSafeInteger(t.id) || typeof t.raw !== "string" || !Number.isSafeInteger(t.block?.height) || typeof t.block.hash !== "string") {
         return close(new Error(`${fail}: a next frame carries no transaction`), true);
@@ -302,7 +304,7 @@ function subscribe(endpoints: SourceEndpoints, redact: (s: string) => string, ad
         waiting({ value: action, done: false });
         waiting = failed = null;
       } else queue.push(action);
-    } else if (message.type === "error") close(new Error(redact(`${fail}: ${JSON.stringify(message.payload)}`)), false);
+    } else if (message.type === "error") close(new Error(redact(`${fail}: GraphQL error response: <redacted>`)), false);
     else if (message.type === "complete") close("done", false);
   };
   // Ends the iteration and closes the socket, telling the indexer when it is the client that stops.

@@ -262,7 +262,9 @@ GRANDPA checkpoints it trusts, come from a KNOWN_AUTHORS document (`orynq-known-
 signed with Ed25519 by a pinned policy-root key over `"orynq-known-authors/v1\n" ‖ document`.
 The document is shipped as the exact string that was signed, in `known-authors.json`, so no
 JSON canonicalization sits between a signature and what it covers. Parsing is strict: unknown
-fields, networks and roles, malformed keys, and overlapping windows for one key are refused.
+fields, networks and roles, malformed keys, overlapping windows for one key, and duplicate
+JSON object keys at every depth (including escaped aliases) are refused. Policy documents are
+bounded to 2 MiB and 64 nesting levels.
 Each signature check refuses with its own message, so a caller can tell which one failed: `the
 known-authors document carries no signature by a trust root` when no signature names one,
 `... is not 64 bytes of lowercase hex` when every trust-root signature is malformed, and `... does
@@ -287,6 +289,31 @@ the operator. Agent/root access is an accepted interim custody risk; hardware to
 an isolated admin device remain a later hardening step. `scripts/known-authors.ts` creates
 owner-only root seeds and signs documents without printing seeds. Keep root signing separate
 from the online batch author.
+
+Review and sign the exact policy bytes in separate steps:
+
+```sh
+node --import tsx packages/anchors-midnight/scripts/known-authors.ts inspect policy.json
+node --import tsx packages/anchors-midnight/scripts/known-authors.ts sign policy.json root.seed --reviewed-sha256 <reviewed-document-sha256> --checkpoint-proofs checkpoint-proofs.json
+```
+
+`inspect` prints the parsed authors, roles and inclusive windows, checkpoint set IDs/start
+blocks, authority-key SHA-256 fingerprints/weights, and the exact document hash. Independently
+check those facts before supplying that hash to `sign`; the hash binding records which bytes
+were reviewed, and is not proof that a person performed the review. The signing step prints
+that same public review on stderr and refuses a changed hash before opening the seed.
+
+Checkpoint history under an existing shipped signing root must remain an append-only prefix.
+Every appended checkpoint needs exactly one portable derivation artifact in the JSON array
+`checkpoint-proofs.json`, authenticated by its immediately preceding pinned checkpoint with
+`verifyCheckpointAdvance` (sequence 1 and null previous digest for this direct derivation).
+The shared checkpoint-advance tool can produce and independently replay that evidence. An
+author-only update with unchanged checkpoints omits `--checkpoint-proofs`. Unused or ambiguous
+evidence, tampered authorities, rollback and a new-network bootstrap without an independently
+reviewed pinned predecessor all refuse before signing. Onboarding a new trust root/checkpoint
+remains an independent operator/root-review operation; the production CLI cannot silently
+promote caller-prepared genesis authority JSON. Low-level `signKnownAuthors` is an API for
+already-reviewed custom trust domains and test fixtures, not a substitute for root review.
 
 Default `knownAuthors()` strictly verifies every shipped document. Explicit `trustRoots`
 select a separate trust domain: only shipped documents naming one of those roots are included,
@@ -439,3 +466,13 @@ the packed package.
 in-process (about a minute on one core) and scans the proven, bound bytes. The npm ledger WASM
 does not verify contract proofs; the slow suite pins that, and nothing in this package presents
 a local `wellFormed()` as proof verification.
+
+
+Search assurance: `findMidnightAnchors` returns `assurance: "indexer-reported"`. Its `complete`
+flag means the subscription reached the newest action the indexer reported; it does not
+establish that the indexer has disclosed every network action. Each candidate carries
+`authorStatus` (`known`, `outside-window`, or `unknown`) at its reported block height, including
+explicitly requested author keys. A later `verifyMidnightAnchor` establishes finality and policy
+trust independently. Public check details and search rejection reasons are printable and
+bounded to 300 characters. Malformed hashes/statuses use fixed diagnostic placeholders;
+arbitrary JSON-RPC error messages/data are withheld while numeric error codes remain available.
