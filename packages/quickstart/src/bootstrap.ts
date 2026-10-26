@@ -25,6 +25,7 @@ import { Keyring } from "@polkadot/keyring";
 import { cryptoWaitReady } from "@polkadot/util-crypto";
 import {
   MateriosProvider,
+  merkleRoot,
   submitReceipt,
   uploadBlobs,
   prepareBlobData,
@@ -189,18 +190,18 @@ export async function bootstrapAndTrace(
     const treatCertTimeoutAsSuccess = opts.treatCertTimeoutAsSuccess !== false;
 
     // 5a. Derive the receiptId the same way submit_receipt does: it's
-    //     sha256 of the (binary) contentHash. The blob-gateway routes
-    //     all chunk + manifest paths under this receiptId so they must
-    //     match the on-chain id byte-for-byte.
+    //     sha256 of the (binary) contentHash.
     const contentHashHex = contentHash.startsWith("0x") ? contentHash.slice(2) : contentHash;
     const receiptIdHex = "0x" + createHash("sha256")
       .update(Buffer.from(contentHashHex, "hex"))
       .digest("hex");
 
-    // 5b. Upload the blob via sig-only auth (no API key required).
+    // 5b. Upload the blob via sig-only auth (no API key required), under its content hash: the
+    //     gateway resolves a receipt to its on-chain content hash and reads the manifest stored
+    //     there, which is how the certifying committee locates the blob.
     const { manifest, chunks } = prepareBlobData(receiptIdHex, contentBuf);
     const uploadResult = await uploadBlobs(
-      receiptIdHex,
+      contentHashHex,
       manifest,
       chunks,
       {
@@ -218,10 +219,12 @@ export async function bootstrapAndTrace(
     // 5c. Submit the on-chain receipt. Pass receiptId explicitly so the
     //     gateway-side blob path + the on-chain receipt agree on the key
     //     (the SDK's default derivation matches what we computed above).
+    // The committee certifies only when the on-chain root equals the Merkle root of the uploaded
+    // chunk hashes; the trace's own rootHash travels inside the content.
     const submitResult = await submitReceipt(provider, {
       receiptId: receiptIdHex,
       contentHash,
-      rootHash: bundle.rootHash,
+      rootHash: merkleRoot(manifest.chunks.map((chunk) => chunk.sha256)),
       manifestHash: uploadResult.storageLocatorHash ?? bundle.manifestHash,
     });
     onProgress({
@@ -253,12 +256,8 @@ export async function bootstrapAndTrace(
       }
     }
 
-    // The gateway routes blob status by the same key the SDK uploaded
-    // under — that's the receiptId, NOT the content sha256. Pass it as
-    // `contentHash` to buildExplorerUrls (the parameter name carries the
-    // legacy meaning from the gateway route).
     const urls = buildExplorerUrls({
-      contentHash: receiptIdHex,
+      contentHash: contentHashHex,
       blockHash: submitResult.blockHash,
       gatewayBaseUrl: gateway,
       rpcUrl,
