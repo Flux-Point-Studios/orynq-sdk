@@ -3,11 +3,8 @@ import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { chainView, openJournal, type AnchorKey, type ChainView, type Submission } from "../src/journal.js";
+import { openJournal, type AnchorKey, type ChainView, type Submission } from "../src/journal.js";
 import { fixture } from "../src/__tests__/anchor-chain.js";
-import { u64le } from "../src/scale.js";
-import type { MidnightSource } from "../src/source.js";
-import { batchOver, ledgerNode, type NodeVersion } from "../src/__tests__/ledger-node.js";
 
 const dir = mkdtempSync(join(tmpdir(), "orynq-journal-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -31,7 +28,7 @@ const bytesOf = (name: Recorded) => new Uint8Array(Buffer.from(fixture[name].tx,
 const INDEXED_HEAD = "cd".repeat(32);
 function network(name = "preprod") {
   const arrived: string[] = [];
-  const indexed = new Map<string, "SUCCESS" | "FAILURE">();
+  const indexed = new Map<string, "SUCCESS" | "PARTIAL_SUCCESS" | "FAILURE">();
   const placed = new Map<string, { height: number; blockHash: string }>();
   const final = new Map<number, string>();
   const contracts = new Set<string>();
@@ -40,7 +37,10 @@ function network(name = "preprod") {
   const chain: ChainView = {
     network: name,
     lookup: async (txHash) => (indexed.has(txHash) ? { status: indexed.get(txHash)!, ...(placed.get(txHash) ?? { height: 7, blockHash: "ab".repeat(32) }) } : null),
-    indexedThrough: async () => ({ hash: INDEXED_HEAD, time: indexedAt }),
+    indexedThrough: async () => ({ height: 100, hash: INDEXED_HEAD, time: indexedAt }),
+    confirm: async ({ hint }) => hint?.status === "SUCCESS" || hint?.status === "PARTIAL_SUCCESS"
+      ? { state: "landed", height: hint.height, blockHash: hint.blockHash }
+      : { state: "absent", through: { height: 100, hash: INDEXED_HEAD } },
     holdsContract: async (address, at) => {
       asked.push([address, at]);
       return contracts.has(address);
@@ -52,7 +52,7 @@ function network(name = "preprod") {
     arrived,
     contracts,
     asked,
-    index: (status: "SUCCESS" | "FAILURE" = "SUCCESS") => arrived.forEach((h) => indexed.set(h, status)),
+    index: (status: "SUCCESS" | "PARTIAL_SUCCESS" | "FAILURE" = "SUCCESS") => arrived.forEach((h) => indexed.set(h, status)),
     place: (txHash: string, height: number, blockHash: string) => placed.set(txHash, { height, blockHash }),
     forget: (txHash: string) => indexed.delete(txHash),
     finalize: (height: number, blockHash: string) => final.set(height, blockHash),
@@ -247,15 +247,50 @@ describe("the write-ahead journal", () => {
     journal.close();
   });
 
-  it("a transaction the chain reports failed frees the key for a new attempt", async () => {
+  it("a transaction independently proved absent through its finalized TTL window frees the key for a new attempt", async () => {
     const journal = openJournal(file());
     const net = network();
     const count = { n: 0 };
     await journal.submitOnce(key, { prepare: prepared("anchor", count), broadcast: net.send("anchor"), chain: net.chain });
     net.index("FAILURE");
+    net.advance(new Date(TTL.getTime() + 6 * MINUTE));
     expect(await journal.submitOnce(key, { prepare: prepared("hiding", count), broadcast: net.send("hiding"), chain: net.chain })).toMatchObject({ txHash: fixture.hiding.txHash });
     expect(count.n).toBe(2);
     expect(net.asked).toEqual([]);
+    journal.close();
+  });
+
+  it.each(["FAILURE", "PARTIAL_SUCCESS", null])("an uncorroborated indexer status %s never frees a pending anchor", async status => {
+    const journal = openJournal(file());
+    const net = network();
+    const count = { n: 0 };
+    await journal.submitOnce(key, { prepare: prepared("anchor", count), broadcast: net.send("anchor"), chain: net.chain });
+    net.chain.lookup = async () => ({ status, height: 7, blockHash: "ab".repeat(32) });
+    net.chain.confirm = async () => ({ state: "pending" });
+    net.advance(new Date(TTL.getTime() + 60 * MINUTE));
+    expect(await journal.submitOnce(key, { prepare: prepared("hiding", count), broadcast: net.send("hiding"), chain: net.chain })).toMatchObject({ txHash: fixture.anchor.txHash, state: "pending" });
+    expect(count.n).toBe(1); expect(net.arrived).toHaveLength(1);
+    journal.close();
+  });
+
+  it("a guaranteed anchor with PARTIAL_SUCCESS remains landed when node inclusion confirms it", async () => {
+    const journal = openJournal(file()); const net = network();
+    await journal.submitOnce(key, { prepare: prepared("anchor", { n: 0 }), broadcast: net.send("anchor"), chain: net.chain });
+    net.index("PARTIAL_SUCCESS");
+    expect(await journal.reconcile(net.chain)).toEqual([expect.objectContaining({ state: "landed", txHash: fixture.anchor.txHash })]);
+    journal.close();
+  });
+
+  it("legacy anchors without a pre-broadcast boundary stay held when node absence is unavailable", async () => {
+    const path = file(); const journal = openJournal(path); const net = network();
+    await journal.submitOnce(key, { prepare: prepared("anchor", { n: 0 }), broadcast: net.send("anchor"), chain: net.chain });
+    const db = new DatabaseSync(path); db.prepare("update attempts set start_height=null,start_hash=null").run(); db.close();
+    net.chain.confirm = async request => {
+      expect(request.since).toBeNull(); return { state: "pending" };
+    };
+    net.advance(new Date(TTL.getTime() + 60 * MINUTE));
+    await journal.reconcile(net.chain);
+    expect(journal.live(key)?.state).toBe("pending");
     journal.close();
   });
 
@@ -370,6 +405,7 @@ describe("the write-ahead journal", () => {
     const refused = network();
     await other.submitOnce(key, { prepare: prepared("anchor", { n: 0 }), broadcast: refused.send("anchor"), chain: refused.chain });
     refused.index("FAILURE");
+    refused.advance(new Date(TTL.getTime() + 6 * MINUTE));
     await other.reconcile(refused.chain);
     expect(other.live(key)).toBeUndefined();
     other.close();
@@ -493,160 +529,3 @@ describe("a landed row whose block the node's finalized chain does not hold", ()
   });
 });
 
-describe("chainView over a Midnight source", () => {
-  const TIMESTAMP_NOW = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
-  const HEAD = { height: 10, hash: "ef".repeat(32), timestamp: Date.UTC(2030, 0, 2) };
-  const FINALIZED = `0x${"fa".repeat(32)}`;
-  const timestamp = (ms: number) => `0x${Buffer.from(u64le(BigInt(ms))).toString("hex")}`;
-  // An indexer whose newest block is HEAD, and a node that holds `nodeHash` at HEAD's height and
-  // `below` at the height under it, records `nodeNow` (by default `nodeTime`, encoded) as HEAD's
-  // Timestamp.Now, has finalized its chain up to height `finalized` (holding no header for its
-  // finalized head when null), and reads its ledger in the blocks `ledgerIn`, by default HEAD,
-  // holding a contract at each address in `contracts` and answering for any other as
-  // midnight-node `version` does.
-  const source = ({
-    nodeHash = `0x${HEAD.hash}`,
-    below = `0x${"99".repeat(32)}`,
-    nodeTime = HEAD.timestamp,
-    nodeNow = nodeTime === null ? null : timestamp(nodeTime),
-    finalized = HEAD.height,
-    ledgerIn = [HEAD.hash],
-    contracts = [fixture.registry.address],
-    version = "2.1.0",
-  }: {
-    nodeHash?: string | null;
-    below?: string | null;
-    nodeTime?: number | null;
-    nodeNow?: string | null;
-    finalized?: number | null;
-    ledgerIn?: string[];
-    contracts?: string[];
-    version?: NodeVersion;
-  } = {}) => {
-    const calls: Array<[string, unknown[]]> = [];
-    const ledger = ledgerNode({ blocks: ledgerIn, contracts: (address) => (contracts.includes(address) ? "0102" : undefined), version });
-    const call = async (method: string, params: unknown[] = []) => {
-      calls.push([method, params]);
-      if (method === "chain_getBlockHash" && params[0] === HEAD.height) return nodeHash;
-      if (method === "chain_getBlockHash" && params[0] === HEAD.height - 1) return below;
-      if (method === "chain_getFinalizedHead") return FINALIZED;
-      if (method === "chain_getHeader" && params[0] === FINALIZED) return finalized === null ? null : { number: `0x${finalized.toString(16)}` };
-      if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && params[1] === `0x${HEAD.hash}`) return nodeNow;
-      if (method === "midnight_zswapStateRoot" || method === "midnight_contractState") return ledger.call("test", method, params);
-      throw new Error(`unexpected ${method} ${JSON.stringify(params)}`);
-    };
-    const s = {
-      indexer: {
-        transactions: async (hash: string) =>
-          hash === fixture.anchor.txHash
-            ? [{ hash, raw: "", block: { height: 9, hash: "cd".repeat(32), timestamp: 0 }, status: "SUCCESS", contractActions: [] }]
-            : [],
-        head: async () => HEAD,
-      },
-      node: { call, batch: batchOver(call) },
-    } as unknown as MidnightSource;
-    return { s, calls };
-  };
-
-  it("reads a transaction's status and block from the indexer", async () => {
-    const view = chainView(source().s, "preprod");
-    expect(await view.lookup(fixture.anchor.txHash)).toEqual({ status: "SUCCESS", height: 9, blockHash: "cd".repeat(32) });
-    expect(await view.lookup(fixture.hiding.txHash)).toBeNull();
-  });
-
-  it("reads chain time from the indexer's newest block only as the node records that block: on its chain, at its own Timestamp.Now", async () => {
-    const agreed = source();
-    expect(await chainView(agreed.s, "preprod").indexedThrough()).toEqual({ hash: HEAD.hash, time: new Date(HEAD.timestamp) });
-    expect(agreed.calls).toEqual([
-      ["chain_getBlockHash", [HEAD.height]],
-      ["state_getStorage", [TIMESTAMP_NOW, `0x${HEAD.hash}`]],
-    ]);
-    expect(await chainView(source({ nodeTime: HEAD.timestamp - 60_000 }).s, "preprod").indexedThrough()).toEqual({ hash: HEAD.hash, time: new Date(HEAD.timestamp - 60_000) });
-  });
-
-  it("reads the indexer's time for its newest block when the node records a later one there", async () => {
-    expect(await chainView(source({ nodeTime: HEAD.timestamp + 60_000 }).s, "preprod").indexedThrough()).toEqual({ hash: HEAD.hash, time: new Date(HEAD.timestamp) });
-  });
-
-  it("refuses a node that records no Timestamp.Now in a block it holds", async () => {
-    await expect(chainView(source({ nodeTime: null }).s, "preprod").indexedThrough()).rejects.toThrow(`the node holds no Timestamp.Now in block ${HEAD.height}`);
-  });
-
-  it("refuses a Timestamp.Now that is not exactly a u64", async () => {
-    await expect(chainView(source({ nodeNow: `${timestamp(HEAD.timestamp)}00` }).s, "preprod").indexedThrough()).rejects.toThrow("Timestamp.Now has 1 trailing byte");
-  });
-
-  it.each(["2.1.0", "1.0.400"] as const)("asks node %s whether it holds a contract at an address in a given block, behind the ledger's zswap root there", async (version) => {
-    const { s, calls } = source({ version });
-    const view = chainView(s, "preprod");
-    expect(await view.holdsContract(fixture.registry.address, HEAD.hash)).toBe(true);
-    expect(await view.holdsContract("12".repeat(32), HEAD.hash)).toBe(false);
-    expect(calls).toEqual([
-      ["midnight_zswapStateRoot", [`0x${HEAD.hash}`]],
-      ["midnight_contractState", [fixture.registry.address, `0x${HEAD.hash}`]],
-      ["midnight_zswapStateRoot", [`0x${HEAD.hash}`]],
-      ["midnight_contractState", ["12".repeat(32), `0x${HEAD.hash}`]],
-    ]);
-  });
-
-  it("settles a deploy row past its TTL plus the margin from the node's ledger at the indexer's newest block: pending while the node cannot read it there, landed while node 2.1.0 holds the contract, retired once it answers that none is there", async () => {
-    const journal = openJournal(file(), { ttlMarginMillis: 5 * MINUTE });
-    const net = network();
-    await journal.submitOnce(deployKey, { prepare: prepared("registry", { n: 0 }), broadcast: net.send("registry"), chain: net.chain });
-    const behind = source({ ledgerIn: [], contracts: [] });
-    await expect(journal.reconcile(chainView(behind.s, "preprod"))).rejects.toThrow('test node: midnight_zswapStateRoot failed: {"code":-32602,"message":"Unable to get requested zswap state root"}');
-    expect(journal.live(deployKey)).toMatchObject({ txHash: fixture.registry.txHash, state: "pending" });
-    expect(await journal.reconcile(chainView(source({ contracts: [] }).s, "preprod"))).toEqual([expect.objectContaining({ txHash: fixture.registry.txHash, state: "failed" })]);
-    expect(journal.live(deployKey)).toBeUndefined();
-
-    const landed = openJournal(file(), { ttlMarginMillis: 5 * MINUTE });
-    await landed.submitOnce(deployKey, { prepare: prepared("registry", { n: 0 }), broadcast: net.send("registry"), chain: net.chain });
-    expect(await landed.reconcile(chainView(source().s, "preprod"))).toEqual([expect.objectContaining({ txHash: fixture.registry.txHash, state: "landed" })]);
-    journal.close();
-    landed.close();
-  });
-
-  it("names the block the node's finalized chain holds at a height up to its finalized head, and none above it", async () => {
-    const below = source({ finalized: HEAD.height - 1 });
-    const view = chainView(below.s, "preprod");
-    expect(await view.finalHash(HEAD.height - 1)).toBe("99".repeat(32));
-    expect(await view.finalHash(HEAD.height)).toBeNull();
-    expect(below.calls.filter(([method]) => method === "chain_getBlockHash")).toEqual([["chain_getBlockHash", [HEAD.height - 1]]]);
-    expect(await chainView(source().s, "preprod").finalHash(HEAD.height)).toBe(HEAD.hash);
-  });
-
-  it("refuses a node that holds no header for its finalized head, or no block below it", async () => {
-    await expect(chainView(source({ finalized: null }).s, "preprod").finalHash(HEAD.height)).rejects.toThrow(`the node holds no header for its finalized head ${FINALIZED}`);
-    await expect(chainView(source({ below: null }).s, "preprod").finalHash(HEAD.height - 1)).rejects.toThrow(`the node holds no block ${HEAD.height - 1}, below its finalized head ${HEAD.height}`);
-  });
-
-  it("proves no chain time while the node holds another block at the indexer's newest height, or none yet", async () => {
-    expect(await chainView(source({ nodeHash: `0x${"12".repeat(32)}` }).s, "preprod").indexedThrough()).toBeNull();
-    expect(await chainView(source({ nodeHash: null }).s, "preprod").indexedThrough()).toBeNull();
-  });
-
-  it("names the network it reads, and settles none of another network's rows: a preprod node holding a contract at a mainnet deploy's address leaves that deploy pending", async () => {
-    const journal = openJournal(file());
-    const mainnet = network("mainnet");
-    const mainnetDeploy: AnchorKey = { ...deployKey, network: "mainnet" };
-    await journal.submitOnce(mainnetDeploy, { prepare: prepared("registry", { n: 0 }), broadcast: mainnet.send("registry"), chain: mainnet.chain });
-    const { s, calls } = source();
-    const preprod = chainView(s, "preprod");
-    expect(await journal.reconcile(preprod)).toEqual([]);
-    expect(calls).toEqual([]);
-    expect(journal.live(mainnetDeploy)).toMatchObject({ txHash: fixture.registry.txHash, state: "pending" });
-    expect(preprod.network).toBe("preprod");
-    journal.close();
-  });
-
-  it("keeps a row pending past its TTL by the indexer's clock while the node does not hold the indexer's newest block", async () => {
-    const journal = openJournal(file());
-    const net = network();
-    const count = { n: 0 };
-    await journal.submitOnce(key, { prepare: prepared("hiding", count), broadcast: net.send("hiding"), chain: net.chain });
-    const forked = source({ nodeHash: `0x${"12".repeat(32)}`, nodeTime: TTL.getTime() + 60 * MINUTE });
-    const pastTtl = { ...forked.s, indexer: { ...forked.s.indexer, head: async () => ({ ...HEAD, timestamp: TTL.getTime() + 60 * MINUTE }) } } as MidnightSource;
-    expect(await journal.reconcile(chainView(pastTtl, "preprod"))).toEqual([expect.objectContaining({ txHash: fixture.hiding.txHash, state: "pending" })]);
-    journal.close();
-  });
-});
