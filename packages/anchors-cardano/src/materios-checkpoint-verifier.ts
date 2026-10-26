@@ -64,6 +64,8 @@ export interface CheckpointTransaction {
   txHash: string;
   /** null while the transaction is in no block. */
   blockHeight: number | null;
+  /** Cardano absolute slot, used to enforce the pinned wallet's inclusive trust window. */
+  slot: number | null;
   /** Metadata by label, each value as Koios renders it in JSON; null when the tx carries none. */
   metadata: Record<string, unknown> | null;
   /** The bech32 address of every input the transaction spends. */
@@ -131,15 +133,31 @@ export interface MateriosCheckpointClaim {
 
 export interface MateriosCheckpointOptions {
   source: MateriosCheckpointSource;
-  /** Bech32 addresses of the wallets that fund genuine anchor txs. */
-  anchorWallets: readonly string[];
+  /** Explicit encoding and inclusive slot interval trusted for each funding wallet. */
+  anchorWallets: readonly MateriosAnchorWalletPin[];
   /**
    * Confirmations the tx's block needs, counting that block as one. The
-   * default 15 is a depth Cardano mainnet has never rolled back; 2160, the
-   * security parameter k, is the depth no rollback can reach.
+   * default 15 matches the gateway's operational "settled" depth. Use the
+   * Cardano security parameter k=2160 for a stronger finality margin; source
+   * truthfulness and the chain's consensus assumptions still apply.
    */
   minConfirmations?: number;
 }
+
+export interface MateriosAnchorWalletPin {
+  address: string;
+  encoding: MateriosAnchorEncoding;
+  fromSlot: number;
+  toSlot: number;
+}
+
+/** Historical windows reviewed through 2026-10-24; extend only after reviewing the new window. */
+export const MATERIOS_CHECKPOINT_WALLET_PINS: readonly MateriosAnchorWalletPin[] = Object.freeze([
+  Object.freeze({ address: "addr1qx2h3pcsp6l9lxc0nujfdrczrmmstvju024xxvjcu2ywptslud3z94x5tgw8p0aefdjm8wxwrt0j49y384nuxgsjd9xq89stdk", encoding: "flat" as const,
+    fromSlot: Date.parse("2026-04-18T00:00:00Z") / 1000 - 1591566291, toSlot: Date.parse("2026-06-29T23:59:59Z") / 1000 - 1591566291 }),
+  Object.freeze({ address: "addr1v8jk9tqygmwd7xvf86pkz2033ahf0zrzdeesz0wy25my7xqgduf4l", encoding: "detailed-schema" as const,
+    fromSlot: Date.parse("2026-06-30T00:00:00Z") / 1000 - 1591566291, toSlot: Date.parse("2026-10-24T23:59:59Z") / 1000 - 1591566291 }),
+]);
 
 export interface MateriosCheckpointVerification {
   verified: boolean;
@@ -201,6 +219,7 @@ interface Input {
   txHash: string | null;
   scanFromBlockHeight: number | null;
   wallets: Set<string>;
+  walletPins: readonly MateriosAnchorWalletPin[];
   minConfirmations: number;
 }
 
@@ -238,8 +257,16 @@ function parseInput(claim: MateriosCheckpointClaim, options: MateriosCheckpointO
   const cardanoNetworkId = manifest.cardanoNetworkId ?? "";
   if (typeof cardanoNetworkId !== "string") throw new Refusal("input", "manifest.cardanoNetworkId is not a string");
   const wallets = options.anchorWallets;
-  if (!Array.isArray(wallets) || wallets.length === 0 || !wallets.every((w) => typeof w === "string" && w.length > 0)) {
-    throw new Refusal("input", "anchorWallets pins no wallet");
+  if (!Array.isArray(wallets) || wallets.length === 0) throw new Refusal("input", "anchorWallets pins no wallet");
+  const pins: MateriosAnchorWalletPin[] = [];
+  for (const w of wallets) {
+    if (!w || typeof w !== "object") throw new Refusal("input", "each anchorWallets pin requires address, encoding, fromSlot and toSlot");
+    const pin = { address: w.address, encoding: w.encoding, fromSlot: w.fromSlot, toSlot: w.toSlot };
+    if (typeof pin.address !== "string" || pin.address.length === 0 || !["flat", "detailed-schema"].includes(pin.encoding)) {
+      throw new Refusal("input", "each anchorWallets pin requires address, encoding, fromSlot and toSlot");
+    }
+    if (count(pin.fromSlot, "wallet.fromSlot", 0) > count(pin.toSlot, "wallet.toSlot", 0)) throw new Refusal("input", "wallet trust window ends before it starts");
+    pins.push(Object.freeze(pin));
   }
   return {
     genesis,
@@ -254,7 +281,8 @@ function parseInput(claim: MateriosCheckpointClaim, options: MateriosCheckpointO
     claimedAnchorId: claim.anchorId === undefined ? null : hash32(claim.anchorId, "anchorId"),
     txHash: "txHash" in cardano ? hash32(cardano.txHash, "cardano.txHash") : null,
     scanFromBlockHeight: "txHash" in cardano ? null : count(cardano.scanFromBlockHeight, "cardano.scanFromBlockHeight", 0),
-    wallets: new Set(wallets),
+    wallets: new Set(pins.map((w) => w.address)),
+    walletPins: pins,
     minConfirmations: count(options.minConfirmations ?? SETTLED_CONFIRMATIONS, "minConfirmations", 1),
   };
 }
@@ -344,7 +372,7 @@ async function checkAnchoring(tx: CheckpointTransaction, input: Input, claimed: 
 
     if (tx.inputAddresses.length === 0) throw new Refusal("wallet", "the transaction spends no input");
     const foreign = [...new Set(tx.inputAddresses.filter((address) => !input.wallets.has(address)))];
-    check("wallet", foreign.length === 0, `funded by ${[...new Set(tx.inputAddresses)].join(", ")}`, `the transaction spends inputs of ${foreign.join(", ")}, which no pinned anchor wallet is`);
+    if (foreign.length > 0) throw new Refusal("wallet", `the transaction spends inputs of ${foreign.join(", ")}, which no pinned anchor wallet is`);
 
     const value = tx.metadata?.[LABEL];
     if (value === undefined) throw new Refusal("record", `the transaction carries no label ${LABEL} metadata`);
@@ -352,6 +380,10 @@ async function checkAnchoring(tx: CheckpointTransaction, input: Input, claimed: 
     if (!decoded.ok) throw new Refusal("record", `its label ${LABEL} value: ${decoded.reason}`);
     const { record } = decoded;
     out.encoding = decoded.encoding;
+    const slot = tx.slot;
+    check("wallet", Number.isSafeInteger(slot) && slot !== null && slot >= 0 && tx.inputAddresses.every((address) => input.walletPins.some((pin) => pin.address === address && pin.encoding === decoded.encoding && slot >= pin.fromSlot && slot <= pin.toSlot)),
+      `funded by pinned wallets in their ${decoded.encoding} trust windows at slot ${slot}`,
+      "the funding wallet, record encoding or Cardano slot is outside every pinned trust window");
     pass("record", `a ${decoded.encoding} p "materios", v 2 record under label ${LABEL}, labelled chain ${record.chain}`);
 
     check("anchored_root", record.root === bare(claimed.root), `the record anchors root ${record.root}`, `the record anchors root ${record.root}, not ${bare(claimed.root)}`);
@@ -389,7 +421,7 @@ async function checkAnchoring(tx: CheckpointTransaction, input: Input, claimed: 
  *     manifest: { fromBlock: batch.blockRangeStart, toBlock: batch.blockRangeEnd },
  *     cardano: { txHash: batch.cardanoTxHash },
  *   },
- *   { source: createKoiosCheckpointSource({ network: "mainnet" }), anchorWallets: [ANCHOR_WALLET] },
+ *   { source: createKoiosCheckpointSource({ network: "mainnet" }), anchorWallets: MATERIOS_CHECKPOINT_WALLET_PINS },
  * );
  * if (!result.verified) console.log(result.refusal);
  * ```
@@ -405,7 +437,7 @@ export async function verifyMateriosCheckpointAnchor(
   const pass = (name: MateriosCheckpointCheck, detail: string) => result.checks.push({ name, ok: true, detail });
   try {
     const input = parseInput(claim, options);
-    pass("input", `receipt 0x${input.receiptId} on Materios chain ${input.genesis}`);
+    pass("input", `receipt 0x${input.receiptId}; checkpoint commitment genesis ${input.genesis}`);
     result.certHash = `0x${input.cert}`;
     const claimed = commitment(input, pass);
     Object.assign(result, { leaf: claimed.leaf, rootHash: claimed.root, manifestHash: claimed.manifestHash, anchorId: claimed.anchorId });

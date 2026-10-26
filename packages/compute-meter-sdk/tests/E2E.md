@@ -203,8 +203,7 @@ upstream piece is missing so they can fix THAT, not chase the SDK.
 Test-vector-driven Phase 2 demo: submits a `compute_metering_v2.1` record
 that carries a real Google-rooted Pixel StrongBox attestation chain
 (vendored from `pallets/tee-attestation/src/test_vectors.rs`), watches the
-chain attest + Cardano-anchor it, and round-trips the
-`attestation_evidence_hash` back through Blockfrost. When this harness
+chain attest + Cardano-anchor it, and checks the Cardano checkpoint metadata shape through Blockfrost. Individual receipt membership and evidence hashes are not stored as a leaf list on Cardano. When this harness
 goes green end-to-end, Wave 3 Phase 2 is shipped.
 
 The harness uses two independent trust layers — see the long explanation
@@ -231,13 +230,13 @@ export PHASE2_ADMIN_TOKEN="<gateway-admin-shared-secret>"
 export MATERIOS_E2E_FLEET_OPERATOR_KEY="/path/to/fleet-operator-key.json"
 
 # Required for test #5 (Cardano metadata round-trip):
-export PHASE2_BLOCKFROST_PROJECT_ID="preprod<your_project_id>"
+export PHASE2_BLOCKFROST_PROJECT_ID="mainnet<your_project_id>"
 
 # Optional:
 export MATERIOS_E2E_GATEWAY="https://materios.fluxpointstudios.com/preprod-blobs"
 export MATERIOS_RPC_URL="ws://127.0.0.1:9945"
 export PHASE2_ATTESTOR_KEY="/path/to/attestor-key.json"   # otherwise generated fresh per session
-export PHASE2_BLOCKFROST_URL="https://cardano-preprod.blockfrost.io/api/v0"
+export PHASE2_BLOCKFROST_URL="https://cardano-mainnet.blockfrost.io/api/v0"
 
 .venv/bin/pytest tests/test_phase2_path_c_smoke.py -m phase_2_smoke -v
 ```
@@ -250,7 +249,7 @@ export PHASE2_BLOCKFROST_URL="https://cardano-preprod.blockfrost.io/api/v0"
 | `test_path_c_evidence_submission_returns_correct_hash` | The gateway's `attestation_evidence_hash` matches the SDK's pinned canonical-CBOR-sha256 byte-for-byte. Cross-language encoder property test, end-to-end. | <60s |
 | `test_path_c_invalid_pixel_chain_rejected` | Tampered Pixel chain (`PIXEL_KEY_CERT_INVALID`) — the gateway accepts the evidence at the endpoint level, but `composite_trust_score` MUST stay at 0 past `PHASE2_DEADLINE_NEGATIVE_S` (default 180 s). The cert-daemon refuses to attest. | <3 min |
 | `test_path_c_valid_pixel_chain_attested` | Headline demo. Valid Pixel chain → `composite_trust_score >= 1` AND `cardano_anchor_tx != null`. Logs the cexplorer.io URL on success. | <20 min |
-| `test_path_c_anchor_evidence_hash_round_trips` | Reads back the Cardano anchor tx via Blockfrost, parses label-8746 metadata, finds the leaf for our receipt, asserts the leaf's `attestation_evidence_hash` matches the SDK's value. Real Google-rooted hardware → Cardano L1 audit trail. | <30s after #4 |
+| `test_path_c_anchor_metadata_is_checkpoint_commitment` | Reads Cardano mainnet label-8746 metadata in its flat or detailed-schema encoding and checks root/manifest/range/integer count. This smoke does not prove receipt membership; use the off-chain leaf list or Merkle proof with `verifyMateriosCheckpointAnchor` for that. | <30s after #4 |
 
 ### Phase 2 skip behaviour
 
@@ -275,4 +274,4 @@ The skip messages are deliberately verbose — running `pytest -m phase_2_smoke 
 | `PHASE2_DEADLINE_RECEIPT_S` | 60 | Max time to wait for the v2.1 record to surface in `/billing/usage`. |
 | `PHASE2_DEADLINE_CERT_S` | 600 | (reserved) — the chain attestation half budget. |
 | `PHASE2_DEADLINE_NEGATIVE_S` | 180 | Negative-test deadline: how long to wait before concluding the cert-daemon WON'T attest a tampered chain. |
-| `PHASE2_DEADLINE_ANCHOR_S` | 1200 | Max wait for the headline demo's anchor + trust-score to land (Cardano preprod p50 ≈ 5-15 min). |
+| `PHASE2_DEADLINE_ANCHOR_S` | 1200 | Max wait for the headline demo's anchor + trust-score to land (Cardano mainnet p50 ≈ 5-15 min). |
