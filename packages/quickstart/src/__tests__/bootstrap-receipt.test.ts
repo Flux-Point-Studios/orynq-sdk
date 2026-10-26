@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, expect, it, vi } from "vitest";
+import { bootstrapAndTrace } from "../bootstrap.js";
+import { merkleRoot } from "@fluxpointstudios/orynq-sdk-anchors-materios";
 
 // bootstrapAndTrace with the chain and gateway calls stubbed and the SDK's blob layout and Merkle
 // rule kept real, so what it uploads and what it puts on chain are what the committee checks:
@@ -33,8 +35,6 @@ afterEach(() => {
 });
 
 it("uploads the blob under its content hash and puts its chunk Merkle root on chain", async () => {
-  const { bootstrapAndTrace } = await import("../bootstrap.js");
-  const { merkleRoot } = await import("@fluxpointstudios/orynq-sdk-anchors-materios");
   const root = mkdtempSync(join(tmpdir(), "quickstart-receipt-")); roots.push(root);
   const result = await bootstrapAndTrace({ configPath: join(root, "config.json"), skipFaucet: true, certTimeoutMs: 0 });
   const contentHash = result.bundle.manifestHash.replace(/^0x/, "");
@@ -52,7 +52,6 @@ it("uploads the blob under its content hash and puts its chunk Merkle root on ch
 
 
 it("submits the complete two-chunk root and returns the full verification identities", async () => {
-  const { bootstrapAndTrace } = await import("../bootstrap.js");
   const root = mkdtempSync(join(tmpdir(), "quickstart-large-receipt-")); roots.push(root);
   const result = await bootstrapAndTrace({ configPath: join(root, "config.json"), skipFaucet: true, summary: "x".repeat(270_000) });
   const content = Buffer.from(result.bundle.content, "utf8");
