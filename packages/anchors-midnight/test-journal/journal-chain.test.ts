@@ -65,7 +65,7 @@ describe("node-confirmed finalized journal retirement", () => {
     const net = source(); net.timestamp(raw);
     await expect(chainView(net.s, "preprod").indexedThrough()).rejects.toThrow(/Timestamp.Now/);
   });
-  it.each(["FAILURE", "PARTIAL_SUCCESS", null])("node inclusion keeps a guaranteed anchor landed despite indexer status %s", async status => {
+  it.each(["FAILURE", "PARTIAL_SUCCESS", null] as const)("node inclusion keeps a guaranteed anchor landed despite indexer status %s", async status => {
     const net = source(), view = chainView(net.s, "preprod");
     const journal = openJournal(join(root, `${index++}.sqlite`));
     await journal.submitOnce(key, { prepare: async () => ({ bytes: bytes(), ttl }), broadcast: async () => { net.body(2, [midnightExtrinsic(bytes())]); net.head(3); net.list(status); }, chain: view });
@@ -99,4 +99,25 @@ describe("node-confirmed finalized journal retirement", () => {
     await journal.reconcile(view); await journal.reconcile(view);
     expect(journal.live(key)?.state).toBe("pending"); journal.close();
   });
+  it("bounds a stalled node scan without retiring or re-preparing its row", async () => {
+    const net = source(), original = net.s.node.call.bind(net.s.node);
+    net.s.node.call = async <T>(method: string, params?: unknown[]): Promise<T> => method === "chain_getBlock" ? new Promise<T>(() => undefined) : original<T>(method, params);
+    const view = chainView(net.s, "preprod", { scanTimeoutMillis: 20 }); const journal = openJournal(join(root, `${index++}.sqlite`));
+    await journal.submitOnce(key, { prepare: async () => ({ bytes: bytes(), ttl }), broadcast: async () => { net.head(3, ttl.getTime() + 3600_000); }, chain: view });
+    const started = performance.now();
+    await journal.reconcile(view);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(journal.live(key)?.state).toBe("pending"); journal.close();
+  });
+
+  it("finds the same guaranteed anchor inside a merged transaction with another hash", async () => {
+    const first = L.Transaction.deserialize("signature", "proof", "binding", bytes());
+    const second = L.Transaction.fromParts(fixture.network).addIntent({ tag: "specific", value: 2 }, L.Intent.new([...first.intents!.values()][0]!.ttl)).mockProve();
+    const merged = first.merge(second);
+    expect(merged.transactionHash()).not.toBe(first.transactionHash());
+    const net = source(), view = chainView(net.s, "preprod"), journal = openJournal(join(root, `${index++}.sqlite`));
+    await journal.submitOnce(key, { prepare: async () => ({ bytes: bytes(), ttl }), broadcast: async () => { net.body(2, [midnightExtrinsic(merged.serialize())]); net.head(3, ttl.getTime() + 3600_000); }, chain: view });
+    expect(await journal.reconcile(view)).toEqual([expect.objectContaining({ state: "landed", height: 2 })]); journal.close();
+  });
+
 });

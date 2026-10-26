@@ -1,4 +1,4 @@
-import { closeSync, constants, openSync, statSync } from "node:fs";
+import { closeSync, constants, openSync, lstatSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
 
@@ -54,6 +54,7 @@ export interface JournalRow {
   height?: number;
   blockHash?: string;
   payer?: string;
+  orphaned?: JournalBoundary;
 }
 
 const SCHEMA = `
@@ -86,6 +87,8 @@ interface Row {
   start_hash: string | null;
   scan_height: number | null;
   scan_hash: string | null;
+  orphaned_height: number | null;
+  orphaned_hash: string | null;
 }
 
 const keyOf = (k: AnchorKey) => {
@@ -101,6 +104,7 @@ const view = (r: Row): JournalRow => ({
   ...(r.height === null ? {} : { height: r.height }),
   ...(r.block_hash === null ? {} : { blockHash: r.block_hash }),
   ...(r.payer === null ? {} : { payer: r.payer }),
+  ...(r.orphaned_height === null || r.orphaned_hash === null ? {} : { orphaned: { height: r.orphaned_height, hash: r.orphaned_hash } }),
 });
 
 const finalTransaction = (bytes: Uint8Array) => {
@@ -124,12 +128,11 @@ export const TTL_MARGIN_MILLIS = 5 * 60_000;
 // A write-ahead journal of anchor submissions in SQLite. A row is written, with the hash of
 // the exact bytes, before those bytes are broadcast, so a broadcast that fails, times out after
 // the node accepted it, or dies with the process is answered later by its hash and never sent
-// as a second transaction. A pending row is retired only when the indexer reports its
-// transaction, or has read past its TTL plus `ttlMarginMillis` in chain time without seeing it.
-// A row whose bytes deploy a contract is never retired on the indexer's word, whichever caller
-// reconciles the journal: only once chain time is past its TTL plus the margin and the node, at
-// that block, holds no contract at an address they deploy. While it holds one, the row is landed,
-// with no block until the indexer lists its transaction, since a second deploy is a second contract.
+// as a second transaction. Anchor retirement needs a complete, bounded scan of the configured
+// node's finalized chain from its pre-broadcast boundary through the block whose finalized
+// Timestamp.Now is past the encoded TTL plus margin. Indexer status and omission never suffice.
+// Deploy retirement additionally requires absence at every deterministic deployed address.
+// A contract that exists there holds the key even when its original transaction is unindexed.
 // A row is settled only from a chain view of its own network, so one file may hold the rows of
 // several networks: another network's indexer, clock and node never settle it.
 export function openJournal(path: string, { ttlMarginMillis = TTL_MARGIN_MILLIS }: { ttlMarginMillis?: number } = {}) {
@@ -140,18 +143,26 @@ export function openJournal(path: string, { ttlMarginMillis = TTL_MARGIN_MILLIS 
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
-  if (statSync(path).mode & 0o077) throw new Error(`${path} can be read or written by group or others`);
+  const file = lstatSync(path);
+  if (!file.isFile() || file.isSymbolicLink()) throw new Error(`${path} must be a regular journal file, not a symlink`);
+  if (typeof process.getuid === "function" && file.uid !== process.getuid()) throw new Error(`${path} is not owned by this process's user`);
+  if (file.mode & 0o077) throw new Error(`${path} can be read or written by group or others`);
   const db = new DatabaseSync(path);
-  db.exec("pragma journal_mode = wal; pragma synchronous = full; pragma busy_timeout = 10000;");
+  db.exec("pragma busy_timeout = 10000; pragma journal_mode = wal; pragma synchronous = full;");
+  db.exec("begin immediate");
+  try {
   db.exec(SCHEMA);
   // A journal whose table was created without the payer column gains it; its rows name no payer.
   if (!db.prepare("select 1 from pragma_table_info('attempts') where name = 'payer'").get()) db.exec("alter table attempts add column payer text");
   // Older rows have no proven pre-broadcast boundary: their absence never frees an anchor
   // key. Positive node inclusion can still settle them; never reset/delete that evidence.
-  for (const column of ["start_height integer", "start_hash text", "scan_height integer", "scan_hash text"]) {
+  for (const column of ["start_height integer", "start_hash text", "scan_height integer", "scan_hash text", "orphaned_height integer", "orphaned_hash text"]) {
     const name = column.split(" ")[0]!;
     if (!db.prepare("select 1 from pragma_table_info('attempts') where name = ?").get(name)) db.exec(`alter table attempts add column ${column}`);
   }
+  db.exec("commit");
+  } catch (error) { db.exec("rollback"); db.close(); throw error; }
+  const orphan = db.prepare("update attempts set orphaned_height = ?, orphaned_hash = ? where tx_hash = ?");
   const progress = db.prepare("update attempts set scan_height = ?, scan_hash = ? where tx_hash = ?");
   const live = db.prepare("select * from attempts where key = ? and state != 'failed'");
   const insert = db.prepare("insert into attempts (key, tx_hash, bytes, ttl_ms, state, payer, start_height, start_hash) values (?, ?, ?, ?, 'pending', ?, ?, ?)");
@@ -187,14 +198,17 @@ export function openJournal(path: string, { ttlMarginMillis = TTL_MARGIN_MILLIS 
     else {
       const head = await chain.indexedThrough();
       if (head && head.time.getTime() > row.ttl_ms + ttlMarginMillis) {
+        // A newer finalized clock cannot turn an older, incomplete absence window into proof:
+        // the transaction could have landed between the scanned head and this clock's block.
+        const absentAtHead = evidence?.state === "absent" && evidence.through?.height === head.height && evidence.through?.hash === head.hash;
         if (deploys.length) {
           const held = await Promise.all(deploys.map(address => chain.holdsContract(address, head.hash)));
           // A finalized contract at this deterministic address is positive evidence even when
           // a merged transaction is not indexed under this journal's original transaction hash.
           if (held.includes(true)) settle.run("landed", null, null, row.tx_hash);
-          else if (!chain.confirm || evidence?.state === "absent") settle.run("failed", seen?.height ?? null, seen?.blockHash ?? null, row.tx_hash);
-        } else if (evidence?.state === "absent") {
-          settle.run("failed", seen?.height ?? null, seen?.blockHash ?? null, row.tx_hash);
+          else if (!chain.confirm || absentAtHead) settle.run("failed", null, null, row.tx_hash);
+        } else if (absentAtHead) {
+          settle.run("failed", null, null, row.tx_hash);
         }
       }
     }
@@ -221,9 +235,14 @@ export function openJournal(path: string, { ttlMarginMillis = TTL_MARGIN_MILLIS 
       throw new Error("A new journal attempt needs a finalized pre-broadcast boundary; nothing was prepared or sent");
     }
     const { bytes, ttl, payer } = await prepare();
-    const txHash = finalTransaction(bytes).transactionHash();
+    const tx = finalTransaction(bytes), txHash = tx.transactionHash();
+    const expiries = [ttl.getTime(), ...[...(tx.intents?.values() ?? [])].map(intent => intent.ttl.getTime())];
+    if (expiries.some(value => !Number.isFinite(value))) throw new Error("A journal attempt needs a finite transaction TTL");
+    // Caller metadata can hold a key longer, never free it while an encoded intent remains
+    // valid. This also covers independently merged intents with different encoded deadlines.
+    const expires = Math.max(...expiries);
     try {
-      insert.run(k, txHash, bytes, ttl.getTime(), payer ?? null, boundary?.height ?? null, boundary?.hash ?? null);
+      insert.run(k, txHash, bytes, expires, payer ?? null, boundary?.height ?? null, boundary?.hash ?? null);
     } catch (error) {
       const other = live.get(k) as unknown as Row | undefined;
       if (other) return view(other);
@@ -269,6 +288,7 @@ export function openJournal(path: string, { ttlMarginMillis = TTL_MARGIN_MILLIS 
         if (row.state === "landed" && row.height !== null) {
           const final = await chain.finalHash(row.height);
           if (final !== null && final !== row.block_hash) {
+            orphan.run(row.height, row.block_hash, txHash);
             settle.run("pending", null, null, txHash);
             await reconcile(byHash.get(txHash) as unknown as Row, chain);
           }

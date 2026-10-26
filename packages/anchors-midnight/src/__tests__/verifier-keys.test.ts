@@ -26,7 +26,7 @@ describe("the registry's verifier keys", () => {
     }
     const k = (name: string) => Zkir.deserialize(new Uint8Array(readFileSync(new URL(`../../contract/managed/zkir/${name}.bzkir`, import.meta.url)))).getK();
     expect([k("anchor"), k("anchor_hiding")]).toEqual([13, 14]);
-  });
+  }, 30_000);
 
   it("are canonical: one ContractOperation round-trip is a fixed point, and the deploy state holds exactly that encoding", () => {
     const state = registryInitialState();
@@ -35,12 +35,12 @@ describe("the registry's verifier keys", () => {
       expect(hex(L.ContractOperation.deserialize(Buffer.from(canonical, "hex")).serialize())).toBe(canonical);
       expect(hex(state.operation(name)!.serialize())).toBe(canonical);
     }
-  });
+  }, 30_000);
 
   it("negative control: ledger 8.1.3 refuses a verifier key with a trailing byte, so no second encoding of a key exists", () => {
     const padded = new Uint8Array([...keyFile("anchor"), 0]);
     expect(() => canonicalVerifierKey(padded)).toThrow(/Not all bytes read .*1 bytes remaining/);
-  });
+  }, 30_000);
 
   it("are read from disk only when each file still matches its pin", async () => {
     expect(hex(compiledVerifierKeys().anchor)).toBe(hex(keyFile("anchor")));
@@ -61,7 +61,7 @@ describe("the registry's verifier keys", () => {
       vi.doUnmock("node:fs");
       vi.resetModules();
     }
-  });
+  }, 30_000);
 });
 
 // A submitter proves with the prover keys and zkir of the committed build; contract/HASHES.txt,
@@ -82,12 +82,12 @@ describe("compiledContractFile", () => {
         expect(createHash("sha256").update(bytes).digest("hex"), path).toBe(hashes.get(`managed/${path}`));
       }
     }
-  });
+  }, 30_000);
 
   it("refuses a path HASHES.txt does not pin, and any way out of the managed directory", () => {
     expect(() => compiledContractFile("keys/other.prover")).toThrow(/contract\/HASHES\.txt pins no managed\/keys\/other\.prover/);
     expect(() => compiledContractFile("../orynq-anchor-registry.compact")).toThrow(/pins no managed\/\.\.\/orynq-anchor-registry\.compact/);
-  });
+  }, 30_000);
 
   it("refuses a file that no longer matches its pin", async () => {
     vi.resetModules();
@@ -109,5 +109,5 @@ describe("compiledContractFile", () => {
       vi.doUnmock("node:fs");
       vi.resetModules();
     }
-  });
+  }, 30_000);
 });

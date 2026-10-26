@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -260,7 +260,7 @@ describe("the write-ahead journal", () => {
     journal.close();
   });
 
-  it.each(["FAILURE", "PARTIAL_SUCCESS", null])("an uncorroborated indexer status %s never frees a pending anchor", async status => {
+  it.each(["FAILURE", "PARTIAL_SUCCESS", null] as const)("an uncorroborated indexer status %s never frees a pending anchor", async status => {
     const journal = openJournal(file());
     const net = network();
     const count = { n: 0 };
@@ -464,6 +464,22 @@ describe("the write-ahead journal", () => {
     expect(() => openJournal(open)).toThrow(/journal-\d+\.sqlite can be read or written by group or others/);
   });
 
+  it("refuses an existing symlink even when its target is an owner-only journal", () => {
+    const target = file(), link = file(); openJournal(target).close(); symlinkSync(target, link);
+    expect(() => openJournal(link)).toThrow(/regular journal file/);
+    expect(() => openJournal(target).close()).not.toThrow();
+  });
+
+  it("never combines an older absence scan with a newer finalized clock to free a key", async () => {
+    const journal = openJournal(file()), net = network();
+    await journal.submitOnce(key, { prepare: prepared("anchor", { n: 0 }), broadcast: net.send("anchor"), chain: net.chain });
+    net.advance(new Date(TTL.getTime() + 6 * MINUTE));
+    const newer = { ...net.chain, indexedThrough: async () => ({ height: 101, hash: "ee".repeat(32), time: new Date(TTL.getTime() + 6 * MINUTE) }) };
+    await journal.reconcile(newer);
+    expect(journal.live(key)?.state).toBe("pending");
+    expect(net.arrived).toEqual([fixture.anchor.txHash]); journal.close();
+  });
+
   it("refuses bytes that are not a final transaction before writing anything", async () => {
     const journal = openJournal(file());
     const net = network();
@@ -500,7 +516,7 @@ describe("a landed row whose block the node's finalized chain does not hold", ()
     const { journal, net } = await landedAnchor();
     net.finalize(7, "11".repeat(32));
     net.place(fixture.anchor.txHash, 9, ELSEWHERE);
-    expect(await journal.relocate(fixture.anchor.txHash, net.chain)).toEqual({ txHash: fixture.anchor.txHash, state: "landed", ttl: TTL, broadcasts: 1, height: 9, blockHash: ELSEWHERE });
+    expect(await journal.relocate(fixture.anchor.txHash, net.chain)).toEqual({ txHash: fixture.anchor.txHash, state: "landed", ttl: TTL, broadcasts: 1, height: 9, blockHash: ELSEWHERE, orphaned: { height: 7, hash: ORPHANED } });
     expect(journal.live(key)).toMatchObject({ state: "landed", height: 9, blockHash: ELSEWHERE });
     expect(net.arrived).toEqual([fixture.anchor.txHash]);
     journal.close();
@@ -510,7 +526,7 @@ describe("a landed row whose block the node's finalized chain does not hold", ()
     const { journal, net } = await landedAnchor();
     net.finalize(7, "11".repeat(32));
     net.forget(fixture.anchor.txHash);
-    expect(await journal.relocate(fixture.anchor.txHash, net.chain)).toEqual({ txHash: fixture.anchor.txHash, state: "pending", ttl: TTL, broadcasts: 1 });
+    expect(await journal.relocate(fixture.anchor.txHash, net.chain)).toEqual({ txHash: fixture.anchor.txHash, state: "pending", ttl: TTL, broadcasts: 1, orphaned: { height: 7, hash: ORPHANED } });
     net.advance(new Date(TTL.getTime() + 5 * MINUTE + 1));
     expect(await journal.reconcile(net.chain)).toEqual([expect.objectContaining({ txHash: fixture.anchor.txHash, state: "failed" })]);
     expect(journal.live(key)).toBeUndefined();

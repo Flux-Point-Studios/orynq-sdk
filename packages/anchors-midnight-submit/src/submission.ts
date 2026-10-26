@@ -126,6 +126,7 @@ export function confirmedSends(journalling: Journalling, key: AnchorKey, what: s
   const EXPIRED = `the journalled ${what} expired without landing; rerun to prepare new bytes`;
   const failure = (txHash: string) => {
     const row = journal.history(key).find(candidate => candidate.txHash === txHash && candidate.state === "failed");
+    if (row?.orphaned) return `the journalled ${what} was orphaned from block ${row.orphaned.height} (${row.orphaned.hash}) and expired without landing again; rerun to prepare new bytes`;
     return row?.height === undefined ? EXPIRED : `the journalled ${what} failed in block ${row.height}${row.blockHash ? ` (${row.blockHash})` : ""}; rerun to prepare new bytes`;
   };
   const unknownTime = (which: string) => `the ${network} node does not hold the indexer's newest block, so chain time is unknown and the ${which} bytes may be past their TTL`;
@@ -181,11 +182,12 @@ export function confirmedSends(journalling: Journalling, key: AnchorKey, what: s
 }
 
 // Waits, by txHash, until the journal settles `row`, sending nothing, and returns it landed with
-// its block as the indexer lists it; a transaction the chain reports failed, or that outlives its
-// TTL unseen, is an error.
+// its canonical finalized placement; an attempt retired after a proven absent TTL window is
+// an error. The deadline retains bytes and never sends a replacement.
 export async function landedRow({ journal, chain, network, pollMillis, settleTimeoutMillis = 120_000 }: Journalling, key: AnchorKey, row: JournalRow): Promise<JournalRow & { height: number; blockHash: string }> {
   if (!Number.isFinite(settleTimeoutMillis) || settleTimeoutMillis <= 0 || settleTimeoutMillis > 60 * 60_000) throw new Error("Invalid journal settlement deadline");
   const deadline = performance.now() + settleTimeoutMillis;
+  const wait = async () => {
   while (row.state === "pending") {
     const left = deadline - performance.now();
     if (left <= 0) throw new Error(`Timed out waiting for transaction ${row.txHash} on ${network}; its journalled bytes and claim were retained`);
@@ -193,11 +195,19 @@ export async function landedRow({ journal, chain, network, pollMillis, settleTim
     const settled = await journal.reconcile(chain);
     row = settled.find((r) => r.txHash === row.txHash) ?? journal.history(key).find((r) => r.txHash === row.txHash)!;
   }
-  if (row.state !== "landed") throw new Error(`transaction ${row.txHash} failed on ${network}${row.height === undefined ? " after its finalized TTL window" : ` in block ${row.height}${row.blockHash ? ` (${row.blockHash})` : ""}`}`);
+  if (row.state !== "landed") throw new Error(`transaction ${row.txHash} failed on ${network} after its finalized TTL window${row.orphaned ? `; its cached block ${row.orphaned.height} (${row.orphaned.hash}) was orphaned and the finalized chain contains no replacement inclusion` : " without a canonical inclusion"}`);
   if (row.height !== undefined && row.blockHash !== undefined) return { ...row, height: row.height, blockHash: row.blockHash };
   // Landed on the node's word, which names no block: the indexer names it once it lists the transaction.
   const seen = await chain.lookup(row.txHash);
   if (seen && seen.status !== "SUCCESS" && seen.status !== "PARTIAL_SUCCESS") throw new Error(`transaction ${row.txHash} took effect on ${network} in another or unsupported indexed transaction; indexer reports a terminal non-success result`);
   if (!seen) throw new Error(`transaction ${row.txHash} took effect on ${network}, as the node's state shows, but the indexer does not list it yet`);
   return { ...row, height: seen.height, blockHash: seen.blockHash };
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      wait(),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`Timed out waiting for transaction ${row.txHash} on ${network}; its journalled bytes and claim were retained`)), settleTimeoutMillis); }),
+    ]);
+  } finally { if (timer) clearTimeout(timer); }
 }

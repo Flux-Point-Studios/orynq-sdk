@@ -212,48 +212,62 @@ needs a global `WebSocket`, which Node has from version 22.
 
 ## Submission journal
 
-`@fluxpointstudios/orynq-sdk-anchors-midnight/journal` keeps a write-ahead journal of anchor
-submissions in SQLite (`node:sqlite`, Node 22.13 or later). `submitOnce(key, { prepare,
-broadcast, chain })` allows one live attempt per anchor key (network, registry, author, kind,
-commitment, attribute). It writes the attempt's row, with the hash it computes from the final
-bytes `prepare` returns, before `broadcast` sees those bytes, so a broadcast that times out
-after the node accepted it, or a process that dies before or during it, is answered later by
-that hash and never sent as a second transaction. A row whose broadcast never returned is resent
-with the same bytes. A caller that holds its final bytes already names their hash
-(`submitOnce(key, { ..., txHash })`): a live row of other bytes then comes back unsent, so that
-caller never broadcasts an attempt it did not prepare. A pending row is retired only when the indexer reports its transaction
-(landed or failed), or when the indexer's newest block is past the transaction's TTL plus a
-margin, in chain time rather than the local clock. A row whose bytes deploy a contract is never
-retired on the indexer's word, since a second deploy is a second contract: whatever the indexer
-reports, other than landed, it stays live until chain time is past its TTL plus the margin, and
-then the journal asks the chain view's `holdsContract(address, block)` whether the node holds a
-contract, at that very block, at an address the bytes deploy. If it does, the row is landed, with
-no block until the indexer lists the transaction; only if it holds none is the row retired. The
-rule lives in the journal, so every reconcile of a journal keeps it, whichever caller runs it, and
-a lookup answered from an older indexer snapshot than the head, or an indexer that reports a
-landed deploy failed, never frees the key for a second deploy. A chain view names its network,
-and a row is settled only from a view of its own: `reconcile(chain)` settles the pending rows of
-the view's network alone, and `submitOnce` refuses a key of another network before preparing
-anything, so in a file that holds several networks' rows, another network's indexer, clock and
-node never retire a deploy or land one. Calls are serialized per journal, and across processes
-the attempt that writes its row second never broadcasts. Each row records the wallet that paid
-the attempt's fee when `prepare` names it (`payer`); a journal created before that column existed
-gains it on open, its older rows naming none. `live(key)` returns a key's live attempt with its
-exact bytes and payer, so a caller that lost its own record of an attempt can resume it and name
-the wallet that paid it. A landed row names the block the indexer placed it in, which a reorg
-can orphan: `relocate(txHash, chain)` settles a landed row afresh once the chain view's
-`finalHash(height)`, the block the node's finalized chain holds at the row's height, is another
-block. The row is then pending again and settled by its hash as any pending row is: landed where
-the indexer now places it, or retired once chain time is past its TTL plus the margin unseen,
-which frees its key. Nothing is prepared or broadcast, and a row whose block the node has not
-finalized, or has finalized as the very block the row names, stays as it is.
-`chainView(source, network)` reads `network` through its source: transactions from its
-indexer, contracts from its node (`contractStateOnNode` at the block), the node's finalized block
-at a height (null above its finalized head), and chain time from the
-indexer's newest block only once the source's node holds that block at that height, as the
-smaller of the indexer's time for it and the node's own `Timestamp.Now` in it; until the node
-holds it there is no chain time, so an indexer that is forked, foreign or ahead of the node
-retires nothing.
+`@fluxpointstudios/orynq-sdk-anchors-midnight/journal` keeps final transaction bytes in an
+owner-only SQLite write-ahead journal (`node:sqlite`, Node 22.13 or later). One live attempt
+holds each anchor key (network, registry, author, kind, commitment, attribute). `submitOnce`
+writes the exact bytes, computed hash, payer, and finalized pre-broadcast boundary before
+calling `broadcast`. Retries reuse those bytes. A caller that supplies its confirmed `txHash`
+receives another attempt's row unsent. Calls serialize per journal; the unique live-key index
+also prevents a second process from broadcasting a competing attempt. Existing symlinks,
+nonregular files, foreign owners, and files accessible to group or others are refused.
+
+`chainView(source, network)` binds each operation to the network's pinned genesis. It reads
+chain time from the configured node's finalized `Timestamp.Now`, verifies canonical header
+hashes and complete block-body roots, and follows parent links while scanning. Indexer
+`SUCCESS`, `PARTIAL_SUCCESS`, `FAILURE`, and missing lookup results are hints. They cannot free
+an anchor key. Exact canonical inclusion, or a merged transaction carrying the same anchor,
+settles a guaranteed anchor landed, including a `PARTIAL_SUCCESS` transaction. Fallible calls
+require the source's execution verifier. An unsupported wrapper containing the retained
+intent holds the row rather than serving as proof of absence.
+
+Retirement requires a complete scan from the retained pre-broadcast boundary through the
+same finalized block whose time exceeds every encoded intent TTL plus `TTL_MARGIN_MILLIS`
+(five minutes). A scan covers at most 128 blocks and 30 seconds per reconcile by default;
+`maxScanBlocks` (at most 1024) and `scanTimeoutMillis` (at most 120000) configure those budgets.
+Its validated prefix persists so later reconciles continue without dropping the key. Missing
+bodies, broken ancestry, changed retained boundaries, unknown time, or a later clock than the
+scanned head cannot authorize retirement. Deploy retirement additionally requires the node
+to hold no contract at any deterministic address deployed by those bytes, using a validated
+33-octet ledger root at that very finalized block. Its root-and-contract batch must be served
+by one backend, rather than a load balancer dispatching methods to different nodes. Unknown
+RPC absence errors fail closed.
+
+This journal trusts the configured node's reported canonical chain and finalized state; it
+does not independently authenticate GRANDPA finality. Pinning genesis prevents accidental
+foreign-network settlement, but does not make a jointly malicious node and indexer safe.
+Use an independently operated, authenticated node endpoint when the indexer is untrusted.
+The submitter's operator and receipt path must complete consensus verification before
+reporting an anchor complete. A caller-supplied `ChainView` is itself a trusted adapter and
+must uphold the same evidence rules. Local-clock checks may refuse a send but never retire a row.
+
+`live(key)` returns retained bytes and payer for recovery. `reconcile(chain)` only settles
+pending rows of that chain's network and never sends. `relocate(txHash, chain)` checks a
+landed row against the node's finalized canonical hash; an orphaned placement is retained in
+`row.orphaned` while the same bytes settle afresh. It never prepares or broadcasts a replacement.
+The confirmed-send helpers recheck TTL at the actual wallet-submit boundary, represent
+unknown expiry as `null`, and bound settlement waits. A timeout preserves the attempt and
+its coins for an exact-byte resume after the node recovers.
+
+Legacy rows lacking a pre-broadcast boundary remain held when absence cannot be proved.
+Do not reset/delete a pending row, reuse its author in a new journal, or replace its bytes.
+For audited recovery, retain an owner-only backup, record the existing key, transaction hash,
+bytes and payer, and restore access to an archive node and indexer on the pinned network.
+An exact transaction lookup supplies an inclusion hint; reconciliation rechecks its canonical
+header/body before settling it. If an independent audit finds a merged inclusion, a trusted
+`ChainView.lookup` adapter may supply that candidate block while retaining the standard
+`chainView.confirm` validator; the validator checks the actual semantic anchor itself.
+When neither positive inclusion nor a trustworthy original boundary can be recovered, this
+version deliberately provides no API to release the legacy claim on an absence assertion.
 
 ## Known authors
 

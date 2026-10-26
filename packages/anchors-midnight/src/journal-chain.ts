@@ -22,27 +22,31 @@ const sameAnchor = (raw: Uint8Array, key: AnchorKey) => decodeAnchorTransaction(
 // A journal trusts this configured node for its finalized-chain view; this is not itself a
 // GRANDPA proof. User-facing receipts still require the consensus verifier. Every operation
 // binds the node to the pinned genesis, and every scanned body to its canonical header/root.
-export function chainView(source: MidnightSource, network: string, { maxScanBlocks = 128 }: { maxScanBlocks?: number } = {}): ChainView {
+class NodeScanDeadline extends Error {}
+export function chainView(source: MidnightSource, network: string, { maxScanBlocks = 128, scanTimeoutMillis = 30_000 }: { maxScanBlocks?: number; scanTimeoutMillis?: number } = {}): ChainView {
   if (!MIDNIGHT_GENESIS_HASHES[network]) throw new Error("A journal chain view needs a pinned Midnight network");
   if (!Number.isSafeInteger(maxScanBlocks) || maxScanBlocks < 1 || maxScanBlocks > 1024) throw new Error("Invalid journal block scan budget");
-  const identity = async () => {
-    const genesis = hash(await source.node.call("chain_getBlockHash", [0]), "genesis");
+  if (!Number.isFinite(scanTimeoutMillis) || scanTimeoutMillis < 1 || scanTimeoutMillis > 120_000) throw new Error("Invalid journal scan deadline");
+  type NodeCall = MidnightSource["node"]["call"];
+  const ordinaryCall: NodeCall = source.node.call.bind(source.node);
+  const identity = async (call: NodeCall = ordinaryCall) => {
+    const genesis = hash(await call("chain_getBlockHash", [0]), "genesis");
     if (genesis !== MIDNIGHT_GENESIS_HASHES[network]) throw new SourceConflict(`The node is not the pinned ${network} chain`);
   };
-  const finalized = async () => {
-    await identity();
-    const blockHash = hash(await source.node.call("chain_getFinalizedHead"), "finalized head");
-    const json = await source.node.call<RpcHeader | null>("chain_getHeader", [`0x${blockHash}`]);
+  const finalized = async (call: NodeCall = ordinaryCall) => {
+    await identity(call);
+    const blockHash = hash(await call("chain_getFinalizedHead"), "finalized head");
+    const json = await call<RpcHeader | null>("chain_getHeader", [`0x${blockHash}`]);
     if (!json) return null;
     const header = headerFromRpc(json);
     if (toHex(headerHash(header)) !== blockHash) throw new SourceConflict("The finalized header does not hash to its claimed block");
     return { height: header.number, hash: blockHash };
   };
-  const atHeight = async (height: number) => hash(await source.node.call("chain_getBlockHash", [height]), "canonical block");
-  const bodyAt = async (block: JournalBoundary) => {
-    const { specVersion } = await source.node.call<{ specVersion: number }>("state_getRuntimeVersion", [`0x${block.hash}`]);
+  const atHeight = async (height: number, call: NodeCall = ordinaryCall) => hash(await call("chain_getBlockHash", [height]), "canonical block");
+  const bodyAt = async (block: JournalBoundary, call: NodeCall = ordinaryCall) => {
+    const { specVersion } = await call<{ specVersion: number }>("state_getRuntimeVersion", [`0x${block.hash}`]);
     if (!(KNOWN_RUNTIME_SPEC_VERSIONS as readonly number[]).includes(specVersion)) throw new SourceConflict("A journal scan encountered an unsupported runtime");
-    const response = await source.node.call<{ block: { header: RpcHeader; extrinsics: string[] } }>("chain_getBlock", [`0x${block.hash}`]);
+    const response = await call<{ block: { header: RpcHeader; extrinsics: string[] } }>("chain_getBlock", [`0x${block.hash}`]);
     const header = headerFromRpc(response.block.header);
     const extrinsics = response.block.extrinsics.map(e => fromHex(e, "extrinsic"));
     if (header.number !== block.height || toHex(headerHash(header)) !== block.hash || toHex(orderedTrieRoot(extrinsics)) !== toHex(header.extrinsicsRoot)) {
@@ -63,7 +67,7 @@ export function chainView(source: MidnightSource, network: string, { maxScanBloc
     async indexedThrough() {
       const head = await finalized();
       if (!head) return null;
-      const raw = await source.node.call<string | null>("state_getStorage", [TIMESTAMP_NOW, `0x${head.hash}`]);
+      const raw = await ordinaryCall<string | null>("state_getStorage", [TIMESTAMP_NOW, `0x${head.hash}`]);
       if (raw === null) throw new Error("The finalized block has no Timestamp.Now");
       const reader = new ScaleReader(fromHex(raw, "Timestamp.Now"), "Timestamp.Now");
       const value = reader.u64(); reader.end();
@@ -81,14 +85,29 @@ export function chainView(source: MidnightSource, network: string, { maxScanBloc
       return !head || height > head.height ? null : atHeight(height);
     },
     async confirm({ key, bytes, since, through, hint }): Promise<JournalConfirmation> {
-      const head = await finalized();
+      let cursor = through;
+      const deadline = performance.now() + scanTimeoutMillis;
+      const withinBudget = async <T>(operation: () => Promise<T>): Promise<T> => {
+        const remaining = deadline - performance.now();
+        if (remaining <= 0) throw new NodeScanDeadline();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          return await Promise.race([
+            operation(),
+            new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new NodeScanDeadline()), remaining); }),
+          ]);
+        } finally { if (timer) clearTimeout(timer); }
+      };
+      const call: NodeCall = <T>(method: string, params?: unknown[]) => withinBudget(() => ordinaryCall<T>(method, params));
+      try {
+      const head = await finalized(call);
       if (!head) return { state: "pending" };
       const tx = L.Transaction.deserialize("signature", "proof", "binding", bytes);
       const originalIntents = [...(tx.intents?.values() ?? [])];
       const guaranteed = originalIntents.every(intent => intent.actions.every(action => !(action instanceof L.ContractCall) || (action.guaranteedTranscript !== undefined && action.fallibleTranscript === undefined)));
       const intents = originalIntents.map(intent => Buffer.from(intent.serialize()));
       const check = async (block: JournalBoundary, loaded?: Awaited<ReturnType<typeof bodyAt>>) => {
-        const { header, extrinsics } = loaded ?? await bodyAt(block);
+        const { header, extrinsics } = loaded ?? await bodyAt(block, call);
         let uncertain = false;
         for (const [extrinsicIndex, extrinsic] of extrinsics.entries()) {
           const raw = midnightTransactionIn(extrinsic);
@@ -96,7 +115,7 @@ export function chainView(source: MidnightSource, network: string, { maxScanBloc
             const actual = L.Transaction.deserialize("signature", "proof", "binding", raw);
             if (actual.transactionHash() === tx.transactionHash() || (key.kind !== 0 && sameAnchor(raw, key))) {
               if (!guaranteed && !source.verifyExecution) return "uncertain";
-              if (source.verifyExecution) await source.verifyExecution({ header, blockHash: block.hash, extrinsicIndex, txHash: actual.transactionHash() });
+              if (source.verifyExecution) await withinBudget(() => source.verifyExecution!({ header, blockHash: block.hash, extrinsicIndex, txHash: actual.transactionHash() }));
               return { state: "landed" as const, height: block.height, blockHash: block.hash };
             }
             if (intents.some(intent => Buffer.from(raw).includes(intent))) uncertain = true;
@@ -111,18 +130,18 @@ export function chainView(source: MidnightSource, network: string, { maxScanBloc
       // Positive inclusion can settle pre-migration rows, but absence cannot: no trustworthy
       // pre-broadcast boundary exists for those rows.
       if (hint && Number.isSafeInteger(hint.height) && hint.height >= 0 && hint.height <= head.height) {
-        const canonical = await atHeight(hint.height);
+        const canonical = await atHeight(hint.height, call);
         const included = await check({ height: hint.height, hash: canonical });
         if (included && included !== "uncertain") return included;
       }
       if (!since) return { state: "pending" };
       for (const boundary of [since, ...(through ? [through] : [])]) {
-        if (boundary.height > head.height || await atHeight(boundary.height) !== boundary.hash) throw new SourceConflict("The journal's retained finalized boundary is no longer canonical");
+        if (boundary.height > head.height || await atHeight(boundary.height, call) !== boundary.hash) throw new SourceConflict("The journal's retained finalized boundary is no longer canonical");
       }
-      let cursor = through, count = 0;
+      let count = 0;
       for (let height = through ? through.height + 1 : since.height; height <= head.height && count < maxScanBlocks; height++, count++) {
-        const block = { height, hash: await atHeight(height) };
-        const loaded = await bodyAt(block);
+        const block = { height, hash: await atHeight(height, call) };
+        const loaded = await bodyAt(block, call);
         const { header } = loaded;
         if (cursor && toHex(header.parentHash) !== cursor.hash) throw new SourceConflict("Scanned finalized journal blocks do not extend the retained prefix");
         const included = await check(block, loaded);
@@ -132,6 +151,10 @@ export function chainView(source: MidnightSource, network: string, { maxScanBloc
       }
       if (cursor?.height === head.height && cursor.hash !== head.hash) throw new SourceConflict("The scanned prefix does not end at the finalized head");
       return { state: cursor?.height === head.height ? "absent" : "pending", ...(cursor ? { through: cursor } : {}) };
+      } catch (error) {
+        if (error instanceof NodeScanDeadline) return { state: "pending", ...(cursor ? { through: cursor } : {}) };
+        throw error;
+      }
     },
   };
 }

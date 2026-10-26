@@ -82,6 +82,49 @@ const UNKNOWN_TIME = "the preprod node does not hold the indexer's newest block,
 const MINUTE = 60_000;
 
 describe("registryDeployer", () => {
+  it("refuses bytes whose TTL passes only after the journal write, at the actual send boundary", async () => {
+    const net = chain(), journalPath = fresh("send-boundary.sqlite");
+    const w = wallet(net, () => journalPath);
+    const call = net.source.node.call.bind(net.source.node);
+    let jumped = false;
+    net.source.node.call = async <T>(method: string, params?: unknown[]): Promise<T> => {
+      const answer = await call<T>(method, params);
+      if (method === "state_getStorage" && !jumped) {
+        const db = new DatabaseSync(journalPath);
+        const written = db.prepare("select count(*) as n from attempts").get() as { n: number }; db.close();
+        if (written.n > 0) { jumped = true; net.advance(16 * MINUTE); }
+      }
+      return answer;
+    };
+    const deployer = registryDeployer({ network: "preprod", wallet: w, source: net.source, prover, journalPath, pollMillis: 1 });
+    const prepared = await deployer.prepare();
+    await expect(deployer.submit(prepared)).rejects.toThrow(/TTL.*nothing was sent/);
+    expect(jumped).toBe(true); expect(w.submitted).toEqual([]);
+    const db = new DatabaseSync(journalPath);
+    expect(db.prepare("select tx_hash, state from attempts").all()).toEqual([{ tx_hash: prepared.txHash, state: "pending" }]); db.close();
+    deployer.close();
+  });
+
+  it("bounds an unavailable settlement and resumes the same journalled bytes after node recovery", async () => {
+    const net = chain(), journalPath = fresh("bounded-journal.sqlite");
+    const w = wallet(net, () => journalPath);
+    const delayed = registryDeployer({ network: "preprod", wallet: { ...w, async submit(tx) { await w.submit(tx); net.lag(true); } }, source: net.source, prover, journalPath, pollMillis: 1, settleTimeoutMillis: 10 });
+    const prepared = await delayed.prepare();
+    await expect(delayed.submit(prepared)).rejects.toThrow(/Timed out.*retained/);
+    expect(w.submitted).toHaveLength(1); delayed.close();
+    net.lag(false);
+    const resumed = registryDeployer({ network: "preprod", wallet: w, source: net.source, prover, journalPath, pollMillis: 1 });
+    expect((await resumed.submit((await resumed.journalled())!)).txHash).toBe(prepared.txHash);
+    expect(w.submitted).toHaveLength(1); resumed.close();
+  });
+
+  it("reports unknown resumed chain time as a third expiration state", async () => {
+    const { deployer, net, refusedByProxy } = setup();
+    await refusedByProxy(); net.lag(true);
+    expect((await deployer.journalled())?.journal?.expired).toBeNull();
+    deployer.close();
+  });
+
   it("prepares the final bytes and everything a human must see before they are sent, journalling and submitting nothing", async () => {
     const { deployer, wallet: w, rows } = setup();
     const prepared = await deployer.prepare();
