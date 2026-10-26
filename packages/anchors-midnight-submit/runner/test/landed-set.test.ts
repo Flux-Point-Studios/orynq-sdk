@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { certHash, decodeReceiptRecord } from "@fluxpointstudios/orynq-sdk-core/checkpoint";
+import { rpcOnlySource, type BlockHint } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { batchChain } from "../../../anchors-midnight/src/__tests__/batch-chain.js";
 import { openCensusState } from "../census-state.js";
 import { publishCensusPlan } from "../publisher.js";
@@ -63,6 +64,15 @@ it("lands only a confirmed exact set after real consensus proofs and both fresh 
   expect(calls.slice(firstSet).some(call => call.includes("/members/") || call.includes("/plans/"))).toBe(false);
   expect(state.prepare(census, 0n)).toBeNull();
   await expect(state.publishLandedSet(fixture.set, options())).resolves.toEqual(result);
+});
+
+it("lands through an RPC-only source, which locates the transaction by the set's own block", async () => {
+  await confirm();
+  const verify = (hints: readonly BlockHint[]) => ({
+    source: rpcOnlySource({ network: "preprod", node: fixture.chain.source.node, registries: [fixture.chain.registry], hints }),
+    registries: [fixture.chain.registry], knownAuthors: fixture.authors,
+  });
+  await expect(state.publishLandedSet(fixture.set, { verify, publication: publication() })).resolves.toMatchObject({ objects: 3 });
 });
 
 it("refuses unconfirmed or mismatched sets before any proof RPC or retained-store IO", async () => {

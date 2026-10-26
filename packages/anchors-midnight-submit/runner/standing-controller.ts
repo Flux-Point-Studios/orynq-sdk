@@ -1,4 +1,4 @@
-import { parseBatchSet, type VerifyOptions } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { parseBatchSet, type BlockHint, type VerifyOptions } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import type { Journal, JournalRow } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import type { RegistryOperator } from "../src/operator.js";
 import type { openCensusState, CensusPlan } from "./census-state.js";
@@ -12,7 +12,7 @@ export function openStandingController(options: {
   census: ReturnType<typeof openCensusState>; follower: ReturnType<typeof openFollowerState>;
   session: ReturnType<typeof openStandingSession>; delivery: ReturnType<typeof openStandingDelivery>;
   journal: Journal; operator: Pick<RegistryOperator, "prepare">; readCensus: () => Promise<Census>;
-  publication: PublicationOptions; verify: () => VerifyOptions; clock?: () => number;
+  publication: PublicationOptions; verify: (hints: readonly BlockHint[]) => VerifyOptions; clock?: () => number;
 }) {
   const { census, follower, session, delivery, journal, operator, readCensus, verify } = options, scope = follower.scope();
   const publication = { network: options.publication.network, targets: options.publication.targets.map(target => ({ ...target })) };

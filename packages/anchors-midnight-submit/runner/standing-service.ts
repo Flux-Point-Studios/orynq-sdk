@@ -148,7 +148,7 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
       const censusReader = () => readCensus({ rpcUrl: config.materiosRpcUrl, genesis: config.genesis, signal: abort.signal });
       const delivery = openStandingDelivery({ wallet, follower, session, census, journal, readCensus: censusReader, publication });
       controller = openStandingController({ census, follower, session, delivery, journal, operator, readCensus: censusReader, publication,
-        verify: () => ({ source: rpcOnlySource({ network: config.network, node: config.midnightReadRpcUrl, hints: [], signal: abort.signal, httpBudget: { requests: 256, bytes: 64 * 1024 * 1024, abort: new AbortController() } }), knownAuthors: authors() }) });
+        verify: hints => ({ source: rpcOnlySource({ network: config.network, node: config.midnightReadRpcUrl, hints, signal: abort.signal, httpBudget: { requests: 256, bytes: 64 * 1024 * 1024, abort: new AbortController() } }), knownAuthors: authors() }) });
     } else await catchup.start();
     let previous = "";
     const sample = () => {
