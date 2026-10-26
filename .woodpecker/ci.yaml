@@ -9,7 +9,7 @@ labels:
 # The private t-backend submodule is not a CI build input.
 clone:
   - name: clone
-    image: woodpeckerci/plugin-git
+    image: woodpeckerci/plugin-git@sha256:9802cb7852dcf31f9c5c1d1ddeadfb9002d4fae85751f7b6a792eedb267bcc59
     settings:
       recursive: false
 
@@ -18,7 +18,7 @@ steps:
   # one pnpm install and the one Compact install here serve every step that depends on this one;
   # installing again in a parallel step would race this install in the shared workspace.
   - name: build-test
-    image: node:24-bookworm
+    image: node:24-bookworm@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
     depends_on: []
     environment:
       COMPACTC: /woodpecker/orynq-midnight-tools/compactc/compactc
@@ -42,7 +42,7 @@ steps:
         '
 
   - name: midnight-native
-    image: rust:1.99.0-bookworm
+    image: rust:1.99.0-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6
     depends_on: [build-test]
     backend_options:
       docker:
@@ -60,7 +60,7 @@ steps:
       - cargo +1.99.0 test --release --locked --manifest-path packages/midnight-prover/native/Cargo.toml
 
   - name: midnight-real-proofs
-    image: node:24-bookworm
+    image: node:24-bookworm@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
     depends_on: [midnight-native]
     environment:
       ORYNQ_MIDNIGHT_PARAMS_DIR: /woodpecker/orynq-midnight-tools/zk-params
@@ -72,7 +72,7 @@ steps:
   # The cross-language vector tests shell out to the TS harness, so this needs
   # node and the workspace build-test installed.
   - name: python-test
-    image: nikolaik/python-nodejs:python3.11-nodejs24
+    image: nikolaik/python-nodejs:python3.11-nodejs24@sha256:90538671c42b08e126729c81110c89aeda3c860168888de88f7afaf024b3bbc2
     depends_on: [build-test]
     commands:
       - pip install -e "python/.[dev]"
@@ -85,7 +85,7 @@ steps:
   # the sha256-pinned compiler produces, and proving must keep every secret out of the bytes a
   # submitter sends. Proving takes about a minute on one core, so it runs at the lowest priority.
   - name: midnight-contract
-    image: node:24-bookworm
+    image: node:24-bookworm@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
     depends_on: [build-test]
     environment:
       COMPACTC: /woodpecker/orynq-midnight-tools/compactc/compactc
@@ -106,7 +106,7 @@ steps:
   # finish.sh over a synthetic rehearsal), which runs git as the workspace's owner; nothing in
   # this step talks to a Midnight node or indexer.
   - name: midnight-submit
-    image: node:24-bookworm
+    image: node:24-bookworm@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
     depends_on: [build-test]
     environment:
       MIDNIGHT_PP: /woodpecker/orynq-midnight-tools/zk-params
@@ -123,7 +123,7 @@ steps:
   # The Midnight mainnet runner's systemd user units, as systemd-analyze --user verify reads them
   # laid out as the install lays them out, verified by an unprivileged user.
   - name: midnight-runner-units
-    image: debian:bookworm-slim
+    image: debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8
     depends_on: []
     commands:
       - apt-get update -qq && apt-get install -y -qq --no-install-recommends systemd
@@ -131,7 +131,7 @@ steps:
       - su runner -s /bin/sh -c "$CI_WORKSPACE/packages/anchors-midnight-submit/runner/systemd/verify.sh"
 
   - name: path-check
-    image: alpine:3.20
+    image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
     depends_on: []
     commands:
       - |
@@ -141,7 +141,7 @@ steps:
         fi
 
   - name: security-audit
-    image: node:24-bookworm
+    image: node:24-bookworm@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
     depends_on: []
     commands:
       - corepack enable

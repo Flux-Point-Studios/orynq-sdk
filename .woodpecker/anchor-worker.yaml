@@ -22,7 +22,7 @@ when:
 # checkout never fetched it either.
 clone:
   - name: clone
-    image: woodpeckerci/plugin-git
+    image: woodpeckerci/plugin-git@sha256:9802cb7852dcf31f9c5c1d1ddeadfb9002d4fae85751f7b6a792eedb267bcc59
     settings:
       recursive: false
 
@@ -71,7 +71,7 @@ steps:
   # Kaniko cannot run the image, so the service's own startup check runs here:
   # with no environment it must refuse to start and name what is missing.
   - name: refuses-to-start-without-config
-    image: node:20-bookworm
+    image: node:20-bookworm@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5
     commands:
       - corepack enable
       - pnpm install --frozen-lockfile
