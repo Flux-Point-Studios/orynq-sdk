@@ -392,6 +392,31 @@ describe("saving a wallet's sync state", () => {
     }
   });
 
+  it.each([
+    { label: "known", code: "ENOSPC", expected: "Error: ENOSPC" },
+    { label: "unknown", code: "synthetic-private-error-code", expected: "Error" },
+  ])("keeps only safe filesystem codes in a $label save failure", async ({ label, code, expected }) => {
+    const { wallet, stateFile } = await open(`file-code-${label}`);
+    expect(await wallet.saveState()).toEqual({ saved: true });
+    const good = readFileSync(stateFile);
+    const secret = "synthetic-private-state-in-error";
+    const loud = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const restoreRename = intercept("renameSync", () => () => {
+      throw Object.assign(new Error(secret), { code, path: secret, dest: secret, syscall: secret });
+    });
+    try {
+      expect(await wallet.saveState()).toEqual({ saved: false, failures: [{ part: "file", error: expected }] });
+      expect(loud.mock.calls.flat().join("\n")).not.toContain(secret);
+      expect(loud.mock.calls.flat().join("\n")).not.toContain("synthetic-private-error-code");
+      expect(readFileSync(stateFile)).toEqual(good);
+      expect(leftovers(stateFile)).toEqual([]);
+    } finally {
+      restoreRename();
+      loud.mockRestore();
+      await wallet.close();
+    }
+  });
+
   it("refuses at open a state file in a directory that does not exist, where no save could land", async () => {
     await expect(open("homeless", join(dir, "missing", "homeless.state.json"))).rejects.toThrow(/ENOENT: no such file or directory, scandir '.*\/missing'/);
   });
@@ -510,9 +535,9 @@ describe("saving a wallet's sync state", () => {
 
     const cut = await saveOnce(mnemonicFile, stateFile, true);
     expect(cut.status).toBe(0);
-    expect(JSON.parse(cut.stdout)).toEqual({ saved: false, failures: [{ part: "file", error: "Error: EFBIG: file too large, write" }] });
+    expect(JSON.parse(cut.stdout)).toEqual({ saved: false, failures: [{ part: "file", error: "Error: EFBIG" }] });
     expect(cut.stderr).toContain(
-      `${stateFile}: the preprod wallet's sync state was not saved (file: Error: EFBIG: file too large, write); the file keeps its last good save, and the next open resumes from it and replays the events since\n`,
+      `${stateFile}: the preprod wallet's sync state was not saved (file: Error: EFBIG); the file keeps its last good save, and the next open resumes from it and replays the events since\n`,
     );
     expect(readFileSync(stateFile).equals(good)).toBe(true);
     expect(leftovers(stateFile)).toEqual([]);
