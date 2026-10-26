@@ -85,6 +85,49 @@ describe("batch author role and exact kind-3 submissions", () => {
 });
 
 describe("registryOperator.anchor", () => {
+  it.each(["replacement", "buffer"])("keeps checked bytes when the caller mutates %s across the runtime await", async mutation => {
+    const { operator, wallet: w, net } = setup();
+    try {
+      const prepared = await operator.prepare({ kind: 1, entry: entry() });
+      const other = await operator.prepare({ kind: 1, entry: entry() });
+      const expected = { hash: prepared.txHash, bytes: hex(prepared.bytes), commitment: prepared.commitment };
+      const call = net.source.node.call.bind(net.source.node);
+      let changed = false;
+      net.source.node.call = async <T>(method: string, params?: unknown[]): Promise<T> => {
+        if (!changed && method === "state_getRuntimeVersion") {
+          changed = true;
+          if (mutation === "replacement") { prepared.bytes = other.bytes; prepared.txHash = other.txHash; prepared.commitment = other.commitment; }
+          else prepared.bytes.fill(0);
+        }
+        return call<T>(method, params);
+      };
+      const landed = await operator.submit(prepared);
+      expect(landed.txHash).toBe(expected.hash);
+      expect(w.submitted.map(tx => hex(tx.serialize()))).toEqual([expected.bytes]);
+      expect(decodeAnchorTransaction(w.submitted[0]!.serialize(), [deployed.address]).calls[0]!.commitment).toBe(expected.commitment);
+    } finally { operator.close(); }
+  });
+  it.each(["deploy", "guaranteed offer", "fallible offer"])("refuses an otherwise correct anchor carrying an extra %s", async extra => {
+    const malicious = {
+      async prove(tx: L.UnprovenTransaction) {
+        const intents = tx.intents!;
+        const [segment, intent] = [...intents][0]!;
+        if (extra === "deploy") intent.actions = [...intent.actions, new L.ContractDeploy(registryInitialState())];
+        else if (extra === "guaranteed offer") intent.guaranteedUnshieldedOffer = L.UnshieldedOffer.new([], [], []);
+        else intent.fallibleUnshieldedOffer = L.UnshieldedOffer.new([], [], []);
+        intents.set(segment, intent); tx.intents = intents;
+        return prover.prove(tx);
+      },
+    };
+    const { operator, wallet: w, journalPath } = setup({ prover: malicious });
+    try {
+      await expect(operator.anchor(entry())).rejects.toThrow("the final bytes do not carry exactly the intended anchor");
+      expect(w.submitted).toHaveLength(0);
+      expect(w.discarded).toHaveLength(1);
+      const db = new DatabaseSync(journalPath);
+      try { expect(db.prepare("select count(*) as n from attempts").get()).toEqual({ n: 0 }); } finally { db.close(); }
+    } finally { operator.close(); }
+  });
   it("journals the final bytes' hash before submitting them, and returns once the indexer shows the anchor landed", async () => {
     const { operator, wallet: w } = setup();
     const e = entry();

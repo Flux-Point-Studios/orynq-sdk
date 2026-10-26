@@ -181,6 +181,13 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
 
   // Refuses final bytes that carry anything but exactly the anchor `key` names.
   const assertExact = (bytes: Uint8Array, key: AnchorKey) => {
+    const transaction = finalTransaction(bytes);
+    const intents = [...(transaction.intents?.values() ?? [])];
+    if (transaction.rewards !== undefined || transaction.guaranteedOffer !== undefined || (transaction.fallibleOffer?.size ?? 0) !== 0 ||
+      intents.some(intent => intent.guaranteedUnshieldedOffer !== undefined || intent.fallibleUnshieldedOffer !== undefined) ||
+      intents.reduce((count, intent) => count + intent.actions.length, 0) !== 1) {
+      throw new Error("the final bytes do not carry exactly the intended anchor; nothing was submitted");
+    }
     const { calls, touches } = decodeAnchorTransaction(bytes, [key.registry]);
     const [call] = calls;
     const exact =
@@ -245,11 +252,13 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
   };
   const confirmed = (key: AnchorKey) => confirmedSends(journalling, key, "anchor", "this anchor");
   const submit = async (prepared: PreparedAnchor) => {
-    const key = keyOf(prepared.kind, prepared.commitment, prepared.attribute);
-    assertExact(prepared.bytes, key);
-    assertConfirmedHash(prepared);
+    const { bytes, ttl, journal: held, ...fields } = prepared;
+    const snapshot: PreparedAnchor = { ...fields, bytes: new Uint8Array(bytes), ttl: new Date(ttl.getTime()), ...(held === undefined ? {} : { journal: { ...held } }) };
+    const key = keyOf(snapshot.kind, snapshot.commitment, snapshot.attribute);
+    assertExact(snapshot.bytes, key);
+    assertConfirmedHash(snapshot);
     await assertKnownRuntime(source, network);
-    return receipt(key, await confirmed(key).submit(prepared));
+    return receipt(key, await confirmed(key).submit(snapshot));
   };
 
   return {
