@@ -67,7 +67,7 @@ export const FINISHED: readonly State[] = ["done", "refused", "expired"];
 
 export interface Status {
   intent_id: string;
-  action?: "deploy" | "anchors";
+  action?: "deploy" | "anchors" | "proofs";
   state: State;
   attempt: number;
   approval_sha256?: string | undefined;

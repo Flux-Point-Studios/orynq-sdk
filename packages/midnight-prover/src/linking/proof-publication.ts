@@ -1,33 +1,3 @@
-/**
- * @fileoverview Proof publication to the Midnight network.
- *
- * Location: packages/midnight-prover/src/linking/proof-publication.ts
- *
- * Summary:
- * This module implements the ProofPublisher class which handles submitting ZK proofs
- * to the Midnight network and monitoring their publication status. It provides retry
- * logic for resilient publication and confirmation waiting for transaction finality.
- *
- * Usage:
- * - Used by the MidnightProver to publish proofs to the Midnight network
- * - Integrates with proof-server-client.ts for network communication
- * - Returns PublicationResult with midnightTxHash for cross-chain linking
- *
- * @example
- * ```typescript
- * import { ProofPublisher } from './proof-publication.js';
- *
- * const publisher = new ProofPublisher({ maxRetries: 3 });
- * await publisher.connect(config);
- *
- * const result = await publisher.publish(proof);
- * console.log('Published:', result.midnightTxHash);
- *
- * const confirmed = await publisher.waitForConfirmation(result.proofId);
- * console.log('Confirmed:', confirmed);
- * ```
- */
-
 import type {
   Proof,
   PublicationResult,
@@ -47,13 +17,13 @@ import { sha256StringHex, canonicalize } from "@fluxpointstudios/orynq-sdk-core/
 // =============================================================================
 
 /**
- * Status of a proof publication.
+ * Status inside the publication simulator.
  */
 export type ProofStatus =
-  | "pending"        // Submitted but not yet confirmed
-  | "confirmed"      // Included in a block
-  | "failed"         // Transaction failed
-  | "not_found";     // Proof not found on network
+  | "pending"
+  | "confirmed"
+  | "failed"
+  | "not_found";
 
 /**
  * Detailed status information for a proof.
@@ -122,38 +92,12 @@ const PUBLICATION_DOMAIN_PREFIXES = {
 // PROOF PUBLISHER
 // =============================================================================
 
-/**
- * ProofPublisher handles submitting ZK proofs to the Midnight network.
- *
- * This class provides:
- * - Resilient proof publication with retry logic
- * - Status monitoring for submitted proofs
- * - Confirmation waiting with timeout support
- *
- * Current implementation is a mock that simulates network interaction.
- * No network provider is implemented; simulation must be selected explicitly.
- *
- * @example
- * ```typescript
- * const publisher = new ProofPublisher({ maxRetries: 3, debug: true });
- * await publisher.connect(config);
- *
- * const result = await publisher.publish(hashChainProof);
- * console.log('Transaction:', result.midnightTxHash);
- *
- * // Wait for confirmation
- * const confirmed = await publisher.waitForConfirmation(result.proofId, 60000);
- * if (confirmed) {
- *   console.log('Proof confirmed on Midnight network');
- * }
- * ```
- */
+/** Explicit simulation fixtures. Real publication uses post() and verifyPosted(). */
 export class ProofPublisher {
   private readonly options: Required<ProofPublisherOptions>;
   private config: ProofServerConfig | undefined;
   private connected = false;
 
-  // Mock storage for simulated proofs (would be replaced with network state)
   private readonly publishedProofs = new Map<string, {
     result: PublicationResult;
     status: ProofStatus;
@@ -179,7 +123,7 @@ export class ProofPublisher {
   }
 
   /**
-   * Connect to the Midnight network.
+   * Initialize the explicit publication simulation.
    *
    * @param config - Proof server configuration
    * @throws MidnightProverException on connection failure
@@ -188,11 +132,11 @@ export class ProofPublisher {
     if (this.options.mode !== "simulation") {
       throw new MidnightProverException(
         MidnightProverError.PUBLICATION_FAILED,
-        "Network publication requires a real network provider; simulation must be explicit"
+        "ProofPublisher is simulation-only; use post() for real Midnight publication; simulation must be explicit"
       );
     }
 
-    this.debug("Connecting to Midnight network...");
+    this.debug("Initializing publication simulation...");
 
     try {
       // Validate configuration
@@ -203,31 +147,30 @@ export class ProofPublisher {
         );
       }
 
-      // Mock connection - in production, this would establish network connection
       await this.simulateNetworkDelay(50);
 
       this.config = config;
       this.connected = true;
 
-      this.debug(`Connected to ${config.proofServerUrl}`);
+      this.debug("Publication simulation initialized");
     } catch (error) {
       if (error instanceof MidnightProverException) {
         throw error;
       }
       throw new MidnightProverException(
         MidnightProverError.CONNECTION_FAILED,
-        `Failed to connect to Midnight network: ${String(error)}`,
+        `Failed to initialize publication simulation: ${String(error)}`,
         error instanceof Error ? error : undefined
       );
     }
   }
 
   /**
-   * Disconnect from the Midnight network.
+   * Close the publication simulation.
    */
   async disconnect(): Promise<void> {
     if (this.connected) {
-      this.debug("Disconnecting from Midnight network...");
+      this.debug("Closing publication simulation...");
       await this.simulateNetworkDelay(20);
       this.connected = false;
       this.config = undefined;
@@ -235,7 +178,7 @@ export class ProofPublisher {
   }
 
   /**
-   * Check if connected to the network.
+   * Check whether the publication simulation is initialized.
    */
   isConnected(): boolean {
     return this.connected;
@@ -248,23 +191,11 @@ export class ProofPublisher {
     return this.config;
   }
 
-  /**
-   * Publish a proof to the Midnight network.
-   *
-   * This method:
-   * 1. Validates the proof structure
-   * 2. Serializes the proof for transmission
-   * 3. Submits to the network with retry logic
-   * 4. Returns the publication result with transaction hash
-   *
-   * @param proof - The proof to publish
-   * @returns Publication result with Midnight transaction hash
-   * @throws MidnightProverException on failure after all retries
-   */
+  /** Simulate publication and return a marked fixture with a synthetic transaction hash. */
   async publish(proof: Proof): Promise<PublicationResult> {
     this.ensureConnected();
 
-    this.debug(`Publishing proof: ${proof.proofId}`);
+    this.debug(`Simulating publication: ${proof.proofId}`);
 
     // Validate proof
     this.validateProof(proof);
@@ -292,7 +223,7 @@ export class ProofPublisher {
 
     throw new MidnightProverException(
       MidnightProverError.PUBLICATION_FAILED,
-      `Failed to publish proof after ${this.options.maxRetries} attempts`,
+      `Simulated publication failed after ${this.options.maxRetries} attempts`,
       lastError
     );
   }
@@ -344,7 +275,7 @@ export class ProofPublisher {
   }
 
   /**
-   * Wait for a proof to be confirmed on the network.
+   * Wait for simulated confirmation.
    *
    * @param proofId - Unique proof identifier
    * @param timeoutMs - Maximum time to wait in milliseconds (default: 5 minutes)
@@ -375,7 +306,7 @@ export class ProofPublisher {
       }
 
       if (status.status === "not_found") {
-        this.debug(`Proof ${proofId} not found on network`);
+        this.debug(`Proof ${proofId} not found in simulation`);
         return false;
       }
 
@@ -408,7 +339,7 @@ export class ProofPublisher {
     if (!this.connected) {
       throw new MidnightProverException(
         MidnightProverError.CONNECTION_FAILED,
-        "Not connected to Midnight network. Call connect() first."
+        "Publication simulation is not initialized. Call connect() first."
       );
     }
   }
@@ -507,7 +438,7 @@ export class ProofPublisher {
       submittedAt: Date.now(),
     });
 
-    this.debug(`Proof published: ${midnightTxHash}`);
+    this.debug(`Simulated publication: ${midnightTxHash}`);
 
     return result;
   }
@@ -554,7 +485,7 @@ export class ProofPublisher {
    */
   private debug(message: string): void {
     if (this.options.debug) {
-      console.log(`[ProofPublisher] ${message}`);
+      console.log(`[ProofPublisher simulation] ${message}`);
     }
   }
 }

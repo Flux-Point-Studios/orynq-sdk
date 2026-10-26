@@ -12,11 +12,13 @@
     }
   },
   "files": [
+    "ONCHAIN.md",
     "dist",
     "src",
     "tests",
     ".eslintrc.cjs",
     "circuits",
+    "onchain",
     "managed",
     "scripts",
     "native/Cargo.toml",
@@ -31,14 +33,18 @@
     "test": "vitest run",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
-    "build:circuits": "node scripts/compile-circuits.mjs",
+    "build:circuits": "node scripts/compile-circuits.mjs && node scripts/compile-onchain.mjs --check",
+    "build:onchain": "node scripts/compile-onchain.mjs",
+    "check:onchain": "node scripts/compile-onchain.mjs --check",
     "build:native": "cargo build --release --locked --manifest-path native/Cargo.toml",
-    "test:real": "tsx tests/real-proofs.integration.ts"
+    "test:real": "tsx tests/real-proofs.integration.ts && tsx tests/onchain.integration.ts",
+    "test:onchain-real": "tsx tests/onchain.integration.ts"
   },
   "dependencies": {
     "@fluxpointstudios/orynq-sdk-core": "workspace:*",
     "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*",
     "@fluxpointstudios/orynq-sdk-anchors-cardano": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-anchors-midnight": "workspace:^",
     "@fluxpointstudios/orynq-sdk-attestor": "workspace:*",
     "@midnight-ntwrk/compact-runtime": "0.16.0",
     "@midnight-ntwrk/onchain-runtime-v3": "3.1.2",

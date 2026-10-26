@@ -23,6 +23,7 @@
     "clean": "rimraf dist"
   },
   "dependencies": {
+    "@fluxpointstudios/orynq-sdk-midnight-prover": "workspace:*",
     "@noble/hashes": "^2.4.0",
     "undici": "6.29.1",
     "@fluxpointstudios/orynq-sdk-anchors-midnight": "workspace:*",

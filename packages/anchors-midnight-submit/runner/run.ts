@@ -11,7 +11,9 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { readAnchorPlan } from "../src/anchor-plan.js";
 import { formatDust, parseDust } from "../src/preflight.js";
-import { checkAnchorSummary, checkDeploySummary, driveTool, intentEntries, type AnchorsIntent, type Decision, type DeployIntent } from "./confirm.js";
+import { checkAnchorSummary, checkDeploySummary, checkProofReleaseSummary, driveTool, intentEntries, type AnchorsIntent, type Decision, type DeployIntent } from "./confirm.js";
+import { landedProofDeploy, proofReleaseJournal, proofReleaseComplete } from "../src/proof-release.js";
+import type { ProofReleaseIntent } from "./proof-release-intent.js";
 import { admit, confirmedDust, type Admitted } from "./gate.js";
 import { LIMITS } from "./limits.js";
 import { fillPlan, landedDeploy } from "./plan.js";
@@ -29,7 +31,7 @@ export interface RunOptions {
   id: string;
   // The reviewed tool's command for the intent's action, given the plan anchors are written from;
   // it runs in `cwd` with `env`.
-  tool: (action: Admitted["action"], plan?: string, planSha256?: string) => string[];
+  tool: (action: Admitted["action"], plan?: string, planSha256?: string, expiresAt?: number) => string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
   backoffMs?: readonly number[];
@@ -126,7 +128,11 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
     }
   }
 
-  const journal = action === "deploy" ? paths.deployJournal : paths.anchorsJournal;
+  if (action === "proofs") {
+    plan = files.intent(id);
+    planSha256 = createHash("sha256").update(readFileSync(plan)).digest("hex");
+  }
+  const journal = action === "proofs" ? proofReleaseJournal(root) : action === "deploy" ? paths.deployJournal : paths.anchorsJournal;
   const dailyCap = parseDust(LIMITS.maxDustPer24Hours)!;
   for (;;) {
     verdict = admit(paths, id, Date.now());
@@ -148,8 +154,11 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
     // those, within the confirmations per transaction and the daily cap.
     const decide = (summary: string, token: string): Decision => {
       const at = Date.now();
-      const check = action === "deploy" ? checkDeploySummary(intent as DeployIntent, summary, token) : checkAnchorSummary(intent as AnchorsIntent, registry, summary, token);
+      const check = action === "proofs"
+        ? checkProofReleaseSummary(intent as ProofReleaseIntent, landedProofDeploy("mainnet", journal)?.address ?? "", summary, token)
+        : action === "deploy" ? checkDeploySummary(intent as DeployIntent, summary, token) : checkAnchorSummary(intent as AnchorsIntent, registry, summary, token);
       const problems = [...check.problems];
+      if (action === "proofs" && check.validUntil && Date.parse(check.validUntil) > expiresAt) problems.push("proof transaction outlives its approval");
       const current = admit(paths, id, at);
       if (!current.ok) {
         problems.push(`the approval no longer holds: ${current.reason}`);
@@ -198,7 +207,7 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
 
     // Keep wallet access and confirmation accounting serialized until the tool exits.
     appendFileSync(files.executionLock, "", { mode: 0o600 });
-    const command = ["flock", "--exclusive", files.executionLock, ...tool(action, plan, planSha256)];
+    const command = ["flock", "--exclusive", files.executionLock, ...tool(action, plan, planSha256, expiresAt)];
     const run = driveTool({ command, cwd, env, verb: action === "deploy" ? "DEPLOY" : "ANCHOR", decide, onNo, onText });
     // At expiry a tool that has confirmed nothing is stopped; one that has goes on to finish what it sends.
     let stopped = false;
@@ -213,7 +222,16 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
 
     if (refusal) return finish(expired ? "expired" : "refused", refusal, !expired);
     if (stopped) return finish("expired", `the approval expired at ${approval.expires_at} before attempt ${attempt} confirmed anything; the tool was stopped`);
-    if (code === 0) return finish("done", undefined, true);
+    if (code === 0) {
+      if (action === "proofs") {
+        try {
+          if (!proofReleaseComplete("mainnet", journal)) return finish("refused", "proof release exited without three landed, pinned transactions", true);
+        } catch (error) {
+          return finish("refused", `proof release journal validation failed: ${(error as Error).message}`, true);
+        }
+      }
+      return finish("done", undefined, true);
+    }
     const wait = backoffMs[Math.min(attempt, backoffMs.length) - 1]!;
     const next = Date.now() + wait;
     if (next >= expiresAt) return finish("expired", `the approval expires at ${approval.expires_at}, before the next attempt at ${iso(next)}`);

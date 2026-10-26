@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "circuits": {
+    "proveCapability": {
+      "entryPoint": "proveCapability",
+      "verifierKeyPath": "managed/keys/proveCapability.verifier",
+      "initialContractStatePath": "managed/initial-state.bin"
+    },
+    "proveRolling1": {
+      "entryPoint": "proveRolling1",
+      "verifierKeyPath": "managed/keys/proveRolling1.verifier",
+      "initialContractStatePath": "managed/initial-state.bin"
+    }
+  }
+}

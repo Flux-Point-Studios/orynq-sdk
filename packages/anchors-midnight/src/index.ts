@@ -1,4 +1,5 @@
 export { anchorCallsIn, decodeAnchorTransaction } from "./anchor-transaction.js";
+export { verifyFinalizedTransaction } from "./finalized-transaction.js";
 export type { AnchorCall, AnchorTransaction } from "./anchor-transaction.js";
 export { DEFAULT_MAX_ACTIONS, MAX_FIND_WINDOW, findMidnightAnchors } from "./find.js";
 export type { FindCursor, FindRequest, FindResult, FoundAnchor } from "./find.js";

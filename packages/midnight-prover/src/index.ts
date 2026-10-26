@@ -198,4 +198,11 @@ export {
 } from "./prover.js";
 
 export { RealMidnightProver } from "./real-prover.js";
+export { post } from "./post.js";
+export type { ProofWallet } from "./post.js";
+export { verifyPosted, assertPostedProof } from "./posted.js";
+export type { PostedProofRequest } from "./posted.js";
+export { buildProofDeploy, buildProofCall, proofInitialState, assertProofDeploy, presentationId, PROOF_PINS } from "./onchain.js";
+export type { ProofStatement, ProofWitness, ProofNetwork } from "./onchain.js";
+export { proofProvider } from "./proof-material.js";
 export type { RealProverOptions, CircuitProof, CapabilityProof, RollingHashChainProof } from "./real-prover.js";
