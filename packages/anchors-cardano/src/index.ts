@@ -184,6 +184,7 @@ export type {
 
 export {
   createChainedSubmitQueue,
+  classifyCardanoSubmitError,
   isSpentInputError,
   SubmitQueueFullError,
   SubmitRefusedError,

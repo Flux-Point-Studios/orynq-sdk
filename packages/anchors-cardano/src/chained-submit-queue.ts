@@ -101,13 +101,45 @@ const SPENT_INPUT_PATTERNS = [
 
 /** True when a submission failed because an input is already spent or unknown to the node. */
 export function isSpentInputError(error: unknown): boolean {
-  let current: unknown = error;
-  for (let depth = 0; depth < 8 && current !== undefined && current !== null; depth++) {
-    const message = current instanceof Error ? current.message : String(current);
-    if (SPENT_INPUT_PATTERNS.some((pattern) => pattern.test(message))) return true;
-    current = current instanceof Error ? current.cause : undefined;
+  return classifyCardanoSubmitError(error) === "spent-input";
+}
+
+/** A refusal is not evidence that a transaction landed; only exact-hash confirmation is. */
+export function classifyCardanoSubmitError(error: unknown): "spent-input" | "refused" | "unknown" {
+  const visited = new Set<unknown>();
+  const codes: number[] = [];
+  const messages: string[] = [];
+  const inspect = (value: unknown, depth: number): void => {
+    if (depth >= 8 || value === null || value === undefined || visited.has(value)) return;
+    visited.add(value);
+    if (typeof value === "string") {
+      messages.push(value);
+      // Some providers retain the JSON-RPC envelope only in Error.message.
+      const start = value.indexOf("{");
+      if (value.length <= 65_536 && start !== -1) {
+        try { inspect(JSON.parse(value.slice(start)), depth + 1); } catch { /* Prose fallback below. */ }
+      }
+      return;
+    }
+    if (typeof value !== "object") return;
+    const object = value as { code?: unknown; message?: unknown; error?: unknown; cause?: unknown; data?: unknown };
+    if (Number.isSafeInteger(object.code)) codes.push(object.code as number);
+    inspect(object.message, depth + 1);
+    inspect(object.error, depth + 1);
+    inspect(object.cause, depth + 1);
+    inspect(object.data, depth + 1);
+  };
+  inspect(error, 0);
+  // Ogmios 3997 also describes inputs that never existed. Never call it a duplicate.
+  const code = codes.find(value => [-32602, 3004, 3010, 3110, 3117, 3997].includes(value));
+  if (code === 3997 || code === 3117) return "spent-input";
+  if (code !== undefined) return "refused";
+  if (error instanceof SubmitRefusedError) {
+    return messages.some(message => SPENT_INPUT_PATTERNS.some(pattern => pattern.test(message))) ? "spent-input" : "refused";
   }
-  return false;
+  if (messages.some(message => SPENT_INPUT_PATTERNS.some(pattern => pattern.test(message)))) return "spent-input";
+  if (messages.some(message => /TxValidationErrorInCardanoMode|ShelleyTxValidationError/.test(message))) return "refused";
+  return "unknown";
 }
 
 interface Anchored {
@@ -201,7 +233,7 @@ export function createChainedSubmitQueue<U>(
         chainLength = 0;
         throw error;
       }
-      if (error instanceof SubmitRefusedError) throw error;
+      if (classifyCardanoSubmitError(error) === "refused") throw error;
       return confirmUnknownOutcome(key, anchored, error);
     }
 
