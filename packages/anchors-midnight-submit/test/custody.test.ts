@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { createAuthorKeyFile, createSaltKeyFile } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { registryOperator, type OperatorOptions } from "../src/operator.js";
@@ -161,4 +161,19 @@ describe("off mainnet, nothing is opened from the mainnet secrets directory, how
   it("a mainnet operator, in a process without Claude Code or Codex environment, loads its key from there", () => {
     expect(() => withoutAgents(() => operator({ network: "mainnet", authorKeyFile: author }).close())).not.toThrow();
   });
+});
+
+
+it("refuses the account home mainnet mnemonic path even with HOME moved, before reading it", async () => {
+  const savedHome = process.env.HOME;
+  const mnemonicFile = join(userInfo().homedir, ".secrets", "orynq-midnight-mainnet", "nonexistent-home-override-regression.txt");
+  process.env.HOME = join(root, "moved-home");
+  try {
+    await expect(openWallet({ network: "preprod", mnemonicFile, endpoints: undefined as never, source: undefined as never, zkDir: "/nonexistent" })).rejects.toThrow(
+      `${mnemonicFile} lies in the FPS mainnet secrets directory; a preprod process never opens it`,
+    );
+  } finally {
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+  }
 });
