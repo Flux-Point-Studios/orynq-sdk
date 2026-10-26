@@ -85,6 +85,38 @@ async function served(spec, registry, { attempts, delayMs }) {
 const lastLine = (text) => String(text).trim().split("\n").filter(Boolean).at(-1) ?? "";
 const errorLine = (text) => String(text).split("\n").find((l) => /\b\w*Error\b/.test(l))?.trim() ?? lastLine(text);
 
+// npm ends failures with a debug-log path, hiding the useful earlier lines. Keep only
+// structured codes and fixed descriptions: free-form npm text may contain credentials,
+// registry URLs, filesystem paths, or text supplied by a registry.
+export function npmInstallFailure(error) {
+  const stderr = String(error.stderr ?? "");
+  const field = (name, pattern) => new RegExp(`^npm (?:error|ERR!) ${name} (${pattern})\\s*$`, "m").exec(stderr)?.[1];
+  const npmCode = field("code", "[A-Z][A-Z0-9_]{0,63}") ?? "unavailable";
+  const errno = field("errno", "EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|EPIPE");
+  const syscall = field("syscall", "getaddrinfo|connect|read|write");
+  const http = /^E([45][0-9]{2})$/.exec(npmCode)?.[1] ?? /^npm (?:error|ERR!) ([45][0-9]{2})(?:\s|$)/m.exec(stderr)?.[1];
+  const details = [
+    `exit=${Number.isSafeInteger(error.code) ? error.code : "unavailable"}`,
+    `npm=${npmCode}`,
+    ...(errno ? [`errno=${errno}`] : []),
+    ...(syscall ? [`syscall=${syscall}`] : []),
+    ...(http ? [`http=${http}`] : []),
+  ];
+  const reason = {
+    ERESOLVE: "dependency resolution conflict",
+    ETARGET: "requested package version unavailable",
+    E404: "registry resource unavailable",
+    ENOTFOUND: "registry hostname lookup failed",
+    EAI_AGAIN: "temporary hostname lookup failure",
+    ECONNRESET: "connection reset",
+    ECONNREFUSED: "connection refused",
+    ETIMEDOUT: "connection timed out",
+    E401: "registry authentication required",
+    E403: "registry access refused",
+  }[npmCode];
+  return `npm install failed (${details.join(", ")})${reason ? `: ${reason}` : ""}`;
+}
+
 async function importProblem(dir, spec) {
   const manifest = JSON.parse(readFileSync(join(dir, "node_modules", nameOf(spec), "package.json"), "utf8"));
   if (!manifest.exports && !manifest.main) {
@@ -114,9 +146,7 @@ async function checkLayout(specs, { registry, singletons }, importsToCheck) {
         maxBuffer: 64 << 20,
       });
     } catch (e) {
-      const npmCode = /^npm (?:error|ERR!) code ([A-Z][A-Z0-9_]{0,63})\s*$/m.exec(String(e.stderr))?.[1] ?? "unavailable";
-      const exit = Number.isSafeInteger(e.code) ? e.code : "unavailable";
-      return { problems: [`${label}: npm install failed (exit=${exit}, npm=${npmCode})`], layout: null };
+      return { problems: [`${label}: ${npmInstallFailure(e)}`], layout: null };
     }
     const problems = [];
     for (const spec of importsToCheck) {
