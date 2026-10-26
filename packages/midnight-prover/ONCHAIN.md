@@ -1,6 +1,6 @@
 # On-chain proof presentations
 
-Status: implementation under review; no preprod or mainnet deployment is recorded. The local native-ledger rehearsal does not establish network inclusion or finality. See [rehearsal evidence](onchain/REHEARSAL.md).
+Status: **preprod-rehearsed**. Both locally proven SDK post calls passed fresh-tarball verifyPosted with authenticated GRANDPA-final execution on PREPROD. No mainnet proof-contract deployment is recorded. See [rehearsal evidence](onchain/REHEARSAL.md).
 
 This extends the existing local prover and consumes the anchor package's GRANDPA verifier, authenticated runtime/events proofs, transaction decoder and RPC transport. The original local envelope format and circuits remain available.
 

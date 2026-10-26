@@ -1,52 +1,52 @@
 # Proof presentation rehearsal — 2026-10-26
 
-Status: **local native ledger passed; PREPROD faucet payment located; wallet sync and deployment awaiting authorized indexer access; MAINNET not attempted**.
+Status: **preprod-rehearsed**. The immutable contract was deployed on Midnight PREPROD, both witnesses were proven locally through SDK `post`, and a fresh tarball installation independently verified both calls through authenticated execution and GRANDPA finality. No mainnet proof-contract deployment or runner execution occurred.
 
-The brief forbids reading `~/.secrets`. None was read. The fresh preprod wallet is retained outside that directory. No standing service, node or container was modified.
+Machine-readable receipts, exact statements, verifier outputs, package checksums and provenance: [preprod-rehearsal.json](preprod-rehearsal.json).
 
-Read-only requests to the public `https://rpc.preprod.midnight.network` succeeded on 2026-10-26: chain `Midnight Preprod`, genesis `df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b`, runtime `midnight` spec `1000300`, transaction version `3`. Public chain reads are available and match the supported runtime.
+## Network and funding
 
-A fresh preprod-only wallet was created with the existing key utility outside the forbidden directory, under `/home/deci/.local/state/codex-tasks/midnight-prover-onchain/preprod-wallet/`. Its directory is 0700 and its mnemonic is 0600; no secret was printed. Its **unshielded** address is:
+Network genesis: `df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b`. Runtime spec: 1000300. Authenticated Blockfrost preprod endpoints were selected explicitly; no provider default changed. The supplied project ID was read only in-process from the permitted task file. No `~/.secrets` access, service change, merge, tag or npm publication occurred.
 
-`mn_addr_preprod1pju7t5t0lej86fyp6c63gyhy823e5zh2py4m4lkzpjhvf0sv4ylsrzw2pz`
+Wallet: `mn_addr_preprod1pju7t5t0lej86fyp6c63gyhy823e5zh2py4m4lkzpjhvf0sv4ylsrzw2pz`. Its 5,000 tNIGHT payment was independently consensus-verified in block 3150901, transaction `bdba9f29be53f71572fb12c4620d6fd6d43d1df41f22c2554a14fd4f45473164`. The faucet identifier `00e16532647cbcc331c19697c9cdd8eaeb1bfe03eabb8843cfba30f80f06668f99` is an intent identifier, distinct from this final transaction hash.
 
-deci completed the faucet on 2026-10-26. A bounded scan of the public preprod RPC located the payment, and ledger-8 decoding found a native-token output of **5,000,000,000 STAR (5,000 tNIGHT)** owned by this exact address:
+NIGHT registration: `f7544fb5dbef368890c94c10793ce94d3b1101c707b413d89477561f88d76624`, block 3151647, hash `cf248d69325f0a33cb8032f59932226aeee93b999041a65f3ed4e35b5b7ca32d`. The wallet then generated DUST and saved a validated snapshot. The retained wallet and journal remain outside the repository.
 
-| Funding field | Value |
-|---|---|
-| Faucet intent identifier | `00e16532647cbcc331c19697c9cdd8eaeb1bfe03eabb8843cfba30f80f06668f99` |
-| Final transaction hash | `bdba9f29be53f71572fb12c4620d6fd6d43d1df41f22c2554a14fd4f45473164` |
-| Block height | `3150901` |
-| Block hash | `9b8bbba8a68ef0fd4f6babc57d0ee8547962d10c89447fbd17c598a1435ccafa` |
+## Deployment and calls
 
-The faucet identifier belongs to the final transaction's `identifiers()` set; it is not its `transactionHash()`. The payment's block and output are located from chain bytes, without relying on the retired indexer. This is funding evidence, not proof-contract deployment evidence.
+Contract address: `9020196694e9738b77d977985f35b05a64aae79346ec87400750b48e38f27de6`. The deployment exactly matches the pinned initial state and immutable maintenance authority (empty committee, threshold 1, counter 0). Both proof calls used SDK `post`, including local circuit proving, the supplied fee wallet and the durable preprod release journal.
 
-The remaining prerequisite is an authorized indexer. The hosted preprod GraphQL endpoint returned **HTTP 410** and the replacement Blockfrost endpoint returned **HTTP 403** without authentication. Midnight's [environment reference](https://docs.midnight.network/relnotes/network) documents the preprod indexer retirement. No Blockfrost credential is present in the task environment or at the requested allowed path, `/home/deci/.local/state/codex-tasks/midnight-prover-preprod/blockfrost.project_id`. Supply a preprod token there with mode 0600, or an authorized compatible indexer/RPC endpoint. Do not paste a token into a transcript. The existing wallet API then syncs, registers NIGHT for DUST, and pays the rehearsal fees. Retain the wallet through build cleanup.
+| Transaction | Final transaction hash | Block | Block hash |
+|---|---|---:|---|
+| `deploy` | `d133a44a4978458d7950641f680256e940a809c7b0736090f3ae6193ccd5dc25` | 3151664 | `301f43611c552bf57ec3cb286094800fd957c0184054bd44f0ae104b4c3290b2` |
+| `proveCapability` | `62e01625f2159ba9de6cc30b467dcf2c52c518f497148ec089f6f0c87af1ad40` | 3151676 | `ee2e5db28016032578f9e847c7ffbd123958330958976f10d5325bb448fd3b00` |
+| `proveRolling1` | `072b650be00ae312605b5217e204cc248ec17e2a7b9e56d04f1d8169e6824425` | 3151703 | `5d937fcfe11c3f34622214c7a669342918c509ef16d258721d7faec1e0abe17a` |
 
-A checkpoint refresh started from the committed preprod fixture's set 9497 at block 2834399. Successful intermediate checks reached set 10250 after block 3058673. The retired RPC then returned HTTP 403 to historical header reads, including a six-header batch with a 547-byte method/parameter payload. Increasing aggregate response budgets and reducing batches did not complete the walk. No consensus-verified faucet result or proof-contract finality result is claimed. Resume with an authorized supported RPC; the retained checkpoint progress records only completed verifications.
+## Fresh-package verification
 
-## Local evidence
+Both updated packages were packed from the isolated checkout and installed with `npm install --ignore-scripts --no-audit --no-fund` into a new consumer directory. Import realpaths were checked to remain inside that consumer, and each tarball was checked against its npm lockfile SHA-512 integrity plus a recorded SHA-256. No native verifier executable or workspace import was used by this consumer.
 
-`tests/onchain.integration.ts --record` generated fresh proofs with compactc 0.31.1's pinned proving keys and local parameters. Each native verifier response was `{"valid":true,"code":"verified"}`. It applied the deployment and both calls to one local ledger; both calls were prepared against the original empty map. The resulting map retained both records. Native Rust replay independently verifies the proofs and reproduces exactly the JavaScript ledger's final state.
+The consumer independently replayed 1065 authority-set changes from the committed preprod checkpoint (set 9497 after block 2834399) to block 3151111. That walk used 426 authenticated HTTP requests. Its verified checkpoint was persisted in the same consumer; the final read-only verification rechecked package integrity and used 26 further HTTP requests. Transaction block hints located bytes; body inclusion, execution, block time and GRANDPA finality were authenticated independently.
 
-| Local artifact | Transaction hash |
-|---|---|
-| Immutable deploy | `2845b663e357167ce086b8dbc63298ed13395488890f7acff8c0efe051a03659` |
-| Capability | `d2bbca3011040a669b32ae16be1423471a35d62c2d0cc89834c50b7d61dd6b6a` |
-| Rolling step | `6ae8886910240867c28a522254089240ae4a2ed4e7c1569176aff8e9cba97f10` |
+- `proveCapability` at block 3151676: `valid=true`, `assurance=consensus-verified`; presentation ID `715d448574f27f03755a6f532c4472eaffad2a7396a263816b6dfdb378ad0d46`.
+- `proveRolling1` at block 3151703: `valid=true`, `assurance=consensus-verified`; presentation ID `17e5d217e9ccd40698d176628d2537ef958baa94078cacc0c6efbf92a781b1b1`.
 
-Local address: `84ee1eb21cb7012790de18a23d4d3a3a548ccb565297a4a41d1aa26d7ba3f997`. Block-context timestamp: `1793033506`; proved deadline: `1793037006`. These are **unfunded local transactions**, with balancing enforcement disabled only in the test. They have no network block height, network inclusion or GRANDPA verdict. The committed fixtures live in `native/tests/fixtures/onchain/`; all witnesses are synthetic. The expired-deadline test extends the outer TTL, then proves that the native ledger still refuses each call at the circuit's original deadline.
+## Measured fees
 
-## Fresh npm consumer check
+| Transaction | Required fee, SPECK | Declared and burned, SPECK |
+|---|---:|---:|
+| `deploy` | 1 | 2 |
+| `proveCapability` | 1 | 2 |
+| `proveRolling1` | 1 | 2 |
 
-The updated anchors-midnight and midnight-prover tarballs were installed with `npm install --ignore-scripts --no-audit --no-fund` in a new directory outside the checkout. Both imports resolved inside that directory's own `node_modules`. Both local proof transcripts and the pinned deployment decoded successfully from the installed packages, without a native executable.
+Each transaction burned **2 SPECK (0.000000000000002 DUST)**; all three burned **6 SPECK**. The indexer reports the required fee, which was 1 SPECK each. The declared amount was independently decoded from each final transaction and matched the journal. A DUST spend burns its entire declaration, including overhead; see [Midnight fee semantics](https://docs.midnight.network/guides/manage-dust). These preprod measurements are not mainnet price estimates. The prepared 0.01 DUST per-transaction ceiling and 0.1 DUST shared daily ceiling remain unchanged.
 
-The installed generic verifier also replayed the existing recorded registry RPC fixture: transaction `e273d480e57b3315937c8929fbc3c11ab798d42b4ff6c0b88172856dec6b7d58`, block **3113832**, hash `18e31c819837ede6ed536fcd85a8d8f29af6affd87d642793ef9bcbe50ea1008`, with GRANDPA finality and successful execution authenticated. `verifyPosted` rejected that unrelated registry transaction as the new proof contract's deployment. This checks package completeness and the shared finality primitive; it is not a preprod proof-presentation receipt.
+## Reproduction and operational notes
 
-The same fresh consumer then verified that existing transaction through the **live** public read-RPC at `https://midnight-proofs-a.fluxpointstudios.com/midnight/mainnet/rpc`, retaining the independently trusted checkpoint from the fixture. Result: GRANDPA finality and successful execution verified, same block height/hash, **4 HTTP requests / 6 RPC subcalls**. The probe was read-only, bounded to 32 HTTP requests, 96 subcalls and 60 seconds, and used no credential. It did not submit any transaction.
+The one-off scripts and logs are retained at `/home/deci/work/scratch-midnight-proof-preprod2-20261026/`. `rehearse.mts funds` synchronized the wallet and registered NIGHT. `rehearse.mts` then deployed and posted both proofs. `consumer/verify-fresh.mjs checkpoint` verified the trust-root walk; after copying the final network receipts, `consumer/verify-fresh.mjs` produced both verdicts. `fees.mjs` checked encoded declarations against the indexer's required fees. All execution used low scheduling priority and bounded Node heaps; the one-off scratch-script TDD exception applies. Production code is unchanged from the recorded source commit.
 
-## Completion criteria for preprod
+Fresh wallet replay exposed the SDK's 1 ms batch timeout: the 1,000-event limit alone produced mostly one- or two-event batches. This rehearsal supplied a 1,000 ms collection window through the pinned SDK while retaining the size bound, and saved validated progress periodically. A corrected probe confirmed identical serialized DUST state for 936 events grouped together versus two smaller batches. An earlier probe reused consumed WASM events; its state was discarded before the successful replay. Production defaults remain unchanged; follow-up [#199](https://github.com/Flux-Point-Studios/orynq-sdk/issues/199) owns the performance fix.
 
-Use the private `proofReleaseOperator` with `network: 'preprod'`, an explicit supplied wallet and source, a task-specific journal and a one-hour expiry. Deploy through that operator, then generate each call through the public SDK `post` function. Its supplied wallet journals the final bytes through the release operator before broadcasting them. The journal permits retries of the same bytes and requires the pinned deployment to land before either call. Record every transaction hash, landed height and block hash.
+The submission process retained a background handle after its completion assertion and successful wallet close. A separate process reopened the journal and required all three landed records plus the saved-wallet-close event before stopping only that completed scratch process. The independent read-only verification then passed. No chain node or standing service was signalled.
 
-Install the packed updated anchors-midnight and midnight-prover packages in a new consumer directory. Use the public `verifyPosted` example in `ONCHAIN.md`, an independently authenticated preprod checkpoint and RPC-only source with the deployment and both call block hints. Record two `valid: true`, `assurance: 'consensus-verified'` results. Only then change the package status to preprod-rehearsed. Local replay and recorded registry finality tests cannot substitute for this check.
+The compiler reproduced all committed pins, the complete workspace built, and 30 public proof/finality plus 14 private release tests passed. Pipeline 211 passed all workflows on the unchanged implementation. The evidence follow-up requires its own approved green CI status before review; live status is on [PR #194](https://github.com/Flux-Point-Studios/orynq-sdk/pull/194). Prior native local-ledger evidence remains in [VALIDATION.md](VALIDATION.md) and the committed native fixtures.

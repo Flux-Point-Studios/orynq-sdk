@@ -335,7 +335,7 @@
     {
       "id": "midnight-prover",
       "name": "Midnight prover",
-      "desc": "Local Compact capability and exact rolling proofs plus immutable keyed on-chain presentations, caller-wallet post and checkpoint-rooted verifyPosted using authenticated execution. Compiled ledger-8 keys and initial state are pinned and ship in npm. No network proof-contract deployment is recorded; the local native-ledger rehearsal is separate from finality. Legacy publication is explicitly simulation-only.",
+      "desc": "Local Compact capability and exact rolling proofs plus immutable keyed on-chain presentations, caller-wallet post and checkpoint-rooted verifyPosted using authenticated execution. Compiled ledger-8 keys and initial state are pinned and ship in npm. Preprod-rehearsed: the immutable deployment and both locally proven SDK post calls have fresh-tarball consensus-verified receipts; no mainnet proof-contract deployment is recorded. Legacy publication is explicitly simulation-only.",
       "kind": "engine",
       "paths": [
         "packages/midnight-prover"

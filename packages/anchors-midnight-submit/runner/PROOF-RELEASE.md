@@ -1,6 +1,10 @@
 # Prepared proof-contract release intent
 
-This is review material, not an approval. No live mainnet runner or deployment was executed. The preprod faucet payment is located at block 3150901; wallet sync and deployment await authorized indexer access as recorded in [the rehearsal](../../midnight-prover/onchain/REHEARSAL.md). Recompilation reproduced the code, initial-state and verifier-key pins unchanged. The DUST figures below are authorization ceilings; funded proof-contract fees remain unmeasured. CTO review and preprod finality evidence precede execution.
+This is review material, not an approval. PREPROD is rehearsed: the pinned immutable contract and both locally proven SDK post calls were independently verified from fresh tarballs to GRANDPA-final execution. No live mainnet proof runner or deployment was executed. Code, initial-state and verifier-key pins reproduced unchanged and match the deployed preprod bytes. CTO review and a separate mainnet authorization still precede any mainnet execution.
+
+## Preprod fee check
+
+All three transactions declared and burned **2 SPECK (0.000000000000002 DUST)** each, **6 SPECK total**. The indexer's required fee was **1 SPECK** each; it is distinct from the full declaration burned by a DUST spend. Exact hashes, blocks and both consensus-verified verdicts are in [the rehearsal](../../midnight-prover/onchain/REHEARSAL.md). These are measured preprod fees, not mainnet forecasts. The 0.01 DUST per-transaction, 0.1 DUST shared rolling-day and 0.03 DUST initial reservation figures below remain authorization ceilings. Both circuits and all synthetic statement fields remain unchanged.
 
 ## Exact proposed authorization text
 

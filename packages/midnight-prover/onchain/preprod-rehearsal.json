@@ -1,0 +1,250 @@
+{
+  "sourceCommit": "a87db7e683ec60773bf29ea85c73cfb74d713e78",
+  "network": "preprod",
+  "genesis": "df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b",
+  "runtimeSpecVersion": 1000300,
+  "pins": {
+    "codeHash": "bd518847ed1c6800d129bdac57a1d595a0912afd74406a07d7838ae1ab060361",
+    "initialStateSha256": "55041c6c05f64fb1cf3aa974aba8e27a83206506bc40a6d21c540d8d294f01b2",
+    "verifierKeys": {
+      "proveCapability": "33197b9416d101c79df3d9b18ec092c7594d592498679feb920041e9856e5554",
+      "proveRolling1": "877ec547709026e5fd60f6386521c7634d6a95ba71ad8e35fc092c332217975d"
+    }
+  },
+  "funding": {
+    "network": "preprod",
+    "faucetId": "00e16532647cbcc331c19697c9cdd8eaeb1bfe03eabb8843cfba30f80f06668f99",
+    "txHash": "bdba9f29be53f71572fb12c4620d6fd6d43d1df41f22c2554a14fd4f45473164",
+    "block": {
+      "height": 3150901,
+      "hash": "9b8bbba8a68ef0fd4f6babc57d0ee8547962d10c89447fbd17c598a1435ccafa"
+    },
+    "timestamp": 1793040480000,
+    "address": "mn_addr_preprod1pju7t5t0lej86fyp6c63gyhy823e5zh2py4m4lkzpjhvf0sv4ylsrzw2pz",
+    "creditedNightStar": "5000000000",
+    "valid": true,
+    "assurance": "consensus-verified",
+    "finality": {
+      "setChanges": 26,
+      "requests": 9
+    },
+    "verifiedAt": "2026-10-26T19:13:17.578Z"
+  },
+  "registration": {
+    "txHash": "f7544fb5dbef368890c94c10793ce94d3b1101c707b413d89477561f88d76624",
+    "block": {
+      "height": 3151647,
+      "hash": "cf248d69325f0a33cb8032f59932226aeee93b999041a65f3ed4e35b5b7ca32d",
+      "timestamp": 1793044956000
+    }
+  },
+  "transactions": {
+    "deploy": {
+      "address": "9020196694e9738b77d977985f35b05a64aae79346ec87400750b48e38f27de6",
+      "txHash": "d133a44a4978458d7950641f680256e940a809c7b0736090f3ae6193ccd5dc25",
+      "blockHeight": 3151664,
+      "blockHash": "301f43611c552bf57ec3cb286094800fd957c0184054bd44f0ae104b4c3290b2",
+      "declaredFeeSpeck": "2",
+      "ttl": "2026-10-26T21:02:54.000Z"
+    },
+    "proveCapability": {
+      "address": "9020196694e9738b77d977985f35b05a64aae79346ec87400750b48e38f27de6",
+      "txHash": "62e01625f2159ba9de6cc30b467dcf2c52c518f497148ec089f6f0c87af1ad40",
+      "blockHeight": 3151676,
+      "blockHash": "ee2e5db28016032578f9e847c7ffbd123958330958976f10d5325bb448fd3b00",
+      "declaredFeeSpeck": "2",
+      "ttl": "2026-10-26T21:03:34.000Z",
+      "statement": {
+        "circuit": "proveCapability",
+        "contextDigest": "4770ef105d104ebe892876677489a67c4ccb046d46655b0ff36a80c89fff47dc",
+        "commitment": "d51d825634d331539b98e22b64a856ccf1210fdb7a422ef7815ba86f6810bd3a",
+        "notAfter": 1793048614
+      },
+      "path": "SDK post"
+    },
+    "proveRolling1": {
+      "address": "9020196694e9738b77d977985f35b05a64aae79346ec87400750b48e38f27de6",
+      "txHash": "072b650be00ae312605b5217e204cc248ec17e2a7b9e56d04f1d8169e6824425",
+      "blockHeight": 3151703,
+      "blockHash": "5d937fcfe11c3f34622214c7a669342918c509ef16d258721d7faec1e0abe17a",
+      "declaredFeeSpeck": "2",
+      "ttl": "2026-10-26T21:04:46.000Z",
+      "statement": {
+        "circuit": "proveRolling1",
+        "contextDigest": "4770ef105d104ebe892876677489a67c4ccb046d46655b0ff36a80c89fff47dc",
+        "genesisHash": "ff7becf8f8d6ed64167ded450b1887baa59edb6515148201bf533f91abb568ba",
+        "rootHash": "dc18beb5501a78e97517cbc4ea8be924816517af751beb0cc73efbd208af28ba",
+        "anchorHash": "b77016351de3f95a03f40de79f7bc925876faf9eb976512cb4449d60827aefc1",
+        "notAfter": 1793048686
+      },
+      "path": "SDK post"
+    }
+  },
+  "fees": [
+    {
+      "label": "deploy",
+      "txHash": "d133a44a4978458d7950641f680256e940a809c7b0736090f3ae6193ccd5dc25",
+      "declaredFeeSpeck": "2",
+      "requiredFeeSpeck": "1"
+    },
+    {
+      "label": "proveCapability",
+      "txHash": "62e01625f2159ba9de6cc30b467dcf2c52c518f497148ec089f6f0c87af1ad40",
+      "declaredFeeSpeck": "2",
+      "requiredFeeSpeck": "1"
+    },
+    {
+      "label": "proveRolling1",
+      "txHash": "072b650be00ae312605b5217e204cc248ec17e2a7b9e56d04f1d8169e6824425",
+      "declaredFeeSpeck": "2",
+      "requiredFeeSpeck": "1"
+    }
+  ],
+  "verification": {
+    "verifiedAt": "2026-10-26T20:10:17.727Z",
+    "packages": [
+      {
+        "name": "@fluxpointstudios/orynq-sdk-anchors-midnight",
+        "version": "0.3.2",
+        "tarball": "fluxpointstudios-orynq-sdk-anchors-midnight-0.3.2.tgz",
+        "sha256": "9683e6be00c727e74713f866a6048f625586d3031efce4ccef6c243764949739"
+      },
+      {
+        "name": "@fluxpointstudios/orynq-sdk-midnight-prover",
+        "version": "0.2.0",
+        "tarball": "fluxpointstudios-orynq-sdk-midnight-prover-0.2.0.tgz",
+        "sha256": "f9b380943e1015f16da4e990fae12e54ced3bd0020bd4ca4e53081c934115212"
+      }
+    ],
+    "trustRoot": {
+      "repoCommit": "f0422aad55152e7973a4960b690e05e4b7528ddd",
+      "fixture": "packages/anchors-midnight/src/__tests__/fixtures/preprod-finality.json",
+      "fixtureSha256": "4ca576c2b94f7318b02e134817f13207fad9f14b7caa9cf4d40cfe9d22cba570",
+      "checkpoint": {
+        "setId": "9497",
+        "startsAfter": {
+          "height": 2834399,
+          "hash": "f010f7dec742f57c4ea292626d2b6e11fab9972e77c041ae5b8c8905fb60177f"
+        },
+        "authorities": [
+          {
+            "key": "d80bd8f46a6e184314444c4bcc9760b223d504479bc6d560542353c4b150c121",
+            "weight": "10"
+          },
+          {
+            "key": "eb55418410838206ba8d78f1dc8cf3cc06a3f8d050eade45efbb42b92335360a",
+            "weight": "10"
+          },
+          {
+            "key": "5533a50ebb042a4137c2d1e5be6867cc860e3cf0ce8a83b8d862733c216c7e0d",
+            "weight": "10"
+          },
+          {
+            "key": "df4f88cfc5e92a7ebad1158236247eb7b000c436b8258680a0d44ce7f28cded7",
+            "weight": "10"
+          },
+          {
+            "key": "5e0bb84193a97f4745a991c7313e5dd8a850af16efa93f6b8b4a8b6aa6ec59d9",
+            "weight": "10"
+          },
+          {
+            "key": "0235a9e06d7eefef4c0bd23b57d6516fc99692e51c14f9d019f517aebe7150d0",
+            "weight": "10"
+          },
+          {
+            "key": "5cb5c9ae29506dee99bf73cc51a5ecafaa535f32d91f55d37409c20ddfa41d58",
+            "weight": "10"
+          },
+          {
+            "key": "4ec40960fa043bcf08917cf9e83538946a750123747265ba466b6a4d61cb4764",
+            "weight": "10"
+          },
+          {
+            "key": "1bce1ca17ca250a2ccb4964573cc9a8650e390c38b0a6963b5307f9e5fc3f9fe",
+            "weight": "10"
+          },
+          {
+            "key": "5d6c9d7aa9dec0c224febc0a0d1407c0b875369cdae82957b679d7a03aab75d7",
+            "weight": "10"
+          },
+          {
+            "key": "0d1a7725715dada86797150e28caa848eb67ab4ddb938f2de14bad9f7f5de222",
+            "weight": "10"
+          },
+          {
+            "key": "f43aee8b493584b597c73a2403538407e4dc286e940245bb3ecbc540ee76ba57",
+            "weight": "10"
+          },
+          {
+            "key": "523d18cbfad4396b13cbe560adcc55cf845859ae5dfe02840a1699f290e933b8",
+            "weight": "10"
+          }
+        ]
+      }
+    },
+    "checkpointWalk": {
+      "setChanges": 1065,
+      "verifiedAt": "2026-10-26T19:22:56.733Z",
+      "httpRequests": 426
+    },
+    "httpRequests": 26,
+    "results": [
+      {
+        "valid": true,
+        "assurance": "consensus-verified",
+        "txHash": "62e01625f2159ba9de6cc30b467dcf2c52c518f497148ec089f6f0c87af1ad40",
+        "address": "9020196694e9738b77d977985f35b05a64aae79346ec87400750b48e38f27de6",
+        "block": {
+          "height": 3151676,
+          "hash": "ee2e5db28016032578f9e847c7ffbd123958330958976f10d5325bb448fd3b00"
+        },
+        "timestamp": 1793045130001,
+        "presentationId": "715d448574f27f03755a6f532c4472eaffad2a7396a263816b6dfdb378ad0d46",
+        "statement": {
+          "circuit": "proveCapability",
+          "contextDigest": "4770ef105d104ebe892876677489a67c4ccb046d46655b0ff36a80c89fff47dc",
+          "commitment": "d51d825634d331539b98e22b64a856ccf1210fdb7a422ef7815ba86f6810bd3a",
+          "notAfter": 1793048614
+        }
+      },
+      {
+        "valid": true,
+        "assurance": "consensus-verified",
+        "txHash": "072b650be00ae312605b5217e204cc248ec17e2a7b9e56d04f1d8169e6824425",
+        "address": "9020196694e9738b77d977985f35b05a64aae79346ec87400750b48e38f27de6",
+        "block": {
+          "height": 3151703,
+          "hash": "5d937fcfe11c3f34622214c7a669342918c509ef16d258721d7faec1e0abe17a"
+        },
+        "timestamp": 1793045292000,
+        "presentationId": "17e5d217e9ccd40698d176628d2537ef958baa94078cacc0c6efbf92a781b1b1",
+        "statement": {
+          "circuit": "proveRolling1",
+          "contextDigest": "4770ef105d104ebe892876677489a67c4ccb046d46655b0ff36a80c89fff47dc",
+          "genesisHash": "ff7becf8f8d6ed64167ded450b1887baa59edb6515148201bf533f91abb568ba",
+          "rootHash": "dc18beb5501a78e97517cbc4ea8be924816517af751beb0cc73efbd208af28ba",
+          "anchorHash": "b77016351de3f95a03f40de79f7bc925876faf9eb976512cb4449d60827aefc1",
+          "notAfter": 1793048686
+        }
+      }
+    ]
+  },
+  "sync": {
+    "batchSize": 1000,
+    "batchTimeoutMilliseconds": 1000,
+    "batchSpacingMilliseconds": 4,
+    "productionDefaultsChanged": false,
+    "equivalenceEvents": 936
+  },
+  "transactionBytesSha256": {
+    "deploy": "d133a44a4978458d7950641f680256e940a809c7b0736090f3ae6193ccd5dc25",
+    "proveCapability": "62e01625f2159ba9de6cc30b467dcf2c52c518f497148ec089f6f0c87af1ad40",
+    "proveRolling1": "072b650be00ae312605b5217e204cc248ec17e2a7b9e56d04f1d8169e6824425"
+  },
+  "rehearsalScriptsSha256": {
+    "rehearse.mts": "c553cafec5977b8039723ca5bb07678b60683add721147c1ee34877e3146c7fa",
+    "batching.mts": "9b76891b989360a88e19d129bfe6af125d0d49e7102e4101dc3e872f662f087b",
+    "verify-fresh.mjs": "15cff2563ef803c42d11cc9eebf766472cbc91de76e1912bd6d4f246f0923e06",
+    "fees.mjs": "86b38dc866664e9872ce8b386fd27df796b3381eac2fc5a916d6e18568806ca2"
+  }
+}
