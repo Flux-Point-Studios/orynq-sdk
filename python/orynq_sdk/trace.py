@@ -26,23 +26,23 @@ Public API mirrors the TS package one-for-one (Pythonic snake_case names):
 
 Three lower-level utilities are also exported for cross-language tests:
 
-    canonical_json(value)              RFC-8785-ish JCS (sort keys, strip nulls)
+    canonical_json(value)              RFC 8785 JCS with object-null removal
     sha256_hex(string)                 lowercase hex SHA-256 of a UTF-8 string
     GENESIS_ROLLING_HASH               sha256("poi-trace:roll:v1|genesis")
 
-This module deliberately avoids any external dependencies — pure stdlib
-hashlib + json keeps Python install footprint tiny so `pip install
-orynq-sdk` doesn't drag in pyca/cryptography or substrate-interface
-unless the user opts into the [materios] extra (see pyproject.toml).
+Hashing uses stdlib hashlib; canonical JSON uses the small, pure-Python
+`rfc8785` package for ECMAScript number spelling and UTF-16 key ordering.
+Trace primitives do not require substrate-interface or native cryptography.
 """
 from __future__ import annotations
 
 import hashlib
-import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
+
+import rfc8785
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +63,7 @@ GENESIS_ROLLING_HASH = hashlib.sha256(
 
 
 # ---------------------------------------------------------------------------
-# Canonical JSON (RFC 8785-ish: sort keys, strip nulls + undefined, no whitespace)
+# Canonical JSON (RFC 8785 with TypeScript's object-null removal)
 # ---------------------------------------------------------------------------
 
 def canonical_json(value: Any) -> str:
@@ -71,33 +71,32 @@ def canonical_json(value: Any) -> str:
     Serialise `value` to canonical JSON.
 
     Matches the TS implementation's two production opt-ins:
-    `removeNulls=true`, `removeUndefined=true`. Keys are sorted
-    lexicographically; arrays preserve their order.
+    `removeNulls=true`, `removeUndefined=true`. Object keys use UTF-16
+    ordering; arrays retain their order and null members. Finite floats use
+    ECMAScript number spelling. Python integers must be within the inclusive
+    JavaScript safe range -(2**53 - 1)..2**53 - 1. Non-finite floats, unsafe
+    integers, invalid Unicode and unsupported values raise ValueError.
 
     Used by:
       - event hashing
       - manifest hashing
       - cross-language vector regression
     """
-    return json.dumps(
-        _sort_canonical(value),
-        separators=(",", ":"),
-        ensure_ascii=False,
-        sort_keys=False,  # we already sorted recursively
-    )
+    return rfc8785.dumps(_without_null_fields(value)).decode("utf-8")
 
 
-def _sort_canonical(value: Any) -> Any:
+def _without_null_fields(value: Any) -> Any:
     if isinstance(value, dict):
         out: Dict[str, Any] = {}
-        for k in sorted(value.keys()):
-            v = value[k]
+        for k, v in value.items():
+            if not isinstance(k, str):
+                raise ValueError("canonical JSON object keys must be strings")
             if v is None:
                 continue
-            out[k] = _sort_canonical(v)
+            out[k] = _without_null_fields(v)
         return out
-    if isinstance(value, list):
-        return [_sort_canonical(v) for v in value]
+    if isinstance(value, (list, tuple)):
+        return [_without_null_fields(v) for v in value]
     return value
 
 
@@ -376,11 +375,12 @@ def add_event(
         kind=kind,
         payload=dict(payload),
     )
-    run.next_seq += 1
-
     # Compute event hash via canonical JSON (everything except `hash`).
     event_hash = sha256_hex(HASH_DOMAIN_EVENT + canonical_json(event.to_dict_without_hash()))
     event.hash = event_hash
+    # Validation can reject non-finite numbers or unsafe Python integers. Keep
+    # the sequence unchanged until the event can actually enter the hash chain.
+    run.next_seq += 1
 
     # Update the run's rolling hash.
     run.rolling_hash = sha256_hex(

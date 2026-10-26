@@ -5,7 +5,9 @@ These tests verify that Python produces the same canonical JSON output
 as TypeScript and other language implementations in the orynq-sdk.
 """
 
-import json
+import math
+
+import pytest
 
 from orynq_sdk.trace import canonical_json, sha256_hex as sha256_hash
 
@@ -239,31 +241,36 @@ class TestCanonicalJsonEdgeCases:
         assert '\\"' in result
         assert '\\\\' in result
 
-    def test_scientific_notation_numbers(self):
-        """Test that scientific notation is handled."""
-        result = canonical_json({"num": 1e10})
-        # Python may represent as 10000000000.0 or 1e10
-        parsed = json.loads(result)
-        assert parsed["num"] == 1e10
+    @pytest.mark.parametrize("number,expected", [
+        (1.0, "1"),
+        (-0.0, "0"),
+        (1e-7, "1e-7"),
+        (1e-6, "0.000001"),
+        (1e10, "10000000000"),
+        (1e20, "100000000000000000000"),
+        (1e21, "1e+21"),
+        (333333333.33333329, "333333333.3333333"),
+        (math.nextafter(0, 1), "5e-324"),
+        (float.fromhex("0x1.fffffffffffffp+1023"), "1.7976931348623157e+308"),
+        (2**53 - 1, "9007199254740991"),
+        (-(2**53 - 1), "-9007199254740991"),
+        # Explicit floats keep their IEEE-754 value even above safe-integer range.
+        (float(2**53), "9007199254740992"),
+    ])
+    def test_ecmascript_number_bytes(self, number, expected):
+        assert canonical_json({"num": number}) == '{"num":' + expected + '}'
 
-    def test_very_small_float(self):
-        """Test very small floating point numbers."""
-        result = canonical_json({"num": 0.0000001})
-        parsed = json.loads(result)
-        assert abs(parsed["num"] - 0.0000001) < 1e-15
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf, 2**53, -(2**53)])
+    def test_rejects_numbers_without_lossless_interchange(self, value):
+        with pytest.raises(ValueError, match="safe integer domain|not representable"):
+            canonical_json({"nested": [value]})
 
-    def test_negative_zero(self):
-        """Test negative zero."""
-        result = canonical_json({"num": -0.0})
-        # Should be represented as 0
-        parsed = json.loads(result)
-        assert parsed["num"] == 0
+    def test_utf16_key_order_and_nested_nulls(self):
+        assert canonical_json({
+            "\ue000": {"keep": 1.0, "omit": None},
+            "😀": [None, {"keep": -0.0, "omit": None}],
+        }) == '{"😀":[null,{"keep":0}],"\ue000":{"keep":1}}'
 
-    def test_integer_vs_float(self):
-        """Test that integers and floats are distinct."""
-        int_result = canonical_json({"num": 1})
-        float_result = canonical_json({"num": 1.0})
-        # Both should parse to the same value
-        int_parsed = json.loads(int_result)
-        float_parsed = json.loads(float_result)
-        assert int_parsed["num"] == float_parsed["num"]
+    def test_rejects_non_string_keys(self):
+        with pytest.raises(ValueError, match="keys must be strings"):
+            canonical_json({1: "value"})
