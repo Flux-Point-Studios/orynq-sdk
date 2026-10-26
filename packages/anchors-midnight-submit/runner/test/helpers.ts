@@ -82,9 +82,27 @@ export function journalled(path: string, txHash: string, state: "pending" | "lan
 // The PID of the one `script` this test process runs a tool under, so a test signals it and
 // nothing else.
 export function scriptPid(): number {
-  const proc = `/proc/${process.pid}/task`;
-  const children = readdirSync(proc).flatMap((task) => readFileSync(`${proc}/${task}/children`, "utf8").split(" ").filter(Boolean));
-  const scripts = children.filter((pid) => readFileSync(`/proc/${pid}/comm`, "utf8").trim() === "script");
+  const scripts: number[] = [];
+  // Some procfs mounts omit task/*/children. One stat snapshot identifies both the direct
+  // parent and command without relying on that optional file or racing a second comm read.
+  for (const pid of readdirSync("/proc")) {
+    if (!/^[1-9][0-9]*$/.test(pid) || !Number.isSafeInteger(Number(pid))) continue;
+    let stat: string;
+    try { stat = readFileSync(`/proc/${pid}/stat`, "utf8"); }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ESRCH") continue;
+      throw error;
+    }
+    // The parenthesized command can itself contain whitespace and parentheses. The fields
+    // after its last ')' begin with process state, then parent PID.
+    const start = pid.length + 1, end = stat.lastIndexOf(")");
+    const fields = stat.slice(end + 1).trim().split(/\s+/);
+    if (!stat.startsWith(`${pid} (`) || end <= start || !/^[A-Za-z]$/.test(fields[0] ?? "") || !/^(0|[1-9][0-9]*)$/.test(fields[1] ?? "") || !Number.isSafeInteger(Number(fields[1]))) {
+      throw new Error(`Malformed process stat for PID ${pid}`);
+    }
+    if (Number(fields[1]) === process.pid && stat.slice(start + 1, end) === "script") scripts.push(Number(pid));
+  }
   if (scripts.length !== 1) throw new Error(`this process runs ${scripts.length} script processes, not one`);
-  return Number(scripts[0]);
+  return scripts[0]!;
 }
