@@ -64,4 +64,6 @@ export type {
   BootstrapStep,
 } from "./bootstrap.js";
 
-export const VERSION = "0.1.0";
+import packageMetadata from "../package.json";
+
+export const VERSION = packageMetadata.version;

@@ -100,7 +100,9 @@ const result = await bootstrapAndTrace({
 });
 
 console.log("Trace URL:", result.urls.blobStatus);
-console.log("Cert hash:", result.certHash);
+console.log("Content hash:", result.contentHash); // --content-hash
+console.log("Submitted base root:", result.rootHash); // chunk Merkle root
+console.log("Cert hash:", result.certHash); // --certificate-hash; absent while pending
 ```
 
 ### Primitives
