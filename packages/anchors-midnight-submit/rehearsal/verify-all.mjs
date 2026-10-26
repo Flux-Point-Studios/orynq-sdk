@@ -1,7 +1,7 @@
 // Verifies every preprod rehearsal anchor with the W2 verifier, in a process of its own that
 // imports only the packed @fluxpointstudios/orynq-sdk-anchors-midnight tarball and gate.mjs. It
-// reads through Blockfrost preprod, the operator the writes went through too, and trusts only
-// the preprod-only KNOWN_AUTHORS root.
+// reads through Blockfrost preprod. Shipped policy roots authenticate its reviewed consensus
+// checkpoints; the fresh preprod drill root authorizes only the rotation's author windows.
 // It exits 0 only when gate.mjs, copied beside it, finds nothing the evidence pack could not claim.
 //   node verify-all.mjs EVIDENCE_DIR BLOCKFROST_PROJECT_ID_FILE > verified.json
 // EVIDENCE_DIR holds raw.json, bundles.json, known-authors/, crash.log and crash.log.status.
@@ -49,7 +49,11 @@ const checkpoints = consensus.checkpoints("preprod");
 if (checkpoints.length === 0) refuse("reviewed signed preprod consensus onboarding is required");
 const root = readFileSync(`${dir}/known-authors/root.pub`, "utf8").trim();
 const signed = [1, 2, 3].map((n) => read(`known-authors/signed-${n}.json`)[0]);
-const authorsFrom = (...serials) => knownAuthors({ documents: serials.map((n) => signed[n - 1]), trustRoots: [root] });
+const authorsFrom = (...serials) => {
+  const authors = knownAuthors({ documents: serials.map((n) => signed[n - 1]), trustRoots: [root] });
+  if (authors.checkpoints("preprod").length) refuse("drill author policies must not supply consensus checkpoints");
+  return authors;
+};
 const source = midnightSource(blockfrostEndpoints("preprod", projectIdFile));
 const registry = {
   generation: 1,

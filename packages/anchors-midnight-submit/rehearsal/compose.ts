@@ -86,7 +86,7 @@ try {
   const documents = [1, 2, 3].map(n => json(`evidence/known-authors/signed-${n}.json`)[0]);
   documents.forEach((signed, i) => {
     const opened = openKnownAuthors(signed, [verified.trustRoot]);
-    if (opened.serial !== i + 1 || JSON.stringify(Object.keys(JSON.parse(signed.document).networks)) !== '["preprod"]') throw new Error("document mismatch");
+    if (opened.serial !== i + 1 || opened.checkpoints("preprod").length !== 0 || JSON.stringify(Object.keys(JSON.parse(signed.document).networks)) !== '["preprod"]') throw new Error("document mismatch");
   });
   const serial3 = documents[2];
   const reopened = JSON.parse(serial3.document);

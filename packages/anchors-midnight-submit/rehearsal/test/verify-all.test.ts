@@ -5,6 +5,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, cpSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
+import { signKnownAuthors } from "../../../anchors-midnight/src/known-authors.js";
 import { FAKE_TARBALL, VERIFY_DIST, fakeChain, fakeConsumer, honestRehearsal, removeScratch, scratch, writeRehearsal, type Rehearsal } from "./fixture.js";
 
 const HERE = new URL("..", import.meta.url).pathname;
@@ -44,6 +45,25 @@ const lockEntry = (consumer: string, edit: (entry: Record<string, string>) => vo
 afterAll(removeScratch);
 
 describe("verify-all.mjs", () => {
+  it("requires the consensus checkpoint policy to authenticate under the packed package's shipped roots", () => {
+    const { run, out, asked } = verifyAll(r => { r.consensusPolicy[0]!.signatures[0]!.key = r.root; });
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("no signature by a trust root");
+    expect(out).toBeNull(); expect(asked).toEqual([]);
+  });
+
+  it("refuses consensus checkpoints introduced by the fresh drill author-policy root", () => {
+    const { run, out, asked } = verifyAll(r => {
+      const checkpoints = JSON.parse(r.consensusPolicy[0]!.document).networks.preprod.checkpoints;
+      r.documents = r.documents.map(signed => {
+        const document = JSON.parse(signed.document); document.networks.preprod.checkpoints = checkpoints;
+        return signKnownAuthors(JSON.stringify(document), Buffer.from(r.rootSeed, "hex"));
+      });
+    });
+    expect(run.status).toBe(1); expect(out).toBeNull(); expect(asked).toEqual([]);
+    expect(run.stderr).toContain("drill author policies must not supply consensus checkpoints");
+  });
+
   it("verifies every recorded anchor, crash-drill anchors included, through Blockfrost preprod alone, and exits 0 only with an empty gate", () => {
     const { r, run, out, asked, sources } = verifyAll();
     expect(run.status, run.stderr).toBe(0);

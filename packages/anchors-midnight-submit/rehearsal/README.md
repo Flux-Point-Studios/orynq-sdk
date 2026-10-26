@@ -25,7 +25,7 @@ package publishes only `dist`, so nothing here ships.
 | `evidence-integrity.mjs` | Compares every installed verify-package file with the saved tarball and rejects missing/extra/changed files, links and unsafe archive paths. Composition rechecks the saved tarball and installed-tree fingerprint. |
 | `run.ts` | The phases `chain funding deploy kind1 kind2 sameblock negatives rotation`. Records everything public in `evidence/raw.json` (git-ignored). `funding` records each wallet's first funding once and waits, every run, until each wallet can spend DUST. `deploy` resumes the deploy its journal still holds (`registryDeployer.journalled`) instead of preparing another, and saves the landing before it reads the wallet's balance. A node negative counts as refused only on the node's own JSON-RPC answer (`nodeRefusal`), and a recorded case is never sent again. The node's refusal of an anchor's bytes goes into `anchorRefusals` (label, transaction hash, the node's code and data, time) before the error leaves the phase, and each landed anchor records when it was recorded (`recordedAt`). Each wallet saves its sync state once it has synced and again at close, and `stateSaves` records every outcome: a save that fails fails no phase, and the next run resyncs from the last good save. |
 | `crash.ts` | One crash-window step per process: `kill-before`, `kill-after` (SIGKILL) and `recover`. A recovery ends with a `closed` line recording what saving the wallet's state did. |
-| `docs.ts` | Signs the drill's KNOWN_AUTHORS documents with a preprod-only trust root through `anchors-midnight/scripts/known-authors.ts`. |
+| `docs.ts` | Emits stable author-only policy drafts, then signs through the guarded policy CLI only against an owner-only external map of all three exact reviewed SHA-256 values. Drill documents contain no consensus checkpoints. |
 | `rehearse.sh` | All of the above in order, at nice 19; the crash drill runs once. |
 | `verify-all.mjs` | Verifies every recorded anchor, the rotation matrix, twelve verifier negatives and the absence of every refused maintenance transaction through Blockfrost, and opens the forged KNOWN_AUTHORS documents, from a consumer directory into which npm installed the packed verify package. It exits 1 on any gate failure. |
 | `gate.mjs` | The claims the pack may make, from what was recorded and what the verifier returned. Each maintenance update counts as refused only on the node's answer 1010 Invalid Transaction with the maintenance authority's own custom code, and each forged document only on the verify package's answer from the check it targets (below). The deploy the pack describes must be the one that landed: a prepared record whose transaction hash or address differs, such as a prepare a later run abandoned, fails the gate. A recorded refusal of an anchor's bytes (`anchorRefusals`) passes only when a later transaction for the same label landed: the anchor recorded under the label is another transaction, recorded after the refusal. |
@@ -155,8 +155,10 @@ installed and built (`pnpm install && pnpm build` at the root).
   separate pack verifier use Blockfrost preprod.
 - Create `author-relay-2.key` before onboarding. Owner-only
   `~/.secrets/orynq-midnight-preprod/submission-known-authors.json` must contain a nonempty list
-  of signed preprod-only KNOWN_AUTHORS envelopes under the shipped trust roots, with both
+  of signed KNOWN_AUTHORS envelopes under the shipped trust roots, with both
   rehearsal authors valid from the deployed registry height and a reviewed preprod checkpoint.
+  Preserve the shipped mainnet checkpoint history in each global policy update; this helper
+  consumes only the preprod section and refuses mainnet requests.
   The current shipped preprod checkpoint list is empty: a trust-root holder must independently
   review and sign this onboarding policy before live anchor phases can succeed. Do not substitute
   `src/__tests__/fixtures` checkpoints, an unsigned input or a newly generated trust root.
@@ -194,6 +196,15 @@ tarball beside the evidence for composition's second integrity check.
 ```
 ./rehearse.sh
 ```
+
+After the rotation phases, the first `docs.ts` invocation emits three unsigned drafts and stops.
+Independently review each `evidence/known-authors/doc-N.json` (authors, height windows and empty
+checkpoint lists). Record their reviewed SHA-256 values in owner-only
+`~/.secrets/orynq-midnight-preprod/known-authors-reviewed.json`, an object with exactly keys
+`"1"`, `"2"`, `"3"` and their reviewed digest strings. Rerun `docs.ts` to sign; changed or missing
+digests fail before signing. The issuance time remains stable across the review round trip.
+The packed verifier receives consensus checkpoints separately from the shipped-root-approved
+submission policy and refuses any checkpoint introduced by the fresh drill root.
 
 For large preprod transactions that exceed a provider's request limit, set
 `REHEARSAL_PUBLIC_PREPROD_WS=1` when running positive phases. This credential-free path checks
@@ -243,6 +254,14 @@ list, the numbers skip one, or the attempt reached a kill point (a kill step log
 found a journal row, or a step exited 0 or 137): an attempt that reached a kill point is a pass of
 the drill, not an abort, and the drill runs once. The fresh drill must pass every check of its own.
 
+If a failed attempt reached a kill point, retain its logs and canonical journals unchanged and
+reconcile the pending bytes before further submissions. It cannot be relabelled an aborted
+attempt or reset by deleting a journal. To start a new drill, archive its evidence and begin a
+fresh rehearsal with fresh author keys and a separate private namespace, leaving the old bound
+journals at their canonical paths. Funded wallet state can be restored in that namespace after
+the old attempt's DUST is available; new signed author onboarding and new reviewed draft hashes
+are required. The pack describes the new rehearsal, not a rewritten earlier crash window.
+
 ### 3. The consumer
 
 The verifier runs from a directory outside the repository into which only the packed verify
@@ -252,7 +271,7 @@ package is installed, from the same commit:
 C=$(mktemp -d "$HOME/.cache/orynq-midnight/consumer.XXXXXX")
 pnpm --filter @fluxpointstudios/orynq-sdk-anchors-midnight build
 (cd ../../anchors-midnight && pnpm pack --pack-destination "$C")
-(cd "$C" && npm init -y >/dev/null && npm install ./fluxpointstudios-orynq-sdk-anchors-midnight-0.1.0.tgz)
+(cd "$C" && npm init -y >/dev/null && npm install ./fluxpointstudios-orynq-sdk-anchors-midnight-*.tgz)
 sha256sum "$C"/*.tgz
 ```
 
