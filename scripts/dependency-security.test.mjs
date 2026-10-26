@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { join } from 'node:path';
 import test from 'node:test';
 
 const require = createRequire(import.meta.url);
@@ -18,6 +19,26 @@ function assertLockedFloor(name, floor, advisory) {
     assert.ok(semver.gte(version, typeof floor === 'string' ? floor : floor[semver.major(version)]), `${name} ${version} is affected by ${advisory}`);
   }
 }
+
+test('the wallet prover shares an Effect runtime that satisfies its platform peer', () => {
+  // Follow active dependency links, including import-only packages that do not export
+  // package.json. Scanning the pnpm store could accidentally check obsolete installations.
+  const dependencyManifest = (from, name) => {
+    const file = createRequire(from).resolve.paths(name).map(base => join(base, name, 'package.json')).find(existsSync);
+    assert.ok(file, `${name} must be installed`);
+    return realpathSync(file);
+  };
+  const submit = new URL('../packages/anchors-midnight-submit/package.json', import.meta.url);
+  const capabilities = dependencyManifest(submit, '@midnight-ntwrk/wallet-sdk-capabilities');
+  const prover = dependencyManifest(capabilities, '@midnight-ntwrk/wallet-sdk-prover-client');
+  const platform = dependencyManifest(prover, '@effect/platform');
+  const manifest = JSON.parse(readFileSync(platform, 'utf8'));
+  const resolvedVersion = createRequire(platform)('effect/package.json').version;
+  assert.equal(resolvedVersion, createRequire(submit)('effect/package.json').version,
+    'the wallet prover must share the submitter Effect runtime');
+  assert.ok(semver.satisfies(resolvedVersion, manifest.peerDependencies.effect),
+    `${manifest.name}@${manifest.version} requires effect ${manifest.peerDependencies.effect}, resolved ${resolvedVersion}`);
+});
 
 test('every locked Vite release includes the launch-editor security fix', () => {
   assertLockedFloor('vite', '8.3.3', 'GHSA-587h-7wmj-h5pm');
