@@ -64,7 +64,11 @@ export interface AnchorRecord {
 export interface ReceiptInput {
   /** SHA-256 content hash of the data being anchored */
   contentHash: string;
-  /** Base root hash (SHA-256 Merkle root of the data tree) */
+  /**
+   * Base root hash (SHA-256 Merkle root of the data tree). For a blob receipt (no or zero
+   * `schemaHash`), `submitCertifiedReceipt` submits the Merkle root of the uploaded chunk hashes in
+   * its place, the only root the committee certifies for a blob.
+   */
   rootHash: string;
   /** Manifest hash describing the data layout */
   manifestHash: string;

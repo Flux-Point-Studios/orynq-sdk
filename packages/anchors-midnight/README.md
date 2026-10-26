@@ -1,0 +1,441 @@
+# @fluxpointstudios/orynq-sdk-anchors-midnight
+
+Orynq anchors on Midnight. This package holds the `orynq-anchor-registry` Compact contract, the
+exact state it is deployed with, the checks that refuse any other deploy, and the verifier that
+checks an anchor against the registry generations it pins. Generation 1 is deployed on Midnight
+mainnet. This package is public (`npm install @fluxpointstudios/orynq-sdk-anchors-midnight`); the
+submitter, `@fluxpointstudios/orynq-sdk-anchors-midnight-submit`, is private.
+
+## The registry contract
+
+`contract/orynq-anchor-registry.compact` (compactc 0.31.1, language 0.23.0, runtime 0.16.0)
+has two circuits. Both only write ledger state, never read it, so concurrent anchors never
+conflict and nobody can block one.
+
+| Circuit | Publishes | Proves to consensus |
+|---|---|---|
+| `anchor(commitment, kind)` | commitment, kind, author key | the author knows the secret behind the author key; refuses kind 2 |
+| `anchor_hiding(attribute)` | commitment, attribute, author key | the author knows the secret, and an opening whose commitment is the published one |
+
+The author key is `author_key(secret) = SHA-256(pad32("orynq:anchor:author:v1") ‖ secret)`.
+Every digest is plain SHA-256 over 32-byte words, so a verifier recomputes it with any SHA-256:
+
+```
+entry_digest(root, manifest, merkle)          = SHA-256(pad32("orynq:anchor-entry:v1")  ‖ root ‖ manifest ‖ merkle)
+hidden_digest(root, manifest, merkle, attr)   = SHA-256(pad32("orynq:anchor-hidden:v1") ‖ root ‖ manifest ‖ merkle ‖ attr)
+hiding_commitment(digest, salt)               = SHA-256(salt ‖ digest)
+derive_salt(salt_key, digest)                 = SHA-256(pad32("orynq:anchor-salt:v1")   ‖ salt_key ‖ digest)
+```
+
+A salt key is published only by its id, `SHA-256(pad32("orynq:anchor-salt-key-id:v1") ‖ salt_key)`,
+which the contract never computes.
+
+### What a kind-2 anchor binds
+
+`anchor_hiding` proves that the published commitment equals
+`hiding_commitment(hidden_digest(root, manifest, merkle, attribute), salt)` for an opening only
+the author holds. The published attribute is therefore bound to the published commitment: no
+opening of that commitment carries a different attribute.
+
+The circuit does not check the attribute against the trace. It treats `root` as 32 opaque
+bytes, and process-trace folds the model manifest into the root hash inside a variable-length
+string that no circuit reads, so a trace that ran under model manifest B can be committed with
+attribute A.
+Only someone holding the opening and the bundle can check that the attribute matches the
+manifest bound in the root. `src/__tests__/attribute-binding.test.ts` pins both halves.
+
+### Immutability
+
+The registry is deployed with maintenance authority committee `[]`, threshold 1, counter 0,
+and nothing else is accepted. With no committee a maintenance update needs one signature from
+a member that cannot exist, so no update can ever apply; threshold 0 would admit an unsigned
+one. `assertRegistryDeployBytes` decodes the exact transaction bytes, before or after proving
+and binding, and refuses them unless they deploy exactly `registryInitialState()`, byte for
+byte, and touch no other contract.
+
+## Commitments and author keys
+
+`entryCommitment`, `hiddenDigest`, `hidingCommitment`, `deriveSalt` and `authorKey` call the
+compiled contract's own pure circuits, so the SDK and the registry cannot compute a commitment
+differently. They take 32-byte hashes as bytes or as hex, bare or prefixed `sha256:` or `0x`, the
+forms process-trace bundles and anchors-cardano entries use. A kind-1 commitment is
+`entry_digest(rootHash, manifestHash, merkleRoot)`, with 32 zero bytes when the entry has no
+merkle root.
+
+An author key is a fresh random 32-byte secret, never derived from a wallet seed.
+`createAuthorKeyFile(path)` writes one to a new file only its owner can read, flushed to disk,
+and returns the public author key (a write a full disk or a quota cuts short throws and leaves no
+file); `readAuthorSecret(path)` refuses a symlink, a file the caller does not own and
+a file group or others can read or write. A service's salt key, from which its kind-2 anchors
+derive their hiding salts, is a fresh random 32-byte secret too: `createSaltKeyFile(path)` writes
+one under the same rules and returns `saltKeyId(key)`, its public id, so a salt key disclosed later
+to open kind-2 anchors can be matched to the id published when it was made.
+
+A user anchoring with their own key holds a user key file instead: `createUserKeyFile(path)`
+writes a fresh author secret and a fresh salt key (from which a kind-2 anchor derives its hiding
+salt) as `{"format":"orynq-midnight-user-key/v1","authorSecret":…,"saltKey":…}`, under the same
+rules, and returns the public author key. `readUserKey(path)` refuses everything
+`readAuthorSecret` refuses, any other format, unknown fields, and equal keys. It refuses a bare
+author key file too, so a tool that anchors with a user's key never takes a service's key file.
+
+## Registry generations
+
+`MIDNIGHT_REGISTRIES` lists the deployed registry generations per network. Each entry pins its
+address, deploy transaction and block height, the runtime whose extrinsic layout the decoder
+knows (spec 1000300), and this contract's verifier keys, which `assertRegistryGenerations`
+checks. The verifier accepts an anchor only in a pinned generation, and verifies that
+generation's pinned deploy the way it verifies the anchor.
+
+| Network | Generation | Address | Deploy transaction | Block |
+|---|---|---|---|---|
+| mainnet | 1 | `438b1ea134e760e8b4e87409d663f36561f15341880c118dc41e4fc2b224c736` | `1bb33baad6eff44f9f485fef1a83b7f2200f09174d286936081574a3221535e8` | 3113819 |
+
+No generation is pinned on preprod.
+
+## Verifying an anchor
+
+`verifyMidnightAnchor({ network, txHash, expect }, { source })` checks an anchor from the
+transaction's own bytes, never from what a source says about them. Each step is a named check
+in the result:
+
+1. The indexer's bytes must decode to a transaction whose own hash is `txHash`, before anything
+   else is asked of them.
+2. The transaction must write exactly one anchor to a registry generation in
+   `MIDNIGHT_REGISTRIES`, with a guaranteed transcript equal, op for op, to what the compiled
+   circuits write; `anchor()` never with kind 2 or a nonzero attribute. A deploy or maintenance
+   update aimed at the registry in the same transaction is refused.
+3. The node's block at the indexer's height must have the indexer's hash, hash to it from its
+   header, and commit to its body through `extrinsicsRoot`; its runtime must be one whose
+   extrinsic layout the decoder knows, and one extrinsic must be exactly the bare
+   `Midnight.send_mn_transaction` of these bytes.
+4. GRANDPA must show the block final from a trusted checkpoint (the KNOWN_AUTHORS document's,
+   or the caller's).
+5. The registry's pinned deploy goes through the same steps and must deploy exactly the
+   immutable registry state at the registry's address, in the pinned block; the indexer's and the
+   node's state snapshots are cross-checks.
+6. The anchor must match the request, and its author must be the key the caller pins
+   (`expectedAuthor`) or, with none pinned, a key KNOWN_AUTHORS lists for that height.
+
+Statuses, most severe first: `invalid`, `conflict` (sources disagree with each other or with
+consensus), `unavailable`, `unverified-finality`, `unauthenticated`, `author-revoked`, and
+`valid`. A result takes the status of its most severe failed check, and `checks` lists every
+one that failed. Assurance says how far inclusion is established: `consensus-verified`, `multi-path`
+(indexer and node agree; on Blockfrost that is one operator running two pieces of software),
+`single-path` or `none`. A result is `valid` only at `consensus-verified`: skipping finality
+(`finality: "skip"`), a checkpoint more than `maxSetChanges` set changes away, or a node that
+cannot answer leaves it `unverified-finality` or `unavailable`, never `valid`.
+
+`verifiedFields` names only what the commitment binds and the request matched: `rootHash`,
+`manifestHash` and `merkleRoot` for a kind-1 entry, `commitment` for a bare kind-1 commitment,
+and `committedAttribute` for kind 2, plus the entry's hashes when the caller supplies the
+private opening, which is checked locally. `expect: { kind: "any" }` expects nothing: every
+other check runs, the anchor's commitment is reported, and `verifiedFields` stays empty. A kind-2 result always carries a note that the
+circuit binds the attribute to the commitment and never checks it against the trace. No proof is
+re-verified locally: the npm ledger WASM cannot verify one, and inclusion in a final block is
+what shows consensus did.
+
+The `author` field says how the author key was judged; its `key` is always the key that wrote
+the anchor. `known` and `outside-window` come from a signed KNOWN_AUTHORS document (below): the
+key is listed, and the block lies inside its window of block heights, or outside it (status
+`author-revoked`). `unknown` means no document this package ships or the caller passes lists the
+key; that is all it says, since the anchor can still be final and well formed. It makes the
+status `unauthenticated` unless a more severe status applies, such as `unverified-finality` when
+no trusted checkpoint shows the block final. `expected` means the caller pinned that key with
+`expectedAuthor` and it wrote the anchor. `mismatch` means another key wrote it: `author.expected`
+is the pinned key, and the status is `invalid`, the most severe, so an anchor by another key
+never reads like one by the pinned key, final or not.
+
+`verifyReport(result)` is the result as a terminal prints it and a model reads it: the finality
+checkpoint is dropped (its weights are bigints, which JSON cannot carry), a block hash that is not
+64 hex characters drops the block, and every check, note, operator and the transaction hash pass
+through `printable`, which turns control, format, private-use and unassigned characters and line
+separators into `?` and cuts text at 300 characters. A source's text can still say anything
+printable; the status and assurance are what to act on.
+
+## Verifying an anchor on mainnet
+
+The shipped signed KNOWN_AUTHORS policy supplies FPS author windows and the original
+mainnet GRANDPA checkpoint. The caller supplies a source and can explicitly pin its own
+author or checkpoint:
+
+- A source. Midnight decommissioned its public mainnet indexer on 2026-10-09, so the indexer is
+  Blockfrost's (`sourceEndpoints("mainnet", { blockfrostProjectIdFile })`) or one you run
+  (`sourceEndpoints("mainnet", { indexer, node })`).
+- A different GRANDPA checkpoint you trust, in `checkpoints`. Without a trusted checkpoint below
+  its block, an anchor verifies at most to `unverified-finality`. Finality and inclusion says what a
+  checkpoint is; a finalized result returns a newer one to keep.
+- An explicit author key, in `expectedAuthor`. Without it, the signed policy determines whether
+  an author is known at the anchor's height. With it, an anchor that key wrote
+  reads `expected`, and one any other key wrote reads `mismatch` and is `invalid`. FPS's mainnet
+  author key is `6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08`. This
+  README and the package's tests name it, so pinning it trusts this package's publisher, as
+  running its code does.
+
+```ts
+import { midnightSource, sourceEndpoints, verifyMidnightAnchor, type FinalityCheckpoint } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+
+declare const checkpoint: FinalityCheckpoint; // a GRANDPA set you trust
+const source = midnightSource(sourceEndpoints("mainnet", { blockfrostProjectIdFile: "/path/to/project-id" })!);
+const result = await verifyMidnightAnchor(
+  {
+    network: "mainnet",
+    txHash: "e273d480e57b3315937c8929fbc3c11ab798d42b4ff6c0b88172856dec6b7d58",
+    expect: { kind: 1, commitment: "c5027cecfc7c6dac5dcce026178ccaec51afe30735dc311635907b8e06b69a59" },
+    expectedAuthor: "6a140f2346ec16bc587b506e3d447f05ddcc9bdd72778bee578767571b061f08",
+  },
+  { source, checkpoints: [checkpoint] },
+);
+```
+
+FPS's first two mainnet anchors, both `valid` at `consensus-verified` with that key pinned:
+
+| Kind | Transaction | Block | Commitment |
+|---|---|---|---|
+| 1 | `e273d480e57b3315937c8929fbc3c11ab798d42b4ff6c0b88172856dec6b7d58` | 3113832 | `c5027cecfc7c6dac5dcce026178ccaec51afe30735dc311635907b8e06b69a59` |
+| 2 | `5cf70930503785a1a4524f458ec6986d9e1083ad04a2851946e911bb87338643` | 3113847 | `7d3e484c72ad02493526ba7bd885977264e02b57d8bc4645d4d67c18123476da` |
+
+The kind-2 anchor's attribute is `6087363539cf4a83f465b586740d385ffe9d87d3be00701a66f0ad0f2f50ae15`.
+
+## Finding anchors
+
+`findMidnightAnchors({ network, source, fromHeight, toHeight })` lists the anchors a set of
+authors (the KNOWN_AUTHORS document's by default) wrote in a window of at most 20,000 blocks that
+lies at or below the indexer's head. It reads the indexer's `contractActions` subscription for
+each registry generation and decodes every action from its transaction's own bytes; a call to a
+registry that is not an anchor is reported under `rejected`. It stops at the first action past
+the window, when the subscription has delivered the newest action the indexer knows, or after
+`maxActions` actions (default 2,000), returning a cursor to resume from, so strangers anchoring
+in the same window cannot make one call read more than `maxActions` actions. A result is a list
+of candidates: each one is shown final and authentic only by `verifyMidnightAnchor`. Nothing on
+a critical path scans the registry; the submitter reconciles by transaction hash. The search
+needs a global `WebSocket`, which Node has from version 22.
+
+## Submission journal
+
+`@fluxpointstudios/orynq-sdk-anchors-midnight/journal` keeps a write-ahead journal of anchor
+submissions in SQLite (`node:sqlite`, Node 22.13 or later). `submitOnce(key, { prepare,
+broadcast, chain })` allows one live attempt per anchor key (network, registry, author, kind,
+commitment, attribute). It writes the attempt's row, with the hash it computes from the final
+bytes `prepare` returns, before `broadcast` sees those bytes, so a broadcast that times out
+after the node accepted it, or a process that dies before or during it, is answered later by
+that hash and never sent as a second transaction. A row whose broadcast never returned is resent
+with the same bytes. A caller that holds its final bytes already names their hash
+(`submitOnce(key, { ..., txHash })`): a live row of other bytes then comes back unsent, so that
+caller never broadcasts an attempt it did not prepare. A pending row is retired only when the indexer reports its transaction
+(landed or failed), or when the indexer's newest block is past the transaction's TTL plus a
+margin, in chain time rather than the local clock. A row whose bytes deploy a contract is never
+retired on the indexer's word, since a second deploy is a second contract: whatever the indexer
+reports, other than landed, it stays live until chain time is past its TTL plus the margin, and
+then the journal asks the chain view's `holdsContract(address, block)` whether the node holds a
+contract, at that very block, at an address the bytes deploy. If it does, the row is landed, with
+no block until the indexer lists the transaction; only if it holds none is the row retired. The
+rule lives in the journal, so every reconcile of a journal keeps it, whichever caller runs it, and
+a lookup answered from an older indexer snapshot than the head, or an indexer that reports a
+landed deploy failed, never frees the key for a second deploy. A chain view names its network,
+and a row is settled only from a view of its own: `reconcile(chain)` settles the pending rows of
+the view's network alone, and `submitOnce` refuses a key of another network before preparing
+anything, so in a file that holds several networks' rows, another network's indexer, clock and
+node never retire a deploy or land one. Calls are serialized per journal, and across processes
+the attempt that writes its row second never broadcasts. Each row records the wallet that paid
+the attempt's fee when `prepare` names it (`payer`); a journal created before that column existed
+gains it on open, its older rows naming none. `live(key)` returns a key's live attempt with its
+exact bytes and payer, so a caller that lost its own record of an attempt can resume it and name
+the wallet that paid it. A landed row names the block the indexer placed it in, which a reorg
+can orphan: `relocate(txHash, chain)` settles a landed row afresh once the chain view's
+`finalHash(height)`, the block the node's finalized chain holds at the row's height, is another
+block. The row is then pending again and settled by its hash as any pending row is: landed where
+the indexer now places it, or retired once chain time is past its TTL plus the margin unseen,
+which frees its key. Nothing is prepared or broadcast, and a row whose block the node has not
+finalized, or has finalized as the very block the row names, stays as it is.
+`chainView(source, network)` reads `network` through its source: transactions from its
+indexer, contracts from its node (`contractStateOnNode` at the block), the node's finalized block
+at a height (null above its finalized head), and chain time from the
+indexer's newest block only once the source's node holds that block at that height, as the
+smaller of the indexer's time for it and the node's own `Timestamp.Now` in it; until the node
+holds it there is no chain time, so an indexer that is forked, foreign or ahead of the node
+retires nothing.
+
+## Known authors
+
+Which author keys a verifier recognizes, over which block heights and in which role, and which
+GRANDPA checkpoints it trusts, come from a KNOWN_AUTHORS document (`orynq-known-authors/v1`)
+signed with Ed25519 by a pinned policy-root key over `"orynq-known-authors/v1\n" ‖ document`.
+The document is shipped as the exact string that was signed, in `known-authors.json`, so no
+JSON canonicalization sits between a signature and what it covers. Parsing is strict: unknown
+fields, networks and roles, malformed keys, and overlapping windows for one key are refused.
+Each signature check refuses with its own message, so a caller can tell which one failed: `the
+known-authors document carries no signature by a trust root` when no signature names one,
+`... is not 64 bytes of lowercase hex` when every trust-root signature is malformed, and `... does
+not verify` only after Ed25519 verification failed for every well-formed trust-root signature.
+
+Each author has a role (`relay` for individual anchors or `batch` for certified batch sets) and a
+window of block heights, `validFrom` to `validTo` inclusive. Revoking a key is a later document
+with a higher serial that closes its window at the height the compromise began; anchors below
+it stay valid and anchors above it read `outside-window`. A verifier learns of a revocation from
+the documents it is given, never by scanning the permissionless registry. `knownAuthors()` keeps
+the highest serial among the shipped documents and any newer ones a caller passes, so an older
+document cannot roll a revocation back, and a document that fails to verify is an error.
+
+Serial 1 ships with root `ddddd25ed40d8396f74bdedcb94b4e7694a4c4734035568887bb1098c979e113`.
+The legacy relay is authorized only at heights 3113819 through 3113847; the hosted batch
+author `067513ff2f976554098feecb3555197255b71f26a48ad6b1828ade967b746a39` starts at
+3149499. The original checkpoint at 3113541, set 10422, is unchanged. These are policy
+identities, not a claim that hosted anchoring is active or that receipts are covered.
+
+The initial deployment uses owner-only software keys on existing hosts, as authorized by
+the operator. Agent/root access is an accepted interim custody risk; hardware tokens and
+an isolated admin device remain a later hardening step. `scripts/known-authors.ts` creates
+owner-only root seeds and signs documents without printing seeds. Keep root signing separate
+from the online batch author.
+
+Default `knownAuthors()` strictly verifies every shipped document. Explicit `trustRoots`
+select a separate trust domain: only shipped documents naming one of those roots are included,
+while every caller-supplied document must verify. An explicit empty root list trusts no shipped
+author or checkpoint. Highest-serial and same-serial conflict checks still apply to all selected
+documents.
+
+## Finality and inclusion
+
+`verifyFinality` decides whether a block is final under GRANDPA from data any untrusted source
+supplies (`grandpa_proveFinality` and `chain_getHeader`, batched), trusting only the
+checkpoints it is given. A checkpoint names a GRANDPA set id, its weighted authorities, and the
+set-change block after which that set finalizes. From the nearest checkpoint below the block,
+the verifier follows each set change: the outgoing set must justify the set-change block with a
+supermajority of its weight (finality-grandpa's threshold, `total - (total - 1) / 3`), the block
+must come after the set's start, and its header, which must hash to the justified hash, names the
+next set in its FRNK log; a forced or delayed change stops the walk. The set that finalized the
+block must then justify a block at or above it, and the headers in its proof must chain down to
+the block's hash. A justification's own target is not signed, so a precommit counts for it only
+when it signed that hash at that number, or a descendant whose ancestry headers lead down to it at
+that number: a source cannot relabel a final block's justification as a higher block. It can
+relabel it as a lower one, an ancestor the precommits also finalize, which is why a set-change
+block at or before the set's start is refused: the set's own last justification relabeled as an
+older set-change block would otherwise install that block's authorities as the next set.
+
+An authority that signed two different precommits in the round equivocated. finality-grandpa
+tells precommits apart by target and signature, so one precommit signed twice is an equivocation
+too (Ed25519 lets the signer choose the nonce). It reads an authority's first two different
+precommits and no more, and counts an equivocator's weight for every block of the round's vote
+graph: the blocks that descend from the round's base and lead to a precommit. The base is the
+commit's lowest voter precommit, the first at that number, and finality-grandpa refuses a commit
+holding a voter precommit that does not descend from it. This verifier counts an equivocator when
+that lowest precommit is signed, lies on the target's chain, and is, or through the ancestry
+headers is an ancestor of, both of the equivocator's first two precommits, and some authority's
+precommit is for the target or a descendant. A precommit outside the base's descendants makes
+finality-grandpa refuse the whole commit; here that precommit is set aside, and its signer counts
+only as its other precommit does. GRANDPA signs neither a chain nor its genesis, so a precommit an
+authority key signed on another GRANDPA chain with the same set id and round verifies here as
+well. Paired with one from this chain it counts only when the commit's lowest precommit is for a
+block both chains share, as finality-grandpa requires of the round's base.
+
+A set finalizes only with more than two thirds of a total weight above 0, from distinct
+authorities, and an authority with weight 0 is no voter, as in finality-grandpa's voter set. A
+checkpoint with no voting weight (no authorities, or every weight 0) or with a negative weight is
+refused before anything is asked of the source, and so is a set change that schedules a set with
+no voting weight.
+
+Trust assumption: "consensus-verified" means that the checkpoint really is that GRANDPA set, and
+that every set from it to the block had more than two thirds of its weight held by honest keys
+that sign under that set id on this chain alone. A justification that keys holding a
+supermajority of a set's weight signed under that set id on another GRANDPA chain verifies here,
+and the walk then follows that chain's own set changes. That includes an earlier incarnation of
+this chain: a chain restarted from a new genesis with the same GRANDPA keys counts its set ids
+from 0 again. Signatures are Ed25519 (OpenSSL, RFC 8032 strict, which can refuse a ZIP-215
+signature Substrate accepts but never accept one it refuses) and headers BLAKE2b-256.
+
+Cost: one batched request per 32 set changes for the proofs and one for the headers, where most
+sets last 300 blocks (30 minutes) on mainnet; after a set of another length the walk asks for
+that set's end on its own and fetches the rest of its batch again. A batch holds at most 32
+requests because rpc.mainnet.midnight.network refuses a JSON-RPC request body over 8 KiB, which
+64 header requests exceed. Through that node, the walk from set 9284 to set 10422 (1138 set
+changes) took 182 requests and returned about 141 MB, in 48 seconds on 2026-10-21. The walk
+stops after `maxSetChanges` (default 2016, six weeks) and reports the block not finalized, so
+the cost never grows with the chain's age; a fresher checkpoint is the remedy. Each
+justification's work is linear in its size, whatever the source sends. A precommit from a
+non-voter, one repeating a voter's earlier precommit (the same target and signature), and any
+after a voter's first two different precommits are skipped by a lookup. Only those first two and
+the commit's lowest voter precommit are verified, so a justification costs at most two Ed25519
+verifications per voter and one more, and each ancestry header is hashed once and walked at most
+once. None of these is refused for its number: Substrate accepts, stores and serves
+justifications that carry non-voters' precommits, repeats and repeated ancestry headers. A
+finalized result returns the set that justified the block as a checkpoint the caller can keep.
+
+Inclusion is a strict decode, never a byte search. `orderedTrieRoot` recomputes a block body's
+`extrinsicsRoot` (trie layout V1, which Midnight's state version 3 selects), and
+`includedTransactionIndex` finds the one extrinsic that is exactly a bare
+`Midnight.send_mn_transaction(tx)` (pallet 5, call 0 in runtime 1000300) with nothing before or
+after the transaction. Only a bare extrinsic counts, because for those the runtime runs the
+ledger's full `well_formed` check, proofs included, in `pre_dispatch`: a block holding one is
+invalid unless the transaction is, so inclusion in a final block means consensus checked the
+proof. A transaction carried inside another call, another pallet, a signed or general extrinsic,
+or another transaction's bytes is not included.
+
+Execution authenticates the parent runtime's actual `:code` value hash. Its RPC
+request uses the strict extension `:code + 00`, which retains the committed code
+leaf while avoiding the large external Wasm value. The existing trie verifier
+still checks the actual `:code` key against the pinned hash under the authenticated
+parent state root. This follows [Substrate's trie lookup](https://github.com/paritytech/trie/blob/master/trie-db/src/lookup.rs#L714-L752);
+extension absence alone is never accepted as runtime evidence. A sampled mainnet
+code witness used 1,385 JSON bytes versus 1,078,240 for the exact-value request.
+
+`midnightSource` reads a Midnight indexer (GraphQL) and node (JSON-RPC); `blockfrostEndpoints`
+points it at Blockfrost, with the project id read from a file only its owner can read and sent
+as a header. No error, status or echoed body carries the project id, and a file that does not
+hold one (a lowercase prefix, then 32 letters and digits) is refused, so naming the wrong file,
+a mnemonic or an author key, never sends that secret to Blockfrost. `sourceEndpoints(network,
+{ blockfrostProjectIdFile } | { indexer, node })` is what a user configures: Blockfrost through a
+project id file, or an http or https indexer GraphQL URL and node JSON-RPC URL that need no
+credential, such as a self-hosted node. It returns null when neither is given and refuses both,
+or half a pair. A node's JSON-RPC error answer is raised as a `NodeError` naming the method and
+the error's code, and a batch is refused at its first failed request in request order.
+
+`contractStateOnNode(source, address, at?)` returns the state the node holds at `address` in
+block `at` (its best block when none is named), or null when no contract is there. Nodes answer
+for an address holding no contract in two ways: midnight-node 1.0 with an empty string, and 2.x
+(what Blockfrost serves on mainnet and preprod) with JSON-RPC error -32602, which is also its
+answer in a block whose ledger it cannot read, such as one it does not hold. So the contract is
+read in one batched request behind `midnight_zswapStateRoot` in the same block, which needs that
+ledger: -32602 on the contract read counts as no contract only once the root read before it was
+answered, and every other answer is an error, so a node that lags the block never reports a
+contract absent.
+
+## Reproducing the build
+
+```
+tools/compactc/install.sh ~/.cache/midnight/compactc ~/.cache/midnight/zk-params
+COMPACTC=~/.cache/midnight/compactc/compactc MIDNIGHT_PP=~/.cache/midnight/zk-params packages/anchors-midnight/contract/compile.sh --check
+```
+
+The installer verifies every compactc file and the k=13/14 parameters by sha256, and refuses
+either directory unless you own it, no group or other user can write it, and every directory
+above it is a real directory owned by you or root that no group or other user can write; it
+installs nothing below a shared sticky directory such as /tmp. An install anyone else can change
+or swap out would no longer be the pinned compiler by the time it runs. The check recompiles the
+contract and requires `managed/` and `HASHES.txt` to match byte for byte, and requires the same
+keys and zkir when the pure circuits are not exported. The verifier keys hash to
+`85dc57a4…77c5` (`anchor`, k=13) and `081384ce…790f` (`anchor_hiding`, k=14).
+
+## Tests
+
+`pnpm test` runs the contract, ledger, decoder, finality, known-authors, verifier, search and
+journal suites; `pnpm test:journal` runs the journal alone, which needs Node 22.13 or later for
+`node:sqlite`. The verifier's golden vectors are real: mainnet and preprod blocks, set-change
+headers and a state read proof, and recordings of the finality walk, the verifier and the search
+run against Blockfrost, which the tests replay and which fail on any request that was not
+recorded. The registry transactions in `src/__tests__/fixtures/registry-transactions.json` were
+proven in-process with the committed keys by `scripts/registry-fixtures.ts`.
+
+`src/__tests__/fixtures/mainnet-anchors.json` is the verifier's run on FPS's two mainnet anchors
+against the pinned generation, with FPS's key pinned, and on the controls beside them: no key
+pinned, the wrong key, a commitment or attribute one bit off, a registry address that is not
+pinned, and another contract's call in the same block. `scripts/mainnet-anchors.mjs` recorded it
+through rpc.mainnet.midnight.network, a node, with no indexer: it reads each transaction's
+block, events and contract state from the node in the indexer's place, and its finality starts
+from set 10422, which its walk from `mainnet-finality.json`'s set 9284 returned. It exits 1
+unless every verdict is the expected one, and runs the same way from a directory that installed
+the packed package.
+
+`MIDNIGHT_PP=~/.cache/midnight/zk-params nice -n 19 pnpm test:slow` proves both circuits
+in-process (about a minute on one core) and scans the proven, bound bytes. The npm ledger WASM
+does not verify contract proofs; the slow suite pins that, and nothing in this package presents
+a local `wellFormed()` as proof verification.

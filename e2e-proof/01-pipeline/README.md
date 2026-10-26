@@ -47,10 +47,12 @@ by the gateway's `/receipts/{content_hash}` endpoint within 180s.
 * The cert-daemon committee accepts the canonical bytes the SDK signed.
 * The anchor-worker rolls the receipt into a Cardano L1 transaction with
   metadata label 8746 (the Materios checkpoint label).
-* A third party with the returned `cardano_anchor_tx` can replay the
-  same proof against [Cexplorer](https://preprod.cexplorer.io) or
-  [Cardanoscan](https://preprod.cardanoscan.io) without contacting any
-  FPS-controlled endpoint.
+* A third party with the returned `cardano_anchor_tx` can read its
+  anchor record on Cardano mainnet through [Cexplorer](https://cexplorer.io)
+  or [Cardanoscan](https://cardanoscan.io) without contacting any
+  FPS-controlled endpoint. Proving that the receipt is in the anchored
+  batch also takes the batch's leaf list, which only the FPS gateway
+  serves.
 
 ## Run
 
@@ -78,10 +80,10 @@ Cardano preprod tx:  abcd...
 
 ## Third-party verification
 
-Anyone can confirm the resulting `cardano_anchor_tx`:
+Anyone can inspect the resulting `cardano_anchor_tx`:
 
 1. Open Cexplorer / Cardanoscan with the tx hash.
-2. Decode metadata label `8746`. The structure is:
+2. Read metadata label `8746`. It holds the batch's checkpoint record:
 
        {
          "p":        "materios",
@@ -93,12 +95,24 @@ Anyone can confirm the resulting `cardano_anchor_tx`:
          "manifest": "<manifest_hash_hex>"
        }
 
-3. The `chain` field equals the Materios preprod genesis hash:
-   `0e46e33f639a56cc8780fd871d9a15e16d99af248526f907cb560cb40849f7bf`.
+   The live anchor worker writes it in cardano-serialization-lib's
+   detailed-schema encoding, so the label's value reads
+   `{"map": [{"k": {"string": "p"}, "v": {"string": "materios"}}, ...]}`.
+   Only the anchors a second, Lucid-based worker wrote from 2026-04-18 to
+   2026-06-29 hold the record above as it stands.
+3. The `chain` field names the Materios preprod genesis,
+   `0e46e33f639a56cc8780fd871d9a15e16d99af248526f907cb560cb40849f7bf`,
+   but only as a label: in two windows genuine anchors name another chain
+   than the genesis their root and manifest commit to, as
+   [the anchors-cardano README](../../packages/anchors-cardano/README.md#the-chain-field-is-a-label)
+   lists.
 
-If the metadata label is present and the chain field matches, the receipt
-is anchored to the Materios partner-chain irreversibly. To go further and
-prove the specific `content_hash` is in the batch, use demo 4.
+The label alone proves little: anyone can write a label 8746 record naming
+any root. `verifyMateriosCheckpointAnchor` from
+`@fluxpointstudios/orynq-sdk-anchors-cardano` proves that the receipt is in
+the anchored batch and that a wallet you pin funded the anchor; its
+[README](../../packages/anchors-cardano/README.md#verifying-a-receipts-anchor)
+lists what it needs and what it trusts.
 
 ## CI
 

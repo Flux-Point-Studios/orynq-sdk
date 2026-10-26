@@ -7,13 +7,23 @@
 # token: the npm_token secret's image filter names the digest pinned below, so no step that
 # runs an install, build or package script can receive it. The plugin refuses restarts, so a
 # failed publish is retried by the next push to main, which packs only what is still missing.
+#
+# release-guard runs before anything is built or packed, after the install that gives it npm's
+# semver and npm-package-arg: it refuses a public package with a runtime dependency on a private
+# one or on a local path, a version npm would record differently, and a version below one npm
+# already has. post-publish-check
+# installs what was published from npm and requires one copy of each WASM singleton.
 when:
   - event: pull_request
   - event: push
     branch: main
 
-# The t-backend submodule is private and nothing here builds it; GitHub's
-# checkout never fetched it either.
+depends_on: [ci]
+
+labels:
+  platform: linux/amd64
+
+# The private t-backend submodule is not a CI build input.
 clone:
   - name: clone
     image: woodpeckerci/plugin-git
@@ -22,10 +32,13 @@ clone:
 
 steps:
   - name: pack
-    image: node:20-bookworm
+    image: node:24-bookworm
     commands:
       - corepack enable
       - pnpm install --frozen-lockfile
+      - node tools/release-guard/release-guard.mjs
+      - tools/compactc/install.sh "$$HOME/.cache/midnight/compactc" "$$HOME/.cache/midnight/zk-params"
+      - COMPACTC="$$HOME/.cache/midnight/compactc/compactc" MIDNIGHT_PP="$$HOME/.cache/midnight/zk-params" pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:circuits
       - pnpm build
       - node scripts/pack-unpublished.mjs /woodpecker/npm-publish
 
@@ -35,6 +48,14 @@ steps:
       dir: /woodpecker/npm-publish
       token:
         from_secret: npm_token
+    when:
+      - event: push
+        branch: main
+
+  - name: post-publish-check
+    image: node:24-bookworm
+    commands:
+      - node tools/release-guard/post-publish-check.mjs /woodpecker/npm-publish
     when:
       - event: push
         branch: main

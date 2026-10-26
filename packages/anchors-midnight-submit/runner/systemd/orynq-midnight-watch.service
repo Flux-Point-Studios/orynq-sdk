@@ -1,0 +1,15 @@
+[Unit]
+Description=Independent Orynq Midnight standing-service watch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deci
+EnvironmentFile=/etc/materios-watchdog.env
+ExecStart=/usr/bin/python3 /home/deci/.local/lib/orynq-midnight-watch/standing-watch.py --config /home/deci/.config/orynq-midnight-watch/config.json
+TimeoutStartSec=120
+Nice=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

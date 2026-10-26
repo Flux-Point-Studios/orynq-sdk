@@ -67,9 +67,10 @@ Replay the suppression-resistance proof yourself:
    `cardano_anchor_tx`.
 2. Wait an hour, a day, a week — whatever you want.
 3. Hit any public Cardano indexer (Blockfrost, Koios) and ask for the
-   tx. The metadata label `8746` will still be there with the same
-   `root` field, and the `chain` will still be the Materios genesis
-   `0e46e33f639a56cc8780fd871d9a15e16d99af248526f907cb560cb40849f7bf`.
+   tx. The metadata label `8746` will still be there with the `root`
+   and `chain` fields it was written with. `chain` is a label that
+   nothing hashes; see
+   [the anchors-cardano README](../../packages/anchors-cardano/README.md#the-chain-field-is-a-label).
 4. Independently call the gateway's `/blobs/{content_hash}/status` —
    you'll see the same `content_hash` is still indexed.
 

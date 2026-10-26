@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-quickstart",
-  "version": "0.2.1",
+  "version": "0.4.1",
   "description": "Solo-developer quickstart for orynq — sub-5-minute first trace. Generates identity, faucet-drips MATRA, anchors a sample trace on Materios, prints an explorer URL.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -66,9 +66,18 @@
     "@polkadot/util-crypto": "^13.0.0"
   },
   "devDependencies": {
+    "@fluxpointstudios/orynq-sdk-anchors-midnight": "workspace:*",
     "tsup": "^8.0.1",
     "typescript": "^5.3.3",
     "vitest": "^4.1.11"
+  },
+  "peerDependencies": {
+    "@fluxpointstudios/orynq-sdk-anchors-midnight": "workspace:>=0.1.0 <1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@fluxpointstudios/orynq-sdk-anchors-midnight": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=18.0.0"

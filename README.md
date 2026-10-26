@@ -306,6 +306,8 @@ curl -H "project_id: $BLOCKFROST_KEY" \
   "https://cardano-mainnet.blockfrost.io/api/v0/txs/{txHash}/metadata"
 ```
 
+A receipt on the Materios partner chain reaches Cardano inside a checkpoint batch anchored under label 8746. `verifyMateriosCheckpointAnchor` checks that anchor end to end, from the receipt's leaf to a confirmed transaction funded by a wallet you pin; [the anchors-cardano README](packages/anchors-cardano/README.md#verifying-a-receipts-anchor) lists what a caller supplies and what the check trusts.
+
 ---
 
 ## Packages
@@ -316,8 +318,10 @@ curl -H "project_id: $BLOCKFROST_KEY" \
 |---------|-------------|
 | `@fluxpointstudios/orynq-sdk-quickstart` | Solo-dev DX: `orynq init` / `orynq trace` CLI + one-call `bootstrapAndTrace()` API |
 | `@fluxpointstudios/orynq-sdk-process-trace` | Cryptographic process trace builder with hash chains and Merkle trees |
-| `@fluxpointstudios/orynq-sdk-anchors-cardano` | Cardano anchor builder, serializer, and verifier |
+| `@fluxpointstudios/orynq-sdk-anchors-cardano` | Cardano anchor builder, serializer, and verifier; end-to-end verifier of Materios checkpoint anchors (label 8746), with [the record's two encodings and what a caller supplies](packages/anchors-cardano/README.md) |
 | `@fluxpointstudios/orynq-sdk-anchors-materios` | Materios chain receipts, certification, blob uploads, and verification |
+| `@fluxpointstudios/orynq-sdk-anchors-midnight` | Midnight anchor verifier against the immutable orynq-anchor-registry, pinned to mainnet generation 1; [what a caller supplies](packages/anchors-midnight/README.md#verifying-an-anchor-on-mainnet) |
+| `@fluxpointstudios/orynq-sdk-midnight-prover` | Local Compact capability and rolling-digest proofs with native verification; [build requirements and limits](packages/midnight-prover/README.md) |
 
 ### Payment Protocol (for Anchor-as-a-Service)
 
@@ -386,9 +390,11 @@ Orynq is built in the open and we are actively proposing primitives we believe e
 
 ## Development
 
+The Midnight package requires compiled circuits before the workspace build. Follow its [build instructions](packages/midnight-prover/README.md); CI uses Node 24, Rust 1.99.0 and `tools/compactc/install.sh`, which installs Compact 0.31.1 and its ZK parameters with every file pinned by sha256.
+
 ```bash
 # Install dependencies
-pnpm install
+pnpm install --frozen-lockfile
 
 # Build all packages
 pnpm build
@@ -398,7 +404,13 @@ pnpm test
 
 # Type checking
 pnpm typecheck
+
+# Dependency guard regressions and blocking audit
+node --test scripts/dependency-security.test.mjs
+pnpm audit --audit-level=high
 ```
+
+`braces` 3.0.3, its newest release, is open to [depth exhaustion](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) and has no fixed upstream release. `patches/braces@3.0.3.patch` makes its parser reject brace or parenthesis nesting deeper than 100 levels with a `SyntaxError`, before any recursive pass runs. `scripts/dependency-security.test.mjs` fails without the patch. The audit ignores only CVE-2026-93687, so any other `braces` advisory still fails it. When upstream ships a fix, remove the patch, that ignore and the root `braces` pin together. Workspace patches and overrides do not reach consumers of the published packages.
 
 ---
 

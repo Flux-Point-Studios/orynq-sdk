@@ -1,0 +1,74 @@
+{
+  "name": "@fluxpointstudios/orynq-sdk-anchors-midnight",
+  "version": "0.3.2",
+  "description": "Orynq anchors on Midnight: the immutable orynq-anchor-registry contract, its exact deploy state, the registry generations it is pinned to, and a verifier that checks an anchor from its own bytes to a GRANDPA-final block",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./journal": {
+      "types": "./dist/journal.d.ts",
+      "import": "./dist/journal.js"
+    }
+  },
+  "files": [
+    "dist",
+    "known-authors.json",
+    "contract/orynq-anchor-registry.compact",
+    "contract/HASHES.txt",
+    "contract/managed/compiler",
+    "contract/managed/contract",
+    "contract/managed/keys",
+    "contract/managed/zkir/anchor.bzkir",
+    "contract/managed/zkir/anchor_hiding.bzkir",
+    "BATCH-PROOFS.md",
+    "runtime/1000300.scale"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:slow": "vitest run --config vitest.slow.config.ts",
+    "test:journal": "vitest run test-journal",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@midnight-ntwrk/compact-runtime": "0.16.0",
+    "@midnight-ntwrk/ledger-v8": "8.1.3",
+    "@midnight-ntwrk/onchain-runtime-v3": "3.1.2",
+    "@noble/hashes": "^2.4.0",
+    "@fluxpointstudios/orynq-sdk-core": "workspace:^",
+    "@polkadot-api/substrate-bindings": "0.21.2",
+    "@polkadot-api/metadata-builders": "0.15.2"
+  },
+  "devDependencies": {
+    "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*",
+    "@midnight-ntwrk/zkir-v2": "2.1.1",
+    "@types/node": "^24.19.1",
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3",
+    "vitest": "^4.1.11"
+  },
+  "keywords": [
+    "orynq",
+    "midnight",
+    "compact",
+    "anchor",
+    "zero-knowledge"
+  ],
+  "author": "Flux Point Studios",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
+    "directory": "packages/anchors-midnight"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "sideEffects": false
+}

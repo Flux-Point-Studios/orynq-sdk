@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-core",
-  "version": "0.1.0",
+  "version": "0.3.1",
   "description": "Core types and utilities for orynq-sdk dual-protocol commerce layer",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -46,6 +46,16 @@
         "types": "./dist/utils/index.d.cts",
         "default": "./dist/utils/index.cjs"
       }
+    },
+    "./checkpoint": {
+      "import": {
+        "types": "./dist/checkpoint.d.ts",
+        "default": "./dist/checkpoint.js"
+      },
+      "require": {
+        "types": "./dist/checkpoint.d.cts",
+        "default": "./dist/checkpoint.cjs"
+      }
     }
   },
   "files": [
@@ -88,8 +98,9 @@
     "typescript": "^5.3.3",
     "vitest": "^4.1.11"
   },
-  "peerDependencies": {},
-  "dependencies": {},
+  "dependencies": {
+    "@noble/hashes": "1.8.0"
+  },
   "engines": {
     "node": ">=18.0.0"
   },

@@ -59,6 +59,7 @@ export type ProofStatus =
  * Detailed status information for a proof.
  */
 export interface ProofStatusInfo {
+  readonly simulation: true;
   status: ProofStatus;
   proofId: string;
   midnightTxHash: string | undefined;
@@ -72,6 +73,7 @@ export interface ProofStatusInfo {
  * Options for the ProofPublisher.
  */
 export interface ProofPublisherOptions {
+  mode?: "real" | "simulation";
   /**
    * Maximum number of retry attempts for publication.
    * Default: 3
@@ -129,7 +131,7 @@ const PUBLICATION_DOMAIN_PREFIXES = {
  * - Confirmation waiting with timeout support
  *
  * Current implementation is a mock that simulates network interaction.
- * Real Midnight integration will be added when the network SDK is available.
+ * No network provider is implemented; simulation must be selected explicitly.
  *
  * @example
  * ```typescript
@@ -166,6 +168,7 @@ export class ProofPublisher {
    */
   constructor(options: ProofPublisherOptions = {}) {
     this.options = {
+      mode: options.mode ?? "real",
       maxRetries: options.maxRetries ?? 3,
       retryDelayMs: options.retryDelayMs ?? 1000,
       maxRetryDelayMs: options.maxRetryDelayMs ?? 30000,
@@ -182,6 +185,13 @@ export class ProofPublisher {
    * @throws MidnightProverException on connection failure
    */
   async connect(config: ProofServerConfig): Promise<void> {
+    if (this.options.mode !== "simulation") {
+      throw new MidnightProverException(
+        MidnightProverError.PUBLICATION_FAILED,
+        "Network publication requires a real network provider; simulation must be explicit"
+      );
+    }
+
     this.debug("Connecting to Midnight network...");
 
     try {
@@ -301,6 +311,7 @@ export class ProofPublisher {
     const record = this.publishedProofs.get(proofId);
     if (!record) {
       return {
+        simulation: true,
         status: "not_found",
         proofId,
         midnightTxHash: undefined,
@@ -321,6 +332,7 @@ export class ProofPublisher {
     }
 
     return {
+      simulation: true,
       status: record.status,
       proofId,
       midnightTxHash: record.result.midnightTxHash,
@@ -425,6 +437,12 @@ export class ProofPublisher {
         "Proof type is required"
       );
     }
+    if (proof.simulation !== true) {
+      throw new MidnightProverException(
+        MidnightProverError.INVALID_PROOF_FORMAT,
+        "Simulation publisher accepts only marked simulation fixtures"
+      );
+    }
   }
 
   /**
@@ -463,7 +481,7 @@ export class ProofPublisher {
       proofHash: await this.hashProofBytes(proof.proof),
       timestamp: new Date().toISOString(),
     });
-    const midnightTxHash = await sha256StringHex(PUBLICATION_DOMAIN_PREFIXES.txHash + txInputData);
+    const midnightTxHash = `simulation-${await sha256StringHex(PUBLICATION_DOMAIN_PREFIXES.txHash + txInputData)}`;
 
     // Simulate occasional network failures (10% failure rate on first attempt only)
     // This ensures retries work but doesn't cause flaky tests
@@ -472,12 +490,13 @@ export class ProofPublisher {
     }
 
     const result: PublicationResult = {
+      simulation: true,
       midnightTxHash,
       proofId: proof.proofId,
       timestamp: new Date().toISOString(),
       cardanoAnchorTxHash,
-      blockNumber: Math.floor(100000 + Math.random() * 10000),
-      fee: BigInt(Math.floor(1000 + Math.random() * 500)),
+      blockNumber: undefined,
+      fee: undefined,
     };
 
     // Store in mock registry

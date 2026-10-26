@@ -559,6 +559,14 @@ export interface KoiosConfig extends AnchorChainProviderConfig {
   network: CardanoNetwork;
 
   /**
+   * Base URL of a Koios-compatible API, such as a Koios instance you run,
+   * in place of the public endpoint for `network`.
+   *
+   * @example "https://koios.example.org/api/v1"
+   */
+  baseUrl?: string;
+
+  /**
    * Optional API token for authenticated access.
    *
    * Public access is rate-limited; authenticated access

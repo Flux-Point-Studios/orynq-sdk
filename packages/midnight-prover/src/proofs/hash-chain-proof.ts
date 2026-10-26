@@ -89,6 +89,7 @@ const GENESIS_SEED = "genesis";
  * Options for HashChainProver configuration.
  */
 export interface HashChainProverOptions {
+  mode?: "real" | "simulation";
   /**
    * Enable debug logging.
    */
@@ -115,7 +116,7 @@ export interface HashChainProverOptions {
  * 3. This hash matches what was anchored on Cardano (cross-chain binding)
  *
  * Current implementation is a mock that simulates proof generation.
- * Real Midnight integration will be added when the Compact runtime is available.
+ * These fixtures do not use the Compact proof system.
  *
  * @example
  * ```typescript
@@ -145,6 +146,7 @@ export class HashChainProver {
    */
   constructor(options: HashChainProverOptions = {}) {
     this.options = {
+      mode: options.mode ?? "real",
       debug: options.debug ?? false,
       maxEvents: options.maxEvents ?? MAX_EVENTS_PER_PROOF,
       simulatedProvingTimeMs: options.simulatedProvingTimeMs ?? 100,
@@ -166,6 +168,13 @@ export class HashChainProver {
    * @throws MidnightProverException on validation or generation failure
    */
   async generateProof(input: HashChainInput): Promise<HashChainProof> {
+    if (this.options.mode !== "simulation") {
+      throw new MidnightProverException(
+        MidnightProverError.PROOF_GENERATION_FAILED,
+        "Legacy hash-chain proofs require explicit simulation mode"
+      );
+    }
+
     const startTime = Date.now();
 
     this.debug("Starting hash-chain proof generation");
@@ -195,8 +204,9 @@ export class HashChainProver {
     }
 
     const proof: HashChainProof = {
+      simulation: true,
       proofType: "hash-chain",
-      proofId: randomUUID(),
+      proofId: `simulation-${randomUUID()}`,
       proof: proofBytes,
       createdAt: new Date().toISOString(),
       provingTimeMs,
@@ -226,6 +236,10 @@ export class HashChainProver {
    * @returns Promise resolving to true if valid, false otherwise
    */
   async verifyProof(proof: HashChainProof): Promise<boolean> {
+    if (this.options.mode !== "simulation" || proof.simulation !== true || !proof.proofId.startsWith("simulation-")) {
+      return false;
+    }
+
     this.debug(`Verifying proof: ${proof.proofId}`);
 
     try {
@@ -547,7 +561,8 @@ export class HashChainProver {
       }
 
       return true;
-    } catch {
+    } catch (error) {
+      this.debug(`Invalid simulation proof structure: ${String(error)}`);
       return false;
     }
   }

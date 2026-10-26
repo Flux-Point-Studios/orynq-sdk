@@ -6,18 +6,22 @@
  * This module implements the AnchorChainProvider interface using the Koios API,
  * a distributed, community-operated Cardano API. It provides functionality to
  * fetch transaction metadata and information for verifying PoI anchors stored
- * under metadata label 2222.
+ * under metadata label 2222, and the MateriosCheckpointSource that
+ * verifyMateriosCheckpointAnchor reads label 8746 anchors through.
  *
  * Features:
  * - Transaction metadata retrieval via POST /tx_metadata
  * - Transaction info retrieval via POST /tx_info
  * - Current tip retrieval for confirmation calculation
+ * - An address's transactions via POST /address_txs, page by page
+ * - Any Koios-compatible endpoint through `baseUrl`
  * - Configurable timeout, retries, and fetch function injection
  * - Support for optional API token authentication
  * - Proper error handling for rate limits and auth failures
  *
  * Used by:
  * - src/anchor-verifier.ts: For verifying anchors on-chain
+ * - src/materios-checkpoint-verifier.ts: Through createKoiosCheckpointSource
  * - Consumer applications that need Koios-based verification
  *
  * @see https://www.koios.rest/ for API documentation
@@ -31,6 +35,7 @@ import type {
   CardanoNetwork,
 } from "../types.js";
 import { POI_METADATA_LABEL } from "../types.js";
+import type { CheckpointTransaction, MateriosCheckpointSource } from "../materios-checkpoint-verifier.js";
 
 // =============================================================================
 // CONSTANTS
@@ -152,7 +157,7 @@ interface KoiosTxInfoResponse {
  * Koios tip response.
  */
 interface KoiosTipResponse {
-  block_no: number;
+  block_height: number;
   // Other fields omitted
 }
 
@@ -226,76 +231,22 @@ async function handleHttpError(response: Response): Promise<never> {
 }
 
 // =============================================================================
-// KOIOS PROVIDER IMPLEMENTATION
+// KOIOS CLIENT
 // =============================================================================
 
 /**
- * Create a Koios provider for Cardano anchor verification.
- *
- * The Koios provider implements the AnchorChainProvider interface using the
- * Koios distributed Cardano API. It supports all three Cardano networks
- * (mainnet, preprod, preview) and provides configurable timeout, retry,
- * and authentication options.
- *
- * @param config - Koios configuration with network and optional API token.
- * @returns AnchorChainProvider implementation for Koios.
- *
- * @example
- * ```typescript
- * // Basic usage with preprod network
- * const koios = createKoiosProvider({
- *   network: "preprod",
- * });
- *
- * // With API token for higher rate limits
- * const authenticatedKoios = createKoiosProvider({
- *   network: "mainnet",
- *   apiToken: "your-api-token",
- *   timeout: 10000,
- *   retries: 5,
- * });
- *
- * // Fetch transaction metadata
- * const metadata = await koios.getTxMetadata(txHash);
- * if (metadata) {
- *   console.log("Found metadata:", metadata);
- * }
- *
- * // Fetch transaction info
- * const txInfo = await koios.getTxInfo(txHash);
- * if (txInfo) {
- *   console.log("Block height:", txInfo.blockHeight);
- *   console.log("Confirmations:", txInfo.confirmations);
- * }
- *
- * // Get network identifier
- * console.log("Network:", koios.getNetworkId());
- * ```
- *
- * @example
- * ```typescript
- * // Dependency injection for testing
- * const mockFetch = jest.fn().mockResolvedValue({
- *   ok: true,
- *   json: async () => [{ tx_hash: "...", metadata: {...} }],
- * });
- *
- * const testKoios = createKoiosProvider({
- *   network: "preprod",
- *   fetchFn: mockFetch,
- * });
- * ```
+ * The Koios transport the providers share: JSON POSTs with timeout, retry
+ * and error mapping, and the chain tip.
  */
-export function createKoiosProvider(config: KoiosConfig): AnchorChainProvider {
+function createKoiosClient(config: KoiosConfig) {
   const {
     network,
+    baseUrl = getKoiosBaseUrl(network),
     apiToken,
     fetchFn = fetch,
     timeout = DEFAULT_TIMEOUT,
     retries = DEFAULT_RETRIES,
   } = config;
-
-  const baseUrl = getKoiosBaseUrl(network);
 
   /**
    * Build headers for Koios API requests.
@@ -322,7 +273,7 @@ export function createKoiosProvider(config: KoiosConfig): AnchorChainProvider {
    * @returns Parsed JSON response.
    * @throws KoiosError on failure after all retries exhausted.
    */
-  async function makeRequest<T>(endpoint: string, body: unknown): Promise<T> {
+  async function post<T>(endpoint: string, body: unknown): Promise<T> {
     const url = `${baseUrl}${endpoint}`;
     const headers = buildHeaders();
 
@@ -391,7 +342,7 @@ export function createKoiosProvider(config: KoiosConfig): AnchorChainProvider {
    * @returns Current block height.
    * @throws KoiosError on failure.
    */
-  async function getCurrentTipHeight(): Promise<number> {
+  async function tipHeight(): Promise<number> {
     const url = `${baseUrl}/tip`;
     const headers = buildHeaders();
 
@@ -418,15 +369,83 @@ export function createKoiosProvider(config: KoiosConfig): AnchorChainProvider {
       }
 
       const tipData = data[0];
-      if (tipData === undefined) {
+      if (tipData === undefined || !Number.isSafeInteger(tipData.block_height)) {
         throw new KoiosError("Invalid tip response from Koios", undefined, true);
       }
 
-      return tipData.block_no;
+      return tipData.block_height;
     } finally {
       clearTimeout(timeoutId);
     }
   }
+
+  return { post, tipHeight };
+}
+
+// =============================================================================
+// KOIOS PROVIDER IMPLEMENTATION
+// =============================================================================
+
+/**
+ * Create a Koios provider for Cardano anchor verification.
+ *
+ * The Koios provider implements the AnchorChainProvider interface using the
+ * Koios distributed Cardano API. It supports all three Cardano networks
+ * (mainnet, preprod, preview) and provides configurable timeout, retry,
+ * and authentication options.
+ *
+ * @param config - Koios configuration with network and optional API token.
+ * @returns AnchorChainProvider implementation for Koios.
+ *
+ * @example
+ * ```typescript
+ * // Basic usage with preprod network
+ * const koios = createKoiosProvider({
+ *   network: "preprod",
+ * });
+ *
+ * // With API token for higher rate limits
+ * const authenticatedKoios = createKoiosProvider({
+ *   network: "mainnet",
+ *   apiToken: "your-api-token",
+ *   timeout: 10000,
+ *   retries: 5,
+ * });
+ *
+ * // Fetch transaction metadata
+ * const metadata = await koios.getTxMetadata(txHash);
+ * if (metadata) {
+ *   console.log("Found metadata:", metadata);
+ * }
+ *
+ * // Fetch transaction info
+ * const txInfo = await koios.getTxInfo(txHash);
+ * if (txInfo) {
+ *   console.log("Block height:", txInfo.blockHeight);
+ *   console.log("Confirmations:", txInfo.confirmations);
+ * }
+ *
+ * // Get network identifier
+ * console.log("Network:", koios.getNetworkId());
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Dependency injection for testing
+ * const mockFetch = jest.fn().mockResolvedValue({
+ *   ok: true,
+ *   json: async () => [{ tx_hash: "...", metadata: {...} }],
+ * });
+ *
+ * const testKoios = createKoiosProvider({
+ *   network: "preprod",
+ *   fetchFn: mockFetch,
+ * });
+ * ```
+ */
+export function createKoiosProvider(config: KoiosConfig): AnchorChainProvider {
+  const { network } = config;
+  const client = createKoiosClient(config);
 
   // =========================================================================
   // AnchorChainProvider Implementation
@@ -451,7 +470,7 @@ export function createKoiosProvider(config: KoiosConfig): AnchorChainProvider {
         _tx_hashes: [normalizedHash],
       };
 
-      const response = await makeRequest<KoiosTxMetadataResponse[]>(
+      const response = await client.post<KoiosTxMetadataResponse[]>(
         "/tx_metadata",
         requestBody
       );
@@ -506,7 +525,7 @@ export function createKoiosProvider(config: KoiosConfig): AnchorChainProvider {
         _tx_hashes: [normalizedHash],
       };
 
-      const response = await makeRequest<KoiosTxInfoResponse[]>(
+      const response = await client.post<KoiosTxInfoResponse[]>(
         "/tx_info",
         requestBody
       );
@@ -524,7 +543,7 @@ export function createKoiosProvider(config: KoiosConfig): AnchorChainProvider {
       }
 
       // Fetch current tip to calculate confirmations
-      const currentHeight = await getCurrentTipHeight();
+      const currentHeight = await client.tipHeight();
       const confirmations = Math.max(0, currentHeight - txData.block_height);
 
       // Convert Unix timestamp to ISO string
@@ -547,6 +566,88 @@ export function createKoiosProvider(config: KoiosConfig): AnchorChainProvider {
      */
     getNetworkId(): CardanoNetwork {
       return network;
+    },
+  };
+}
+
+// =============================================================================
+// MATERIOS CHECKPOINT SOURCE
+// =============================================================================
+
+/** tx_info hashes per request, which keeps each answer, every input of every tx, small. */
+const TX_INFO_BATCH = 50;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Throws on a row missing what Koios always sends, so a drifted answer reads
+ * as an unavailable source rather than as a refused anchor.
+ */
+function checkpointTransaction(row: unknown): CheckpointTransaction {
+  if (!isRecord(row) || typeof row.tx_hash !== "string") throw new KoiosError("Koios tx_info row without a tx hash");
+  const at = `Koios tx_info row for ${row.tx_hash}`;
+  const height = row.block_height ?? null;
+  if (height !== null && !Number.isSafeInteger(height)) throw new KoiosError(`${at} has a malformed block height`);
+  const metadata = row.metadata;
+  if (metadata !== null && !isRecord(metadata)) throw new KoiosError(`${at} has malformed metadata`);
+  if (!Array.isArray(row.inputs)) throw new KoiosError(`${at} lists no inputs`);
+  const inputAddresses = row.inputs.map((input) => {
+    const address = isRecord(input) && isRecord(input.payment_addr) ? input.payment_addr.bech32 : undefined;
+    if (typeof address !== "string") throw new KoiosError(`${at} has an input without an address`);
+    return address;
+  });
+  return { txHash: row.tx_hash, blockHeight: height as number | null, metadata, inputAddresses };
+}
+
+/**
+ * Create the chain source `verifyMateriosCheckpointAnchor` reads, backed by
+ * Koios or any Koios-compatible API (`baseUrl`).
+ *
+ * @example
+ * ```typescript
+ * const source = createKoiosCheckpointSource({ network: "mainnet" });
+ * ```
+ */
+export function createKoiosCheckpointSource(config: KoiosConfig): MateriosCheckpointSource {
+  const client = createKoiosClient(config);
+  return {
+    async transactions(txHashes) {
+      const found: CheckpointTransaction[] = [];
+      for (let i = 0; i < txHashes.length; i += TX_INFO_BATCH) {
+        const rows = await client.post<unknown>("/tx_info", {
+          _tx_hashes: txHashes.slice(i, i + TX_INFO_BATCH),
+          _inputs: true,
+          _metadata: true,
+          _assets: false,
+          _withdrawals: false,
+          _certs: false,
+          _scripts: false,
+          _bytecode: false,
+        });
+        if (!Array.isArray(rows)) throw new KoiosError("Koios tx_info answered with something other than a list");
+        found.push(...rows.map(checkpointTransaction));
+      }
+      return found;
+    },
+
+    tipHeight: client.tipHeight,
+
+    // Koios caps each answer at a page; an empty page ends the listing.
+    async addressTransactions(address, fromBlockHeight) {
+      const hashes: string[] = [];
+      for (;;) {
+        const page = await client.post<unknown>(`/address_txs?offset=${hashes.length}`, {
+          _addresses: [address],
+          _after_block_height: fromBlockHeight,
+        });
+        if (!Array.isArray(page)) throw new KoiosError("Koios address_txs answered with something other than a list");
+        if (page.length === 0) return hashes;
+        for (const row of page) {
+          if (!isRecord(row) || typeof row.tx_hash !== "string") throw new KoiosError("Koios address_txs row without a tx hash");
+          hashes.push(row.tx_hash);
+        }
+      }
     },
   };
 }
