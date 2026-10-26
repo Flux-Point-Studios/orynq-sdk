@@ -65,6 +65,7 @@ export class NodeError extends Error {
     readonly method: string,
     readonly code: number | undefined,
     readonly completedResults: readonly unknown[] = [],
+    readonly reason?: "contract-not-present",
   ) {
     super(message);
   }
@@ -197,7 +198,8 @@ export function midnightSource(endpoints: SourceEndpoints): MidnightSource {
     if (a.error !== undefined) {
       const code = (a.error as { code?: unknown } | null)?.code;
       const numeric = typeof code === "number" && Number.isSafeInteger(code) ? code : undefined;
-      throw new NodeError(redact(`${endpoints.operator} node: ${method} failed${numeric === undefined ? "" : ` (code ${numeric})`}`), method, numeric);
+      const reason = method === "midnight_contractState" && code === -32602 && (a.error as { message?: unknown } | null)?.message === "Unable to get requested contract state" ? "contract-not-present" : undefined;
+      throw new NodeError(redact(`${endpoints.operator} node: ${method} failed${numeric === undefined ? "" : ` (code ${numeric})`}`), method, numeric, [], reason);
     }
     return a.result;
   };
@@ -254,7 +256,7 @@ export function midnightSource(endpoints: SourceEndpoints): MidnightSource {
         for (const [id, [method]] of calls.entries()) {
           try { completed.push(answer(method, byId.get(id)) as T); }
           catch (error) {
-            if (error instanceof NodeError) throw new NodeError(error.message, error.method, error.code, completed);
+            if (error instanceof NodeError) throw new NodeError(error.message, error.method, error.code, completed, error.reason);
             throw error;
           }
         }

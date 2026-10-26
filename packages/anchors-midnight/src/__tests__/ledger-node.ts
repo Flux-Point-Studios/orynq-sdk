@@ -27,7 +27,7 @@ export function ledgerNode({ blocks, contracts, version = "2.1.0" }: { blocks: s
     // As midnightSource's call returns or raises it, from the node of `operator`.
     call(operator: string, method: string, params: unknown[]) {
       const a = answer(method, params);
-      if ("error" in a) throw new NodeError(`${operator} node: ${method} failed: ${JSON.stringify(a.error)}`, method, a.error.code);
+      if ("error" in a) throw new NodeError(`${operator} node: ${method} failed: ${JSON.stringify(a.error)}`, method, a.error.code, [], method === "midnight_contractState" && a.error.message === "Unable to get requested contract state" ? "contract-not-present" : undefined);
       return a.result;
     },
   };
@@ -42,7 +42,7 @@ export const batchOver =
     for (const [method, params] of calls) {
       try { answers.push(await call(method, params)); }
       catch (error) {
-        if (error instanceof NodeError) throw new NodeError(error.message, error.method, error.code, answers);
+        if (error instanceof NodeError) throw new NodeError(error.message, error.method, error.code, answers, error.reason);
         throw error;
       }
     }

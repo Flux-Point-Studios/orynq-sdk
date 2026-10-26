@@ -5,7 +5,9 @@ import { NodeError, type MidnightSource } from "./source.js";
 // contract with an empty string, 2.x with JSON-RPC error -32602, its answer too in a block whose
 // ledger it cannot read, such as one it does not hold. So the contract is read in one request
 // behind the ledger's zswap root in the same block: a batch is refused at its first failed
-// request, so -32602 on the contract read means the node read that ledger and found no contract.
+// request, so the observed -32602 missing-contract answer, after a valid root, means the node
+// read that ledger and found no contract. Other -32602 messages and unknown ledger-9 errors
+// remain errors; only the exact observed RPC error is classified as contract-not-present.
 // This assumes one backend answers the entire batch, not a load balancer dispatching each
 // method to a different node. A caller supplying a custom source must preserve prior results
 // on NodeError, as midnightSource does; a failed/unknown root never proves absence.
@@ -21,7 +23,7 @@ export async function contractStateOnNode(source: Pick<MidnightSource, "node" | 
     return state === "" ? null : state;
   } catch (error) {
     const refused = error as Partial<NodeError> | undefined;
-    if (refused?.method === "midnight_contractState" && refused.code === -32602) {
+    if (refused?.method === "midnight_contractState" && refused.code === -32602 && refused.reason === "contract-not-present") {
       assertLedgerRoot(refused.completedResults?.[0], source.operator);
       return null;
     }

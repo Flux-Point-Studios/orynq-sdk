@@ -209,6 +209,11 @@ describe("contractStateOnNode", () => {
     await expect(contractStateOnNode(source(), ABSENT, AT)).rejects.toThrow("33-byte root");
   });
 
+  it.each(["ContractNotPresent", "Invalid contract-state argument", "Unable to get requested contract state\nextra"])("fails closed on an unrecognized -32602 contract error even behind a valid root: %s", async (message) => {
+    handler = (b) => ({ json: [{ jsonrpc: "2.0", id: b[0].id, result: new Array(33).fill(0) }, { jsonrpc: "2.0", id: b[1].id, error: { code: -32602, message } }] });
+    await expect(contractStateOnNode(source(), ABSENT, AT)).rejects.toThrow(/midnight_contractState/);
+  });
+
   it("refuses any other answer to the contract read: another error, or a result that is not a string", async () => {
     handler = (b) => ({ json: [{ jsonrpc: "2.0", id: b[0].id, result: Array.from({ length: 33 }, (_, i) => i) }, { jsonrpc: "2.0", id: b[1].id, error: { code: -32603, message: "Internal error" } }] });
     await expect(contractStateOnNode(source(), REGISTRY, AT)).rejects.toThrow("test node: midnight_contractState failed (code -32603)");
