@@ -6,65 +6,8 @@ as TypeScript and other language implementations in the orynq-sdk.
 """
 
 import json
-import hashlib
 
-import pytest
-
-
-def sort_keys_recursive(obj):
-    """
-    Recursively sort dictionary keys.
-
-    Note: Unlike some implementations, this does NOT remove null values
-    to match the hash vectors which include null.
-
-    Args:
-        obj: The object to sort
-
-    Returns:
-        Object with sorted dictionary keys
-    """
-    if isinstance(obj, dict):
-        return {
-            k: sort_keys_recursive(v)
-            for k, v in sorted(obj.items())
-        }
-    elif isinstance(obj, list):
-        return [sort_keys_recursive(item) for item in obj]
-    else:
-        return obj
-
-
-def canonical_json(obj) -> str:
-    """
-    RFC 8785 (JCS) style canonicalization.
-
-    Produces deterministic JSON output with:
-    - Sorted keys (recursive)
-    - No whitespace
-    - Unicode preserved (not escaped)
-
-    Args:
-        obj: The object to canonicalize
-
-    Returns:
-        Canonical JSON string
-    """
-    sorted_obj = sort_keys_recursive(obj)
-    return json.dumps(sorted_obj, separators=(',', ':'), ensure_ascii=False)
-
-
-def sha256_hash(data: str) -> str:
-    """
-    Compute SHA256 hash of a string.
-
-    Args:
-        data: UTF-8 string to hash
-
-    Returns:
-        Lowercase hex-encoded hash
-    """
-    return hashlib.sha256(data.encode('utf-8')).hexdigest()
+from orynq_sdk.trace import canonical_json, sha256_hex as sha256_hash
 
 
 class TestCanonicalJson:
@@ -104,10 +47,10 @@ class TestCanonicalJson:
         result = canonical_json({"arr": [{"z": 1, "a": 2}, {"b": 3}]})
         assert result == '{"arr":[{"a":2,"z":1},{"b":3}]}'
 
-    def test_preserves_null(self):
-        """Test that null values are preserved."""
+    def test_strips_null_object_fields(self):
+        """Match TypeScript null removal in object fields."""
         result = canonical_json({"a": 1, "b": None, "c": 3})
-        assert result == '{"a":1,"b":null,"c":3}'
+        assert result == '{"a":1,"c":3}'
 
     def test_no_whitespace(self):
         """Test that output has no extra whitespace."""
@@ -197,16 +140,12 @@ class TestCrossLanguageVectors:
 
     def test_simple_object_vector(self, hash_vectors):
         """Test simple object from vectors."""
-        if not hash_vectors:
-            pytest.skip("Hash vectors not found")
-
         # Find the simple_object vector
         simple_vector = next(
             (v for v in hash_vectors if v["name"] == "simple_object"),
             None
         )
-        if not simple_vector:
-            pytest.skip("simple_object vector not found")
+        assert simple_vector is not None, "Required simple_object vector not found"
 
         input_obj = simple_vector["input"]
         expected_canonical = simple_vector["canonical"]
@@ -226,18 +165,13 @@ class TestCrossLanguageVectors:
             f"  Actual:   {actual_hash}"
         )
 
-    def test_nested_mixed_vector(self, hash_vectors):
-        """Test nested mixed object from vectors."""
-        if not hash_vectors:
-            pytest.skip("Hash vectors not found")
-
-        # Find the nested_mixed vector
+    def test_nested_object_vector(self, hash_vectors):
+        """Test the shared nested_object fixture."""
         nested_vector = next(
-            (v for v in hash_vectors if v["name"] == "nested_mixed"),
+            (v for v in hash_vectors if v["name"] == "nested_object"),
             None
         )
-        if not nested_vector:
-            pytest.skip("nested_mixed vector not found")
+        assert nested_vector is not None, "Required nested_object vector not found"
 
         input_obj = nested_vector["input"]
         expected_canonical = nested_vector["canonical"]
@@ -247,28 +181,20 @@ class TestCrossLanguageVectors:
         actual_hash = sha256_hash(actual_canonical)
 
         assert actual_canonical == expected_canonical, (
-            f"Canonical mismatch for nested_mixed:\n"
+            f"Canonical mismatch for nested_object:\n"
             f"  Expected: {expected_canonical}\n"
             f"  Actual:   {actual_canonical}"
         )
         assert actual_hash == expected_hash, (
-            f"Hash mismatch for nested_mixed:\n"
+            f"Hash mismatch for nested_object:\n"
             f"  Expected: {expected_hash}\n"
             f"  Actual:   {actual_hash}"
         )
 
     def test_all_vectors(self, hash_vectors):
         """Test all vectors from the fixture file."""
-        if not hash_vectors:
-            pytest.skip("Hash vectors not found")
-
         for vector in hash_vectors:
             name = vector["name"]
-            # Skip vectors with null handling differences between TS and Python
-            # TypeScript strips nulls, Python keeps them - known cross-language difference
-            if name == "with_null_values":
-                continue
-
             input_obj = vector["input"]
             expected_canonical = vector["canonical"]
             expected_hash = vector["sha256"]

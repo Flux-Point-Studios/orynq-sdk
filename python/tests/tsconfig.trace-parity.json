@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": "../..",
+    "paths": {
+      "@fluxpointstudios/orynq-sdk-core/utils": ["packages/core/src/utils/index.ts"]
+    }
+  }
+}

@@ -102,3 +102,41 @@ def test_two_events_change_root_hash() -> None:
     b2 = finalize_trace(run2)
 
     assert b1.root_hash != b2.root_hash
+
+
+def test_empty_span_matches_typescript_hash(monkeypatch) -> None:
+    """Reference digest from TS computeSpanHash: both ID arrays, no trailing pipe."""
+    monkeypatch.setattr("orynq_sdk.trace._now_iso", lambda: "2026-10-26T00:00:00.000Z")
+    monkeypatch.setattr("orynq_sdk.trace.uuid.uuid4", lambda: "00000000-0000-4000-8000-000000000001")
+    run = create_trace(agent_id="a")
+    span = add_span(run, name="empty")
+    close_span(run, span.id)
+    assert span.hash == "883c8e5cc6ded0050f15c28396982c42da962c375a6e9b34a556a6c0a28d0406"
+
+
+def test_default_visibility_keeps_decisions_private() -> None:
+    run = create_trace(agent_id="a")
+    span = add_span(run, name="public", visibility="public")
+    command = add_event(run, span.id, kind="command", command="build")
+    observation = add_event(run, span.id, kind="observation", observation="build passed")
+    decision = add_event(run, span.id, kind="decision", decision="private reasoning")
+    bundle = finalize_trace(run)
+    disclosed = bundle.public_view["publicSpans"][0]["events"]
+    assert [event["id"] for event in disclosed] == [command.id, observation.id]
+    assert decision.visibility == "private"
+
+
+def test_empty_trace_has_typescript_empty_merkle_root() -> None:
+    assert finalize_trace(create_trace(agent_id="a")).merkle_root == ""
+
+
+def test_millisecond_durations_do_not_round_down(monkeypatch) -> None:
+    times = iter(["2026-10-26T00:00:00.000Z", "2026-10-26T00:00:00.000Z",
+                  "2026-10-26T00:00:01.001Z", "2026-10-26T00:00:01.001Z"])
+    monkeypatch.setattr("orynq_sdk.trace._now_iso", lambda: next(times))
+    run = create_trace(agent_id="a")
+    span = add_span(run, name="timed")
+    close_span(run, span.id)
+    finalize_trace(run)
+    assert span.duration_ms == 1001
+    assert run.duration_ms == 1001

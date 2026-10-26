@@ -24,6 +24,28 @@ pip install orynq-sdk[aws]
 pip install orynq-sdk[dev]
 ```
 
+## Trace interoperability
+
+Use `json.dumps(bundle.to_dict())` to export a finalized Python trace in the
+TypeScript `TraceBundle` wire format. The export includes private events; share
+`bundle.public_view` when only public disclosure is intended.
+
+Span hashes include `eventIds` and `childSpanIds`, and empty spans have no
+trailing hash separator. These corrections change hashes produced by earlier
+Python versions; existing commitments cannot be rewritten. Commands and
+observations default to public, while decisions default to private, matching
+the TypeScript SDK. Set `visibility` explicitly to choose another policy.
+
+The Python `manifest_hash` is a hash of `bundle.content` (the public view).
+It is distinct from the TypeScript storage manifest and is not exported as
+`manifestHash`.
+
+For repository development, install `python/.[dev]` and run `pytest python/tests`.
+This includes JSON Schema validation and the required shared hash fixtures.
+Install workspace Node dependencies with `pnpm install` to also run the actual
+TypeScript verifier against Python bundles. Live faucet tests still require
+`ORYNQ_RUN_LIVE_TESTS=1`.
+
 ## Quick Start
 
 ```python
