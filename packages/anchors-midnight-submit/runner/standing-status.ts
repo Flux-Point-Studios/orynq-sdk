@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { readPrivateFile, writePrivateFile, type MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { flushDirectory } from "./state.js";
+import { writePrivateFile, type MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { flushDirectory, readPrivateJson } from "./state.js";
 
 type Loop = "follower" | "controller";
 export type StandingHold = "dust-cap" | "warmup" | "policy" | "history" | "source";
@@ -19,8 +19,7 @@ export function openStandingStatus(root: string, input: Scope, clock: () => numb
   let cap = { sequence: 0, active: false, lastAt: null as number | null };
   if (existsSync(path)) {
     if (statSync(path).size > 2 * 1024 * 1024) throw new Error("Standing retained status exceeds its bounds");
-    let previous: { format?: unknown; scope?: Record<string, unknown>; cap?: typeof cap };
-    try { previous = JSON.parse(readPrivateFile(path)); } catch { throw new Error("Standing retained monitoring state is unreadable"); }
+    const previous = readPrivateJson(path, "Standing retained monitoring state") as { format?: unknown; scope?: Record<string, unknown>; cap?: typeof cap };
     if (previous.format !== "orynq-midnight-standing-status/v1" || !previous.scope || Object.keys(previous.scope).sort().join(",") !== Object.keys(scope).sort().join(",") || Object.entries(scope).some(([key,value]) => previous.scope![key] !== value)) throw new Error("Standing retained monitoring scope differs");
     const saved = previous.cap;
     if (!saved || Object.keys(saved).sort().join(",") !== "active,lastAt,sequence" || !Number.isSafeInteger(saved.sequence) || saved.sequence < 0 || typeof saved.active !== "boolean" || (saved.lastAt !== null && (!Number.isSafeInteger(saved.lastAt) || saved.lastAt < 0)) || (saved.sequence === 0 ? saved.active || saved.lastAt !== null : saved.lastAt === null)) throw new Error("Standing retained cap history is invalid");

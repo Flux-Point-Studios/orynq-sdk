@@ -35,6 +35,11 @@ The configuration file must be private and owner-controlled. Its exact fields ar
 }
 ```
 
+Every file the configuration names must also be owner-only (mode 0600) and owned by the
+service's user, the public wallet `record` and signed author policy included; only `zk`, whose
+public parameters are checked by hash, is exempt. The service refuses any other file and names it
+and the reason as it stops.
+
 `genesis` names Materios. The signed author policy supplies Midnight's original finality
 checkpoint. Policy and the compiled mainnet batch-author pin must authorize the configured
 author. Copy the released signed public policy into `knownAuthorsFile`; updates may append

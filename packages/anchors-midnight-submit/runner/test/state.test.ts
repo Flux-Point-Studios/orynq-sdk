@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
-import { audit, ensureRunnerRoot, readAudit, runnerFiles } from "../state.js";
+import { audit, ensureRunnerRoot, readAudit, readPrivateJson, runnerFiles } from "../state.js";
 import { stateRoot } from "./helpers.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -25,5 +25,32 @@ describe("the audit log", () => {
       expect(after.slice(0, after.indexOf("close") + 1)).toEqual(["write", "sync", "close"]);
     }
     expect(readAudit(paths.root).map((e) => e.attempt)).toEqual([1, 2]);
+  });
+});
+
+describe("an owner-only JSON file", () => {
+  const thrown = (path: string) => { try { readPrivateJson(path, "Fixture"); } catch (error) { return error as Error; } throw new Error("expected a refusal"); };
+  const chain = (error: unknown): string[] => (error instanceof Error ? [error.message, ...chain(error.cause)] : []);
+
+  it("reads back its JSON", () => {
+    const path = `${stateRoot().paths.root}.json`;
+    fs.writeFileSync(path, '{"entries":[1]}', { mode: 0o600 });
+    expect(readPrivateJson(path, "Fixture")).toEqual({ entries: [1] });
+  });
+
+  it("names the file and why it was refused", () => {
+    const path = `${stateRoot().paths.root}.json`;
+    fs.writeFileSync(path, "{}"); fs.chmodSync(path, 0o644);
+    const error = thrown(path);
+    expect(error.message).toBe("Fixture is unreadable");
+    expect(chain(error)).toContain(`${path} can be read or written by group or others`);
+  });
+
+  it("never quotes a file that is not JSON", () => {
+    const path = `${stateRoot().paths.root}.json`;
+    fs.writeFileSync(path, "abandon ability able", { mode: 0o600 });
+    const error = thrown(path);
+    expect(error.message).toBe("Fixture is not JSON");
+    expect(chain(error).join(" ")).not.toContain("abandon");
   });
 });
