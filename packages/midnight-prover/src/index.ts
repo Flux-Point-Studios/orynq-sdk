@@ -197,5 +197,5 @@ export {
   createMidnightProver,
 } from "./prover.js";
 
-export { RealMidnightProver } from "./real-prover.js";
+export { RealMidnightProver, NativeVerifierConfigurationError } from "./real-prover.js";
 export type { RealProverOptions, CircuitProof, CapabilityProof, RollingHashChainProof } from "./real-prover.js";

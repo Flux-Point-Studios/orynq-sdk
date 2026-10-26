@@ -9,6 +9,7 @@ use onchain_runtime::state::ContractState;
 use serde::Deserialize;
 use serde_json::json;
 use serialize::{tagged_deserialize, tagged_serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     env, fs,
@@ -20,7 +21,18 @@ use storage::db::InMemoryDB;
 use transient_crypto::{commitment::PureGeneratorPedersen, proofs::VerifierKey};
 
 const MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;
+const ARTIFACT_PINS: &str = include_str!("../../artifact-pins.json");
 type FinalizedTransaction = Transaction<Signature, ProofMarker, PureGeneratorPedersen, InMemoryDB>;
+
+fn check_artifact_pin(path: &str, bytes: &[u8]) -> Result<(), &'static str> {
+    let pins: serde_json::Value =
+        serde_json::from_str(ARTIFACT_PINS).map_err(|_| "configuration-error")?;
+    let expected = pins["sha256"][path].as_str().ok_or("configuration-error")?;
+    if format!("{:x}", Sha256::digest(bytes)) != expected {
+        return Err("configuration-error");
+    }
+    Ok(())
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -28,7 +40,6 @@ struct Request {
     circuit_id: String,
     transaction_base64: String,
     reference_state_base64: String,
-    verification_time_unix_seconds: u64,
 }
 
 #[derive(Deserialize)]
@@ -52,9 +63,6 @@ fn verify(registry_path: &Path, input: &[u8]) -> Result<(), &'static str> {
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "invalid-time")?
         .as_secs();
-    if now.abs_diff(request.verification_time_unix_seconds) > 30 {
-        return Err("invalid-time");
-    }
     let registry_bytes = fs::read(registry_path).map_err(|_| "configuration-error")?;
     let registry: Registry =
         serde_json::from_slice(&registry_bytes).map_err(|_| "configuration-error")?;
@@ -72,6 +80,18 @@ fn verify(registry_path: &Path, input: &[u8]) -> Result<(), &'static str> {
         tagged_deserialize(&key_bytes[..]).map_err(|_| "configuration-error")?;
     let initial_bytes = fs::read(directory.join(&circuit.initial_contract_state_path))
         .map_err(|_| "configuration-error")?;
+    // Official Orynq circuits retain the reviewed build identity even if a caller's trusted
+    // registry was populated by an accidental recompilation. Other application-owned circuit
+    // IDs (including the synthetic crypto fixtures) still use their explicit trusted registry.
+    let pinned_key = match request.circuit_id.as_str() {
+        "lease-capability-v1" => Some("keys/proveCapability.verifier"),
+        "rolling-hash-chain-v1" => Some("keys/proveRolling1.verifier"),
+        _ => None,
+    };
+    if let Some(path) = pinned_key {
+        check_artifact_pin(path, &key_bytes)?;
+        check_artifact_pin("initial-state.bin", &initial_bytes)?;
+    }
     let template: ContractState<InMemoryDB> =
         tagged_deserialize(&initial_bytes[..]).map_err(|_| "configuration-error")?;
     let entry_point = circuit.entry_point.as_bytes().into();
@@ -171,5 +191,24 @@ fn main() {
     println!("{}", json!({ "valid": valid, "code": code }));
     if code == "configuration-error" {
         std::process::exit(2);
+    }
+}
+
+#[cfg(test)]
+mod artifact_tests {
+    use super::check_artifact_pin;
+
+    #[test]
+    fn official_artifacts_cannot_be_replaced_by_recompiled_bytes() {
+        for path in [
+            "keys/proveCapability.verifier",
+            "keys/proveRolling1.verifier",
+            "initial-state.bin",
+        ] {
+            assert_eq!(
+                check_artifact_pin(path, b"different compiler output"),
+                Err("configuration-error")
+            );
+        }
     }
 }

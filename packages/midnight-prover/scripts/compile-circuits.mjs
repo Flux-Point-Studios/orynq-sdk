@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as runtime from "@midnight-ntwrk/compact-runtime";
 import * as ledger from "@midnight-ntwrk/ledger-v8";
+import { assertArtifactPins } from "./artifact-pins.mjs";
 
 const directory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const output = join(directory, "managed");
@@ -25,4 +26,5 @@ for (const entryPoint of Object.values(circuits)) {
 }
 await writeFile(join(output, "initial-state.bin"), template.serialize());
 await writeFile(join(output, "registry.json"), JSON.stringify({ version: 1, circuits: Object.fromEntries(Object.entries(circuits).map(([id, entryPoint]) => [id, { entryPoint, verifierKeyPath: `keys/${entryPoint}.verifier`, initialContractStatePath: "initial-state.bin" }])) }, null, 2) + "\n");
+await assertArtifactPins(output);
 console.log("Compiled real circuits and trusted verifier registry");

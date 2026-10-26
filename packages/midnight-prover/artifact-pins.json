@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "compiler": "0.31.1",
+  "sha256": {
+    "keys/proveCapability.verifier": "809f424647e14f1f0a15d53bc508e8ab8f1e927a88afbd094cbe263f98d283a8",
+    "keys/proveRolling1.verifier": "c2e040e56a6d4331aea1ea08cd01fd30c43524715db150495a1959802223df0d",
+    "initial-state.bin": "193715fcc452badb826be963394e657a60665e827c0290fba9159ce487844c06"
+  }
+}

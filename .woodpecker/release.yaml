@@ -40,6 +40,7 @@ steps:
       - tools/compactc/install.sh "$$HOME/.cache/midnight/compactc" "$$HOME/.cache/midnight/zk-params"
       - COMPACTC="$$HOME/.cache/midnight/compactc/compactc" MIDNIGHT_PP="$$HOME/.cache/midnight/zk-params" pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:circuits
       - pnpm build
+      - pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover verify:artifacts
       - node scripts/pack-unpublished.mjs /woodpecker/npm-publish
 
   - name: publish
