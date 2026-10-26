@@ -12,6 +12,7 @@ license = "MIT"
 dependencies = [
     "httpx>=0.25.0",
     "pydantic>=2.0.0",
+    "rfc8785>=0.1.4,<0.2",
 ]
 
 [project.optional-dependencies]

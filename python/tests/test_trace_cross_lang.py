@@ -7,6 +7,7 @@ regressions in test_trace.py always run.
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import subprocess
 from copy import deepcopy
@@ -85,3 +86,39 @@ def test_python_bundle_verifies_in_typescript(shape, fixed_clock_and_ids):
         tampered = deepcopy(wire)
         tampered["privateRun"]["spans"][0]["childSpanIds"] = []
         assert not _verify(tampered)["report"]["valid"]
+
+
+def test_numeric_and_utf16_payloads_verify_in_typescript(fixed_clock_and_ids):
+    """Exercise the actual verifier across JS decimal/exponent and IEEE limits."""
+    payload = {
+        "numbers": [
+            1.0, -0.0, 1e-7, 1e-6, 1e20, 1e21,
+            333333333.33333329, 1.2345678901234568e30,
+            math.nextafter(1e-6, 0), math.nextafter(1e-6, math.inf),
+            math.nextafter(1e21, 0), math.nextafter(1e21, math.inf),
+            math.nextafter(0, 1), -math.nextafter(0, 1),
+            float.fromhex("0x1.fffffffffffffp+1023"),
+            -float.fromhex("0x1.fffffffffffffp+1023"),
+            2**53 - 1, -(2**53 - 1), float(2**53),
+        ],
+        # Supplementary characters sort before U+E000 by UTF-16 code units.
+        "\ue000": {"omit": None, "value": 1.0},
+        "😀": [None, {"omit": None, "value": -0.0}],
+    }
+    run = trace.create_trace(agent_id="numeric-parity")
+    span = trace.add_span(run, name="numbers", visibility="public", metadata=payload)
+    for invalid in (math.nan, 2**53):
+        with pytest.raises(ValueError):
+            trace.add_event(run, span.id, kind="custom", data={"value": invalid})
+        assert run.next_seq == 0
+        assert run.events == []
+    event = trace.add_event(run, span.id, kind="custom", visibility="public", data=payload)
+    bundle = trace.finalize_trace(run)
+    actual = _verify(bundle.to_dict())
+    assert actual["report"]["valid"], actual["report"]
+    assert actual["eventHashes"] == [event.hash]
+    assert actual["spanHashes"] == [span.hash]
+    assert actual["rollingHash"] == run.rolling_hash
+    assert actual["rootHash"] == bundle.root_hash
+    assert actual["contentHash"] == bundle.manifest_hash
+    assert trace.canonical_json(payload["😀"]) == '[null,{"value":0}]'

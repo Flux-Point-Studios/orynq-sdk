@@ -40,6 +40,16 @@ The Python `manifest_hash` is a hash of `bundle.content` (the public view).
 It is distinct from the TypeScript storage manifest and is not exported as
 `manifestHash`.
 
+Canonical JSON uses `rfc8785` to match JavaScript number spelling (`1.0` becomes
+`1`, `-0.0` becomes `0`) and UTF-16 object-key ordering. Null object fields are
+removed recursively; null array elements and array order are retained. Integers
+must be within `-(2**53 - 1)` through `2**53 - 1`, inclusive. Larger integer
+identifiers should be encoded as strings. Explicit finite Python floats retain
+their IEEE-754 value, including values outside the safe-integer range. Unsafe
+Python integers, NaN and positive/negative infinity raise `ValueError` before
+a commitment is produced. Corrected numeric spellings change commitments
+previously produced for those values; existing on-chain commitments stay fixed.
+
 For repository development, install `python/.[dev]` and run `pytest python/tests`.
 This includes JSON Schema validation and the required shared hash fixtures.
 Install workspace Node dependencies with `pnpm install` to also run the actual
