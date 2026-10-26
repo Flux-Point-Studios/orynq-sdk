@@ -1,5 +1,11 @@
 # @fluxpointstudios/orynq-sdk-quickstart
 
+## 0.4.1
+
+### Patch Changes
+
+- `orynq trace` receipts are now certified by the Materios committee. Each receipt's blob is uploaded under its content hash, where the gateway's locator looks it up, instead of under the receipt ID. The receipt's on-chain root is now the Merkle root of the uploaded chunk hashes, which the committee checks; before, it was the trace's own root hash. Earlier receipts could never be certified. The blob-status link now points at the content hash.
+
 ## 0.3.0
 
 ### Minor Changes
