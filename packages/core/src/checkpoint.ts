@@ -167,7 +167,9 @@ export function encodeCert(format: CertFormat, genesis: string, receiptId: strin
     return concat(encoder.encode("materios-availability-cert-v1"), new Uint8Array(3), bytes(genesis), bytes(receiptId), ...fields,
       Uint8Array.of(0, 0, 0, 0, 109, 1, 0, 0, 2, 1));
   }
-  if (format.format !== "dcbor-v1" || bareHash(genesis) !== LIVE_GENESIS || format.chainId === null || ![LIVE_GENESIS, LEGACY_GENESIS].includes(bareHash(format.chainId))) {
+  // The dcbor certificate carries its own domain. Historical checkpoint leaves can commit
+  // to a different genesis; that commitment must not change or prevent rebuilding the Cert.
+  if (format.format !== "dcbor-v1" || ![LIVE_GENESIS, LEGACY_GENESIS].includes(bareHash(genesis)) || format.chainId === null || ![LIVE_GENESIS, LEGACY_GENESIS].includes(bareHash(format.chainId))) {
     throw new Error("Unsupported certificate format or chain genesis");
   }
   function text(value: string): Uint8Array {
@@ -185,7 +187,7 @@ export function certHash(format: CertFormat, genesis: string, receiptId: string,
 export function certFormatOf(record: CertFields & { availabilityCertHash: string }, genesis: string, receiptId: string): CertFormat | null {
   const expected = bareHash(record.availabilityCertHash);
   const formats: CertFormat[] = [{ format: "scale-v1", chainId: null }];
-  if (bareHash(genesis) === LIVE_GENESIS) formats.push(...[LIVE_GENESIS, LEGACY_GENESIS].map((chainId): CertFormat => ({ format: "dcbor-v1", chainId })));
+  if ([LIVE_GENESIS, LEGACY_GENESIS].includes(bareHash(genesis))) formats.push(...[LIVE_GENESIS, LEGACY_GENESIS].map((chainId): CertFormat => ({ format: "dcbor-v1", chainId })));
   return formats.find((format) => bareHash(certHash(format, genesis, receiptId, record)) === expected) ?? null;
 }
 
