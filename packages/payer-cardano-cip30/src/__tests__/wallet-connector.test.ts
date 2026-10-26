@@ -117,6 +117,22 @@ describe("getAvailableWallets", () => {
     cleanupWindow();
   });
 
+  it("discovers, describes and connects a 1AM CIP-30 extension", async () => {
+    const api = createMockWalletApi("1AM");
+    setupWindowCardano({ "1am": api });
+
+    expect(await getAvailableWallets()).toEqual(["1am"]);
+    expect(await getWalletInfo()).toEqual([{
+      name: "1am",
+      displayName: "1AM",
+      apiVersion: "1.0.0",
+      icon: "data:image/png;base64,mock-1AM-icon",
+    }]);
+    expect(isWalletAvailable("1am")).toBe(true);
+    expect(await connectWallet("1am")).toBeDefined();
+    expect(api.enable).toHaveBeenCalledOnce();
+  });
+
   it("should return empty array when no window", async () => {
     cleanupWindow();
     const wallets = await getAvailableWallets();
