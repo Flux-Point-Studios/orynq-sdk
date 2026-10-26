@@ -20,7 +20,9 @@ export interface CheckpointAdvance {
 const MAX_BYTES = 64 * 1024 * 1024;
 const hash32 = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 const hex = (bytes: Uint8Array) => Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
-const unhex = (value: string) => new Uint8Array(value.match(/../g)!.map(byte => Number.parseInt(byte, 16)));
+// Hex is validated before this conversion; Buffer decodes linearly without allocating
+// one JavaScript string/object per byte for large retained proof transcripts.
+const unhex = (value: string) => new Uint8Array(Buffer.from(value, "hex"));
 const encodedBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 function bounded(value: unknown) { if (encodedBytes(value).length > MAX_BYTES) throw new Error("Checkpoint advancement exceeds its byte budget"); }
 function exact(value: unknown, keys: string[]): asserts value is Record<string, unknown> {
@@ -52,7 +54,8 @@ export async function verifyCheckpointAdvance(options: {
   artifact: unknown; predecessor: FinalityCheckpoint; expectedNetwork: MidnightNetwork;
   expectedSequence: number; previousDigest: string | null; rootId?: string;
 }): Promise<{ checkpoint: FinalityCheckpoint; digest: string; block: BlockRef; sequence: number; setChanges: number }> {
-  const artifact = options.artifact;
+  bounded(options.artifact);
+  const artifact = structuredClone(options.artifact);
   bounded(artifact);
   exact(artifact, ["format", "network", "rootId", "predecessorId", "sequence", "previousDigest", "block", "successor", "proofs", "headers"]);
   const rootId = options.rootId ?? checkpointId(options.predecessor);
@@ -86,6 +89,8 @@ export async function deriveCheckpointAdvance(options: {
   network: MidnightNetwork; predecessor: FinalityCheckpoint; rpc: FinalityRpc; block: BlockRef;
   sequence?: number; previousDigest?: string | null; rootId?: string;
 }): Promise<CheckpointAdvance> {
+  const predecessor = structuredClone(options.predecessor), block = { ...options.block };
+  const network = options.network, sequence = options.sequence ?? 1, previousDigest = options.previousDigest ?? null, rootId = options.rootId ?? checkpointId(predecessor);
   const proofs = new Map<number, string | null>(), headers = new Map<string, RpcHeader>();
   let retainedBytes = 2;
   const retain = <K, V>(map: Map<K, V>, key: K, value: V) => {
@@ -98,9 +103,24 @@ export async function deriveCheckpointAdvance(options: {
     async proveFinality(heights) { const result = await options.rpc.proveFinality(heights); if (result.length !== heights.length) throw new Error("Checkpoint proof response count differs"); result.forEach((value, i) => retain(proofs, heights[i]!, value === null ? null : hex(value))); return result; },
     async headers(hashes) { const result = await options.rpc.headers(hashes); if (result.length !== hashes.length) throw new Error("Checkpoint header response count differs"); result.forEach((value, i) => retain(headers, hashes[i]!.replace(/^0x/, ""), structuredClone(value))); return result; },
   };
-  const result = await verifyFinality({ rpc, block: options.block, checkpoints: [structuredClone(options.predecessor)], maxSetChanges: DEFAULT_MAX_SET_CHANGES });
+  const result = await verifyFinality({ rpc, block, checkpoints: [predecessor], maxSetChanges: DEFAULT_MAX_SET_CHANGES });
   if (!result.finalized) throw new Error("Checkpoint advancement target is not authenticated");
-  const artifact: CheckpointAdvance = { format: "orynq-midnight-checkpoint-advance/v1", network: options.network, rootId: options.rootId ?? checkpointId(options.predecessor), predecessorId: checkpointId(options.predecessor), sequence: options.sequence ?? 1, previousDigest: options.previousDigest ?? null, block: { ...options.block }, successor: checkpointToJson(result.checkpoint), proofs: [...proofs], headers: [...headers] };
-  await verifyCheckpointAdvance({ artifact, predecessor: options.predecessor, expectedNetwork: options.network, expectedSequence: artifact.sequence, previousDigest: artifact.previousDigest, rootId: artifact.rootId });
+  const artifact: CheckpointAdvance = { format: "orynq-midnight-checkpoint-advance/v1", network, rootId, predecessorId: checkpointId(predecessor), sequence, previousDigest, block, successor: checkpointToJson(result.checkpoint), proofs: [...proofs], headers: [...headers] };
+  await verifyCheckpointAdvance({ artifact, predecessor, expectedNetwork: network, expectedSequence: artifact.sequence, previousDigest: artifact.previousDigest, rootId: artifact.rootId });
   return artifact;
+}
+
+export async function verifyCheckpointAdvanceHistory(options: { expectedNetwork: MidnightNetwork; checkpoints: readonly FinalityCheckpoint[]; artifacts: readonly CheckpointAdvance[] }) {
+  if (!options.checkpoints.length || options.checkpoints.length > 64 || !Array.isArray(options.artifacts) || options.artifacts.length > 4096) throw new Error("Invalid checkpoint history bounds");
+  const tips = new Map(options.checkpoints.map(checkpoint => [checkpointId(checkpoint), { checkpoint: structuredClone(checkpoint), sequence: 0, digest: null as string | null }]));
+  if (tips.size !== options.checkpoints.length) throw new Error("Original checkpoint identities repeat");
+  let bytes = 0;
+  const artifacts = options.artifacts.map(artifact => { bounded(artifact); bytes += encodedBytes(artifact).length; if (bytes > 512 * 1024 * 1024) throw new Error("Checkpoint history exceeds its byte budget"); return structuredClone(artifact); }).sort((a, b) => (a.rootId < b.rootId ? -1 : a.rootId > b.rootId ? 1 : 0) || a.sequence - b.sequence);
+  for (const artifact of artifacts) {
+    const prior = tips.get(artifact.rootId);
+    if (!prior) throw new Error("Checkpoint history has no pinned original root");
+    const result = await verifyCheckpointAdvance({ artifact, predecessor: prior.checkpoint, expectedNetwork: options.expectedNetwork, expectedSequence: prior.sequence + 1, previousDigest: prior.digest, rootId: artifact.rootId });
+    tips.set(artifact.rootId, { checkpoint: result.checkpoint, sequence: result.sequence, digest: result.digest });
+  }
+  return { artifacts, tips: [...tips].map(([rootId, tip]) => ({ rootId, ...tip })) };
 }

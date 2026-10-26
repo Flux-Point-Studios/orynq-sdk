@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { followerChain } from "./follower-chain.js";
 import { finalityRpc } from "../source.js";
 import { checkpointId } from "../checkpoints.js";
-import { deriveCheckpointAdvance, verifyCheckpointAdvance } from "../checkpoint-advance.js";
+import { checkpointAdvanceId, deriveCheckpointAdvance, verifyCheckpointAdvance } from "../checkpoint-advance.js";
 
 async function fixture() {
   const chain = followerChain(), predecessor = chain.checkpoint;
@@ -34,4 +34,11 @@ it("extends an immutable transcript chain without recurring root signatures", as
   const second = await verifyCheckpointAdvance({ artifact, predecessor: verified.checkpoint, expectedNetwork: "mainnet", expectedSequence: 2, previousDigest: verified.digest, rootId: first.artifact.rootId });
   expect(second.checkpoint.setId).toBeGreaterThan(verified.checkpoint.setId);
   await expect(verifyCheckpointAdvance({ artifact, predecessor: verified.checkpoint, expectedNetwork: "mainnet", expectedSequence: 2, previousDigest: "00".repeat(32), rootId: first.artifact.rootId })).rejects.toThrow(/continuity/i);
+});
+
+it("owns the transcript before asynchronous verification so callers cannot replace accepted evidence", async () => {
+  const { artifact, predecessor } = await fixture(), digest = checkpointAdvanceId(artifact);
+  const verifying = verifyCheckpointAdvance({ artifact, predecessor, expectedNetwork: "mainnet", expectedSequence: 1, previousDigest: null });
+  artifact.sequence = 99; artifact.successor.authorities[0]!.key = "00".repeat(32); artifact.proofs.splice(0);
+  const result = await verifying; expect(result.digest).toBe(digest); expect(result.sequence).toBe(1);
 });

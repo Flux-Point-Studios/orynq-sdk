@@ -68,7 +68,7 @@ export type { HiddenEntry, RegistryCallArgs, RegistryWitnesses } from "./registr
 export { BatchSetCache, BATCH_PROOF_FORMAT, parseBatchSet, verifyBatchProof, verifyBatchSet } from "./batch-proof.js";
 export type { BatchProofOptions, BatchProofResult, BatchSetFacts, BatchSetResult } from "./batch-proof.js";
 export { auditCheckpoints, checkpointId } from "./checkpoints.js";
-export { deriveCheckpointAdvance, verifyCheckpointAdvance, checkpointAdvanceId, checkpointToJson, checkpointFromJson } from "./checkpoint-advance.js";
+export { deriveCheckpointAdvance, verifyCheckpointAdvance, verifyCheckpointAdvanceHistory, checkpointAdvanceId, checkpointToJson, checkpointFromJson } from "./checkpoint-advance.js";
 export type { CheckpointAdvance } from "./checkpoint-advance.js";
 export { ed25519Verify } from "./ed25519.js";
 export { rpcOnlySource } from "./rpc-source.js";
