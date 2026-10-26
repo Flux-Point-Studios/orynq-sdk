@@ -99,6 +99,9 @@ const BALANCING_MS = 30_000;
 interface Balanced {
   coinValues: string[];
   feeAsItIs: string;
+  feeWithOne?: string;
+  feeWithAll?: string;
+  legacyError?: string;
   error?: string;
   intents?: Array<string[] | null>;
   coinsUntouched?: boolean;
@@ -153,6 +156,18 @@ describe("balancing a fee", () => {
     expect(BigInt(fee![0]!)).toBeGreaterThan(small);
     expect(BigInt(fee![0]!)).toBeLessThan(large);
     expect(r.coinsLeft).toEqual([String(small)]);
+    expect(r.landed).toBe(true);
+  });
+
+  it("prices each largest prefix exactly when the old marginal estimate falsely exhausts an affordable two-coin set", async () => {
+    const r = await balancing("multi-round");
+    const [small, large] = r.coinValues.map(BigInt) as [bigint, bigint];
+    expect(large).toBeLessThan(BigInt(r.feeWithOne!));
+    expect(small + large).toBeGreaterThanOrEqual(BigInt(r.feeWithAll!));
+    expect(r.legacyError).toMatch(/^Insufficient Funds/);
+    expect(r.error).toBeUndefined();
+    expect(r.intents![1]).toHaveLength(2);
+    expect(r.intents![1]!.reduce((sum, value) => sum + BigInt(value), 0n)).toBe(BigInt(r.feeWithAll!));
     expect(r.landed).toBe(true);
   });
 

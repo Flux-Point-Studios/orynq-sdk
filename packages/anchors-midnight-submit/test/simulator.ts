@@ -100,5 +100,5 @@ export async function dustOnSimulator(nights: readonly bigint[], { simulator, ad
     running.push(w);
     return w;
   };
-  return { simulator, wallet, blocks, anotherBlock, now, balanced, coins, syncTime, reopen, restored };
+  return { simulator, wallet, secretKey, blocks, anotherBlock, now, balanced, coins, syncTime, reopen, restored };
 }

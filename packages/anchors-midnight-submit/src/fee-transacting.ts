@@ -33,7 +33,8 @@ function releaseSpends(wallet: CoreWallet, tx: AnyTransaction, secretKey: L.Dust
   return { ...wallet, state, pendingDust: wallet.pendingDust.filter((coin) => !spent.has(coin.nullifier)) };
 }
 
-// wallet-sdk-dust-wallet 4.2.0's fee transactions, with two changes.
+// wallet-sdk-dust-wallet 4.2.0's fee transactions with exact coin-prefix pricing,
+// synchronized spend dates and precise release of unbroadcast fees.
 //
 // A fee's DUST spend is dated at the newest DUST event the wallet applied (the local state's
 // syncTime), not at the indexer's newest block. The node checks the spend's proof against the
@@ -57,7 +58,40 @@ const feeTransacting =
     configuration: Transacting.DefaultTransactingConfiguration,
     getContext: () => Transacting.DefaultTransactingContext,
   ): Transacting.TransactingCapability<L.DustSecretKey, CoreWallet, L.FinalizedTransaction> => {
-    const transacting = Transacting.makeDefaultTransactingCapability(configuration, getContext);
+    const transacting = new Transacting.TransactingCapabilityImplementation<L.FinalizedTransaction>(
+      configuration.networkId, configuration.costParameters,
+      () => getContext().coinSelection, () => getContext().coinsAndBalancesCapability, () => getContext().keysCapability,
+    );
+    // The SDK's average marginal-spend estimate includes the first balancing-intent overhead.
+    // Applying it again to later inputs can reject affordable combinations. Price each largest
+    // prefix against the ledger instead: at most one dry run per available coin, no estimates.
+    transacting.computeBalancingRecipe = (sk, state, transactions, ttl, currentTime, parameters) => Either.try({
+      try: () => {
+        const existingDust = transactions.reduce((sum, transaction) => {
+          const fee = transacting.calculateFee(transaction, parameters);
+          return sum + Transacting.TransactingCapabilityImplementation.feeImbalance(transaction, fee) + fee;
+        }, 0n);
+        let fee = transacting.dryRunFee([], transactions, sk, state, ttl, currentTime, parameters);
+        if (existingDust >= fee) return { fee, recipeInputs: [] };
+        const available = getContext().coinsAndBalancesCapability.getAvailableCoinsWithGeneratedDust(state, currentTime)
+          .filter(coin => coin.value > 0n).sort((a, b) => a.value > b.value ? -1 : a.value < b.value ? 1 : 0);
+        const selected: typeof available = [];
+        let coverage = existingDust;
+        for (const coin of available) {
+          selected.push(coin); coverage += coin.value;
+          fee = transacting.dryRunFee(selected, transactions, sk, state, ttl, currentTime, parameters);
+          if (coverage < fee) continue;
+          let remaining = fee - existingDust;
+          return { fee, recipeInputs: selected.map(input => {
+            const value = input.value < remaining ? input.value : remaining;
+            remaining -= value;
+            return { ...input, value };
+          }) };
+        }
+        throw new WalletError.InsufficientFundsError({ message: "Insufficient Funds: no available largest-first DUST prefix covers its exact fee", tokenType: "dust" });
+      },
+      catch: cause => cause instanceof WalletError.InsufficientFundsError ? cause : new WalletError.TransactingError({ message: "Exact DUST fee pricing failed", cause }),
+    });
     const balance = transacting.balanceTransactions.bind(transacting);
     transacting.balanceTransactions = (sk, wallet, transactions, ttl, _currentTime, ledgerParameters) => {
       const ctime = wallet.state.syncTime;
