@@ -221,95 +221,91 @@ export const fastifyPayment: FastifyPluginCallback<FastifyPaymentPluginOptions> 
       req: FastifyRequest,
       reply: FastifyReply
     ): Promise<void> => {
-      try {
-        // Check for existing payment proof in headers
-        const fluxInvoiceId = getHeader(req, FLUX_HEADERS.INVOICE_ID);
-        const fluxPayment = getHeader(req, FLUX_HEADERS.PAYMENT);
-        const x402Signature = getHeader(req, X402_HEADERS.PAYMENT_SIGNATURE);
+      // Check for existing payment proof in headers
+      const fluxInvoiceId = getHeader(req, FLUX_HEADERS.INVOICE_ID);
+      const fluxPayment = getHeader(req, FLUX_HEADERS.PAYMENT);
+      const x402Signature = getHeader(req, X402_HEADERS.PAYMENT_SIGNATURE);
 
-        // If payment headers present, try to verify
-        if ((fluxInvoiceId && fluxPayment) || x402Signature) {
-          const verifyResult = await verifyPayment(req, options);
+      // If payment headers present, try to verify
+      if ((fluxInvoiceId && fluxPayment) || x402Signature) {
+        const verifyResult = await verifyPayment(req, options);
 
-          if (verifyResult.verified && verifyResult.invoice) {
-            if (onPaymentVerified) {
-              await onPaymentVerified(req, verifyResult.invoice, verifyResult.proof!);
-            }
-
-            req.paidInvoice = verifyResult.invoice;
-            return; // Continue to route handler
+        if (verifyResult.verified && verifyResult.invoice) {
+          if (onPaymentVerified) {
+            await onPaymentVerified(req, verifyResult.invoice, verifyResult.proof!);
           }
 
-          if (onPaymentFailed) {
-            await onPaymentFailed(
-              req,
-              verifyResult.invoice ?? null,
-              verifyResult.error ?? "Verification failed"
-            );
-          }
+          req.paidInvoice = verifyResult.invoice;
+          return; // Continue to route handler
         }
 
-        // Check idempotency for existing invoice
-        const idempotencyResult = await processIdempotency(
-          {
-            method: req.method,
-            url: req.url,
-            body: req.body,
-            headers: req.headers,
-          },
-          storage,
-          idempotency
-        );
-
-        if (idempotencyResult.isDuplicate && idempotencyResult.existingInvoice) {
-          const existingInvoice = idempotencyResult.existingInvoice;
-
-          if (existingInvoice.status === "confirmed" || existingInvoice.status === "consumed") {
-            req.paidInvoice = existingInvoice;
-            return;
-          }
-
-          await emit402Response(
-            existingInvoice,
+        if (onPaymentFailed) {
+          await onPaymentFailed(
             req,
-            reply,
-            protocols,
-            prefer,
-            splits?.(req)
+            verifyResult.invoice ?? null,
+            verifyResult.error ?? "Verification failed"
           );
+        }
+      }
+
+      // Check idempotency for existing invoice
+      const idempotencyResult = await processIdempotency(
+        {
+          method: req.method,
+          url: req.url,
+          body: req.body,
+          headers: req.headers,
+        },
+        storage,
+        idempotency
+      );
+
+      if (idempotencyResult.isDuplicate && idempotencyResult.existingInvoice) {
+        const existingInvoice = idempotencyResult.existingInvoice;
+
+        if (existingInvoice.status === "confirmed" || existingInvoice.status === "consumed") {
+          req.paidInvoice = existingInvoice;
           return;
         }
 
-        // Create new invoice
-        const priceConfig = await price(req);
-        const recipientAddress = typeof payTo === "function" ? payTo(req) : payTo;
-        const requestHash = await hashRequest(req.method, req.url, req.body);
-
-        const metadataValue = metadata?.(req);
-        const invoiceParams: CreateInvoiceParams = {
-          chain: priceConfig.chain,
-          asset: priceConfig.asset,
-          amountUnits: priceConfig.amountUnits,
-          payTo: recipientAddress,
-          expiresInSeconds,
-          idempotencyKey: idempotencyResult.key,
-          requestHash,
-          ...(metadataValue !== undefined ? { metadata: metadataValue } : {}),
-        };
-
-        const invoice = await storage.create(invoiceParams);
-
         await emit402Response(
-          invoice,
+          existingInvoice,
           req,
           reply,
           protocols,
           prefer,
           splits?.(req)
         );
-      } catch (error) {
-        throw error; // Let Fastify error handler deal with it
+        return;
       }
+
+      // Create new invoice
+      const priceConfig = await price(req);
+      const recipientAddress = typeof payTo === "function" ? payTo(req) : payTo;
+      const requestHash = await hashRequest(req.method, req.url, req.body);
+
+      const metadataValue = metadata?.(req);
+      const invoiceParams: CreateInvoiceParams = {
+        chain: priceConfig.chain,
+        asset: priceConfig.asset,
+        amountUnits: priceConfig.amountUnits,
+        payTo: recipientAddress,
+        expiresInSeconds,
+        idempotencyKey: idempotencyResult.key,
+        requestHash,
+        ...(metadataValue !== undefined ? { metadata: metadataValue } : {}),
+      };
+
+      const invoice = await storage.create(invoiceParams);
+
+      await emit402Response(
+        invoice,
+        req,
+        reply,
+        protocols,
+        prefer,
+        splits?.(req)
+      );
     };
 
     // Apply to specific routes or globally

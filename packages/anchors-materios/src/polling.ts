@@ -54,7 +54,7 @@ export async function waitForCertification(
   const api = provider.getApi();
   const chainId = api.genesisHash.toHex();
 
-  while (true) {
+  for (;;) {
     attempt++;
     const elapsed = Date.now() - start;
     if (elapsed >= timeout) {
@@ -111,7 +111,7 @@ export async function waitForAnchor(
   const start = Date.now();
   let attempt = 0;
 
-  while (true) {
+  for (;;) {
     attempt++;
     const elapsed = Date.now() - start;
     if (elapsed >= timeout) {
@@ -339,7 +339,7 @@ export async function waitForMotra(
   const start = Date.now();
   let attempt = 0;
 
-  while (true) {
+  for (;;) {
     attempt++;
     const elapsed = Date.now() - start;
     if (elapsed >= timeout) {
