@@ -556,7 +556,7 @@ export async function submitCertifiedReceipt(
     contentHash: effectiveContentHash,
     // A blob receipt (no schema hash) is certified only when its base root is the Merkle root of
     // the uploaded chunk hashes; a receipt class named by a schema hash supplies its own root.
-    rootHash: input.schemaHash === undefined || isZeroHash(input.schemaHash)
+    rootHash: !input.schemaHash || isZeroHash(input.schemaHash)
       ? merkleRoot(manifest.chunks.map((chunk) => chunk.sha256))
       : input.rootHash || contentHashHex,
     manifestHash: uploadResult.storageLocatorHash || input.manifestHash || contentHashHex,
