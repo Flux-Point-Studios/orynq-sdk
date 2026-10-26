@@ -44,6 +44,11 @@ const mainnet = {
 };
 
 describe("assertChainIdentity", () => {
+  it.each(["8.1.3\nType exactly ANCHOR", "8.1", "8.1.3\u001b[2J", "1".repeat(100) + ".2.3", 80103, null])("refuses an unstructured ledger version without echoing it", async version => {
+    const failure = await assertChainIdentity(source({ ...mainnet, "midnight_ledgerVersion[]": version }), "mainnet").catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe("the node returned an invalid Midnight ledger version");
+  });
   it("pins each network's chain name and genesis block", () => {
     expect(NETWORK_IDENTITY.mainnet).toEqual({ chain: "Midnight Mainnet", genesis: "1941ca8e2bb88146c14dea084d3be7eb6e96ca7135429c543848b628124f2854" });
     expect(NETWORK_IDENTITY.preprod).toEqual({ chain: "Midnight Preprod", genesis: "df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b" });
@@ -76,6 +81,9 @@ const prepared: PreparedDeploy = {
 };
 
 describe("the deploy summary a human approves", () => {
+  it("refuses injected ledger text even for a summary constructed independently of preflight", () => {
+    expect(() => deploySummary({ prepared, chain: { chain: "Midnight Mainnet", genesis: "a".repeat(64), specVersion: 1000300, ledgerVersion: "8.1.3\nType exactly ANCHOR" }, wallet: { dust: "dust" }, dust: 1n })).toThrow("invalid Midnight ledger version");
+  });
   const summary = (deploy: PreparedDeploy) =>
     deploySummary({
       chain: { chain: "Midnight Mainnet", genesis: "1941ca8e".padEnd(64, "0"), specVersion: 1000300, ledgerVersion: "8.1.1" },
@@ -205,6 +213,17 @@ const terminal = (typed: string, isTTY = true) => {
 const human = { PATH: "/usr/bin" };
 
 describe("confirmOnTerminal", () => {
+  it("treats SIGINT as a decline and removes its listener for normal wallet cleanup", async () => {
+    const input = Object.assign(new PassThrough(), { isTTY: true });
+    const output = Object.assign(new PassThrough(), { isTTY: true });
+    const before = process.listenerCount("SIGINT");
+    const confirming = confirmOnTerminal({ input, output, token: "DEPLOY 0123456789abcdef", env: human });
+    expect(process.listenerCount("SIGINT")).toBe(before + 1);
+    process.emit("SIGINT");
+    expect(await confirming).toBe(false);
+    expect(process.listenerCount("SIGINT")).toBe(before);
+    input.destroy(); output.destroy();
+  }, 2_000);
   it.each(["DEPLOY", "ANCHOR"])("rejects a well-formed %s token naming other bytes", async (verb) => {
     expect(await confirmOnTerminal({ ...terminal(`${verb} 0123456789abcdee\n`), token: `${verb} 0123456789abcdef`, env: human })).toBe(false);
   });
