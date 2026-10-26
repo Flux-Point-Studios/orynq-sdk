@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const REPOSITORY = "Flux-Point-Studios/orynq-sdk";
-const PATH = "docs/checkpoints/mainnet.json", MAX = 16 * 1024 * 1024;
+const PATH = "docs/checkpoints/mainnet.json", MAX = 64 * 1024 * 1024;
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 function list(value) {
   if (!Array.isArray(value) || value.length > 4096) throw new Error("Invalid checkpoint publication list");
@@ -46,7 +46,7 @@ export async function publishCheckpointCandidate({ file, token, fetcher = fetch 
       for (;;) {
         const next = await reader.read(); if (next.done) break;
         size += next.value.length;
-        if (size > MAX * 2 + 1024 * 1024) throw new Error("Checkpoint publication response exceeds its bounds");
+        if (size > Math.ceil(MAX * 4 / 3) + 1024 * 1024) throw new Error("Checkpoint publication response exceeds its bounds");
         chunks.push(Buffer.from(next.value));
       }
     } catch (error) { await reader.cancel(); throw error; }

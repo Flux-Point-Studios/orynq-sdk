@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, ftruncateSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -53,6 +53,13 @@ test('publication refuses current-main prefix loss before any remote mutation', 
 test('publication refuses empty candidates before accessing credentials remotely', async () => {
   const f = fixture([]);
   try { await assert.rejects(publishCheckpointCandidate(f), /empty/); assert.equal(f.calls.length, 0); }
+  finally { f.cleanup(); }
+});
+test('publication refuses oversized candidate files before reading bytes or making requests', async () => {
+  const f = fixture();
+  const fd = openSync(f.file, 'r+');
+  try { ftruncateSync(fd, 64 * 1024 * 1024 + 1); } finally { closeSync(fd); }
+  try { await assert.rejects(publishCheckpointCandidate(f), /exceeds its bounds/); assert.equal(f.calls.length, 0); }
   finally { f.cleanup(); }
 });
 test('the credential step pins and executes the verified publisher snapshot with preloads removed', () => {

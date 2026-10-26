@@ -37,7 +37,7 @@ steps:
     image: *node
     commands:
       - corepack enable
-      - pnpm exec tsx packages/anchors-midnight/scripts/checkpoint-advance.ts derive --network mainnet --node https://midnight-proofs-a.fluxpointstudios.com/midnight/mainnet/rpc --history docs/checkpoints/mainnet.json --out /woodpecker/checkpoint-candidate/mainnet.json
+      - pnpm exec tsx packages/anchors-midnight/scripts/checkpoint-advance.ts derive --network mainnet --node https://rpc.mainnet.midnight.network --history docs/checkpoints/mainnet.json --out /woodpecker/checkpoint-candidate/mainnet.json
       - pnpm exec tsx packages/anchors-midnight/scripts/checkpoint-advance.ts verify --network mainnet --history /woodpecker/checkpoint-candidate/mainnet.json
     when:
       - event: cron
@@ -62,7 +62,7 @@ steps:
         import { readFileSync } from 'node:fs';
         import { createHash } from 'node:crypto';
         const source = readFileSync('tools/checkpoint-maintenance/publish.mjs');
-        if (createHash('sha256').update(source).digest('hex') !== '8efb39d0517dc496883bbd0f999219a0e1f713d7d650bb500287e1bfebbe6c23') throw new Error('Checkpoint publisher source differs from its reviewed pin');
+        if (createHash('sha256').update(source).digest('hex') !== '664cb4fa4ad93e3d3b6efc9a4d959d930e5d48ea2c1237ae23dc37a66bc55ccb') throw new Error('Checkpoint publisher source differs from its reviewed pin');
         await import('data:text/javascript;base64,' + source.toString('base64'));
         NODE
     when:

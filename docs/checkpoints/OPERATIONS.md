@@ -46,7 +46,7 @@ workflow does not establish that the hosted job ran or published.
 corepack pnpm install --frozen-lockfile
 corepack pnpm exec tsx packages/anchors-midnight/scripts/checkpoint-advance.ts derive \
   --network mainnet \
-  --node https://midnight-proofs-a.fluxpointstudios.com/midnight/mainnet/rpc \
+  --node https://rpc.mainnet.midnight.network \
   --history docs/checkpoints/mainnet.json --out /private/new-checkpoint-history.json
 corepack pnpm exec tsx packages/anchors-midnight/scripts/checkpoint-advance.ts verify \
   --network mainnet --history /private/new-checkpoint-history.json
@@ -97,6 +97,22 @@ all related stores from one coherent backup and authenticate the missing suffix.
 Unknown journal claims or inconsistent policy/admission history stay held for review.
 
 Bounds are explicit: 64 MiB per artifact, 4,096 artifacts and 512 MiB retained history;
-the GitHub proposal publisher limits its file to 16 MiB. A bound stops maintenance
+the GitHub proposal publisher limits its file to 64 MiB (below GitHub's file limit). A bound stops maintenance
 without pruning anything. A reviewed archival/format upgrade is required before
 raising a bound or retiring evidence.
+
+## Initial accepted-history candidate
+
+The first checked-in transcript was derived on 2026-10-26 through the public
+Foundation RPC above and replayed offline against the SDK's existing signed mainnet
+root `f556728f1114c09bc62a0a9019f54a380366303bc8a872e0c634166273ae1469`. It
+authenticates finalized block 3,186,840
+(`2c886c229ea7976143bb6ef1ffb505fbf73aaabb3d3c47185467f91ecc8f7b25`)
+and successor authority set 10,666, starting after block 3,186,710. Its target's
+authenticated timestamp was `2026-10-26T19:13:00Z`, checked fresh during derivation.
+Offline transcript replay authenticates finality and authority continuity; it does
+not assert present freshness. The compact JSON file is 18,313,584 bytes, SHA-256
+`35b7867edb867a4658cbaee61644d1fb93330b0c3dc73d620da4face1b6f1e3c`.
+It contains 390 recorded proof responses and 242 headers; its artifact digest is
+`51e7b3742a3ac7ebff258f28789bc7b7b6d29920a89853bbfda6931fdb975120`.
+No scheduled job, publication credential or standing host was activated to obtain it.
