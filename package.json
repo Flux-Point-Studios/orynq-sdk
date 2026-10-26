@@ -80,11 +80,6 @@
       "ip-address@10": "^10.7.4",
       "effect": "3.21.5"
     },
-    "auditConfig": {
-      "ignoreCves": [
-        "CVE-2026-93687"
-      ]
-    },
     "patchedDependencies": {
       "@midnight-ntwrk/wallet-sdk-dust-wallet@4.2.0": "patches/@midnight-ntwrk__wallet-sdk-dust-wallet@4.2.0.patch",
       "braces@3.0.3": "patches/braces@3.0.3.patch"
