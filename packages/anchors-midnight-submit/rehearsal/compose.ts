@@ -75,7 +75,7 @@ const { failures, facts } = judge({ raw, verified, crash, crashStatus, head });
 try {
   const tarball = readFileSync(`${dir}/evidence/verify-package.tgz`);
   if (createHash("sha256").update(tarball).digest("hex") !== verified.package.sha256 || `sha512-${createHash("sha512").update(tarball).digest("base64")}` !== verified.package.integrity) throw new Error("tarball hashes differ");
-  const manifest = JSON.parse(packedFiles(tarball).get("package.json")!.toString("utf8"));
+  const manifest = JSON.parse((packedFiles(tarball).get("package.json") as Buffer).toString("utf8"));
   if (manifest.name !== verified.package.name || manifest.version !== verified.package.version) throw new Error("tarball manifest differs");
 } catch { failures.push("the verifier package tarball is absent or differs from the verified identity"); }
 try {
@@ -88,8 +88,10 @@ try {
   const reopened = JSON.parse(serial3.document);
   for (const network of Object.values(reopened.networks) as Array<{ authors: Array<{validTo: unknown}> }>) for (const author of network.authors) author.validTo = null;
   const expected = `${JSON.stringify(reopened, null, 2)}\n`;
+  if (expected === serial3.document) throw new Error("no closed window was forged");
+  if (JSON.stringify(raw.pins) !== JSON.stringify(installedPins())) throw new Error("installed pins differ from writer");
   const forged = verified.forgedDocuments;
-  const rootNames = ["serial 3 with every author window reopened, under the trust root's signature on serial 3", "that document signed by a stranger, under the trust root's key"];
+  const rootNames = ["serial 3 with every author window reopened, under the trust root's signature on serial 3", "that document signed by a stranger, under the trust root's key"] as const;
   const third = forged["that document signed by a stranger, under the stranger's key"], control = forged["positive control: that document signed by a stranger, with the stranger as the trust root"];
   for (const f of Object.values(forged) as any[]) if (f.document !== expected) throw new Error("forged document shape differs");
   if (JSON.stringify(forged[rootNames[0]].signatures) !== JSON.stringify(serial3.signatures)) throw new Error("original signature differs");

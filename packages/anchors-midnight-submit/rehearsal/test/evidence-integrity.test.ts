@@ -9,7 +9,7 @@ it("hashes the installed file set and rejects changed bytes, extra files and lin
   const root = scratch("tree"); fakeConsumer(root);
   const directory = `${root}/node_modules/@fluxpointstudios/orynq-sdk-anchors-midnight`;
   const tar = readFileSync(`${root}/${FAKE_TARBALL}`);
-  expect(packedFiles(tar).size).toBe(2);
+  expect(packedFiles(tar)!.size).toBe(2);
   expect(packageTreeIdentity(tar, directory)).toEqual({ files: 2, sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
   writeFileSync(`${directory}/unexpected`, "injected");
   expect(() => packageTreeIdentity(tar, directory)).toThrow(/file set differs/);

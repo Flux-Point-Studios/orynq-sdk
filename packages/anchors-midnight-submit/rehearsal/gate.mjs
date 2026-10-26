@@ -289,7 +289,7 @@ export function judge({ raw, verified, crash, crashStatus, head = raw.toolingCom
   }
   for (const [name, want] of Object.entries(FORGED_DOCUMENTS)) {
     const got = forged[name]?.outcome;
-    if (forged[name]?.consumerOutcome !== want) failures.push(`forged KNOWN_AUTHORS document "${name}": knownAuthors answered ${forged[name]?.consumerOutcome ?? "not tried"}, not ${want}`);
+    if (forged[name] && forged[name]?.consumerOutcome !== want) failures.push(`forged KNOWN_AUTHORS document "${name}": knownAuthors answered ${forged[name]?.consumerOutcome ?? "not tried"}, not ${want}`);
     if (got !== want) failures.push(`forged KNOWN_AUTHORS document "${name}": ${got ?? "not tried"}, not ${want}`);
     else facts.forgedDocuments.push({ name, outcome: got });
   }

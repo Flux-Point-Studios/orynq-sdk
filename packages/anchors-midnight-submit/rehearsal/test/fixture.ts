@@ -130,7 +130,7 @@ export function honestRehearsal(): Rehearsal {
   };
 
   raw.phaseCommits = Object.fromEntries(["chain", "funding", "deploy", "kind1", "kind2", "sameblock", "negatives", "rotation"].map(phase => [phase, raw.toolingCommit]));
-  for (const [name, negative] of Object.entries(raw.negatives) as Array<[string, any]>) {
+  for (const [, negative] of Object.entries(raw.negatives) as Array<[string, any]>) {
     const action = new L.MaintenanceUpdate(deployAddress, [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority([], 0, 1n))], 0n);
     const tx = L.Transaction.fromParts("preprod", undefined, undefined, L.Intent.new(new Date("2026-10-06T00:00:00Z")).addMaintenanceUpdate(action)).mockProve().bind();
     Object.assign(negative, { txHash: tx.transactionHash(), bytes: Buffer.from(tx.serialize()).toString("hex"), address: deployAddress, operator: "blockfrost" });

@@ -53,7 +53,9 @@ export function packedFiles(tarball) {
       let offset = 0;
       while (offset < body.length) {
         const space = body.indexOf(32, offset);
-        const length = Number(body.subarray(offset, space).toString("ascii"));
+        const decimal = body.subarray(offset, space).toString("ascii");
+        if (!/^[1-9][0-9]*$/.test(decimal)) fail("invalid extended tar length");
+        const length = Number(decimal);
         if (space < offset || !Number.isSafeInteger(length) || length <= space - offset + 1 || offset + length > body.length || body[offset + length - 1] !== 10) fail("invalid extended tar header");
         const record = utf8(body.subarray(space + 1, offset + length - 1));
         const equal = record.indexOf("=");
@@ -73,7 +75,7 @@ export function packedFiles(tarball) {
     if (files.has(path)) fail("duplicate tar file");
     files.set(path, Buffer.from(body));
   }
-  fail("missing tar terminator");
+  return fail("missing tar terminator");
 }
 
 export function packageTreeIdentity(tarball, directory) {
@@ -89,6 +91,7 @@ export function packageTreeIdentity(tarball, directory) {
       else fail("installed non-file entry");
     }
   };
+  if (!lstatSync(directory).isDirectory() || lstatSync(directory).isSymbolicLink()) fail("installed package root is not a directory");
   walk(directory);
   if (actual.size !== expected.size) fail("installed file set differs from tarball");
   for (const [name, bytes] of expected) if (!actual.get(name)?.equals(bytes)) fail(`installed file differs from tarball: ${name}`);
