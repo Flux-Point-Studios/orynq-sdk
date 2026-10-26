@@ -37,6 +37,13 @@ export function terminalDiagnostic(message: string): string {
   });
 }
 
+// Capture before announcing: a slow or blocked terminal write consumes the same timeout.
+export function deadlineBeforeAnnouncement(timeoutMillis: number, announce: () => void, now = Date.now): number {
+  const until = now() + timeoutMillis;
+  announce();
+  return until;
+}
+
 export const home = homedir();
 // Where the FPS mainnet keys and the deploy wallet's mnemonic live.
 export const SECRETS = `${home}/.secrets/orynq-midnight-mainnet`;

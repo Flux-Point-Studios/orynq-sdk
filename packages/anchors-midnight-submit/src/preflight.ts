@@ -20,10 +20,13 @@ export interface ChainFacts {
 }
 
 function checkedLedgerVersion(version: unknown): string {
-  if (typeof version !== "string" || version.length > 32 || !/^\d+\.\d+\.\d+$/.test(version)) {
+  // The RPC uses Cargo exact-version syntax (=8.1.2) on deployed nodes. Normalize only
+  // that recognized marker; everything emitted still has the strict numeric semver grammar.
+  const normalized = typeof version === "string" && version.startsWith("=") ? version.slice(1) : version;
+  if (typeof normalized !== "string" || normalized.length > 32 || !/^\d+\.\d+\.\d+$/.test(normalized)) {
     throw new Error("the node returned an invalid Midnight ledger version");
   }
-  return version;
+  return normalized;
 }
 
 // Refuses a node that is not `network`'s chain or runs a runtime the decoder does not know, and

@@ -43,7 +43,7 @@ import {
   type PreparedAnchor,
   type RegistryOperator,
 } from "../src/index.js";
-import { ANCHORS_JOURNAL, DEPLOY_JOURNAL, SECRETS, STATE, mainnetScript } from "./mainnet-session.js";
+import { ANCHORS_JOURNAL, DEPLOY_JOURNAL, SECRETS, STATE, mainnetScript, deadlineBeforeAnnouncement } from "./mainnet-session.js";
 
 const { option, run, requireDustFloor, confirm } = mainnetScript({
   name: "anchor-mainnet",
@@ -83,10 +83,9 @@ const FINALITY_MINUTES = 10;
 // instead of the node's word.
 async function finalOnNode(source: MidnightSource, operator: RegistryOperator, label: string, prepared: PreparedAnchor, landed: AnchorReceipt): Promise<AnchorReceipt> {
   const chain = chainView(source, "mainnet");
-  const awaiting = ({ blockHeight, blockHash }: AnchorReceipt) => {
+  const awaiting = ({ blockHeight, blockHash }: AnchorReceipt) => deadlineBeforeAnnouncement(FINALITY_MINUTES * 60_000, () => {
     process.stdout.write(`\n${label} landed in block ${blockHeight} (${blockHash}); waiting until the node finalizes it...\n`);
-    return Date.now() + FINALITY_MINUTES * 60_000;
-  };
+  });
   let receipt = landed;
   let until = awaiting(receipt);
   let told: string | null = null;

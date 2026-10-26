@@ -52,8 +52,17 @@ includes the first balancing intent's overhead and can reject an affordable late
 regression with two 14.5-million STAR registrations leaves about 3.82e14 SPECK per coin: one
 spend costs about 4.29e14 and two cost 7.40e14. The old estimate refuses the set; exact prefix
 pricing pays it and the SDK simulator accepts the resulting transaction. These are simulator
-observations at its initial prices; a real anchor call at observed mainnet prices remains an
-explicit release-evidence requirement.
+observations at its initial prices. A second fixture captures mainnet block 3,186,875
+(`dd7d4d27…95d627a`) through the read-only `MidnightRuntimeApi_get_ledger_parameters`
+runtime API on 2026-10-26. The exact request, canonical header, network genesis, serialized
+parameters and SHA-256 are in `test/fixtures/mainnet-ledger-prices.json`. At those observed
+quiet-chain prices (`feePrices.overallPrice` ≈ 5.421e-18), a real generated `anchor()` call
+rounds to a 1-SPECK ledger fee and costs 2 SPECK including the wallet's
+1-SPECK overhead, with or without its one fee spend. The simulator accepts the paid call using
+those parameters. These node-reported parameters are pinned to the observed header, rather
+than authenticated with a new consensus proof. This quiet-block measurement is not an upper
+bound: fees change with block activity. The simulator uses mock proving and erases proofs; this measures fees and ledger acceptance,
+and makes no claim of a live broadcast, new proof, or fresh mainnet latency guarantee.
 
 The wallet takes coins largest first (`largestFirst` through `payingFees`), not in the SDK's
 default order, smallest first. Every DUST spend adds about 3.1e14 SPECK to a fee at the
@@ -285,3 +294,7 @@ Node inclusion remains internal evidence. Every operator completion, including d
 block. A verification outage retains the landed journal row, so retries verify the same attempt.
 Custom verifier integrations return a typed full report and pass the same field checks. The
 accepted report is returned as `receipt.verification` and reused before CLI result recording.
+
+Result updates use a persistent owner-only lock inode and Linux `/usr/bin/flock`; the kernel
+releases the descriptor lock after a crashed writer. No stale-PID check deletes a lock file.
+Do not remove these lock files while writers are running.
