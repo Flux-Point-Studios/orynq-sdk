@@ -6,7 +6,7 @@ import { admit } from "../gate.js";
 import { LIMITS } from "../limits.js";
 import { runIntent } from "../run.js";
 import { audit, readAudit, readStatus } from "../state.js";
-import { HOUR, iso, stateRoot } from "./helpers.js";
+import { HOUR, iso, journalled, stateRoot } from "./helpers.js";
 
 vi.mock("node:fs", async (original) => {
   const actual = await original<typeof import("node:fs")>();
@@ -103,6 +103,7 @@ describe("approval consumption across interruptions and replacement", () => {
 
   it("counts earlier confirmations against the daily cap for a replacement", async () => {
     const r = stateRoot(); const id = r.approve(intent);
+    journalled(r.paths.deployJournal, tx(169), "failed");
     audit(r.paths.root, { event: "confirm", intent: id, item: "deploy", tx_hash: tx(169), fee_dust: "0.01", valid_until: iso(Date.now() + 600_000), approval_sha256: r.approvalSha256(id) });
     r.confirmed("12345678", tx(168), "0.09");
     drive([d => { r.approve(intent, { expires_at: iso(Date.now() + HOUR) }); return answer(d); }]);

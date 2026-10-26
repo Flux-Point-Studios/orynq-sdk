@@ -134,7 +134,7 @@ it("reserves the exact serialized paid fee and rolls back a daily-cap refusal", 
 it("migrates provenance without inventing indexed history or old admissions", async () => {
   const { state, path } = setup(), raw = await batchBytes({ ttl: now + 10 * minute }); state.recordAttempt(raw);
   state.close(); handles.splice(handles.indexOf(state), 1);
-  const db = new DatabaseSync(path); db.exec("drop table follower_admissions; drop table follower_batch_calls; drop table follower_policies; alter table follower_blocks drop column batch_indexed; pragma user_version=1"); db.close();
+  const db = new DatabaseSync(path); db.exec("drop table follower_admissions; drop table follower_batch_calls; drop table follower_policies; drop table follower_checkpoints; alter table follower_blocks drop column batch_indexed; pragma user_version=1"); db.close();
   const resumed = openFollowerState(path, scope); handles.push(resumed);
   expect(() => resumed.assertAdmitted(raw)).toThrow(/admi/i);
   expect(() => resumed.reserveStandingAttempt(raw, policy())).toThrow(/history|index/i);

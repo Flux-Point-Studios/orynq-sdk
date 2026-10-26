@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { tmpdir, userInfo } from "node:os";
@@ -40,11 +40,14 @@ describe("account author journal binding", () => {
   it("fails closed on a deleted or replaced bound journal", () => {
     const root = join(dir, "deleted-bindings"); const journal = join(dir, "deleted.sqlite");
     authorJournal("preprod", author, journal, root).close();
+    const replacement = join(dir, "replacement.sqlite");
+    writeFileSync(replacement, "replacement", { mode: 0o600 });
     rmSync(journal);
     expect(() => authorJournal("preprod", author, journal, root)).toThrow("bound journal is missing");
     expect(() => readFileSync(journal)).toThrow();
-    writeFileSync(journal, "replacement", { mode: 0o600 });
+    renameSync(replacement, journal);
     expect(() => authorJournal("preprod", author, journal, root)).toThrow("replaced or is unsafe");
+    expect(readFileSync(journal, "utf8")).toBe("replacement");
   });
   it("refuses journal and binding directory symlinks", () => {
     const target = join(dir, "symlink-target"); writeFileSync(target, "unmodified", { mode: 0o600 });

@@ -395,7 +395,7 @@ describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
     const m = offlineMainnet();
     const failed = await m.run((token) => token, "lose-read");
     expect(failed.status, failed.output).toBe(1);
-    expect(failed.output).toMatch(/deploy-mainnet: offline indexer: HTTP 502: Bad Gateway/);
+    expect(failed.output).toContain("deploy-mainnet: offline indexer: HTTP 502: <redacted>");
     const [sent] = m.chain().sent;
 
     const rerun = await m.run((token) => token);
@@ -846,7 +846,7 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
     const m = offlineAnchors();
     const failed = await m.run((token) => token, "lose-read");
     expect(failed.status, failed.output).toBe(1);
-    expect(failed.output).toContain("anchor-mainnet: offline indexer: HTTP 502: Bad Gateway");
+    expect(failed.output).toContain("anchor-mainnet: offline indexer: HTTP 502: <redacted>");
     const [sent] = m.sent();
     expect(m.results()).toBeNull();
 
