@@ -39,6 +39,12 @@ export const batchOver =
   (call: (method: string, params: unknown[]) => Promise<unknown>) =>
   async (calls: Array<[string, unknown[]]>): Promise<unknown[]> => {
     const answers: unknown[] = [];
-    for (const [method, params] of calls) answers.push(await call(method, params));
+    for (const [method, params] of calls) {
+      try { answers.push(await call(method, params)); }
+      catch (error) {
+        if (error instanceof NodeError) throw new NodeError(error.message, error.method, error.code, answers);
+        throw error;
+      }
+    }
     return answers;
   };

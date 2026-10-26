@@ -204,11 +204,16 @@ describe("contractStateOnNode", () => {
     await expect(contractStateOnNode(source(), REGISTRY, AT)).rejects.toThrow("midnight_zswapStateRoot failed (code -32602)");
   });
 
+  it.each([null, [], [1], "0x00", new Array(33).fill(256), new Array(33).fill(0.5)])("never treats an invalid root as proof of absent contract: %j", async (root) => {
+    handler = (b) => ({ json: [{ jsonrpc: "2.0", id: b[0].id, result: root }, { jsonrpc: "2.0", id: b[1].id, error: { code: -32602, message: "Unable to get requested contract state" } }] });
+    await expect(contractStateOnNode(source(), ABSENT, AT)).rejects.toThrow("33-byte root");
+  });
+
   it("refuses any other answer to the contract read: another error, or a result that is not a string", async () => {
-    handler = (b) => ({ json: [{ jsonrpc: "2.0", id: b[0].id, result: [1] }, { jsonrpc: "2.0", id: b[1].id, error: { code: -32603, message: "Internal error" } }] });
+    handler = (b) => ({ json: [{ jsonrpc: "2.0", id: b[0].id, result: Array.from({ length: 33 }, (_, i) => i) }, { jsonrpc: "2.0", id: b[1].id, error: { code: -32603, message: "Internal error" } }] });
     await expect(contractStateOnNode(source(), REGISTRY, AT)).rejects.toThrow("test node: midnight_contractState failed (code -32603)");
     for (const answer of [{ result: null }, {}, { result: 7 }]) {
-      handler = (b) => ({ json: [{ jsonrpc: "2.0", id: b[0].id, result: [1] }, { jsonrpc: "2.0", id: b[1].id, ...answer }] });
+      handler = (b) => ({ json: [{ jsonrpc: "2.0", id: b[0].id, result: Array.from({ length: 33 }, (_, i) => i) }, { jsonrpc: "2.0", id: b[1].id, ...answer }] });
       await expect(contractStateOnNode(source(), ABSENT, AT)).rejects.toThrow("test node: midnight_contractState answered something other than a string");
     }
   });

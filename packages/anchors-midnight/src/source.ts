@@ -64,6 +64,7 @@ export class NodeError extends Error {
     message: string,
     readonly method: string,
     readonly code: number | undefined,
+    readonly completedResults: readonly unknown[] = [],
   ) {
     super(message);
   }
@@ -249,7 +250,15 @@ export function midnightSource(endpoints: SourceEndpoints): MidnightSource {
         )) as RpcAnswer[];
         if (!Array.isArray(answers)) throw new Error(`${endpoints.operator} node: a batch was answered with a single response`);
         const byId = new Map(answers.map((a) => [a.id, a]));
-        return calls.map(([method], id) => answer(method, byId.get(id)) as T);
+        const completed: T[] = [];
+        for (const [id, [method]] of calls.entries()) {
+          try { completed.push(answer(method, byId.get(id)) as T); }
+          catch (error) {
+            if (error instanceof NodeError) throw new NodeError(error.message, error.method, error.code, completed);
+            throw error;
+          }
+        }
+        return completed;
       },
     },
   };
@@ -335,28 +344,7 @@ function subscribe(endpoints: SourceEndpoints, redact: (s: string) => string, ad
   };
 }
 
-// The state the node holds at `address` in block `at` (its best block when none is named), or
-// null when it holds no contract there. midnight-node 1.0 answers for an address holding no
-// contract with an empty string, 2.x with JSON-RPC error -32602, its answer too in a block whose
-// ledger it cannot read, such as one it does not hold. So the contract is read in one request
-// behind the ledger's zswap root in the same block: a batch is refused at its first failed
-// request, so -32602 on the contract read means the node read that ledger and found no contract.
-// Any MidnightSource's node may raise that error, so it is recognized by its method and code.
-export async function contractStateOnNode(source: Pick<MidnightSource, "node" | "operator">, address: string, at?: string): Promise<string | null> {
-  const block = at === undefined ? [] : [`0x${at}`];
-  try {
-    const [, state] = await source.node.batch<unknown>([
-      ["midnight_zswapStateRoot", block],
-      ["midnight_contractState", [address, ...block]],
-    ]);
-    if (typeof state !== "string") throw new Error(`${source.operator} node: midnight_contractState answered something other than a string`);
-    return state === "" ? null : state;
-  } catch (error) {
-    const refused = error as Partial<NodeError> | undefined;
-    if (refused?.method === "midnight_contractState" && refused.code === -32602) return null;
-    throw error;
-  }
-}
+export { contractStateOnNode } from "./contract-state.js";
 
 // GRANDPA finality proofs and headers through a source's node, one batched request per call.
 export function finalityRpc(source: MidnightSource): FinalityRpc {
