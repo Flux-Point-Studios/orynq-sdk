@@ -222,10 +222,12 @@ async function cmdTrace() {
   stdout.write(`\n${bold("Hashes")}\n`);
   stdout.write(`  receiptId     ${result.receiptId}\n`);
   stdout.write(`  blockHash     ${result.blockHash}\n`);
-  stdout.write(`  rootHash      ${result.bundle.rootHash}\n`);
-  stdout.write(`  merkleRoot    ${result.bundle.merkleRoot}\n`);
+  stdout.write(`  traceRootHash ${result.bundle.rootHash}\n`);
+  stdout.write(`  traceMerkleRoot ${result.bundle.merkleRoot}\n`);
+  stdout.write(`  contentHash   ${result.contentHash}\n`);
+  stdout.write(`  baseRootHash  ${result.rootHash}\n`);
   if (result.certHash) {
-    stdout.write(`  certHash      ${result.certHash}\n`);
+    stdout.write(`  certificateHash ${result.certHash}\n`);
   }
   return 0;
 }

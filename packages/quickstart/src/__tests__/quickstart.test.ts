@@ -24,7 +24,8 @@ import { mkdtempSync, rmSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { cryptoWaitReady } from "@polkadot/util-crypto";
-import { loadOrCreateIdentity, firstTraceBundle, buildExplorerUrls } from "../index.js";
+import packageMetadata from "../../package.json";
+import { VERSION, loadOrCreateIdentity, firstTraceBundle, buildExplorerUrls } from "../index.js";
 import type { OrynqIdentity, TraceBundleLite } from "../index.js";
 
 beforeAll(async () => {
@@ -172,3 +173,5 @@ describe("buildExplorerUrls", () => {
     expect(urls.explorer).toContain("/explorer/query/0x" + "cd".repeat(32));
   });
 });
+
+it("reports the package version", () => { expect(VERSION).toBe(packageMetadata.version); });
