@@ -111,7 +111,9 @@ describe("critique2 (f): never valid without consensus finality, and every resul
     expect(check(r, "finality")!.detail).toBe("set 7 has no voting weight, so it finalizes nothing");
   });
 
-  it("valid is reachable only at consensus-verified, even if every check passes below it", async () => {
+  // These paths already fail a finality check when assurance is below consensus-verified.
+  // They exercise those verdicts, not done()'s defensive guard with every check passing.
+  it("reports valid for the finalized fixture and unverified-finality when proof is skipped or bounded", async () => {
     const chain = anchorChain();
     const results = await Promise.all([
       verify(chain, request("anchor", KIND1)),
