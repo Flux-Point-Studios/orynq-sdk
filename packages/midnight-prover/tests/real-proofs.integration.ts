@@ -18,7 +18,7 @@ const prover = new RealMidnightProver({
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 
 function nativeCode(proof: CircuitProof): string {
-  const request = { circuitId: proof.circuitId, transactionBase64: proof.transactionBase64, referenceStateBase64: proof.referenceStateBase64, verificationTimeUnixSeconds: nowSeconds() };
+  const request = { circuitId: proof.circuitId, transactionBase64: proof.transactionBase64, referenceStateBase64: proof.referenceStateBase64 };
   const result = spawnSync(nativeVerifierPath, ["--registry", resolve(artifactsDir, "registry.json")], { input: JSON.stringify(request) });
   return (JSON.parse(result.stdout.toString("utf8")) as { code: string }).code;
 }

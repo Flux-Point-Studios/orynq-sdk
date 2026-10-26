@@ -97,7 +97,6 @@ describe("real Midnight proof boundary", () => {
       circuitId: "attacker-circuit",
       transactionBase64: "AA==",
       referenceStateBase64: "AA==",
-      verificationTimeUnixSeconds: 0,
       publicInputs: { contextDigest: "01".repeat(32), commitment: "02".repeat(32), notAfter: Math.floor(Date.now() / 1000) + 600 },
     })).toBe(false);
   });

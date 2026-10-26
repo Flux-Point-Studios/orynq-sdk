@@ -54,8 +54,11 @@ steps:
     commands:
       - test "$(id -u)" = 1000
       - rustup component add --toolchain 1.99.0 rustfmt clippy
+      - bash packages/midnight-prover/native/check-verify-only-boundary.sh
+      - cargo +1.99.0 install cargo-audit --version 0.22.2 --locked
+      - cargo +1.99.0 audit --file packages/midnight-prover/native/Cargo.lock --deny warnings --ignore RUSTSEC-2026-0253 --ignore RUSTSEC-2025-0141 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0387
       - cargo +1.99.0 fmt --manifest-path packages/midnight-prover/native/Cargo.toml -- --check
-      - cargo +1.99.0 clippy --locked --manifest-path packages/midnight-prover/native/Cargo.toml --all-targets -- -D warnings
+      - cargo +1.99.0 clippy --release --locked --manifest-path packages/midnight-prover/native/Cargo.toml --all-targets -- -D warnings
       - cargo +1.99.0 build --release --locked --manifest-path packages/midnight-prover/native/Cargo.toml
       - cargo +1.99.0 test --release --locked --manifest-path packages/midnight-prover/native/Cargo.toml
 

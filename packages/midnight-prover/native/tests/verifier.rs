@@ -43,8 +43,7 @@ fn request(transaction: &str) -> Value {
     json!({
         "circuitId": "synthetic-sha256-fixture-v1",
         "transactionBase64": STANDARD.encode(tx_bytes),
-        "referenceStateBase64": STANDARD.encode(fs::read(fixtures().join("reference-state.bin")).unwrap()),
-        "verificationTimeUnixSeconds": now
+        "referenceStateBase64": STANDARD.encode(fs::read(fixtures().join("reference-state.bin")).unwrap())
     })
 }
 
@@ -158,27 +157,6 @@ fn caller_cannot_supply_verifier_key_path() {
 }
 
 #[test]
-fn caller_cannot_choose_a_stale_validation_clock() {
-    let mut input = request("valid-unbound.bin");
-    input["verificationTimeUnixSeconds"] =
-        json!(input["verificationTimeUnixSeconds"].as_u64().unwrap() - 300);
-    let result = invoke(input, fixtures().join("registry.json"));
-    assert_eq!(result["valid"], false);
-    assert_eq!(result["code"], "invalid-time");
-}
-
-#[test]
-fn past_clock_cannot_resurrect_an_expired_transaction() {
-    let mut input = request("valid-unbound.bin");
-    let now = input["verificationTimeUnixSeconds"].as_u64().unwrap();
-    input["transactionBase64"] = json!(retimed(&input, now - 60));
-    input["verificationTimeUnixSeconds"] = json!(now - 300);
-    let result = invoke(input, fixtures().join("registry.json"));
-    assert_eq!(result["valid"], false);
-    assert_eq!(result["code"], "invalid-time");
-}
-
-#[test]
 fn substituted_reference_key_or_ledger_values_are_rejected() {
     for alter_key in [true, false] {
         let mut input = request("valid-unbound.bin");
@@ -239,7 +217,10 @@ fn reference_state_must_carry_initial_ledger_parameters() {
 #[test]
 fn expired_ttl_is_rejected_at_the_current_clock() {
     let mut input = request("valid-unbound.bin");
-    let now = input["verificationTimeUnixSeconds"].as_u64().unwrap();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     input["transactionBase64"] = json!(retimed(&input, now - 60));
     let result = invoke(input, fixtures().join("registry.json"));
     assert_eq!(result["valid"], false);
