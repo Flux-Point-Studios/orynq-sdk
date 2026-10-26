@@ -1,13 +1,14 @@
 // Verifies every preprod rehearsal anchor with the W2 verifier, in a process of its own that
 // imports only the packed @fluxpointstudios/orynq-sdk-anchors-midnight tarball and gate.mjs. It
-// reads through Blockfrost preprod, the operator the writes went through too, and trusts only
-// the preprod-only KNOWN_AUTHORS root.
+// reads through Blockfrost preprod. Shipped policy roots authenticate its reviewed consensus
+// checkpoints; the fresh preprod drill root authorizes only the rotation's author windows.
 // It exits 0 only when gate.mjs, copied beside it, finds nothing the evidence pack could not claim.
 //   node verify-all.mjs EVIDENCE_DIR BLOCKFROST_PROJECT_ID_FILE > verified.json
 // EVIDENCE_DIR holds raw.json, bundles.json, known-authors/, crash.log and crash.log.status.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname } from "node:path";
+import { packageTreeIdentity } from "./evidence-integrity.mjs";
 import { fileURLToPath } from "node:url";
 import { forgeKnownAuthors, judge, parseCrashLog, parseCrashStatus, ROTATION_LABELS } from "./gate.mjs";
 
@@ -21,6 +22,7 @@ const refuse = (why) => {
   process.stderr.write(`verify-all: ${why}\n`);
   process.exit(1);
 };
+if (process.execArgv.length || process.env.NODE_OPTIONS?.trim()) refuse("preloaded code or runtime arguments are not permitted");
 const resolved = realpathSync(fileURLToPath(import.meta.resolve(PACKAGE)));
 if (!resolved.startsWith(`${here}/node_modules/`)) refuse(`${PACKAGE} resolves to ${resolved}, outside ${here}/node_modules/: install the packed tarball into this directory`);
 const lockFile = `${here}/package-lock.json`;
@@ -30,15 +32,28 @@ if (!/^file:[^/]+\.tgz$/.test(lock.resolved ?? "")) refuse(`npm installed ${PACK
 const tarballPath = `${here}/${lock.resolved.slice("file:".length)}`;
 const tarball = existsSync(tarballPath) ? readFileSync(tarballPath) : null;
 if (!tarball || `sha512-${createHash("sha512").update(tarball).digest("base64")}` !== lock.integrity) refuse(`${tarballPath} does not have the integrity ${lock.integrity} npm recorded when it installed ${PACKAGE}`);
+const packageDirectory = `${here}/node_modules/${PACKAGE}`;
+if (!resolved.startsWith(`${realpathSync(packageDirectory)}/`)) refuse("the verify entry escapes its installed package");
+let installedTree;
+try { installedTree = packageTreeIdentity(tarball, packageDirectory); }
+catch (error) { refuse(error.message); }
 const { blockfrostEndpoints, knownAuthors, midnightSource, openKnownAuthors, signKnownAuthors, verifyMidnightAnchor, KNOWN_AUTHORS_TRUST_ROOTS, REGISTRY_VERIFIER_KEY_SHA256 } = await import(PACKAGE);
 
 const [dir, projectIdFile] = process.argv.slice(2);
 const read = (name) => JSON.parse(readFileSync(`${dir}/${name}`, "utf8"));
 const raw = read("raw.json");
 const bundles = read("bundles.json");
+const consensusPolicy = read("submission-known-authors.json");
+const consensus = knownAuthors({ documents: consensusPolicy }); // Shipped roots only.
+const checkpoints = consensus.checkpoints("preprod");
+if (checkpoints.length === 0) refuse("reviewed signed preprod consensus onboarding is required");
 const root = readFileSync(`${dir}/known-authors/root.pub`, "utf8").trim();
 const signed = [1, 2, 3].map((n) => read(`known-authors/signed-${n}.json`)[0]);
-const authorsFrom = (...serials) => knownAuthors({ documents: serials.map((n) => signed[n - 1]), trustRoots: [root] });
+const authorsFrom = (...serials) => {
+  const authors = knownAuthors({ documents: serials.map((n) => signed[n - 1]), trustRoots: [root] });
+  if (authors.checkpoints("preprod").length) refuse("drill author policies must not supply consensus checkpoints");
+  return authors;
+};
 const source = midnightSource(blockfrostEndpoints("preprod", projectIdFile));
 const registry = {
   generation: 1,
@@ -66,12 +81,18 @@ const summary = (r) => ({
   notes: r.notes,
 });
 const verify = async (txHash, expect, options = {}, extra = {}) =>
-  summary(await verifyMidnightAnchor({ network: "preprod", txHash, expect, ...extra }, { source, registries: [registry], knownAuthors: authorsFrom(1, 2, 3), ...options }));
+  summary(await verifyMidnightAnchor({ network: "preprod", txHash, expect, ...extra }, { source, registries: [registry], checkpoints, knownAuthors: authorsFrom(1, 2, 3), ...options }));
 
 const out = {
   verifier: "@fluxpointstudios/orynq-sdk-anchors-midnight (packed tarball), separate process, no wallet",
   source: "blockfrost preprod",
-  package: { name: PACKAGE, version: lock.version, resolved: lock.resolved, integrity: lock.integrity, sha256: createHash("sha256").update(tarball).digest("hex") },
+  toolingCommit: raw.toolingCommit,
+  execution: { nodeOptions: process.env.NODE_OPTIONS ?? null, execArgv: [...process.execArgv] },
+  verifierKeys: REGISTRY_VERIFIER_KEY_SHA256,
+  consensusPolicy,
+  consensusSerial: consensus.serial,
+  consensusCheckpointCount: checkpoints.length,
+  package: { name: PACKAGE, version: lock.version, resolved: lock.resolved, integrity: lock.integrity, sha256: createHash("sha256").update(tarball).digest("hex"), installedTree },
   trustRoot: root,
   shippedTrustRoots: [...KNOWN_AUTHORS_TRUST_ROOTS],
   knownAuthorsDocuments: signed.map((s) => {
@@ -106,7 +127,10 @@ for (const [name, { signed: forged, trustRoots }] of Object.entries(forgeKnownAu
   } catch (error) {
     outcome = `refused: ${error.message}`;
   }
-  out.forgedDocuments[name] = { ...forged, trustRoots, outcome };
+  let consumerOutcome = "opened";
+  try { knownAuthors({ documents: trustRoots.includes(root) ? [...signed, forged] : [forged], trustRoots }); }
+  catch (error) { consumerOutcome = `refused: ${error.message}`; }
+  out.forgedDocuments[name] = { ...forged, trustRoots, outcome, consumerOutcome };
   process.stderr.write(`forged ${name}: ${outcome}\n`);
 }
 
@@ -125,7 +149,7 @@ const negatives = {
   "finality skipped": () => verify(k1.txHash, expectOf(k1), { finality: "skip" }),
   "a registry pinned at another deploy height": () => verify(k1.txHash, expectOf(k1), { registries: [{ ...registry, deployHeight: registry.deployHeight - 1 }] }),
   "a registry at another address": () => verify(k1.txHash, expectOf(k1), { registries: [{ ...registry, address: random() }] }),
-  "no KNOWN_AUTHORS document and no checkpoint": () => verify(k1.txHash, expectOf(k1), { knownAuthors: knownAuthors({ documents: [], trustRoots: [root] }) }),
+  "no KNOWN_AUTHORS document and no checkpoint": () => verify(k1.txHash, expectOf(k1), { knownAuthors: knownAuthors({ documents: [], trustRoots: [root] }), checkpoints: [] }),
   "a checkpoint too far below for a zero set-change budget": () => verify(k1.txHash, expectOf(k1), { maxSetChanges: 0 }),
 };
 for (const [name, run] of Object.entries(negatives)) {

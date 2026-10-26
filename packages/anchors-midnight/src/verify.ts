@@ -8,6 +8,7 @@ import { assertRegistryDeployBytes, assertRegistryState } from "./registry.js";
 import { fromHex, toHex } from "./scale.js";
 import { SourceConflict, finalityRpc, type IndexedTransaction, type MidnightSource } from "./source.js";
 import { headerFromRpc, headerHash, includedTransactionIndex, orderedTrieRoot, type RpcHeader } from "./substrate.js";
+import { boundedDetail, isSourceHash, isSourceHeight } from "./diagnostics.js";
 
 // Status, most to least severe: a check failed outright (invalid), as when another key wrote the
 // anchor than the one the caller pinned; sources disagree with each other or with consensus
@@ -82,10 +83,10 @@ class Checks {
   readonly list: Check[] = [];
   private readonly failed = new Set<Exclude<AnchorStatus, "valid">>();
   pass(name: string, detail: string) {
-    this.list.push({ name, ok: true, detail });
+    this.list.push({ name, ok: true, detail: boundedDetail(detail) });
   }
   fail(name: string, severity: Exclude<AnchorStatus, "valid">, detail: string) {
-    this.list.push({ name, ok: false, detail });
+    this.list.push({ name, ok: false, detail: boundedDetail(detail) });
     this.failed.add(severity);
   }
   status(): AnchorStatus {
@@ -133,10 +134,15 @@ async function include(
     return null;
   }
   const indexed = found[0]!;
+  if (!isSourceHeight(indexed.block?.height) || !isSourceHash(indexed.block?.hash) || !isSourceHeight(indexed.block?.timestamp) || typeof indexed.raw !== "string") {
+    checks.fail(`${label}indexer-format`, "invalid", "the indexer returned malformed transaction or block metadata");
+    return null;
+  }
   checks.pass(`${label}indexer`, `the indexer places it in block ${indexed.block.height}`);
-  const raw = fromHex(indexed.raw, "raw transaction");
+  let raw: Uint8Array;
   let decoded: AnchorTransaction;
   try {
+    raw = fromHex(indexed.raw, "raw transaction");
     decoded = decodeAnchorTransaction(raw, registries);
   } catch (error) {
     checks.fail(`${label}transaction`, "invalid", message(error));
@@ -153,7 +159,9 @@ async function include(
   let included: boolean;
   let execution: { header: ReturnType<typeof headerFromRpc>; extrinsicIndex: number } | undefined;
   try {
-    const blockHash = (await source.node.call<string>("chain_getBlockHash", [block.height])).replace(/^0x/, "");
+    const answer = await source.node.call<unknown>("chain_getBlockHash", [block.height]);
+    const blockHash = typeof answer === "string" ? answer.replace(/^0x/, "") : null;
+    if (!isSourceHash(blockHash)) throw new SourceConflict("the node returned a malformed block hash");
     if (blockHash !== block.hash) {
       checks.fail(`${label}node-block`, "conflict", `the node's block ${block.height} is ${blockHash}, the indexer's ${block.hash}`);
       return out;
@@ -173,7 +181,9 @@ async function include(
     }
     checks.pass(`${label}extrinsics-root`, `the body's ${extrinsics.length} extrinsics match the header's extrinsicsRoot`);
     if (!source.verifyExecution) {
-      out.runtime = (await source.node.call<{ specVersion: number }>("state_getRuntimeVersion", [`0x${block.hash}`])).specVersion;
+      const specVersion = (await source.node.call<{ specVersion: unknown }>("state_getRuntimeVersion", [`0x${block.hash}`])).specVersion;
+      if (!isSourceHeight(specVersion)) throw new SourceConflict("the node returned a malformed runtime version");
+      out.runtime = specVersion;
       if (!(KNOWN_RUNTIME_SPEC_VERSIONS as readonly number[]).includes(out.runtime)) {
         checks.fail(`${label}runtime`, "invalid", `block ${block.height} runs runtime ${out.runtime}, whose extrinsic layout the decoder does not know`);
         return out;
@@ -330,13 +340,13 @@ export async function verifyMidnightAnchor(request: VerifyRequest, options: Veri
   }
 
   if (options.source.verifyExecution) checks.pass("execution-status", "authenticated finalized events prove SUCCESS");
-  else if (indexed.indexed.status !== "SUCCESS") checks.fail("indexer-status", "invalid", `the indexer reports ${indexed.indexed.status}`);
+  else if (indexed.indexed.status !== "SUCCESS") checks.fail("indexer-status", "invalid", `the indexer reports ${indexed.indexed.status === "FAILURE" || indexed.indexed.status === "PARTIAL_SUCCESS" ? indexed.indexed.status : "an unrecognized or absent status"}`);
   else checks.pass("indexer-status", "the indexer reports SUCCESS");
   stateCheck(checks, "indexer-state", indexed.indexed.contractActions.find((a) => a.address === anchor.address)?.state, "the indexer");
   if (indexed.runtime !== null) {
     try {
       const state = await options.source.node.call<string | null>("midnight_contractState", [anchor.address, `0x${indexed.block.hash}`]);
-      stateCheck(checks, "node-state", state === null ? undefined : state.replace(/^0x/, ""), "the node");
+      stateCheck(checks, "node-state", state === null || state === "" || state === "0x" ? undefined : state.replace(/^0x/, ""), "the node");
     } catch (error) {
       checks.fail("node-state", "unavailable", message(error));
     }

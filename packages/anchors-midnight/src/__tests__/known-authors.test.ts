@@ -3,6 +3,7 @@ import {
   KNOWN_AUTHORS_TRUST_ROOTS,
   SHIPPED_KNOWN_AUTHORS,
   knownAuthors,
+  knownAuthorsSigningSummary,
   openKnownAuthors,
   signKnownAuthors,
   type KnownAuthorsDocument,
@@ -180,5 +181,33 @@ describe("what this package ships", () => {
       expect(() => knownAuthors()).toThrow(/signature|trust root/i);
       if (field !== "key") expect(() => knownAuthors({ trustRoots: [...KNOWN_AUTHORS_TRUST_ROOTS] })).toThrow(/signature|verify/i);
     } finally { shipped.document = original.document; shipped.signatures = original.signatures; }
+  });
+});
+
+
+describe("unambiguous policy text", () => {
+  const ambiguous = [
+    JSON.stringify(doc()).replace('"serial":1', '"serial":1,"serial":2'),
+    JSON.stringify(doc()).replace('"mainnet":', '"mainnet":{"authors":[],"checkpoints":[]},"mainnet":'),
+    JSON.stringify(doc()).replace('"validTo":null', '"validTo":99,"validTo":null'),
+    JSON.stringify(doc()).replace('"weight":"130"', '"weight":"1","weight":"130"'),
+    JSON.stringify(doc()).replace('"serial":1', '"serial":1,"ser\\u0069al":2'),
+  ];
+  it.each(ambiguous)("rejects duplicate decoded keys before signing and after an independently produced signature", document => {
+    expect(() => signKnownAuthors(document, rootSeed)).toThrow(/duplicate object key/);
+    const envelope = { document, signatures: [{ key: root, signature: toHex(ed25519Sign(new Uint8Array(Buffer.from(`orynq-known-authors/v1\n${document}`)), rootSeed)) }] };
+    expect(() => openKnownAuthors(envelope, [root])).toThrow(/duplicate object key/);
+  });
+  it("reviews the exact hash, authors, windows, set IDs and authority fingerprints that will be signed", () => {
+    const review = knownAuthorsSigningSummary(JSON.stringify(doc()));
+    expect(review.serial).toBe(1);
+    expect(review.documentSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(review.networks.mainnet).toMatchObject({ authors: [{ key: relay, validFrom: 100, validTo: null }], checkpoints: [{ setId: "9284", startsAfter: checkpoint.startsAfter, authorities: [{ keySha256: expect.stringMatching(/^[a-f0-9]{64}$/), weight: "130" }] }] });
+    expect(JSON.stringify(review)).not.toContain('"key":"' + "cc".repeat(32));
+  });
+  it("bounds nested and malformed policy input without quoting file contents", () => {
+    expect(() => knownAuthorsSigningSummary('private-seed-should-not-appear')).toThrow(/^Policy document is not valid JSON$/);
+    const deep = '['.repeat(66) + '0' + ']'.repeat(66);
+    expect(() => knownAuthorsSigningSummary(deep)).toThrow(/nesting limit/);
   });
 });

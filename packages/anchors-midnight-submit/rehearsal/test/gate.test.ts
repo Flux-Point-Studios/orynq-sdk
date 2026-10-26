@@ -24,6 +24,20 @@ const FORGED: Record<string, string> = {
 };
 
 describe("the evidence gate", () => {
+  it("requires both preprod identities, one tooling revision and phases, and no verifier preloads", () => {
+    expect(failuresOf(r => { r.raw.chain.hosted.chain = "Midnight Mainnet"; })).toContain("the hosted path did not record Midnight Preprod's chain identity");
+    expect(failuresOf(r => { r.raw.chain.blockfrost.genesis = "ab".repeat(32); })).toContain("the blockfrost path did not record Midnight Preprod's chain identity");
+    expect(failuresOf(r => { r.verified.toolingCommit = "ab".repeat(20); })).toContain("the writer, verifier and composer do not name one committed tooling revision");
+    expect(failuresOf(r => { r.raw.phaseCommits.kind1 = "ab".repeat(20); })).toContain("rehearsal phase kind1 was not recorded at the composing commit");
+    expect(failuresOf(r => { r.verified.execution.execArgv = ["--import", "hook.mjs"]; })).toContain("the verifier did not record an execution without preloaded code or runtime arguments");
+  });
+
+  it("refuses null commitments, missing absence checks, and a hosted refusal relabelled as Blockfrost", () => {
+    expect(failuresOf(r => { r.raw.anchors["git-head"].commitment = null; r.verified.anchors["git-head"].commitment = null; })).toContain("anchor git-head: commitments must be 32-byte hex values");
+    expect(failuresOf(r => { delete r.raw.negatives["ReplaceAuthority, unsigned"].onChain; }).join("\n")).toContain("not checked");
+    expect(failuresOf(r => { r.raw.negatives["ReplaceAuthority, unsigned"].operator = "midnight"; }).join("\n")).toContain("blockfrost");
+  });
+
   it("passes a complete, honest rehearsal and counts what it may claim", () => {
     const r = honestRehearsal();
     const { failures, facts } = run(r);
@@ -181,12 +195,15 @@ describe("the evidence gate", () => {
 
     it("refuses an anchor by the wrong key, and anchors out of order", () => {
       expect(failuresOf((r) => (r.raw.anchors["rotation-new-after"].author = r.raw.rotation.keys.relay1))[0]).toMatch(/^rotation anchor rotation-new-after: written by [0-9a-f]{64}, not relay2/);
-      expect(failuresOf((r) => (r.raw.anchors["rotation-old-after"].blockHeight = 1060))[0]).toMatch(/^the rotation anchors are not four anchors in increasing blocks/);
+      expect(failuresOf((r) => {
+        r.raw.anchors["rotation-old-after"].blockHeight = 1060;
+        for (const values of Object.values(r.verified.rotation) as Array<Record<string, any>>) values["rotation-old-after"].block.height = 1060;
+      })[0]).toMatch(/^the rotation anchors are not four anchors in increasing blocks/);
     });
   });
 
   describe("forged KNOWN_AUTHORS documents count only with the verify package's answer from the check each targets", () => {
-    const answered = (name: string, outcome: string) => (r: Rehearsal) => (r.verified.forgedDocuments[name] = { outcome });
+    const answered = (name: string, outcome: string) => (r: Rehearsal) => (r.verified.forgedDocuments[name] = { ...r.verified.forgedDocuments[name], outcome });
 
     // The allow-list refuses a stranger's key beside the root's signature before any signature
     // is verified, so a verifier that skipped Ed25519 verification gives that answer too.
@@ -255,7 +272,7 @@ describe("the evidence gate", () => {
     });
 
     it("refuses a second broadcast after the node had the bytes, and a resend missing before", () => {
-      expect(failuresOf((r) => r.crash.push({ mode: "recover", label: "crash-after-broadcast", event: "broadcast", txHash: r.raw.anchors["crash-after-broadcast"].txHash }))[0]).toMatch(/^crash drill crash-after-broadcast: the recovery broadcast \["[0-9a-f]{64}"\], not \[\]/);
+      expect(failuresOf((r) => r.crash.push({ commit: r.raw.toolingCommit, mode: "recover", label: "crash-after-broadcast", event: "broadcast", txHash: r.raw.anchors["crash-after-broadcast"].txHash }))[0]).toMatch(/^crash drill crash-after-broadcast: the recovery broadcast \["[0-9a-f]{64}"\], not \[\]/);
       expect(failuresOf((r) => r.crash.splice(r.crash.indexOf(at(r, "crash-before-broadcast", "broadcast")), 1))[0]).toMatch(/^crash drill crash-before-broadcast: the recovery broadcast \[\], not \["/);
     });
 

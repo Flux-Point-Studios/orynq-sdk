@@ -4,6 +4,8 @@ import type { MidnightNetwork } from "./registries.js";
 import { fromHex, toHex } from "./scale.js";
 import shipped from "../known-authors.json" with { type: "json" };
 import { auditCheckpoints } from "./checkpoints.js";
+import { MAX_POLICY_JSON_BYTES, parseStrictJson } from "./strict-json.js";
+import { createHash } from "node:crypto";
 
 // The authors a verifier recognizes, and the GRANDPA checkpoints it trusts, as a JSON document
 // signed by a pinned policy-root key. A revocation is a later document (a higher serial) that
@@ -109,8 +111,8 @@ function parseCheckpoint(v: unknown, at: string): FinalityCheckpoint {
   return { setId: BigInt(c.setId), startsAfter: { height: height(s.height, `${at}.startsAfter.height`), hash: hex64(s.hash, `${at}.startsAfter.hash`) }, authorities };
 }
 
-function parseDocument(text: string): { serial: number; networks: Map<MidnightNetwork, { authors: KnownAuthor[]; checkpoints: FinalityCheckpoint[] }> } {
-  const d = exactKeys(JSON.parse(text), ["format", "serial", "issued", "networks"], "document");
+function parseDocument(text: string): { serial: number; issued: string; networks: Map<MidnightNetwork, { authors: KnownAuthor[]; checkpoints: FinalityCheckpoint[] }> } {
+  const d = exactKeys(parseStrictJson(text), ["format", "serial", "issued", "networks"], "document");
   if (d.format !== KNOWN_AUTHORS_FORMAT) throw new Error(`document format must be ${KNOWN_AUTHORS_FORMAT}`);
   if (!Number.isSafeInteger(d.serial) || (d.serial as number) < 1) throw new Error("document serial must be an integer from 1");
   if (typeof d.issued !== "string" || Number.isNaN(Date.parse(d.issued))) throw new Error("document issued must be a date");
@@ -130,10 +132,30 @@ function parseDocument(text: string): { serial: number; networks: Map<MidnightNe
     const checkpoints = list(n.checkpoints, `${name}.checkpoints`).map((c, i) => parseCheckpoint(c, `${name}.checkpoints[${i}]`));
     networks.set(name as MidnightNetwork, { authors, checkpoints });
   }
-  return { serial: d.serial as number, networks };
+  return { serial: d.serial as number, issued: d.issued, networks };
 }
 
 const signingMessage = (document: string) => new Uint8Array(Buffer.from(SIGNING_DOMAIN + document, "utf8"));
+
+// Public, parsed signing review: no secret material or caller-provided free-form labels.
+export function knownAuthorsSigningSummary(document: string) {
+  const { serial, issued, networks } = parseDocument(document);
+  return {
+    serial,
+    issued,
+    documentSha256: createHash("sha256").update(document).digest("hex"),
+    networks: Object.fromEntries([...networks].map(([network, entry]) => [network, {
+      authors: entry.authors,
+      checkpoints: entry.checkpoints.map(checkpoint => ({
+        setId: checkpoint.setId.toString(), startsAfter: checkpoint.startsAfter,
+        authorities: checkpoint.authorities.map(authority => ({
+          keySha256: createHash("sha256").update(Buffer.from(authority.key, "hex")).digest("hex"),
+          weight: authority.weight.toString(),
+        })),
+      })),
+    }])),
+  };
+}
 
 export function signKnownAuthors(document: string, seed: Uint8Array): SignedKnownAuthors {
   parseDocument(document);
@@ -159,6 +181,7 @@ function view(serial: number, networks: ReturnType<typeof parseDocument>["networ
 // must verify under one of `trustRoots`, and the document must parse strictly. Each check
 // refuses with its own message, so a refusal names the check that made it.
 export function openKnownAuthors(signed: SignedKnownAuthors, trustRoots: readonly string[] = KNOWN_AUTHORS_TRUST_ROOTS): KnownAuthors {
+  if (typeof signed.document !== "string" || Buffer.byteLength(signed.document, "utf8") > MAX_POLICY_JSON_BYTES) throw new Error("Policy JSON exceeds its byte limit or is not text");
   const byRoot = signed.signatures.filter((s) => trustRoots.includes(s.key) && HEX64.test(s.key));
   if (byRoot.length === 0) throw new Error("the known-authors document carries no signature by a trust root");
   const wellFormed = byRoot.filter((s) => /^[0-9a-f]{128}$/.test(s.signature));

@@ -266,6 +266,29 @@ describe("admit: the approval gate", () => {
     }
   });
 
+  it("counts repeated confirmations of the same transaction once, retaining the largest fee", () => {
+    const r = runner();
+    r.confirmed("first", "a1".repeat(32), "0.01");
+    r.confirmed("second", "a1".repeat(32), "0.02");
+    r.confirmed("third", "a1".repeat(32), "0.01");
+    expect(confirmedDust(r.paths.root, NOW - 24 * HOUR)).toBe(2n * 10n ** 13n);
+  });
+
+  it("retains a first and repeated zero-fee confirmation as zero rather than undefined", () => {
+    const r = runner();
+    r.confirmed("first", "a1".repeat(32), "0");
+    r.confirmed("second", "a1".repeat(32), "0");
+    expect(confirmedDust(r.paths.root, NOW - 24 * HOUR)).toBe(0n);
+  });
+
+  it("cannot keep a historical provider-injected deadline reserved indefinitely", () => {
+    const r = runner();
+    r.approve(DEPLOY);
+    appendFileSync(r.files.audit, `${JSON.stringify({ at: iso(NOW), intent: "other", event: "confirm", item: "deploy", tx_hash: "a1".repeat(32), fee_dust: "0.01", valid_until: "9999-12-31T23:59:59Z" })}\n`);
+    expect(confirmedDust(r.paths.root, NOW - 24 * HOUR)).toBe(10n ** 13n);
+    expect(confirmedDust(r.paths.root, NOW + HOUR + 1)).toBe(0n);
+  });
+
   it("refuses when the audit log does not read back, rather than undercount what was confirmed", () => {
     const r = runner();
     const id = r.approve(DEPLOY);

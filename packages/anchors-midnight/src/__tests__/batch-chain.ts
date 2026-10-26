@@ -35,7 +35,7 @@ export async function batchChain(options: { singleBatch?: boolean; network?: Mid
   }
   let chain: ReturnType<typeof anchorChain>;
   chain = anchorChain({ place: [[2023, "anchor", toHex(bytes), txHash]], stateRootOf: height => roots.has(height) ? fromHex(roots.get(height)!, "test state root") : undefined,
-    node: { midnight_zswapStateRoot: () => `0x${"00".repeat(32)}`, state_getReadProof: params => {
+    node: { midnight_zswapStateRoot: () => Array(33).fill(0), state_getReadProof: params => {
       const at = params[1] as string, height = chain.chain.byHash(at.replace(/^0x/, "")).number;
       if (proofs.has(height)) return { at, proof: proofs.get(height)! };
       if (height === DEPLOY_HEIGHT - 1 || height === 2022) return { at, proof: storage.parent.proof.proof };

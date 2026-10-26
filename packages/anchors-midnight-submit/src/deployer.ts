@@ -40,6 +40,7 @@ export interface DeployerOptions {
   journalPath: string;
   ttlMinutes?: number;
   pollMillis?: number;
+  settleTimeoutMillis?: number;
 }
 
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
@@ -113,7 +114,7 @@ export function registryDeployer(options: DeployerOptions) {
 
   // A deploy row fails only when the chain has carried it past its TTL plus the margin unseen,
   // with no contract at its address.
-  const confirmed = confirmedSends({ journal, chain, wallet, network, pollMillis: options.pollMillis ?? 3_000 }, key, "deploy", "a registry deploy");
+  const confirmed = confirmedSends({ journal, chain, wallet, network, pollMillis: options.pollMillis ?? 3_000, ...(options.settleTimeoutMillis === undefined ? {} : { settleTimeoutMillis: options.settleTimeoutMillis }) }, key, "deploy", "a registry deploy");
 
   return {
     async prepare(): Promise<PreparedDeploy> {
@@ -154,10 +155,22 @@ export function registryDeployer(options: DeployerOptions) {
       assertConfirmedHash(snapshot);
       if (deploys !== confirmedAddress) throw new Error(`the bytes deploy ${deploys}, not the confirmed ${confirmedAddress}; nothing was sent`);
       await assertKnownRuntime(source, network);
-      const row = await confirmed.submit(snapshot);
-      const [landed] = (await source.indexer.transactions(row.txHash)).filter((t) => t.hash === row.txHash);
-      if (!landed) throw new Error(`the indexer lost deploy transaction ${row.txHash}`);
-      const address = assertRegistryDeployBytes(new Uint8Array(Buffer.from(landed.raw, "hex")), "final");
+      const submitted = await confirmed.submit(snapshot);
+      const relocated = await journal.relocate(submitted.txHash, chain);
+      if (relocated.state !== "landed" || relocated.height === undefined || relocated.blockHash === undefined) {
+        throw new Error(`The deploy's indexed block was orphaned or is not located on the finalized chain; journalled bytes were retained`);
+      }
+      const row = { ...relocated, height: relocated.height, blockHash: relocated.blockHash };
+      const finalHash = await chain.finalHash(row.height);
+      if (finalHash === null) throw new Error("The deploy block is not finalized yet; journalled bytes were retained");
+      if (finalHash !== row.blockHash) throw new Error(`The deploy's reported block ${row.blockHash} is orphaned; journalled bytes were retained`);
+      const inclusion = await chain.confirm?.({ key, bytes, since: null, hint: { status: "SUCCESS", height: row.height, blockHash: row.blockHash } });
+      if (inclusion?.state !== "landed" || inclusion.height !== row.height || inclusion.blockHash !== row.blockHash) {
+        throw new Error("The finalized deploy block does not contain the confirmed transaction's exact bytes; retained contract state may come from a merged or unsupported transaction");
+      }
+      // The exact bytes in the finalized body have already been checked as the immutable
+      // registry deploy, so an unavailable indexer cannot replace or hide its address.
+      const address = confirmedAddress;
       return { network, address, txHash: row.txHash, blockHeight: row.height, blockHash: row.blockHash };
     },
 

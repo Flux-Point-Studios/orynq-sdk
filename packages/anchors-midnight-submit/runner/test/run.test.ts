@@ -120,12 +120,14 @@ describe("runIntent over the fake tool", () => {
     ]);
   });
 
-  it("confirms new bytes for a transaction whose earlier bytes the journal never held, so never sent", async () => {
+  it("refuses new bytes when earlier confirmations have lost their journal evidence", async () => {
     const r = runner({ kind: "deploy", failsAfterConfirm: 1, txHashes: [TX(0xa1), TX(0xa2)] });
     const id = r.approve(DEPLOY);
     const status = await r.run(id);
-    expect(status).toMatchObject({ state: "done", attempt: 2 });
-    expect(status.transactions.map((t) => t.tx_hash)).toEqual([TX(0xa1), TX(0xa2)]);
+    expect(status).toMatchObject({ state: "refused", attempt: 2 });
+    expect(status.refusals[0]!.reason).toMatch(/journal.*missing.*recover/);
+    expect(status.transactions.map((t) => t.tx_hash)).toEqual([TX(0xa1)]);
+    expect(r.typed().map((t) => t.confirmed)).toEqual([true, false]);
   });
 
   it("confirms new bytes once the journal retired the ones it confirmed, at most three times per transaction", async () => {

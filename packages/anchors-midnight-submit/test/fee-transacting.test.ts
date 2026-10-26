@@ -99,6 +99,13 @@ const BALANCING_MS = 30_000;
 interface Balanced {
   coinValues: string[];
   feeAsItIs: string;
+  feeWithOne?: string;
+  feeWithAll?: string;
+  legacyError?: string;
+  observedMainnetBlock?: number;
+  observedMainnetHash?: string;
+  parametersSha256?: string;
+  anchorCalls?: Array<{ kind: number; entryPoint: string; commitment: string }>;
   error?: string;
   intents?: Array<string[] | null>;
   coinsUntouched?: boolean;
@@ -153,6 +160,32 @@ describe("balancing a fee", () => {
     expect(BigInt(fee![0]!)).toBeGreaterThan(small);
     expect(BigInt(fee![0]!)).toBeLessThan(large);
     expect(r.coinsLeft).toEqual([String(small)]);
+    expect(r.landed).toBe(true);
+  });
+
+  it("prices each largest prefix exactly when the old marginal estimate falsely exhausts an affordable two-coin set", async () => {
+    const r = await balancing("multi-round");
+    const [small, large] = r.coinValues.map(BigInt) as [bigint, bigint];
+    expect(large).toBeLessThan(BigInt(r.feeWithOne!));
+    expect(small + large).toBeGreaterThanOrEqual(BigInt(r.feeWithAll!));
+    expect(r.legacyError).toMatch(/^Insufficient Funds/);
+    expect(r.error).toBeUndefined();
+    expect(r.intents![1]).toHaveLength(2);
+    expect(r.intents![1]!.reduce((sum, value) => sum + BigInt(value), 0n)).toBe(BigInt(r.feeWithAll!));
+    expect(r.landed).toBe(true);
+  });
+
+  it("prices a real registry anchor at captured mainnet ledger prices and the simulator accepts the paid call", async () => {
+    const r = await balancing("mainnet-anchor");
+    expect(r.error).toBeUndefined();
+    expect(r.observedMainnetBlock).toBe(3_186_875);
+    expect(r.observedMainnetHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(r.parametersSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(r.anchorCalls).toEqual([{ kind: 1, entryPoint: "anchor", commitment: expect.stringMatching(/^[0-9a-f]{64}$/) }]);
+    expect(r.intents![1]).toHaveLength(1);
+    expect(BigInt(r.intents![1]![0]!)).toBeGreaterThanOrEqual(BigInt(r.feeAsItIs));
+    expect(r.feeAsItIs).toBe("2");
+    expect(r.intents![1]).toEqual(["2"]);
     expect(r.landed).toBe(true);
   });
 

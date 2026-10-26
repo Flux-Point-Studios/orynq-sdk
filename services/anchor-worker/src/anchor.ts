@@ -9,6 +9,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { LucidEvolution, TxBuilder, UTxO } from "@lucid-evolution/lucid";
 import {
   buildAnchorMetadata,
+  classifyCardanoSubmitError,
   POI_METADATA_LABEL,
   serializeForCbor,
   SubmitRefusedError,
@@ -143,7 +144,7 @@ function anchorTx(lucid: LucidEvolution, payload: TxMetadata): ChainedBuild<UTxO
           // lucid's Blockfrost provider passes a reply's message on only for a
           // 400, which carries the node's refusal. Any other failure may follow
           // a tx the node took, and the queue checks the chain for it.
-          throw /TxValidationErrorInCardanoMode|ShelleyTxValidationError/.test(message)
+          throw classifyCardanoSubmitError(error) === "refused"
             ? new SubmitRefusedError(message, { cause: error })
             : error;
         }

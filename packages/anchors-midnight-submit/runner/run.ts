@@ -4,7 +4,7 @@
 // as it goes. The tools' write-ahead journals keep a retry from sending a transaction twice: a
 // rerun shows the bytes a journal still holds, which the runner confirms again as the same
 // transaction, and the runner confirms other bytes for a transaction only once the journal holds
-// every earlier one failed or never held it (so never sent it).
+// every earlier one explicitly failed. Missing history cannot prove that bytes were never sent.
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -14,6 +14,7 @@ import { formatDust, parseDust } from "../src/preflight.js";
 import { checkAnchorSummary, checkDeploySummary, driveTool, intentEntries, type AnchorsIntent, type Decision, type DeployIntent } from "./confirm.js";
 import { admit, confirmedDust, type Admitted } from "./gate.js";
 import { LIMITS } from "./limits.js";
+import { ProgressLines } from "./output.js";
 import { fillPlan, landedDeploy } from "./plan.js";
 import { audit, ensureRunnerRoot, flushDirectory, readAudit, readStatus, runnerFiles, writeStatus, type RunnerPaths, type Status } from "./state.js";
 
@@ -38,9 +39,9 @@ export interface RunOptions {
 }
 
 // How the journal at `path` holds `txHash`, read only; null where it holds none, which for a
-// write-ahead journal means the bytes were never sent.
+// write-ahead journal is not proof of non-submission after an earlier confirmation: history can be lost.
 function journalState(path: string, txHash: string): string | null {
-  if (!existsSync(path)) return null;
+  if (!existsSync(path)) throw new Error("the journal of an earlier confirmation is missing; recover it before confirming any further bytes");
   const db = new DatabaseSync(path, { readOnly: true });
   try {
     return (db.prepare("select state from attempts where tx_hash = ?").get(txHash) as { state: string } | undefined)?.state ?? null;
@@ -95,6 +96,9 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
   let planSha256: string | undefined;
   let registry = "";
   if (action === "anchors") {
+    // These staging guards are defense in depth (review mutants R11/R12): the attempt-start
+    // admit below independently revalidates the plan and approval before spawning any tool.
+    // Their separate deletion is not claimed as isolated mutation coverage.
     const anchors = intent as AnchorsIntent;
     let landed = landedDeploy(paths.deployJournal);
     if (!landed) save({ state: "waiting-for-deploy" });
@@ -142,6 +146,7 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
     let refusal: string | undefined;
     let expired = false;
     let lastLine = "";
+    const progress = new ProgressLines();
     const confirmedItems = new Set<string>();
     // The runner's answer at a prompt: the summary matches the intent, the approval still holds,
     // and other bytes for a transaction confirmed before come only after the journal let go of
@@ -150,6 +155,7 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
       const at = Date.now();
       const check = action === "deploy" ? checkDeploySummary(intent as DeployIntent, summary, token) : checkAnchorSummary(intent as AnchorsIntent, registry, summary, token);
       const problems = [...check.problems];
+      if (check.validUntil && Date.parse(check.validUntil) > at + 3_600_000) problems.push("the transaction deadline is more than one hour after confirmation");
       const current = admit(paths, id, at);
       if (!current.ok) {
         problems.push(`the approval no longer holds: ${current.reason}`);
@@ -165,8 +171,11 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
         const mine = earlier.filter((t) => t.approval_sha256 === approvalSha256).length;
         if (mine >= LIMITS.maxConfirmationsPerTransaction) problems.push(`confirmed ${mine} times under this approval, the most limits.json allows`);
         for (const t of earlier) {
-          const held = journalState(journal, t.tx_hash);
-          if (held !== null && held !== "failed") problems.push(`the journal holds ${t.tx_hash}, confirmed for it earlier, ${held}; other bytes could land it twice`);
+          try {
+            const held = journalState(journal, t.tx_hash);
+            if (held === null) problems.push(`the journal no longer accounts for earlier confirmation ${t.tx_hash}; recover its history before confirming other bytes`);
+            else if (held !== "failed") problems.push(`the journal holds ${t.tx_hash}, confirmed for it earlier, ${held}; other bytes could land it twice`);
+          } catch (error) { problems.push((error as Error).message); }
         }
       }
       if (problems.length === 0) {
@@ -192,7 +201,7 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
     };
     const onText = (text: string) => {
       appendFileSync(files.log(id), text, { mode: 0o600 });
-      const line = text.split("\n").map((l) => l.trim()).filter(Boolean).at(-1);
+      const line = progress.push(text);
       if (line) save({ last_progress: (lastLine = line) });
     };
 
@@ -209,6 +218,8 @@ export async function runIntent({ paths, id, tool, cwd, env, backoffMs = BACKOFF
     }, Math.max(0, expiresAt - Date.now()));
     const { code } = await run.exited;
     clearTimeout(timer);
+    const finalLine = progress.finish();
+    if (finalLine) save({ last_progress: (lastLine = finalLine) });
     audit(root, { intent: id, event: "run-end", attempt, code });
 
     if (refusal) return finish(expired ? "expired" : "refused", refusal, !expired);

@@ -1,6 +1,7 @@
 import { decodeAnchorTransaction, type AnchorCall, type AnchorTransaction } from "./anchor-transaction.js";
 import { hash32, type Hash32 } from "./commitment.js";
-import { knownAuthors as shippedKnownAuthors, type KnownAuthors } from "./known-authors.js";
+import { knownAuthors as shippedKnownAuthors, type AuthorStatus, type KnownAuthors } from "./known-authors.js";
+import { boundedDetail, isSourceHash, isSourceHeight } from "./diagnostics.js";
 import { MIDNIGHT_REGISTRIES, type MidnightNetwork, type RegistryInfo } from "./registries.js";
 import { fromHex, toHex } from "./scale.js";
 import type { IndexedAction, MidnightSource } from "./source.js";
@@ -23,6 +24,7 @@ export interface FoundAnchor extends AnchorCall {
   transactionId: number;
   actionIndex: number;
   block: { height: number; hash: string };
+  authorStatus: AuthorStatus;
 }
 
 export interface FindRequest {
@@ -46,10 +48,12 @@ export interface FindRequest {
 }
 
 export interface FindResult {
+  assurance: "indexer-reported";
   anchors: FoundAnchor[];
   // Calls to a registry that are not anchors, and the reason.
   rejected: Array<{ txHash: string; height: number; reason: string }>;
   scannedActions: number;
+  // Complete only relative to the indexer's reported newest action, not network completeness.
   complete: boolean;
   nextCursor: FindCursor | null;
 }
@@ -70,16 +74,18 @@ export async function findMidnightAnchors(request: FindRequest): Promise<FindRes
   }
   const registries = [...(request.registries ?? MIDNIGHT_REGISTRIES[network])].sort((a, b) => a.generation - b.generation);
   if (registries.length === 0) throw new Error(`no registry generation is deployed on ${network}`);
-  const authors = new Set((request.authors ?? (request.knownAuthors ?? shippedKnownAuthors()).authors(network).map((a) => a.key)).map((k) => toHex(hash32(k, "author"))));
+  const policy = request.knownAuthors ?? shippedKnownAuthors();
+  const authors = new Set((request.authors ?? policy.authors(network).map((a) => a.key)).map((k) => toHex(hash32(k, "author"))));
   if (authors.size === 0) throw new Error("no author to filter by: pass authors, or a KNOWN_AUTHORS document that lists some");
   const commitment = request.commitment === undefined ? null : toHex(hash32(request.commitment, "commitment"));
   const maxActions = request.maxActions ?? DEFAULT_MAX_ACTIONS;
   const idleMillis = request.idleMillis ?? 5_000;
   const deadline = Date.now() + (request.deadlineMillis ?? 120_000);
   const head = await source.indexer.head();
+  if (!isSourceHeight(head.height)) throw new Error("the indexer returned a malformed head height");
   if (toHeight > head.height) throw new Error(`toHeight ${toHeight} is above the indexer's head ${head.height}`);
 
-  const result: FindResult = { anchors: [], rejected: [], scannedActions: 0, complete: false, nextCursor: null };
+  const result: FindResult = { assurance: "indexer-reported", anchors: [], rejected: [], scannedActions: 0, complete: false, nextCursor: null };
   const cursorAt = request.cursor ? registries.findIndex((r) => r.address === request.cursor!.registry) : 0;
   if (cursorAt < 0) throw new Error(`the cursor names registry ${request.cursor!.registry}, which is no generation on ${network}`);
 
@@ -114,6 +120,9 @@ export async function findMidnightAnchors(request: FindRequest): Promise<FindRes
         }
         pending = null;
         const action = next.value;
+        if (!isSourceHash(action.txHash) || !isSourceHash(action.block?.hash) || !isSourceHeight(action.block?.height) || !isSourceHeight(action.transactionId) || typeof action.raw !== "string") {
+          throw new Error("the indexer returned malformed action metadata");
+        }
         if (action.block.height > toHeight) break;
         const actionIndex = deliveries.get(action.transactionId) ?? 0;
         deliveries.set(action.transactionId, actionIndex + 1);
@@ -130,7 +139,7 @@ export async function findMidnightAnchors(request: FindRequest): Promise<FindRes
             if (tx.txHash !== action.txHash) throw new Error(`the indexer's bytes hash to ${tx.txHash}, not ${action.txHash}`);
           } catch (error) {
             tx = error as Error;
-            result.rejected.push({ txHash: action.txHash, height: action.block.height, reason: tx.message });
+            result.rejected.push({ txHash: action.txHash, height: action.block.height, reason: boundedDetail(tx.message) });
           }
           decoded.set(action.txHash, tx);
         }
@@ -141,7 +150,7 @@ export async function findMidnightAnchors(request: FindRequest): Promise<FindRes
           continue;
         }
         if (!authors.has(call.author) || (request.kinds && !request.kinds.includes(call.kind)) || (commitment !== null && call.commitment !== commitment)) continue;
-        result.anchors.push({ ...call, txHash: action.txHash, transactionId: action.transactionId, actionIndex, block: action.block });
+        result.anchors.push({ ...call, txHash: action.txHash, transactionId: action.transactionId, actionIndex, block: action.block, authorStatus: policy.author(network, call.author, action.block.height) });
       }
     } finally {
       await stream.return?.();

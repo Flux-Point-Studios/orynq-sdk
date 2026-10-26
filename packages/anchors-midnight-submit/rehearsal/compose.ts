@@ -7,15 +7,20 @@
 // statement is built only from what those checks established; README.md maps every statement to
 // its check. Prints counts only.
 //   node --import tsx compose.ts REHEARSAL_DIR OUT.json
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import * as L from "@midnight-ntwrk/ledger-v8";
+import { mnemonicToEntropy } from "@scure/bip39";
+import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { DatabaseSync } from "node:sqlite";
-import { hiddenDigest, hidingCommitment, readAuthorSecret, readPrivateFile, REGISTRY_VERIFIER_KEY_SHA256 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { hiddenDigest, hidingCommitment, readAuthorSecret, readPrivateFile, knownAuthors, openKnownAuthors } from "../../anchors-midnight/src/index.js";
 import { windowHits } from "../../anchors-midnight/src/__tests__/privacy-scan.js";
 import { abortedDrills, INVALID_TRANSACTION, judge, parseCrashLog, parseCrashStatus, ROTATION_EXPECTED, ROTATION_LABELS, unrecordedAnchors } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
+import { toolingCommit, installedPins } from "./tooling.js";
+import { packedFiles, packedTreeIdentity } from "./evidence-integrity.mjs";
 
+const head = toolingCommit();
 const [dir, out] = process.argv.slice(2) as [string, string];
 const text = (p: string) => readFileSync(`${dir}/${p}`, "utf8");
 const json = (p: string) => JSON.parse(text(p));
@@ -40,7 +45,6 @@ const aborted = abortedDrills(
     .map((e) => ({ name: e.name, files: e.isDirectory() ? archived(`${dir}/evidence/${e.name}`) : null })),
 );
 const SECRETS = `${process.env.HOME}/.secrets/orynq-midnight-preprod`;
-const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: new URL(".", import.meta.url), encoding: "utf8" }).trim();
 
 // Every transaction the rehearsal's journals saw land.
 const journalLanded = readdirSync(SECRETS)
@@ -65,7 +69,57 @@ const unopened = kind2.flatMap(([name, a]) => {
   const read = verified.anchors[name]?.commitment;
   return opened === read ? [] : [`kind-2 anchor ${name}: its opening recomputes ${opened}, not the commitment ${read} the verifier read`];
 });
-const { failures, facts } = judge({ raw, verified, crash, crashStatus });
+const { failures, facts } = judge({ raw, verified, crash, crashStatus, head });
+// Recheck evidence that can be changed between verifier and composition, rather than publishing
+// unchecked JSON claims. The tarball is copied beside the evidence by finish.sh.
+try {
+  const tarball = readFileSync(`${dir}/evidence/verify-package.tgz`);
+  if (createHash("sha256").update(tarball).digest("hex") !== verified.package.sha256 || `sha512-${createHash("sha512").update(tarball).digest("base64")}` !== verified.package.integrity) throw new Error("tarball hashes differ");
+  if (JSON.stringify(packedTreeIdentity(tarball)) !== JSON.stringify(verified.package.installedTree)) throw new Error("installed tree fingerprint differs");
+  const manifest = JSON.parse((packedFiles(tarball).get("package.json") as Buffer).toString("utf8"));
+  if (manifest.name !== verified.package.name || manifest.version !== verified.package.version) throw new Error("tarball manifest differs");
+} catch { failures.push("the verifier package tarball is absent or differs from the verified identity"); }
+try {
+  const consensusPolicy = json("evidence/submission-known-authors.json");
+  const consensus = knownAuthors({ documents: consensusPolicy, trustRoots: verified.shippedTrustRoots });
+  if (JSON.stringify(consensusPolicy) !== JSON.stringify(verified.consensusPolicy) || consensus.serial !== verified.consensusSerial || consensus.checkpoints("preprod").length !== verified.consensusCheckpointCount || verified.consensusCheckpointCount < 1) throw new Error("consensus onboarding policy differs");
+  const documents = [1, 2, 3].map(n => json(`evidence/known-authors/signed-${n}.json`)[0]);
+  documents.forEach((signed, i) => {
+    const opened = openKnownAuthors(signed, [verified.trustRoot]);
+    if (opened.serial !== i + 1 || opened.checkpoints("preprod").length !== 0 || JSON.stringify(Object.keys(JSON.parse(signed.document).networks)) !== '["preprod"]') throw new Error("document mismatch");
+  });
+  const serial3 = documents[2];
+  const reopened = JSON.parse(serial3.document);
+  for (const network of Object.values(reopened.networks) as Array<{ authors: Array<{validTo: unknown}> }>) for (const author of network.authors) author.validTo = null;
+  const expected = `${JSON.stringify(reopened, null, 2)}\n`;
+  if (expected === serial3.document) throw new Error("no closed window was forged");
+  if (JSON.stringify(raw.pins) !== JSON.stringify(installedPins())) throw new Error("installed pins differ from writer");
+  const forged = verified.forgedDocuments;
+  const rootNames = ["serial 3 with every author window reopened, under the trust root's signature on serial 3", "that document signed by a stranger, under the trust root's key"] as const;
+  const third = forged["that document signed by a stranger, under the stranger's key"], control = forged["positive control: that document signed by a stranger, with the stranger as the trust root"];
+  for (const f of Object.values(forged) as any[]) if (f.document !== expected) throw new Error("forged document shape differs");
+  if (JSON.stringify(forged[rootNames[0]].signatures) !== JSON.stringify(serial3.signatures)) throw new Error("original signature differs");
+  if (forged[rootNames[1]].signatures.length !== 1 || forged[rootNames[1]].signatures[0].key !== verified.trustRoot || forged[rootNames[1]].signatures[0].signature !== third.signatures[0].signature) throw new Error("forged root-key binding differs");
+  if (JSON.stringify(third.signatures) !== JSON.stringify(control.signatures) || third.signatures.length !== 1 || third.signatures[0].key === verified.trustRoot || JSON.stringify(control.trustRoots) !== JSON.stringify([third.signatures[0].key])) throw new Error("stranger control differs");
+  for (const name of [...rootNames, "that document signed by a stranger, under the stranger's key"]) if (JSON.stringify(forged[name].trustRoots) !== JSON.stringify([verified.trustRoot])) throw new Error("forgery trust root differs");
+  openKnownAuthors(control, control.trustRoots);
+} catch { failures.push("published KNOWN_AUTHORS documents or forgery controls do not match their signed evidence"); }
+for (const [name, negative] of Object.entries(raw.negatives ?? {}) as Array<[string, any]>) {
+  try {
+    const tx = L.Transaction.deserialize("signature", "proof", "binding", Buffer.from(negative.bytes, "hex"));
+    const actions = [...(tx.intents?.values() ?? [])].flatMap(intent => intent.actions);
+    if (tx.transactionHash() !== negative.txHash || actions.length !== 1 || !(actions[0] instanceof L.MaintenanceUpdate) || String(actions[0].address) !== raw.deploy.address || negative.address !== raw.deploy.address) throw new Error("negative transaction binding differs");
+    const update = actions[0], [change] = update.updates;
+    if (update.counter !== 0n || update.updates.length !== 1) throw new Error("maintenance counter or update count differs");
+    if (name === "ReplaceAuthority, unsigned") {
+      if (!(change instanceof L.ReplaceAuthority) || change.authority.committee.length !== 0 || change.authority.threshold !== 0 || change.authority.counter !== 1n || update.signatures.length !== 0) throw new Error("unsigned authority update differs");
+    } else {
+      if (update.signatures.length !== 1 || update.signatures[0]![0] !== 0n) throw new Error("stranger signature index differs");
+      if (name.startsWith("VerifierKeyRemove") ? !(change instanceof L.VerifierKeyRemove) || change.operation !== "anchor" : !(change instanceof L.VerifierKeyInsert) || change.operation !== "rewrite") throw new Error("verifier-key operation differs");
+    }
+  } catch { failures.push(`negative ${name}: serialized bytes do not bind the recorded transaction and deployed update address`); }
+}
+if (bundles.some((bundle: any) => bundle.toolingCommit !== head)) failures.push("rehearsal bundles were not traced at the composing commit");
 failures.push(...unrecordedAnchors(raw, journalLanded), ...unopened, ...aborted.failures);
 if (failures.length) {
   for (const failure of failures) process.stderr.write(`GATE: ${failure}\n`);
@@ -129,7 +183,7 @@ const refusalStatement = anchorRefusals.length
   : [];
 const statements = [
   `All ${counted.total} anchors this rehearsal wrote outside the rotation drill, ${counted.total} distinct transactions (${counted.byKind[1]} kind 1, ${counted.byKind[2]} kind 2) with the ${counted.crash} crash-drill anchors and the same-block pair among them, verified valid at consensus-verified assurance, each with the commitment the rehearsal recorded.`,
-  `The verifier ran in verify-all.mjs, a separate process that imports nothing but Node built-ins, gate.mjs and the verify package, and reads through Blockfrost preprod. It loaded the verify package only from its own node_modules, where npm installed it from ${facts.package!.resolved} (sha256 ${facts.package!.sha256}), a tarball that still had the integrity npm recorded.`,
+  `The verifier ran in verify-all.mjs, a separate process that imports nothing but Node built-ins, gate.mjs, evidence-integrity.mjs and the verify package, and reads through Blockfrost preprod. It loaded the verify package only from its own node_modules, where npm installed it from ${facts.package!.resolved} (sha256 ${facts.package!.sha256}), a tarball that still had the integrity npm recorded and whose file tree matched every installed package file.`,
   "Every transaction the rehearsal's journals recorded as landed, other than the registry deploy, is one of these anchors or one of the rotation drill's four, and every recorded anchor is in a journal as landed.",
   ...refusalStatement,
   `The rehearsal submitted ${sameBlock.anchors[0]} from ${sameBlock.wallets[0]} and ${sameBlock.anchors[1]} from ${sameBlock.wallets[1]} in round ${sameBlock.round}, and the verifier places both in block ${sameBlock.height} (${sameBlock.hash}).`,
@@ -146,11 +200,11 @@ const statements = [
 const pack = {
   format: "orynq-midnight-evidence/v1",
   network: "preprod",
-  purpose: "W3 preprod rehearsal of @fluxpointstudios/orynq-sdk-anchors-midnight-submit: test tokens only, no mainnet write",
+  purpose: "Every write recorded here was found on preprod by the separate verifier",
   date: new Date().toISOString(),
   commit: head,
   chain: raw.chain,
-  pins: { compactc: "0.31.1", ledger: "@midnight-ntwrk/ledger-v8 8.1.3", walletSdk: "1.2.0 (facade 4.1.0, dust-wallet 4.2.0)", zkir: "2.1.1", verifierKeys: REGISTRY_VERIFIER_KEY_SHA256 },
+  pins: { ...installedPins(), verifierKeys: verified.verifierKeys },
   wallets: { A: recorded.walletA.addresses, B: recorded.walletB.addresses },
   funding: raw.funding,
   registry: {
@@ -160,13 +214,14 @@ const pack = {
     deployBlockHash: raw.deploy.blockHash,
     preparedOnFinalBytes: raw.deploy.prepared,
     readback: raw.deploy.readback,
-    landedAfterMs: raw.deploy.landedAfterMs,
-    dustSpeck: { before: raw.deploy.dustBefore, after: raw.deploy.dustAfter },
+    landedAfterMs: raw.deploy.landedAfterMs ?? { absent: "resumed in another process" },
+    prepareMs: raw.deploy.prepared.prepareMs ?? { absent: "resumed in another process" },
+    dustSpeck: { before: raw.deploy.dustBefore ?? { absent: "resumed in another process" }, after: raw.deploy.dustAfter ?? { absent: "wallet sync interrupted after landing" } },
   },
   anchors,
   ...(anchorRefusals.length ? { anchorRefusals } : {}),
   sameBlock: { ...raw.sameBlock, anchors: sameBlock.anchors, verifiedBlock: { height: sameBlock.height, hash: sameBlock.hash } },
-  nodeEnforcedNegatives: nodeNegatives.map((n) => ({ name: n.name, txHash: n.txHash, refusal: n.refusal, refusedBy: n.refusedBy, onChain: 0, blockfrost: verified.refusedTransactions[n.name] })),
+  nodeEnforcedNegatives: nodeNegatives.map((n) => ({ name: n.name, txHash: n.txHash, bytes: raw.negatives[n.name].bytes, address: raw.negatives[n.name].address, operator: raw.negatives[n.name].operator, refusal: n.refusal, refusedBy: n.refusedBy, onChain: 0, blockfrost: verified.refusedTransactions[n.name] })),
   registryAfterNegatives: raw.negativesAfter,
   knownAuthorsDrill: {
     trustRoot: verified.trustRoot,
@@ -179,7 +234,7 @@ const pack = {
   },
   journalCrashDrill: { windows: crashDrill, steps: crashStatus, log: crash, ...(aborted.attempts.length ? { abortedAttempts: aborted.attempts } : {}) },
   verifierNegatives: verified.negatives,
-  verifier: { process: verified.verifier, source: verified.source, package: verified.package },
+  verifier: { process: verified.verifier, source: verified.source, package: verified.package, consensusPolicy: verified.consensusPolicy, consensusSerial: verified.consensusSerial, consensusCheckpointCount: verified.consensusCheckpointCount },
   measurements: {
     declaredFeeSpeck: { perTransaction: [...new Set(fees.map(String))], total: String(fees.reduce((s, f) => s + f, 0n)), deploy: raw.deploy.prepared.declaredFee },
     proveMs: { kind1: stats(timed(1, "proveMs")), kind2: stats(timed(2, "proveMs")) },
@@ -192,7 +247,17 @@ const body = `${JSON.stringify(pack, (_, v) => (typeof v === "bigint" ? v.toStri
 
 // Every secret the rehearsal held, and the private receipts that must hold the openings.
 const hex = (s: string) => new Uint8Array(Buffer.from(s, "hex"));
+const mnemonic = (name: string) => {
+  try { return mnemonicToEntropy(readPrivateFile(`${SECRETS}/${name}`).trim(), wordlist); }
+  catch { throw new Error(`Invalid rehearsal wallet mnemonic in ${name}`); }
+};
+const projectId = readPrivateFile(`${process.env.HOME}/.secrets/blockfrost-midnight-preprod.project_id`).trim();
+if (!/^[a-z]{1,32}[A-Za-z0-9]{32}$/.test(projectId)) throw new Error("Invalid rehearsal Blockfrost project id");
+const projectSecret = projectId.slice(-32);
 const secrets: Array<[string, Uint8Array]> = [
+  ["blockfrost project-id suffix", /^[0-9a-f]{32}$/i.test(projectSecret) ? hex(projectSecret) : new Uint8Array(Buffer.from(projectSecret))],
+  ["wallet-a mnemonic entropy", mnemonic("wallet-a.mnemonic")],
+  ["wallet-b mnemonic entropy", mnemonic("wallet-b.mnemonic")],
   ["author-relay.key", readAuthorSecret(`${SECRETS}/author-relay.key`)],
   ["author-relay-2.key", readAuthorSecret(`${SECRETS}/author-relay-2.key`)],
   ["salt.key", readAuthorSecret(`${SECRETS}/salt.key`)],
@@ -203,7 +268,7 @@ const bytes = new Uint8Array(Buffer.from(body));
 const receipts = new Uint8Array(Buffer.from(readPrivateFile(`${SECRETS}/receipts.json`)));
 const scan = {
   secretsScanned: secrets.length,
-  windowsOfSecretsInPack: secrets.reduce((s, [, v]) => s + windowHits(bytes, v), 0),
+  windowsOfSecretsInPack: secrets.reduce((s, [, v]) => s + windowHits(bytes, v), 0) + (body.includes(projectId) ? 1 : 0),
   positiveControls: {
     openingWindowsInPrivateReceipts: Object.entries(openings).flatMap(([, o]) => [o.salt, o.rootHash]).reduce((s, v) => s + windowHits(receipts, hex(v)), 0),
     attributeWindowsInPack: anchors.filter((a) => a.kind === 2).reduce((s, a) => s + windowHits(bytes, hex(a.attribute)), 0),

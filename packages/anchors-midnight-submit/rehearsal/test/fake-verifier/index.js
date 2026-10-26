@@ -8,8 +8,12 @@ import { appendFileSync, readFileSync } from "node:fs";
 const chain = JSON.parse(readFileSync(process.env.FAKE_CHAIN, "utf8"));
 const SEVERITY = ["invalid", "conflict", "unavailable", "unverified-finality", "unauthenticated", "author-revoked"];
 
-export const { KNOWN_AUTHORS_TRUST_ROOTS, knownAuthors, openKnownAuthors, signKnownAuthors } = await import(process.env.ORYNQ_VERIFY_DIST);
-export const REGISTRY_VERIFIER_KEY_SHA256 = { anchor: "85dc57a4", anchor_hiding: "081384ce" };
+const real = await import(process.env.ORYNQ_VERIFY_DIST);
+export const { openKnownAuthors, signKnownAuthors, REGISTRY_VERIFIER_KEY_SHA256 } = real;
+// This fixture ships its own synthetic policy root. Explicit drill roots still pass through
+// the real strict parser/signature path, including every forged-document consumer attack.
+export const KNOWN_AUTHORS_TRUST_ROOTS = [chain.consensusRoot];
+export function knownAuthors(options = {}) { return real.knownAuthors({ ...options, trustRoots: options.trustRoots ?? KNOWN_AUTHORS_TRUST_ROOTS }); }
 export const blockfrostEndpoints = (network) => ({ operator: "blockfrost", network });
 export const midnightSource = (endpoints) => ({ operator: endpoints.operator, network: endpoints.network });
 
@@ -38,7 +42,7 @@ export async function verifyMidnightAnchor(request, options) {
   if (expect.kind !== anchor.kind || (anchor.kind === 1 ? expect.entry.rootHash !== anchor.rootHash : expect.attribute !== anchor.attribute)) failed.push(["expectation", "invalid"]);
   const authors = options.knownAuthors;
   const skipped = options.finality === "skip";
-  if (skipped || options.maxSetChanges === 0 || authors.serial === 0) failed.push(["finality", "unverified-finality"]);
+  if (skipped || options.maxSetChanges === 0 || authors.serial === 0 || !options.checkpoints?.length) failed.push(["finality", "unverified-finality"]);
   if (request.expectedAuthor !== undefined) {
     const match = request.expectedAuthor === anchor.author;
     author = match ? { status: "expected", key: anchor.author } : { status: "mismatch", key: anchor.author, expected: request.expectedAuthor };

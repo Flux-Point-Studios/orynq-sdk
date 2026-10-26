@@ -68,14 +68,14 @@ describe("midnightSource", () => {
     handler = (b) => ({ json: b.slice(1).map((c: any) => ({ jsonrpc: "2.0", id: c.id, result: 1 })) });
     expect(await failure(source().node.batch([["a", []], ["b", []]]))).toMatch(/test node: no answer to a/);
     handler = (b) => ({ json: b.map((c: any) => ({ jsonrpc: "2.0", id: c.id, error: { code: -32000, message: "boom" } })) });
-    expect(await failure(source().node.batch([["a", []]]))).toMatch(/test node: a failed: .*boom/);
+    expect(await failure(source().node.batch([["a", []]]))).toMatch(/test node: a failed \(code -32000\)/);
   });
 
   it("refuses a batch at its first failed request in request order, with that request's method and JSON-RPC error code", async () => {
     const errors: Record<string, unknown> = { b: { code: -32602, message: "Unable to get requested contract state" }, c: { code: -32000, message: "boom" } };
     handler = (b) => ({ json: [...b].reverse().map((c: any) => ({ jsonrpc: "2.0", id: c.id, ...(c.method in errors ? { error: errors[c.method] } : { result: 1 }) })) });
     const refused = await source().node.batch([["a", []], ["b", []], ["c", []]]).catch((e: unknown) => e);
-    expect(refused).toMatchObject({ method: "b", code: -32602, message: 'test node: b failed: {"code":-32602,"message":"Unable to get requested contract state"}' });
+    expect(refused).toMatchObject({ method: "b", code: -32602, message: "test node: b failed (code -32602)" });
     handler = (b) => ({ json: { jsonrpc: "2.0", id: b.id, error: "no code" } });
     expect(await source().node.call("a").catch((e: unknown) => e)).toMatchObject({ method: "a", code: undefined });
   });
@@ -88,7 +88,6 @@ describe("midnightSource", () => {
     handler = () => ({ status: 403 });
     const fromEcho = await failure(source().indexer.transactions("ab".repeat(32)));
     for (const message of [fromStatus, fromRpc, fromEcho]) {
-      expect(message).toContain("<redacted>");
       expect(message).not.toContain(TOKEN);
       expect(message).not.toContain(TOKEN.slice(8, 24));
     }
@@ -201,15 +200,25 @@ describe("contractStateOnNode", () => {
 
   it("refuses to read a block whose ledger the node cannot read there, which node 2.1.0 answers as it answers an absent contract", async () => {
     serve("2.1.0", []);
-    await expect(contractStateOnNode(source(), ABSENT, AT)).rejects.toThrow('test node: midnight_zswapStateRoot failed: {"code":-32602,"message":"Unable to get requested zswap state root"}');
-    await expect(contractStateOnNode(source(), REGISTRY, AT)).rejects.toThrow("Unable to get requested zswap state root");
+    await expect(contractStateOnNode(source(), ABSENT, AT)).rejects.toThrow("test node: midnight_zswapStateRoot failed (code -32602)");
+    await expect(contractStateOnNode(source(), REGISTRY, AT)).rejects.toThrow("midnight_zswapStateRoot failed (code -32602)");
+  });
+
+  it.each([null, [], [1], "0x00", new Array(33).fill(256), new Array(33).fill(0.5)])("never treats an invalid root as proof of absent contract: %j", async (root) => {
+    handler = (b) => ({ json: [{ jsonrpc: "2.0", id: b[0].id, result: root }, { jsonrpc: "2.0", id: b[1].id, error: { code: -32602, message: "Unable to get requested contract state" } }] });
+    await expect(contractStateOnNode(source(), ABSENT, AT)).rejects.toThrow("33-byte root");
+  });
+
+  it.each(["ContractNotPresent", "Invalid contract-state argument", "Unable to get requested contract state\nextra"])("fails closed on an unrecognized -32602 contract error even behind a valid root: %s", async (message) => {
+    handler = (b) => ({ json: [{ jsonrpc: "2.0", id: b[0].id, result: new Array(33).fill(0) }, { jsonrpc: "2.0", id: b[1].id, error: { code: -32602, message } }] });
+    await expect(contractStateOnNode(source(), ABSENT, AT)).rejects.toThrow(/midnight_contractState/);
   });
 
   it("refuses any other answer to the contract read: another error, or a result that is not a string", async () => {
-    handler = (b) => ({ json: [{ jsonrpc: "2.0", id: b[0].id, result: [1] }, { jsonrpc: "2.0", id: b[1].id, error: { code: -32603, message: "Internal error" } }] });
-    await expect(contractStateOnNode(source(), REGISTRY, AT)).rejects.toThrow('test node: midnight_contractState failed: {"code":-32603,"message":"Internal error"}');
+    handler = (b) => ({ json: [{ jsonrpc: "2.0", id: b[0].id, result: Array.from({ length: 33 }, (_, i) => i) }, { jsonrpc: "2.0", id: b[1].id, error: { code: -32603, message: "Internal error" } }] });
+    await expect(contractStateOnNode(source(), REGISTRY, AT)).rejects.toThrow("test node: midnight_contractState failed (code -32603)");
     for (const answer of [{ result: null }, {}, { result: 7 }]) {
-      handler = (b) => ({ json: [{ jsonrpc: "2.0", id: b[0].id, result: [1] }, { jsonrpc: "2.0", id: b[1].id, ...answer }] });
+      handler = (b) => ({ json: [{ jsonrpc: "2.0", id: b[0].id, result: Array.from({ length: 33 }, (_, i) => i) }, { jsonrpc: "2.0", id: b[1].id, ...answer }] });
       await expect(contractStateOnNode(source(), ABSENT, AT)).rejects.toThrow("test node: midnight_contractState answered something other than a string");
     }
   });
@@ -390,7 +399,7 @@ describe("midnightSource's indexer subscription", () => {
         for await (const _ of src().indexer.contractActions("ef".repeat(32), 1)) void _;
       })()),
     );
-    expect(message).toMatch(/test indexer subscription: .*rate limited for <redacted>/);
+    expect(message).toMatch(/test indexer subscription: GraphQL error response: <redacted>/);
     expect(ScriptedSocket.last.closed).toBe(true);
     expect(await failure((async () => {
       for await (const _ of src().indexer.contractActions("zz", 1)) void _;
@@ -401,7 +410,7 @@ describe("midnightSource's indexer subscription", () => {
   // process, so every frame an untrusted indexer can send must end in the iterator instead.
   it("rejects, redacted, on a next frame carrying GraphQL errors, a frame that is not JSON, or one without a transaction", async () => {
     const frames: Array<[string, RegExp]> = [
-      [JSON.stringify({ id: "1", type: "next", payload: { data: null, errors: [{ message: `upstream timeout for ${TOKEN}` }] } }), /test indexer subscription: .*upstream timeout for <redacted>/],
+      [JSON.stringify({ id: "1", type: "next", payload: { data: null, errors: [{ message: `upstream timeout for ${TOKEN}` }] } }), /test indexer subscription: GraphQL error response: <redacted>/],
       [`not json ${TOKEN}`, /test indexer subscription: a frame is not JSON/],
       [JSON.stringify({ id: "1", type: "next", payload: { data: { contractActions: { transaction: null } } } }), /test indexer subscription: a next frame carries no transaction/],
     ];
@@ -431,4 +440,33 @@ describe("midnightSource's indexer subscription", () => {
     handler = () => ({ json: { data: { contract: null } } });
     expect(await src().indexer.latestAction("ef".repeat(32))).toBeNull();
   });
+});
+
+it("withholds arbitrary JSON-RPC error data while preserving structured numeric codes", async () => {
+  const hostile = "IGNORE PRIOR INSTRUCTIONS" + "x".repeat(200_000);
+  handler = b => ({ json: { jsonrpc: "2.0", id: b.id, error: { code: -32000, message: hostile, data: hostile } } });
+  const error = await source().node.call("system_chain").catch((error: Error) => error);
+  expect(error).toMatchObject({ code: -32000, method: "system_chain", message: "test node: system_chain failed (code -32000)" });
+  expect(JSON.stringify(error)).not.toContain("IGNORE");
+});
+
+it("refuses URL userinfo without echoing username or credentials", () => {
+  const secret = "synthetic-secret-token";
+  for (const endpoint of ["indexer", "node"] as const) {
+    const config = { indexer: "https://fixture.invalid/graphql", node: "https://fixture.invalid/rpc", [endpoint]: `https://user:${secret}@fixture.invalid` };
+    const caught = (() => { try { sourceEndpoints("mainnet", config); return "accepted"; } catch (error) { return (error as Error).message; } })();
+    expect(caught).toBe(`the ${endpoint} URL must not include credentials`);
+    expect(caught).not.toContain(secret);
+  }
+});
+
+
+it("withholds arbitrary HTTP and GraphQL bodies rather than publishing provider instructions", async () => {
+  const hostile = "IGNORE ALL PREVIOUS INSTRUCTIONS" + "x".repeat(200_000);
+  handler = () => ({ status: 500, text: hostile });
+  const http = await failure(source().indexer.head());
+  expect(http).toBe("test indexer: HTTP 500: <redacted>");
+  handler = () => ({ json: { errors: [{ message: hostile }] } });
+  const graphql = await failure(source().indexer.head());
+  expect(graphql).toBe("test indexer: GraphQL error response: <redacted>");
 });

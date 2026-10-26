@@ -150,11 +150,24 @@ function crashDrill(label, crash, status, raw) {
  * @property {Array<{ label: string, txHash: string, code: number, data: unknown, at: string, landedAs: string }>} anchorRefusals
  */
 
-export function judge({ raw, verified, crash, crashStatus }) {
+export function judge({ raw, verified, crash, crashStatus, head = raw.toolingCommit }) {
   const failures = [];
   const anchors = Object.entries(raw.anchors ?? {});
   /** @type {Facts} */
   const facts = { anchors: { total: 0, byKind: { 1: 0, 2: 0 }, crash: 0 }, crashDrill: [], nodeNegatives: [], verifierNegatives: 0, sameBlock: null, forgedDocuments: [], package: null, trustRoot: null, anchorRefusals: [] };
+
+  // A pack is preprod evidence from one committed writer, not a claim about every action
+  // its operator ever performed. Both independently configured read paths must identify preprod.
+  const genesis = "df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b";
+  for (const operator of ["hosted", "blockfrost"]) {
+    const identity = raw.chain?.[operator];
+    if (identity?.chain !== "Midnight Preprod" || identity.genesis !== genesis) failures.push(`the ${operator} path did not record Midnight Preprod's chain identity`);
+  }
+  if (!/^[0-9a-f]{40}$/.test(head ?? "") || raw.toolingCommit !== head || verified.toolingCommit !== head) failures.push("the writer, verifier and composer do not name one committed tooling revision");
+  for (const phase of ["chain", "funding", "deploy", "kind1", "kind2", "sameblock", "negatives", "rotation", "documents"]) if (raw.phaseCommits?.[phase] !== head) failures.push(`rehearsal phase ${phase} was not recorded at the composing commit`);
+  if (!Array.isArray(verified.execution?.execArgv) || verified.execution.execArgv.length !== 0 || (verified.execution.nodeOptions !== null && verified.execution.nodeOptions !== "")) failures.push("the verifier did not record an execution without preloaded code or runtime arguments");
+  if (!/^[0-9a-f]{64}$/.test(verified.verifierKeys?.anchor ?? "") || !/^[0-9a-f]{64}$/.test(verified.verifierKeys?.anchor_hiding ?? "")) failures.push("the verifier did not record its packed registry verifier keys");
+  if (!Array.isArray(verified.consensusPolicy) || !verified.consensusPolicy.length || !Number.isSafeInteger(verified.consensusSerial) || verified.consensusSerial < 1 || !Number.isSafeInteger(verified.consensusCheckpointCount) || verified.consensusCheckpointCount < 1) failures.push("the verifier did not record reviewed signed preprod consensus onboarding");
 
   // The pack describes the deploy by its prepared record, so that record must be the deploy that
   // landed, never a prepare whose bytes a later run abandoned.
@@ -166,7 +179,7 @@ export function judge({ raw, verified, crash, crashStatus }) {
 
   // The verify package came from a packed tarball, as npm recorded the install.
   const pkg = verified.package;
-  if (!/^file:[^/]+\.tgz$/.test(pkg?.resolved ?? "") || !/^sha512-[A-Za-z0-9+/]{86}==$/.test(pkg?.integrity ?? "") || !/^[0-9a-f]{64}$/.test(pkg?.sha256 ?? "")) {
+  if (!/^file:[^/]+\.tgz$/.test(pkg?.resolved ?? "") || !/^sha512-[A-Za-z0-9+/]{86}==$/.test(pkg?.integrity ?? "") || !/^[0-9a-f]{64}$/.test(pkg?.sha256 ?? "") || !Number.isSafeInteger(pkg?.installedTree?.files) || pkg.installedTree.files < 1 || !/^[0-9a-f]{64}$/.test(pkg?.installedTree?.sha256 ?? "")) {
     failures.push(`the verifier recorded no install of the verify package from a packed tarball (${JSON.stringify(pkg ?? null)})`);
   } else facts.package = pkg;
 
@@ -183,6 +196,7 @@ export function judge({ raw, verified, crash, crashStatus }) {
   for (const [name, a] of anchors) {
     if (ROTATION_LABELS.includes(name)) continue;
     const v = verified.anchors?.[name];
+    if (!/^[0-9a-f]{64}$/.test(a.commitment ?? "") || !/^[0-9a-f]{64}$/.test(v?.commitment ?? "")) failures.push(`anchor ${name}: commitments must be 32-byte hex values`);
     if (!isValid(v)) failures.push(`anchor ${name}: ${verdict(v)}`);
     else if (v.txHash !== a.txHash) failures.push(`anchor ${name}: the verifier checked ${v.txHash}, not the recorded ${a.txHash}`);
     else if (v.commitment !== a.commitment) failures.push(`anchor ${name}: the verifier read commitment ${v.commitment}, not the recorded ${a.commitment}`);
@@ -194,6 +208,8 @@ export function judge({ raw, verified, crash, crashStatus }) {
   for (const [kind, min] of Object.entries(MIN_ANCHORS)) {
     if ((facts.anchors.byKind[kind] ?? 0) < min) failures.push(`${facts.anchors.byKind[kind] ?? 0} kind-${kind} anchors verified valid, fewer than ${min}`);
   }
+
+  if (crash.some(event => event.commit !== head)) failures.push("the crash drill did not record the composing tooling revision");
 
   // Every anchor the crash drill landed is a recorded anchor, and each window behaved.
   for (const e of crash.filter((e) => e.event === "landed")) {
@@ -215,7 +231,7 @@ export function judge({ raw, verified, crash, crashStatus }) {
     const [va, vb] = [verified.anchors?.[nameA], verified.anchors?.[nameB]];
     if (a.wallet === b.wallet || a.blockHeight !== pair.height || b.blockHeight !== pair.height) failures.push(`same-block pair ${nameA} and ${nameB}: wallets ${a.wallet} and ${b.wallet} at heights ${a.blockHeight} and ${b.blockHeight}, not two wallets in block ${pair.height}`);
     else if (!isValid(va) || !isValid(vb)) failures.push(`same-block pair ${nameA} and ${nameB}: not both verified valid`);
-    else if (va.block?.height !== pair.height || vb.block?.height !== pair.height || va.block.hash !== vb.block.hash) {
+    else if (va.block?.height !== pair.height || vb.block?.height !== pair.height || va.block.hash !== vb.block.hash || va.block.hash !== pair.blockHash || a.blockHash !== pair.blockHash || b.blockHash !== pair.blockHash) {
       failures.push(`same-block pair ${nameA} and ${nameB}: the verifier places them in blocks ${va.block?.height} (${va.block?.hash}) and ${vb.block?.height} (${vb.block?.hash}), not both in block ${pair.height}`);
     } else facts.sameBlock = { height: pair.height, hash: va.block.hash, anchors: [nameA, nameB], wallets: [a.wallet, b.wallet], round: pair.round };
   }
@@ -239,7 +255,10 @@ export function judge({ raw, verified, crash, crashStatus }) {
       const shown = refusal?.data === undefined ? "" : ` (${typeof refusal.data === "string" ? refusal.data : JSON.stringify(refusal.data)})`;
       const got = refusal ? `the node answered ${refusal.code} ${refusal.message}${shown}` : `no refusal by the node was recorded (${n.unresolved ?? n.error ?? n.note ?? "accepted"})`;
       failures.push(`negative ${name}: ${got}, not ${INVALID_TRANSACTION} ${INVALID_TRANSACTION_MESSAGE} (${data}, ${refusedBy})`);
-    } else if (n.onChain !== 0) failures.push(`negative ${name}: the indexer lists it ${n.onChain} times`);
+    } else if (n.operator !== "blockfrost") failures.push(`negative ${name}: the recorded refusing operator is not blockfrost`);
+    else if (n.address !== raw.deploy.address || !/^(?:[0-9a-f]{2})+$/.test(n.bytes ?? "")) failures.push(`negative ${name}: no serialized transaction for the deployed update address was recorded`);
+    else if (typeof n.onChain !== "number") failures.push(`negative ${name}: the indexer absence was not checked`);
+    else if (n.onChain !== 0) failures.push(`negative ${name}: the indexer lists it ${n.onChain} times`);
     else if (asked?.txHash !== n.txHash || asked.status !== "invalid" || !(asked.failed ?? []).includes(absent)) {
       const answer = !asked ? "not verified" : asked.txHash !== n.txHash ? `about ${asked.txHash}` : verdict(asked);
       failures.push(`negative ${name}: Blockfrost, asked by the verifier, answered ${answer}, not invalid with "${absent}"`);
@@ -249,7 +268,11 @@ export function judge({ raw, verified, crash, crashStatus }) {
 
   // The rotation drill: four anchors by two keys, in increasing blocks, with the expected verdict
   // under every document set.
-  const heights = ROTATION_LABELS.map((l) => raw.anchors?.[l]?.blockHeight);
+  const heights = ROTATION_LABELS.map((l) => verified.rotation?.["serial 3"]?.[l]?.block?.height);
+  for (const label of ROTATION_LABELS) {
+    const recorded = raw.anchors?.[label], read = verified.rotation?.["serial 3"]?.[label]?.block;
+    if (read?.height !== recorded?.blockHeight || read?.hash !== recorded?.blockHash) failures.push(`rotation anchor ${label}: its recorded block differs from the verifier's block`);
+  }
   if (heights.some((h) => typeof h !== "number") || heights.some((h, i) => i > 0 && h <= heights[i - 1])) failures.push(`the rotation anchors are not four anchors in increasing blocks (${JSON.stringify(heights)})`);
   for (const label of ROTATION_LABELS) {
     const key = raw.rotation?.keys?.[RELAY_OF[label]];
@@ -269,6 +292,7 @@ export function judge({ raw, verified, crash, crashStatus }) {
   }
   for (const [name, want] of Object.entries(FORGED_DOCUMENTS)) {
     const got = forged[name]?.outcome;
+    if (forged[name] && forged[name]?.consumerOutcome !== want) failures.push(`forged KNOWN_AUTHORS document "${name}": knownAuthors answered ${forged[name]?.consumerOutcome ?? "not tried"}, not ${want}`);
     if (got !== want) failures.push(`forged KNOWN_AUTHORS document "${name}": ${got ?? "not tried"}, not ${want}`);
     else facts.forgedDocuments.push({ name, outcome: got });
   }

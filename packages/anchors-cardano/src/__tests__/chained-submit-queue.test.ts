@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createChainedSubmitQueue,
+  classifyCardanoSubmitError,
   isSpentInputError,
   SubmitQueueFullError,
   SubmitRefusedError,
@@ -621,5 +622,35 @@ describe("isSpentInputError", () => {
     "fetch failed",
   ])("ignores %s", (message) => {
     expect(isSpentInputError(new Error(message))).toBe(false);
+  });
+});
+
+describe("numeric Cardano/Ogmios submission refusals", () => {
+  const envelope = (code: number, message = "provider-specific explanation") => ({ jsonrpc: "2.0", error: { code, message }, id: "submit" });
+  it.each([-32602, 3004, 3010, 3110])("recognises protocol code %s without relying on prose", code => {
+    expect(classifyCardanoSubmitError(envelope(code))).toBe("refused");
+    expect(classifyCardanoSubmitError(new Error(`TxSubmitError: ${JSON.stringify(envelope(code))}`))).toBe("refused");
+  });
+  it.each([3117, 3997])("treats code %s as unknown/spent inputs, never acceptance", code => {
+    expect(classifyCardanoSubmitError(envelope(code))).toBe("spent-input");
+  });
+  it("uses numeric refusal before contradictory spent-input prose", () => {
+    expect(classifyCardanoSubmitError(envelope(-32602, "All inputs are spent"))).toBe("refused");
+  });
+  it("keeps transport and unknown protocol outcomes uncertain and tolerates cycles", () => {
+    const error = Object.assign(new Error("fetch failed"), { code: 503, cause: {} as unknown }); error.cause = error;
+    expect(classifyCardanoSubmitError(error)).toBe("unknown");
+    expect(classifyCardanoSubmitError(envelope(-32000))).toBe("unknown");
+  });
+  it("fails numeric refusals immediately and requires exact-hash confirmation for uncertain outcomes", async () => {
+    const awaitConfirmation = vi.fn().mockResolvedValue(false);
+    const queue = createChainedSubmitQueue<string>({ maxChainLength: 4, cacheTtlMs: 1000, maxPending: 4, dedupeTtlMs: 1000, dedupeMaxEntries: 4, awaitConfirmation, isOnChain: async () => false });
+    for (const code of [-32602, 3004, 3010, 3110, 3997]) {
+      const error = envelope(code);
+      await expect(queue.submit(`refused-${code}`, async () => ({ txHash: `hash-${code}`, walletUtxos: [], submit: async () => { throw error; } }))).rejects.toBe(error);
+    }
+    expect(awaitConfirmation).not.toHaveBeenCalled();
+    await expect(queue.submit("unknown", async () => ({ txHash: "exact-hash", walletUtxos: [], submit: async () => { throw new Error("connection reset"); } }))).rejects.toThrow("connection reset");
+    expect(awaitConfirmation).toHaveBeenCalledWith("exact-hash");
   });
 });

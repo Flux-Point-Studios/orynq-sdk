@@ -19,16 +19,28 @@ export interface ChainFacts {
   ledgerVersion: string;
 }
 
+function checkedLedgerVersion(version: unknown): string {
+  // The RPC uses Cargo exact-version syntax (=8.1.2) on deployed nodes. Normalize only
+  // that recognized marker; everything emitted still has the strict numeric semver grammar.
+  const normalized = typeof version === "string" && version.startsWith("=") ? version.slice(1) : version;
+  if (typeof normalized !== "string" || normalized.length > 32 || !/^\d+\.\d+\.\d+$/.test(normalized)) {
+    throw new Error("the node returned an invalid Midnight ledger version");
+  }
+  return normalized;
+}
+
 // Refuses a node that is not `network`'s chain or runs a runtime the decoder does not know, and
 // returns what it read.
 export async function assertChainIdentity(source: MidnightSource, network: MidnightNetwork): Promise<ChainFacts> {
   const want = NETWORK_IDENTITY[network];
-  const chain = await source.node.call<string>("system_chain");
-  if (chain !== want.chain) throw new Error(`the node serves ${chain}, not ${want.chain}`);
-  const genesis = (await source.node.call<string>("chain_getBlockHash", [0])).replace(/^0x/, "");
+  const chain = await source.node.call<unknown>("system_chain");
+  if (chain !== want.chain) throw new Error(`the node serves ${Object.values(NETWORK_IDENTITY).some(identity => identity.chain === chain) ? chain : "an unrecognized chain"}, not ${want.chain}`);
+  const rawGenesis = await source.node.call<unknown>("chain_getBlockHash", [0]);
+  if (typeof rawGenesis !== "string" || !/^(?:0x)?[0-9a-f]{64}$/.test(rawGenesis)) throw new Error("the node returned an invalid genesis hash");
+  const genesis = rawGenesis.replace(/^0x/, "");
   if (genesis !== want.genesis) throw new Error(`genesis ${genesis} is not ${want.chain}'s ${want.genesis}`);
   const specVersion = await assertKnownRuntime(source, network);
-  const ledgerVersion = await source.node.call<string>("midnight_ledgerVersion");
+  const ledgerVersion = checkedLedgerVersion(await source.node.call<unknown>("midnight_ledgerVersion"));
   return { chain, genesis, specVersion, ledgerVersion };
 }
 
@@ -51,11 +63,14 @@ export function formatDust(speck: bigint): string {
 // what they are. The DUST balance is this run's wallet's; the payer is the wallet whose DUST paid
 // the bytes.
 function bytesSummary({ chain, wallet, dust, prepared, noun }: { chain: ChainFacts; wallet: { dust: string }; dust: bigint; prepared: PreparedBytes; noun: string }, rows: string[]): string {
+  const ledgerVersion = checkedLedgerVersion(chain.ledgerVersion);
   const { journal } = prepared;
   const resumed =
     journal &&
     (journal.state === "landed"
       ? `these bytes landed; confirming sends nothing and reads the ${noun} back`
+      : journal.expired === null
+        ? "chain time is unknown; confirming sends nothing until the chain can settle these bytes"
       : journal.expired
         ? `these bytes expired at ${prepared.ttl.toISOString()} and the chain does not show them landed; confirming sends nothing and waits until the chain lands or retires them`
         : journal.broadcasts > 0
@@ -64,7 +79,7 @@ function bytesSummary({ chain, wallet, dust, prepared, noun }: { chain: ChainFac
   return [
     ...(resumed ? [`journal          resumed: ${resumed}`] : []),
     `network          ${prepared.network} (${chain.chain}, genesis ${chain.genesis})`,
-    `runtime          ${chain.specVersion}, ledger ${chain.ledgerVersion}`,
+    `runtime          ${chain.specVersion}, ledger ${ledgerVersion}`,
     ...rows,
     `fee (declared)   ${formatDust(prepared.declaredFee)} DUST, all of it burned`,
     `DUST balance     ${formatDust(dust)} DUST at ${wallet.dust}`,
@@ -163,11 +178,15 @@ export async function confirmOnTerminal({
 }): Promise<boolean> {
   assertHumanTerminal({ input, output, env, does: `confirms ${what}`, what });
   const lines = createInterface({ input, output, terminal: false });
+  // SIGINT declines through the normal cleanup path instead of terminating with open wallets.
+  const interrupted = () => lines.close();
+  process.once("SIGINT", interrupted);
   output.write(`\nType exactly "${token}" to confirm these bytes for mainnet, anything else to send nothing: `);
   try {
     for await (const line of lines) return line.trim() === token;
     return false;
   } finally {
+    process.off("SIGINT", interrupted);
     lines.close();
   }
 }

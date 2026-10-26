@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { chmodSync } from "node:fs";
+import { chmodSync, copyFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import {
@@ -20,11 +20,14 @@ import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS } from "../src/custody.js";
 import { registryOperator, type OperatorOptions } from "../src/operator.js";
 import { bytes32, chain, deployed, fresh, hex, wallet } from "./fakes.js";
 import { batch } from "./batch-fixture.js";
+import { fixtureVerifier } from "./fixture-verifier.js";
 import { prover } from "./prover.js";
 
+let bindingRoot: string;
 let authorKeyFile: string;
 let saltKeyFile: string;
 beforeEach(() => {
+  bindingRoot = fresh("bindings");
   authorKeyFile = fresh("author.key");
   createAuthorKeyFile(authorKeyFile);
   saltKeyFile = fresh("salt.key");
@@ -36,6 +39,7 @@ function setup(overrides: Partial<OperatorOptions> & { tamper?: (tx: L.Finalized
   const journalPath = fresh("journal.sqlite");
   const w = wallet(net, () => journalPath, overrides.tamper);
   const operator = registryOperator({
+    bindingRoot, verifyLanded: fixtureVerifier,
     network: "preprod",
     wallet: w,
     source: net.source,
@@ -85,6 +89,49 @@ describe("batch author role and exact kind-3 submissions", () => {
 });
 
 describe("registryOperator.anchor", () => {
+  it.each(["replacement", "buffer"])("keeps checked bytes when the caller mutates %s across the runtime await", async mutation => {
+    const { operator, wallet: w, net } = setup();
+    try {
+      const prepared = await operator.prepare({ kind: 1, entry: entry() });
+      const other = await operator.prepare({ kind: 1, entry: entry() });
+      const expected = { hash: prepared.txHash, bytes: hex(prepared.bytes), commitment: prepared.commitment };
+      const call = net.source.node.call.bind(net.source.node);
+      let changed = false;
+      net.source.node.call = async <T>(method: string, params?: unknown[]): Promise<T> => {
+        if (!changed && method === "state_getRuntimeVersion") {
+          changed = true;
+          if (mutation === "replacement") { prepared.bytes = other.bytes; prepared.txHash = other.txHash; prepared.commitment = other.commitment; }
+          else prepared.bytes.fill(0);
+        }
+        return call<T>(method, params);
+      };
+      const landed = await operator.submit(prepared);
+      expect(landed.txHash).toBe(expected.hash);
+      expect(w.submitted.map(tx => hex(tx.serialize()))).toEqual([expected.bytes]);
+      expect(decodeAnchorTransaction(w.submitted[0]!.serialize(), [deployed.address]).calls[0]!.commitment).toBe(expected.commitment);
+    } finally { operator.close(); }
+  });
+  it.each(["deploy", "guaranteed offer", "fallible offer"])("refuses an otherwise correct anchor carrying an extra %s", async extra => {
+    const malicious = {
+      async prove(tx: L.UnprovenTransaction) {
+        const intents = tx.intents!;
+        const [segment, intent] = [...intents][0]!;
+        if (extra === "deploy") intent.actions = [...intent.actions, new L.ContractDeploy(registryInitialState())];
+        else if (extra === "guaranteed offer") intent.guaranteedUnshieldedOffer = L.UnshieldedOffer.new([], [], []);
+        else intent.fallibleUnshieldedOffer = L.UnshieldedOffer.new([], [], []);
+        intents.set(segment, intent); tx.intents = intents;
+        return prover.prove(tx);
+      },
+    };
+    const { operator, wallet: w, journalPath } = setup({ prover: malicious });
+    try {
+      await expect(operator.anchor(entry())).rejects.toThrow("the final bytes do not carry exactly the intended anchor");
+      expect(w.submitted).toHaveLength(0);
+      expect(w.discarded).toHaveLength(1);
+      const db = new DatabaseSync(journalPath);
+      try { expect(db.prepare("select count(*) as n from attempts").get()).toEqual({ n: 0 }); } finally { db.close(); }
+    } finally { operator.close(); }
+  });
   it("journals the final bytes' hash before submitting them, and returns once the indexer shows the anchor landed", async () => {
     const { operator, wallet: w } = setup();
     const e = entry();
@@ -197,7 +244,7 @@ describe("registryOperator's anchors a human confirms", () => {
   // An operator over `net` and the journal at `journalPath` whose wallet `submit` replaces.
   const sharing = (net: ReturnType<typeof chain>, journalPath: string, submit: (tx: L.FinalizedTransaction) => Promise<void>) => {
     const w = { ...wallet(net, () => journalPath), submit };
-    return registryOperator({ network: "preprod", wallet: w, source: net.source, prover, journalPath, authorKeyFile, saltKeyFile, registry: deployed.address, pollMillis: 1 });
+    return registryOperator({ bindingRoot, verifyLanded: fixtureVerifier, network: "preprod", wallet: w, source: net.source, prover, journalPath, authorKeyFile, saltKeyFile, registry: deployed.address, pollMillis: 1 });
   };
 
   it("prepares the final bytes of a kind-1 anchor and everything a human must see, journalling and submitting nothing", async () => {
@@ -239,12 +286,12 @@ describe("registryOperator's anchors a human confirms", () => {
   });
 
   it("submits exactly the confirmed bytes through the journal and returns the anchor once it landed", async () => {
-    const { operator, wallet: w, journalPath } = setup();
+    const { operator, wallet: w, net, journalPath } = setup();
     const prepared = await operator.prepare({ kind: 1, entry: entry() });
     const receipt = await operator.submit(prepared);
     expect(w.submitted.map((t) => hex(t.serialize()))).toEqual([hex(prepared.bytes)]);
     expect(w.rowsAtSubmit).toEqual([[{ tx_hash: prepared.txHash, state: "pending" }]]);
-    expect(receipt).toEqual({ network: "preprod", registry: deployed.address, txHash: prepared.txHash, blockHeight: 500, blockHash: "ab".repeat(32), kind: 1, commitment: prepared.commitment, attribute: "00".repeat(32), author: prepared.author });
+    expect(receipt).toEqual({ network: "preprod", registry: deployed.address, txHash: prepared.txHash, blockHeight: 500, blockHash: net.blockHash(500), kind: 1, commitment: prepared.commitment, attribute: "00".repeat(32), author: prepared.author });
     expect(rows(journalPath)).toEqual([{ tx_hash: prepared.txHash, state: "landed" }]);
     operator.close();
   });
@@ -292,6 +339,7 @@ describe("registryOperator's anchors a human confirms", () => {
     expect(await operator.journalled({ kind: 1, entry: e })).toBeNull();
     let lost = 1;
     const lossy = registryOperator({
+      bindingRoot, verifyLanded: fixtureVerifier,
       network: "preprod",
       wallet: w,
       source: {
@@ -410,7 +458,8 @@ describe("registryOperator.relocate", () => {
     const prepared = await operator.prepare({ kind: 1, entry: entry() });
     const landed = await operator.submit(prepared);
     net.reorg(prepared.txHash, { height: 640, hash: "ef".repeat(32) });
-    expect(await operator.relocate(prepared)).toEqual({ ...landed, blockHeight: 640, blockHash: "ef".repeat(32) });
+    expect(await operator.submit(prepared)).toEqual({ ...landed, blockHeight: 640, blockHash: net.blockHash(640) });
+    expect(await operator.relocate(prepared)).toEqual({ ...landed, blockHeight: 640, blockHash: net.blockHash(640) });
     expect(w.submitted.map((t) => t.transactionHash())).toEqual([prepared.txHash]);
     expect(rows(journalPath)).toEqual([{ tx_hash: prepared.txHash, state: "landed" }]);
     operator.close();
@@ -426,7 +475,7 @@ describe("registryOperator.relocate", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(rows(journalPath)).toEqual([{ tx_hash: prepared.txHash, state: "pending" }]);
     net.advance(15 * MINUTE + 5 * MINUTE + 1_000);
-    await expect(relocated).rejects.toThrow(EXPIRED);
+    await expect(relocated).rejects.toThrow(/was orphaned from block 500.*expired without landing again/);
     expect(w.submitted.map((t) => t.transactionHash())).toEqual([prepared.txHash]);
     expect(rows(journalPath)).toEqual([{ tx_hash: prepared.txHash, state: "failed" }]);
     expect(await operator.journalled({ kind: 1, entry: e })).toBeNull();
@@ -453,16 +502,20 @@ describe("the author key", () => {
 describe("explicit reconciliation chain views", () => {
   it("uses an explicitly supplied view without reading indexer status", async () => {
     const net = chain();
+    const realLookup = net.source.indexer.transactions;
     net.source.indexer.transactions = async () => { throw new Error("Indexer status must not settle this attempt"); };
     const seen: string[] = [];
     const chainView = {
       network: "preprod",
       async lookup(txHash: string) { seen.push(txHash); return { status: "SUCCESS" as const, height: 777, blockHash: "ca".repeat(32) }; },
-      async indexedThrough() { return null; },
+      async indexedThrough() { return { hash: "ca".repeat(32), time: new Date() }; },
       async holdsContract() { throw new Error("No deployment reconciliation is allowed"); },
       async finalHash() { return "ca".repeat(32); },
     };
-    const { operator, wallet: w } = setup({ net, chain: chainView });
+    const { operator, wallet: w } = setup({ net, chain: chainView, verifyLanded: async (request, options) => {
+      const report = await fixtureVerifier(request, { ...options, source: { ...options.source, indexer: { ...options.source.indexer, transactions: realLookup } } });
+      return { ...report, block: { height: 777, hash: "ca".repeat(32) } };
+    } });
     try {
       const receipt = await operator.anchor(entry());
       expect(receipt.blockHeight).toBe(777);
@@ -474,5 +527,42 @@ describe("explicit reconciliation chain views", () => {
 
   it("refuses a view for another network before opening the operator", () => {
     expect(() => setup({ chain: { network: "mainnet", async lookup() { return null; }, async indexedThrough() { return null; }, async holdsContract() { return false; }, async finalHash() { return null; } } })).toThrow(/chain view.*network|mainnet.*preprod/i);
+  });
+});
+
+
+describe("mandatory operator consensus completion", () => {
+  it("retains node inclusion without reporting success when no trusted consensus proof is available", async () => {
+    const { operator, wallet: w, journalPath } = setup({ verifyLanded: undefined });
+    const request = { kind: 1 as const, entry: entry() };
+    try {
+      await expect(operator.anchor(request.entry)).rejects.toThrow(/consensus-verified known-author/);
+      expect(rows(journalPath)).toEqual([{ tx_hash: w.submitted[0]!.transactionHash(), state: "landed" }]);
+      await expect(operator.anchor(request.entry)).rejects.toThrow(/consensus-verified known-author/);
+      expect(w.submitted).toHaveLength(1);
+    } finally { operator.close(); }
+  });
+  it("applies the same exact full-report gate to custom trust integrations and returns the accepted report", async () => {
+    let weak = true;
+    const { operator, wallet: w } = setup({ verifyLanded: async (request, options) => {
+      const report = await fixtureVerifier(request, options);
+      return { ...report, assurance: weak ? "multi-path" : report.assurance };
+    } });
+    try {
+      const prepared = await operator.prepare({ kind: 1, entry: entry() });
+      await expect(operator.submit(prepared)).rejects.toThrow(/consensus-verified known-author/);
+      weak = false;
+      const receipt = await operator.submit(prepared);
+      expect(receipt.verification).toMatchObject({ status: "valid", assurance: "consensus-verified", txHash: prepared.txHash });
+      expect(w.submitted).toHaveLength(1);
+    } finally { operator.close(); }
+  });
+  it("refuses copied author keys routed to a second journal", () => {
+    const { operator } = setup();
+    try {
+      const copiedKey = fresh("copied-author.key");
+      copyFileSync(authorKeyFile, copiedKey);
+      expect(() => setup({ authorKeyFile: copiedKey })).toThrow("already bound to another journal");
+    } finally { operator.close(); }
   });
 });

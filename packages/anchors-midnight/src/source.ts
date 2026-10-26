@@ -64,6 +64,8 @@ export class NodeError extends Error {
     message: string,
     readonly method: string,
     readonly code: number | undefined,
+    readonly completedResults: readonly unknown[] = [],
+    readonly reason?: "contract-not-present",
   ) {
     super(message);
   }
@@ -95,6 +97,7 @@ const httpUrl = (value: string, name: string) => {
     throw new Error(`the ${name} URL must be http or https`);
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`the ${name} URL must be http or https`);
+  if (url.username || url.password) throw new Error(`the ${name} URL must not include credentials`);
   return url;
 };
 
@@ -183,24 +186,26 @@ export function midnightSource(endpoints: SourceEndpoints): MidnightSource {
       if (error instanceof HttpUnavailable) throw error;
       throw new HttpUnavailable(redact(`${endpoints.operator} ${what}: HTTP request unavailable`));
     } finally { clearTimeout(timer); }
-    if (!res.ok) throw new Error(redact(`${endpoints.operator} ${what}: HTTP ${res.status}: ${redact(text).slice(0, 300)}`));
+    if (!res.ok) throw new Error(redact(`${endpoints.operator} ${what}: HTTP ${res.status}: <redacted>`));
     try {
       return JSON.parse(text);
     } catch {
-      throw new Error(redact(`${endpoints.operator} ${what}: answered with something other than JSON: ${redact(text).slice(0, 120)}`));
+      throw new Error(redact(`${endpoints.operator} ${what}: answered with something other than JSON: <redacted>`));
     }
   };
   const answer = (method: string, a: RpcAnswer | undefined) => {
     if (!a) throw new Error(`${endpoints.operator} node: no answer to ${method}`);
     if (a.error !== undefined) {
       const code = (a.error as { code?: unknown } | null)?.code;
-      throw new NodeError(redact(`${endpoints.operator} node: ${method} failed: ${JSON.stringify(a.error)}`), method, typeof code === "number" ? code : undefined);
+      const numeric = typeof code === "number" && Number.isSafeInteger(code) ? code : undefined;
+      const reason = method === "midnight_contractState" && code === -32602 && (a.error as { message?: unknown } | null)?.message === "Unable to get requested contract state" ? "contract-not-present" : undefined;
+      throw new NodeError(redact(`${endpoints.operator} node: ${method} failed${numeric === undefined ? "" : ` (code ${numeric})`}`), method, numeric, [], reason);
     }
     return a.result;
   };
   const graphql = async <T>(query: string, variables: Record<string, unknown>): Promise<T> => {
     const out = (await post(endpoints.indexer, "indexer", { query, variables })) as { data?: T; errors?: unknown };
-    if (out.errors !== undefined || !out.data) throw new Error(redact(`${endpoints.operator} indexer: ${redact(JSON.stringify(out.errors ?? out)).slice(0, 300)}`));
+    if (out.errors !== undefined || !out.data) throw new Error(redact(`${endpoints.operator} indexer: GraphQL error response: <redacted>`));
     return out.data;
   };
   return {
@@ -247,7 +252,15 @@ export function midnightSource(endpoints: SourceEndpoints): MidnightSource {
         )) as RpcAnswer[];
         if (!Array.isArray(answers)) throw new Error(`${endpoints.operator} node: a batch was answered with a single response`);
         const byId = new Map(answers.map((a) => [a.id, a]));
-        return calls.map(([method], id) => answer(method, byId.get(id)) as T);
+        const completed: T[] = [];
+        for (const [id, [method]] of calls.entries()) {
+          try { completed.push(answer(method, byId.get(id)) as T); }
+          catch (error) {
+            if (error instanceof NodeError) throw new NodeError(error.message, error.method, error.code, completed, error.reason);
+            throw error;
+          }
+        }
+        return completed;
       },
     },
   };
@@ -274,10 +287,10 @@ function subscribe(endpoints: SourceEndpoints, redact: (s: string) => string, ad
     waiting = failed = null;
   };
   socket.onopen = () => socket.send(JSON.stringify({ type: "connection_init" }));
-  socket.onerror = (e: Event) => settle(new Error(redact(`${fail}: ${(e as Event & { message?: string }).message ?? "socket error"}`)));
+  socket.onerror = () => settle(new Error(redact(`${fail}: socket error`)));
   socket.onclose = (e: CloseEvent) => {
     open = false;
-    settle(e.code === 1000 ? "done" : new Error(redact(`${fail}: closed ${e.code} ${e.reason}`)));
+    settle(e.code === 1000 ? "done" : new Error(redact(`${fail}: closed ${Number.isSafeInteger(e.code) && e.code >= 0 && e.code <= 65535 ? e.code : "with an invalid close code"}`)));
   };
   // Node treats a throw from a WebSocket handler as an uncaught exception and ends the process,
   // so every frame either yields an action or ends the iteration with the reason.
@@ -292,7 +305,7 @@ function subscribe(endpoints: SourceEndpoints, redact: (s: string) => string, ad
       socket.send(JSON.stringify({ id: "1", type: "subscribe", payload: { query: CONTRACT_ACTIONS, variables: { address, height: fromHeight } } }));
       subscribed = true;
     } else if (message.type === "next") {
-      if (message.payload?.errors !== undefined) return close(new Error(redact(`${fail}: ${JSON.stringify(message.payload.errors).slice(0, 300)}`)), true);
+      if (message.payload?.errors !== undefined) return close(new Error(redact(`${fail}: GraphQL error response: <redacted>`)), true);
       const t = message.payload?.data?.contractActions?.transaction;
       if (typeof t?.hash !== "string" || !Number.isSafeInteger(t.id) || typeof t.raw !== "string" || !Number.isSafeInteger(t.block?.height) || typeof t.block.hash !== "string") {
         return close(new Error(`${fail}: a next frame carries no transaction`), true);
@@ -302,7 +315,7 @@ function subscribe(endpoints: SourceEndpoints, redact: (s: string) => string, ad
         waiting({ value: action, done: false });
         waiting = failed = null;
       } else queue.push(action);
-    } else if (message.type === "error") close(new Error(redact(`${fail}: ${JSON.stringify(message.payload)}`)), false);
+    } else if (message.type === "error") close(new Error(redact(`${fail}: GraphQL error response: <redacted>`)), false);
     else if (message.type === "complete") close("done", false);
   };
   // Ends the iteration and closes the socket, telling the indexer when it is the client that stops.
@@ -333,28 +346,7 @@ function subscribe(endpoints: SourceEndpoints, redact: (s: string) => string, ad
   };
 }
 
-// The state the node holds at `address` in block `at` (its best block when none is named), or
-// null when it holds no contract there. midnight-node 1.0 answers for an address holding no
-// contract with an empty string, 2.x with JSON-RPC error -32602, its answer too in a block whose
-// ledger it cannot read, such as one it does not hold. So the contract is read in one request
-// behind the ledger's zswap root in the same block: a batch is refused at its first failed
-// request, so -32602 on the contract read means the node read that ledger and found no contract.
-// Any MidnightSource's node may raise that error, so it is recognized by its method and code.
-export async function contractStateOnNode(source: Pick<MidnightSource, "node" | "operator">, address: string, at?: string): Promise<string | null> {
-  const block = at === undefined ? [] : [`0x${at}`];
-  try {
-    const [, state] = await source.node.batch<unknown>([
-      ["midnight_zswapStateRoot", block],
-      ["midnight_contractState", [address, ...block]],
-    ]);
-    if (typeof state !== "string") throw new Error(`${source.operator} node: midnight_contractState answered something other than a string`);
-    return state === "" ? null : state;
-  } catch (error) {
-    const refused = error as Partial<NodeError> | undefined;
-    if (refused?.method === "midnight_contractState" && refused.code === -32602) return null;
-    throw error;
-  }
-}
+export { contractStateOnNode } from "./contract-state.js";
 
 // GRANDPA finality proofs and headers through a source's node, one batched request per call.
 export function finalityRpc(source: MidnightSource): FinalityRpc {

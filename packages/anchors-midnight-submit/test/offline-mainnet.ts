@@ -95,7 +95,7 @@ export const planEntries = () => [
 // FPS's mainnet registry as deploy-mainnet leaves its journal: deployed through registryDeployer,
 // sent and landed. Every anchor test copies that journal as its deploy journal.
 export const FPS_DEPLOY = await (async () => {
-  const net = chain();
+  const net = chain({ network: "mainnet" });
   const journalPath = fresh("mainnet-deploy.sqlite");
   const deployer = registryDeployer({ network: "mainnet", wallet: wallet(net, () => journalPath), source: net.source, prover, journalPath, pollMillis: 1 });
   const { address } = await deployer.submit(await deployer.prepare());
@@ -127,7 +127,7 @@ export function offlineAnchors({ state = registryInitialState(), entries = planE
   chmodSync(deployJournal, 0o600);
   const author = createAuthorKeyFile(`${m.root}/author.key`);
   const saltKeyId = createSaltKeyFile(`${m.root}/salt.key`);
-  const deployed = state === null ? {} : { ["d0".repeat(32)]: { raw: "", height: 400, address: REGISTRY, state: hex(state.serialize()) } };
+  const deployed = state === null ? {} : { ["d0".repeat(32)]: { raw: "", height: 500, address: REGISTRY, state: hex(state.serialize()) } };
   m.update({ landed: deployed, fpsKeys: { authorKeys: [author], saltKeyIds: [saltKeyId] } });
   writeFileSync(`${m.root}/plan.json`, JSON.stringify({ registry, entries }));
   const resultsPath = `${m.root}/state/results.json`;

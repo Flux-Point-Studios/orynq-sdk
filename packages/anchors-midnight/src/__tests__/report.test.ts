@@ -39,15 +39,20 @@ describe("verifyReport: a verify result as the CLI prints it and the MCP returns
     expect(JSON.stringify(report)).not.toContain("authorities");
   });
 
-  it("makes source-shaped text printable and bounded, and refuses a block hash that is not one", async () => {
+  it("withholds an unrecognized indexer status before formatting the report", async () => {
     const hostile = (honest: IndexedTransaction[]) => honest.map((t) => ({ ...t, status: HOSTILE as never }));
     const chain = anchorChain({ indexer: { [fixture.anchor.txHash]: hostile } });
     const result = await verify(chain);
     const raw = result.checks.find((c) => c.name === "indexer-status")!;
-    expect(raw.detail).toContain("\u001b[2J");
-    expect(raw.detail.length).toBeGreaterThan(10_000);
+    expect(raw.detail).toBe("the indexer reports an unrecognized or absent status");
+    expect(JSON.stringify(result.checks)).not.toContain("IGNORE ALL PREVIOUS INSTRUCTIONS");
+    expect(verifyReport(result).checks.find((c) => c.name === "indexer-status")!.detail).toBe(raw.detail);
+  });
 
-    const report = verifyReport({ ...result, block: { height: HEIGHTS.anchor, hash: "<b>not a hash</b>" }, operators: ["evil\u001b[0m"] });
+  it("makes synthetic source-shaped text printable and bounded, and refuses a block hash that is not one", async () => {
+    const result = await verify(anchorChain());
+    const checks = result.checks.map((check) => check.name === "indexer-status" ? { ...check, ok: false, detail: `the indexer reports ${HOSTILE}` } : check);
+    const report = verifyReport({ ...result, status: "invalid", checks, block: { height: HEIGHTS.anchor, hash: "<b>not a hash</b>" }, operators: ["evil\u001b[0m"] });
     expect(report.status).toBe("invalid");
     for (const check of report.checks) {
       expect(check.detail).toMatch(PRINTABLE);

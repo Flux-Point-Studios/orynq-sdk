@@ -19,10 +19,13 @@ package publishes only `dist`, so nothing here ships.
 | File | Role |
 |---|---|
 | `bundles.ts` | Traces the real, read-only processes whose bundles the anchors commit to (`bundles/`, git-ignored), each same-block round's pair included. |
-| `endpoints.ts` | Where `run.ts` and `crash.ts` read and write: every broadcast and every read through Blockfrost preprod, the path a mainnet submitter takes, and the wallets' sync alone through Midnight's hosted indexer, whose event ids their saved state names. |
+| `endpoints.ts` | Default reads and writes through Blockfrost preprod; wallet sync uses Midnight's hosted indexer. Optional `REHEARSAL_PUBLIC_PREPROD_WS=1` uses the public hosted preprod path, with same-socket chain/genesis/runtime pins before a WebSocket submission. `record-golden.ts` uses the same selected source. |
+| `tooling.ts` | Refuses uncommitted tracked or untracked submitter/verifier sources and records the same Git revision for tracing, every phase, signing, crash steps, verification and composition. Pins versions from installed dependencies and the checked-in compiler installer. |
+| `submission-verification.ts` | Keeps one journal per author across fee wallets and crash phases. Runs the real consensus verifier using the exact deployed preprod registry and an independently reviewed preprod author/checkpoint policy signed under the shipped roots. Missing onboarding fails closed; test fixtures cannot bootstrap live trust. |
+| `evidence-integrity.mjs` | Compares every installed verify-package file with the saved tarball and rejects missing/extra/changed files, links and unsafe archive paths. Composition rechecks the saved tarball and installed-tree fingerprint. |
 | `run.ts` | The phases `chain funding deploy kind1 kind2 sameblock negatives rotation`. Records everything public in `evidence/raw.json` (git-ignored). `funding` records each wallet's first funding once and waits, every run, until each wallet can spend DUST. `deploy` resumes the deploy its journal still holds (`registryDeployer.journalled`) instead of preparing another, and saves the landing before it reads the wallet's balance. A node negative counts as refused only on the node's own JSON-RPC answer (`nodeRefusal`), and a recorded case is never sent again. The node's refusal of an anchor's bytes goes into `anchorRefusals` (label, transaction hash, the node's code and data, time) before the error leaves the phase, and each landed anchor records when it was recorded (`recordedAt`). Each wallet saves its sync state once it has synced and again at close, and `stateSaves` records every outcome: a save that fails fails no phase, and the next run resyncs from the last good save. |
 | `crash.ts` | One crash-window step per process: `kill-before`, `kill-after` (SIGKILL) and `recover`. A recovery ends with a `closed` line recording what saving the wallet's state did. |
-| `docs.ts` | Signs the drill's KNOWN_AUTHORS documents with a preprod-only trust root through `anchors-midnight/scripts/known-authors.ts`. |
+| `docs.ts` | Emits stable author-only policy drafts, then signs through the guarded policy CLI only against an owner-only external map of all three exact reviewed SHA-256 values. Drill documents contain no consensus checkpoints. |
 | `rehearse.sh` | All of the above in order, at nice 19; the crash drill runs once. |
 | `verify-all.mjs` | Verifies every recorded anchor, the rotation matrix, twelve verifier negatives and the absence of every refused maintenance transaction through Blockfrost, and opens the forged KNOWN_AUTHORS documents, from a consumer directory into which npm installed the packed verify package. It exits 1 on any gate failure. |
 | `gate.mjs` | The claims the pack may make, from what was recorded and what the verifier returned. Each maintenance update counts as refused only on the node's answer 1010 Invalid Transaction with the maintenance authority's own custom code, and each forged document only on the verify package's answer from the check it targets (below). The deploy the pack describes must be the one that landed: a prepared record whose transaction hash or address differs, such as a prepare a later run abandoned, fails the gate. A recorded refusal of an anchor's bytes (`anchorRefusals`) passes only when a later transaction for the same label landed: the anchor recorded under the label is another transaction, recorded after the refusal. |
@@ -104,13 +107,24 @@ recorded (`raw.json`, the crash log, the journals) is the writer's own record; a
 | 10 | The private receipts hold an opening for each kind-2 anchor, each recomputing the commitment the verifier read; none is in the pack | `receipts.json` (0600); `verified.anchors[name].commitment` | `compose.ts`: an opening per kind-2 txHash whose `hidingCommitment(hiddenDigest(opening, attribute), salt)` equals the verifier's commitment; the scan finds no 8-byte window of any secret or opening field, and finds salts and root hashes in the receipts and attributes in the pack | compose.test `refuses a kind-2 opening ...`, `writes nothing when the privacy scan finds a secret ...` |
 | 11 | The documents are signed by trust root R, not among the trust roots the verify package ships, and each names only preprod | `verified.trustRoot`, `verified.shippedTrustRoots` (the package's `KNOWN_AUTHORS_TRUST_ROOTS`), `verified.knownAuthorsDocuments` | `judge`: R not shipped; three documents, each naming `preprod` alone | gate.test `the drill's trust root` |
 
-The pack claims nothing else, since no check establishes it: not where each write went (the
-pack's `chain.blockfrost` records the chain identity of the Blockfrost endpoints `run.ts` and
-`crash.ts` write and read through, and `chain.hosted` that of the hosted endpoints whose indexer
-the wallets sync from), not which wallet paid beyond the rehearsal's record, not how or when the
-drill's trust-root key was made, not that the tooling that ran was committed (`commit` is the
-worktree's HEAD), and not what an aborted attempt's README.md says: the pack carries its first
-paragraph as the operator's statement, and statement 8a claims only what the gate checked.
+The pack's scope is every write recorded in this rehearsal. The writer, verifier and composer
+must name one clean committed tooling revision; older evidence cannot be resumed after a source
+change. The gate binds same-block and rotation claims to verified heights and hashes, requires
+real non-null commitments, reopens the published signed documents, reconstructs each forgery,
+and decodes each refused maintenance transaction to its exact hash, operation and deployed address.
+It records the actual negative source operator; a public hosted refusal cannot count as a
+Blockfrost refusal. A separate verifier process using the same provider is a separate execution,
+not an independent infrastructure provider. The node's checked block inclusion and GRANDPA
+proof establish the positive consensus claims. The negative absence checks remain observations
+of Blockfrost's indexer, and the pack says so.
+
+The pack does not establish which wallet paid beyond the rehearsal's record, how or when a
+trust-root key was made, or what an aborted attempt's README.md says: the first paragraph is
+carried as the operator's statement. Missing deploy measurements are explicitly marked absent
+when a later process resumed the journalled bytes. Privacy scanning includes both wallet
+mnemonic entropies, the Blockfrost project id, author keys, salt key, the private drill policy root,
+and every kind-2 opening. Eight-byte source windows are encoded for scanning, avoiding shorter
+hexadecimal windows that collide with public data.
 
 ## Tests
 
@@ -135,10 +149,19 @@ installed and built (`pnpm install && pnpm build` at the root).
 
 - `~/.secrets/orynq-midnight-preprod/` (0700) with `wallet-a.mnemonic`, `wallet-b.mnemonic`,
   `author-relay.key` and `salt.key` (0600), made with `../scripts/keys.ts`. The rehearsal adds
-  `author-relay-2.key`, `known-authors-root.seed`, `receipts.json`, the journals and the wallet
+  `known-authors-root.seed`, `receipts.json`, the journals and the wallet
   state there. None of them is ever printed.
-- `~/.secrets/blockfrost-midnight-preprod.project_id` (0600): every broadcast and every read,
-  the verifier's included, goes through Blockfrost preprod.
+- `~/.secrets/blockfrost-midnight-preprod.project_id` (0600): default reads/writes and the
+  separate pack verifier use Blockfrost preprod.
+- Create `author-relay-2.key` before onboarding. Owner-only
+  `~/.secrets/orynq-midnight-preprod/submission-known-authors.json` must contain a nonempty list
+  of signed KNOWN_AUTHORS envelopes under the shipped trust roots, with both
+  rehearsal authors valid from the deployed registry height and a reviewed preprod checkpoint.
+  Preserve the shipped mainnet checkpoint history in each global policy update; this helper
+  consumes only the preprod section and refuses mainnet requests.
+  The current shipped preprod checkpoint list is empty: a trust-root holder must independently
+  review and sign this onboarding policy before live anchor phases can succeed. Do not substitute
+  `src/__tests__/fixtures` checkpoints, an unsigned input or a newly generated trust root.
 - `tools/compactc/install.sh ~/.cache/orynq-midnight/compactc ~/.cache/orynq-midnight/zk`: the
   compiler and the pinned ZK material the prover reads.
 - Saved wallet state in `~/.secrets/orynq-midnight-preprod/state/`. The wallets sync from
@@ -164,9 +187,32 @@ copied into `wallets.json`.
 
 ### 2. Rehearse
 
+Commit all tooling changes before generating bundles or recording evidence. All phases must
+run at that exact revision; archive older evidence before a new rehearsal. The verifier rejects
+`NODE_OPTIONS` preloads and runtime arguments before importing the package, and `finish.sh`
+starts both verification and composition with `NODE_OPTIONS` removed. It also saves the verified
+tarball beside the evidence for composition's second integrity check.
+
 ```
 ./rehearse.sh
 ```
+
+After the rotation phases, the first `docs.ts` invocation emits three unsigned drafts and stops.
+Independently review each `evidence/known-authors/doc-N.json` (authors, height windows and empty
+checkpoint lists). Record their reviewed SHA-256 values in owner-only
+`~/.secrets/orynq-midnight-preprod/known-authors-reviewed.json`, an object with exactly keys
+`"1"`, `"2"`, `"3"` and their reviewed digest strings. Rerun `docs.ts` to sign; changed or missing
+digests fail before signing. The issuance time remains stable across the review round trip.
+The packed verifier receives consensus checkpoints separately from the shipped-root-approved
+submission policy and refuses any checkpoint introduced by the fresh drill root.
+
+For large preprod transactions that exceed a provider's request limit, set
+`REHEARSAL_PUBLIC_PREPROD_WS=1` when running positive phases. This credential-free path checks
+the public node's preprod name, genesis and known runtime on the very socket that submits the
+exact bytes. Acceptance only acknowledges delivery; the real verifier still authenticates
+the landed anchor. Run `chain` and `negatives` with the default Blockfrost source before
+finishing the pack: its required Blockfrost refusal claims cannot be supplied by hosted-node
+responses. No endpoint in this mode targets mainnet.
 
 The `funding` phase registers each wallet's NIGHT for DUST generation and waits until each holds
 more than 1 DUST it can spend. Every phase resumes from `evidence/raw.json`, so a rerun after an
@@ -208,6 +254,14 @@ list, the numbers skip one, or the attempt reached a kill point (a kill step log
 found a journal row, or a step exited 0 or 137): an attempt that reached a kill point is a pass of
 the drill, not an abort, and the drill runs once. The fresh drill must pass every check of its own.
 
+If a failed attempt reached a kill point, retain its logs and canonical journals unchanged and
+reconcile the pending bytes before further submissions. It cannot be relabelled an aborted
+attempt or reset by deleting a journal. To start a new drill, archive its evidence and begin a
+fresh rehearsal with fresh author keys and a separate private namespace, leaving the old bound
+journals at their canonical paths. Funded wallet state can be restored in that namespace after
+the old attempt's DUST is available; new signed author onboarding and new reviewed draft hashes
+are required. The pack describes the new rehearsal, not a rewritten earlier crash window.
+
 ### 3. The consumer
 
 The verifier runs from a directory outside the repository into which only the packed verify
@@ -217,7 +271,7 @@ package is installed, from the same commit:
 C=$(mktemp -d "$HOME/.cache/orynq-midnight/consumer.XXXXXX")
 pnpm --filter @fluxpointstudios/orynq-sdk-anchors-midnight build
 (cd ../../anchors-midnight && pnpm pack --pack-destination "$C")
-(cd "$C" && npm init -y >/dev/null && npm install ./fluxpointstudios-orynq-sdk-anchors-midnight-0.1.0.tgz)
+(cd "$C" && npm init -y >/dev/null && npm install ./fluxpointstudios-orynq-sdk-anchors-midnight-*.tgz)
 sha256sum "$C"/*.tgz
 ```
 
