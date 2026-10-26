@@ -258,7 +258,7 @@ describe("the evidence gate", () => {
     });
 
     it("refuses a second broadcast after the node had the bytes, and a resend missing before", () => {
-      expect(failuresOf((r) => r.crash.push({ mode: "recover", label: "crash-after-broadcast", event: "broadcast", txHash: r.raw.anchors["crash-after-broadcast"].txHash }))[0]).toMatch(/^crash drill crash-after-broadcast: the recovery broadcast \["[0-9a-f]{64}"\], not \[\]/);
+      expect(failuresOf((r) => r.crash.push({ commit: r.raw.toolingCommit, mode: "recover", label: "crash-after-broadcast", event: "broadcast", txHash: r.raw.anchors["crash-after-broadcast"].txHash }))[0]).toMatch(/^crash drill crash-after-broadcast: the recovery broadcast \["[0-9a-f]{64}"\], not \[\]/);
       expect(failuresOf((r) => r.crash.splice(r.crash.indexOf(at(r, "crash-before-broadcast", "broadcast")), 1))[0]).toMatch(/^crash drill crash-before-broadcast: the recovery broadcast \[\], not \["/);
     });
 

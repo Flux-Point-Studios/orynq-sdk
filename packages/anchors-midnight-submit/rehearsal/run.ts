@@ -177,7 +177,7 @@ async function anchored<T>(label: string, write: () => Promise<T>): Promise<T> {
 
 const phases: Record<string, () => Promise<void>> = {
   async chain() {
-    raw.chain = { blockfrost: await assertChainIdentity(source, "preprod"), hosted: await assertChainIdentity(midnightSource(WALLET_SYNC), "preprod") };
+    raw.chain = { ...(source.operator === "blockfrost" ? { blockfrost: await assertChainIdentity(source, "preprod") } : {}), hosted: await assertChainIdentity(midnightSource(WALLET_SYNC), "preprod") };
     save();
     log("chain", raw.chain);
   },
