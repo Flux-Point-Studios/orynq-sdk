@@ -3,6 +3,8 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { entropyToMnemonic } from "@scure/bip39";
+import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { afterAll, describe, expect, it } from "vitest";
 import { ABORTED_STATEMENT, REPOSITORY, abortedDrill, archiveAbortedDrill, honestRehearsal, partialDrill, refuseEarlier, removeScratch, scratch, sha256, writeRehearsal, type Rehearsal } from "./fixture.js";
 
@@ -108,6 +110,62 @@ describe("compose.ts", () => {
     expect(run.status).toBe(1);
     expect(run.stderr).toContain("no pack written: the privacy scan failed");
     expect(existsSync(out)).toBe(false);
+  });
+
+  it.each(["blockfrost", "wallet-a", "wallet-b"])("refuses publication of %s credential material in a public commitment", secret => {
+    let leak = "";
+    const { run, out } = compose(r => { leak = r.raw.anchors["git-log"].commitment; }, home => {
+      if (secret === "blockfrost") writeFileSync(`${home}/.secrets/blockfrost-midnight-preprod.project_id`, `preprod${leak.slice(0, 32)}\n`, { mode: 0o600 });
+      else writeFileSync(`${home}/.secrets/orynq-midnight-preprod/${secret}.mnemonic`, `${entropyToMnemonic(Buffer.from(leak, "hex"), wordlist)}\n`, { mode: 0o600 });
+    });
+    expect(run.status, run.stderr).toBe(1);
+    expect(run.stderr).toContain("no pack written: the privacy scan failed");
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it("rechecks the saved tarball before publishing its identity", () => {
+    const { run, out } = compose(undefined, (_home, dir) => writeFileSync(`${dir}/evidence/verify-package.tgz`, "substituted tarball"));
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("the verifier package tarball is absent or differs");
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it("reopens the published signed documents and reconstructs exact forged-document controls", () => {
+    const tampered = compose(r => {
+      const first = Object.values(r.verified.forgedDocuments)[0] as any;
+      first.document = first.document.replace("fluxpoint", "substituted");
+    });
+    expect(tampered.run.status).toBe(1);
+    expect(tampered.run.stderr).toContain("published KNOWN_AUTHORS documents or forgery controls");
+    const signed = compose(undefined, (_home, dir) => {
+      const file = `${dir}/evidence/known-authors/signed-3.json`;
+      const documents = JSON.parse(readFileSync(file, "utf8"));
+      documents[0].document = documents[0].document.replace('"serial": 3', '"serial": 9');
+      writeFileSync(file, JSON.stringify(documents));
+    });
+    expect(signed.run.status).toBe(1);
+    expect(signed.run.stderr).toContain("published KNOWN_AUTHORS documents or forgery controls");
+  });
+
+  it.each(["bytes", "address"])("binds refused maintenance %s to the exact transaction at the deployed address", field => {
+    const { run, out } = compose(r => {
+      const negative = Object.values(r.raw.negatives)[0] as any;
+      negative[field] = field === "bytes" ? "deadbeef" : "ab".repeat(32);
+    });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("serialized bytes do not bind the recorded transaction and deployed update address");
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it("marks timings and balances absent when a later process resumed the deploy", () => {
+    const { run, pack } = compose(r => {
+      delete r.raw.deploy.landedAfterMs;
+      delete r.raw.deploy.prepared.prepareMs;
+      delete r.raw.deploy.dustBefore;
+      delete r.raw.deploy.dustAfter;
+    });
+    expect(run.status, run.stderr).toBe(0);
+    expect(pack.registry).toMatchObject({ landedAfterMs: { absent: "resumed in another process" }, prepareMs: { absent: "resumed in another process" }, dustSpeck: { before: { absent: "resumed in another process" }, after: { absent: "wallet sync interrupted after landing" } } });
   });
 
   describe("a crash drill that aborted before any kill point", () => {

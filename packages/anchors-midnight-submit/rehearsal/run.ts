@@ -25,6 +25,7 @@ import { source, WALLET_SYNC } from "./endpoints.js";
 import { NODE_NEGATIVES } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
 import { toolingCommit, installedPins } from "./tooling.js";
+import { authorJournalPath, submissionVerification } from "./submission-verification.js";
 
 const commit = toolingCommit();
 const HOME = process.env.HOME!;
@@ -137,7 +138,8 @@ async function operator(which: "walletA" | "walletB", authorFile: string, wrap?:
       wallet: wrap ? wrap(fee) : fee,
       source,
       prover,
-      journalPath: `${SECRETS}/journal-${which}.sqlite`,
+      journalPath: authorJournalPath(SECRETS, authorFile),
+      verifyLanded: submissionVerification(SECRETS, source, raw.deploy),
       authorKeyFile: authorFile,
       saltKeyFile: `${SECRETS}/salt.key`,
       registry: raw.deploy.address,

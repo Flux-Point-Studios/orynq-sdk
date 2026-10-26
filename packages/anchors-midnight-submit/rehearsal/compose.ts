@@ -106,6 +106,14 @@ for (const [name, negative] of Object.entries(raw.negatives ?? {}) as Array<[str
     const tx = L.Transaction.deserialize("signature", "proof", "binding", Buffer.from(negative.bytes, "hex"));
     const actions = [...(tx.intents?.values() ?? [])].flatMap(intent => intent.actions);
     if (tx.transactionHash() !== negative.txHash || actions.length !== 1 || !(actions[0] instanceof L.MaintenanceUpdate) || String(actions[0].address) !== raw.deploy.address || negative.address !== raw.deploy.address) throw new Error("negative transaction binding differs");
+    const update = actions[0], [change] = update.updates;
+    if (update.counter !== 0n || update.updates.length !== 1) throw new Error("maintenance counter or update count differs");
+    if (name === "ReplaceAuthority, unsigned") {
+      if (!(change instanceof L.ReplaceAuthority) || change.authority.committee.length !== 0 || change.authority.threshold !== 0 || change.authority.counter !== 1n || update.signatures.length !== 0) throw new Error("unsigned authority update differs");
+    } else {
+      if (update.signatures.length !== 1 || update.signatures[0]![0] !== 0n) throw new Error("stranger signature index differs");
+      if (name.startsWith("VerifierKeyRemove") ? !(change instanceof L.VerifierKeyRemove) || change.operation !== "anchor" : !(change instanceof L.VerifierKeyInsert) || change.operation !== "rewrite") throw new Error("verifier-key operation differs");
+    }
   } catch { failures.push(`negative ${name}: serialized bytes do not bind the recorded transaction and deployed update address`); }
 }
 if (bundles.some((bundle: any) => bundle.toolingCommit !== head)) failures.push("rehearsal bundles were not traced at the composing commit");
@@ -251,6 +259,7 @@ const secrets: Array<[string, Uint8Array]> = [
   ["author-relay-2.key", readAuthorSecret(`${SECRETS}/author-relay-2.key`)],
   ["salt.key", readAuthorSecret(`${SECRETS}/salt.key`)],
   ["known-authors-root.seed", hex(readPrivateFile(`${SECRETS}/known-authors-root.seed`))],
+  ["submission-verifier.seed", readAuthorSecret(`${SECRETS}/submission-verifier.seed`)],
   ...Object.entries(openings).flatMap(([label, o]) => (["rootHash", "manifestHash", "merkleRoot", "salt"] as const).map((f): [string, Uint8Array] => [`${label}.${f}`, hex(o[f])])),
 ];
 const bytes = new Uint8Array(Buffer.from(body));

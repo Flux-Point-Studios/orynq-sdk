@@ -9,7 +9,7 @@ import { once } from "node:events";
 import { chmodSync, copyFileSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, describe, it } from "vitest";
-import { createAuthorKeyFile } from "../../../anchors-midnight/src/commitment.js";
+import { authorKey, createAuthorKeyFile, readAuthorSecret } from "../../../anchors-midnight/src/commitment.js";
 import { anchorRefusals } from "../gate.mjs";
 import { removeScratch, scratch } from "./fixture.js";
 import type { OfflineChain } from "../../test/offline.js";
@@ -32,7 +32,7 @@ function rehearsal(bundles: string[] = []) {
   chmodSync(secrets, 0o700);
   for (const key of ["author-relay.key", "salt.key"]) createAuthorKeyFile(`${secrets}/${key}`);
   copyFileSync(`${HERE}run.ts`, `${root}/rehearsal/run.ts`);
-  for (const file of ["gate.mjs", "wallets.json", "tooling.ts"]) symlinkSync(`${HERE}${file}`, `${root}/rehearsal/${file}`);
+  for (const file of ["gate.mjs", "wallets.json", "tooling.ts", "submission-verification.ts"]) symlinkSync(`${HERE}${file}`, `${root}/rehearsal/${file}`);
   symlinkSync(OFFLINE, `${root}/rehearsal/endpoints.ts`);
   symlinkSync(OFFLINE, `${root}/src/index.ts`);
   writeFileSync(`${root}/rehearsal/bundles/index.json`, JSON.stringify(bundles.map((label) => ({ toolingCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: HERE, encoding: "utf8" }).trim(), label, kind: 1, rootHash: h(), manifestHash: h(), merkleRoot: h(), modelManifestHash: h() }))));
@@ -64,7 +64,8 @@ function rehearsal(bundles: string[] = []) {
     chain,
     advance: (millis: number) => writeFileSync(chainFile, JSON.stringify({ ...chain(), aheadMs: chain().aheadMs + millis })),
     journal(name = "deploy") {
-      const db = new DatabaseSync(`${secrets}/journal-${name}.sqlite`, { readOnly: true });
+      const journal = name === "walletA" || name === "walletB" ? `author-${Buffer.from(authorKey(readAuthorSecret(`${secrets}/author-relay.key`))).toString("hex")}` : name;
+      const db = new DatabaseSync(`${secrets}/journal-${journal}.sqlite`, { readOnly: true });
       const rows = db.prepare("select tx_hash, state from attempts order by id").all();
       db.close();
       return rows;
@@ -218,6 +219,44 @@ describe.concurrent("run.ts deploy", { timeout: 2 * RUN_TIMEOUT + 30_000 }, () =
 });
 
 describe("run.ts anchors", () => {
+  it("fills missing absence checks for already recorded negative bytes without another broadcast", async ({ expect }) => {
+    const r = rehearsal();
+    expect(await r.run()).toMatchObject({ status: 0 });
+    const names = ["ReplaceAuthority, unsigned", "VerifierKeyRemove(anchor), signed by a stranger at index 0", "VerifierKeyInsert(rewrite), signed by a stranger at index 0"];
+    r.editRaw(raw => ({ ...raw, negatives: Object.fromEntries(names.map(name => [name, { txHash: h(), rejected: true, operator: "blockfrost" }])) }));
+    const before = r.chain().sent;
+    const resumed = await r.run("", "negatives");
+    expect(resumed.status, resumed.output).toBe(0);
+    expect(Object.values(r.raw().negatives).map((negative: any) => negative.onChain)).toEqual([0, 0, 0]);
+    expect(r.chain().sent).toEqual(before);
+  });
+
+  it("keeps first funding measurements across restarts", async ({ expect }) => {
+    const r = rehearsal();
+    expect(await r.run("", "funding")).toMatchObject({ status: 0 });
+    const first = r.raw().funding;
+    expect(await r.run("", "funding")).toMatchObject({ status: 0 });
+    expect(r.raw().funding).toEqual(first);
+  });
+
+  it("keeps completed same-block rounds and their independently landed sides on restart", async ({ expect }) => {
+    const r = rehearsal(["same-block-a-1", "same-block-b-1"]);
+    expect(await r.run()).toMatchObject({ status: 0 });
+    const first = await r.run("", "sameblock");
+    expect(first.status, first.output).toBe(1); // The deterministic fixture gives each send its own block.
+    expect(first.output).toContain("no same-block pair in 1 rounds");
+    const before = r.chain().sent;
+    const rounds = r.raw().sameBlock.rounds;
+    const anchors = r.raw().anchors;
+    expect(rounds).toHaveLength(1);
+    expect(Object.keys(anchors)).toEqual(["same-block-a-1", "same-block-b-1"]);
+    const resumed = await r.run("", "sameblock");
+    expect(resumed.status).toBe(1);
+    expect(r.raw().sameBlock.rounds).toEqual(rounds);
+    expect(r.raw().anchors).toEqual(anchors);
+    expect(r.chain().sent).toEqual(before);
+  });
+
   it("records the node's refusal of an anchor's bytes in raw.json before the run fails, which the gate accepts once a later transaction for the label landed", async ({ expect }) => {
     const r = rehearsal(KIND1);
     expect(await r.run()).toMatchObject({ status: 0 });

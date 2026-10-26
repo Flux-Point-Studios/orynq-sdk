@@ -9,7 +9,7 @@ import * as L from "@midnight-ntwrk/ledger-v8";
 import { packedTreeIdentity } from "../evidence-integrity.mjs";
 import { forgeKnownAuthors } from "../gate.mjs";
 import { installedPins } from "../tooling.js";
-import { REGISTRY_VERIFIER_KEY_SHA256 } from "../../../anchors-midnight/src/registry.js";
+import { compiledVerifierKeys, REGISTRY_VERIFIER_KEY_SHA256 } from "../../../anchors-midnight/src/registry.js";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -132,8 +132,13 @@ export function honestRehearsal(): Rehearsal {
   };
 
   raw.phaseCommits = Object.fromEntries(["chain", "funding", "deploy", "kind1", "kind2", "sameblock", "negatives", "rotation", "documents"].map(phase => [phase, raw.toolingCommit]));
-  for (const [, negative] of Object.entries(raw.negatives) as Array<[string, any]>) {
-    const action = new L.MaintenanceUpdate(deployAddress, [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority([], 0, 1n))], 0n);
+  for (const [name, negative] of Object.entries(raw.negatives) as Array<[string, any]>) {
+    let action: L.MaintenanceUpdate;
+    if (name === "ReplaceAuthority, unsigned") action = new L.MaintenanceUpdate(deployAddress, [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority([], 0, 1n))], 0n);
+    else {
+      action = new L.MaintenanceUpdate(deployAddress, [name.startsWith("VerifierKeyRemove") ? new L.VerifierKeyRemove("anchor", new L.ContractOperationVersion("v3")) : new L.VerifierKeyInsert("rewrite", new L.ContractOperationVersionedVerifierKey("v3", compiledVerifierKeys().anchor))], 0n);
+      action = action.addSignature(0n, L.signData(L.sampleSigningKey(), action.dataToSign));
+    }
     const tx = L.Transaction.fromParts("preprod", undefined, undefined, L.Intent.new(new Date("2026-10-06T00:00:00Z")).addMaintenanceUpdate(action)).mockProve().bind();
     Object.assign(negative, { txHash: tx.transactionHash(), bytes: Buffer.from(tx.serialize()).toString("hex"), address: deployAddress, operator: "blockfrost" });
   }
@@ -267,6 +272,7 @@ export function writeRehearsal(dir: string, home: string, r: Rehearsal) {
   const secret = (name: string, text: string) => writeFileSync(`${secrets}/${name}`, `${text}\n`, { mode: 0o600 });
   for (const name of ["author-relay.key", "author-relay-2.key", "salt.key"]) secret(name, h());
   secret("known-authors-root.seed", r.rootSeed);
+  secret("submission-verifier.seed", h());
   for (const name of ["wallet-a.mnemonic", "wallet-b.mnemonic"]) secret(name, entropyToMnemonic(randomBytes(32), wordlist));
   writeFileSync(`${home}/.secrets/blockfrost-midnight-preprod.project_id`, `preprod${randomBytes(16).toString("hex")}\n`, { mode: 0o600 });
   secret("receipts.json", JSON.stringify(r.openings));

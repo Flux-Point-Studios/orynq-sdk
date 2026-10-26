@@ -10,6 +10,8 @@ import { openWallet, provingService, registryOperator } from "../src/index.js";
 import { source, WALLET_SYNC } from "./endpoints.js";
 import { CRASH_WINDOWS } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
+import { authorJournalPath, submissionVerification } from "./submission-verification.js";
+import { entryCommitment } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 
 import { toolingCommit } from "./tooling.js";
 const commit = toolingCommit();
@@ -20,17 +22,21 @@ const crashWindow = CRASH_WINDOWS[label];
 if (!crashWindow || (mode !== "recover" && mode !== crashWindow.mode)) throw new Error(`crash.ts: ${mode} ${label} is not a crash window the evidence gate knows`);
 const HOME = process.env.HOME!;
 const SECRETS = `${HOME}/.secrets/orynq-midnight-preprod`;
-const JOURNAL = `${SECRETS}/journal-crash.sqlite`;
+const AUTHOR = `${SECRETS}/author-relay.key`;
+const JOURNAL = authorJournalPath(SECRETS, AUTHOR);
 const RAW = new URL("./evidence/raw.json", import.meta.url);
 const raw = JSON.parse(readFileSync(RAW, "utf8"));
 if (raw.toolingCommit !== commit) throw new Error("Crash drill and rehearsal tooling revisions differ");
 const bundles: Array<{ label: string; rootHash: string; manifestHash: string; merkleRoot: string }> = JSON.parse(readFileSync(new URL("./bundles/index.json", import.meta.url), "utf8"));
 const b = bundles.find((x) => x.label === label);
 if (!b) throw new Error(`bundles/index.json holds no bundle ${label}`);
+const commitment = Buffer.from(entryCommitment(b)).toString("hex");
 const rows = () => {
   const db = new DatabaseSync(JOURNAL);
   try {
-    return db.prepare("select tx_hash, state, broadcasts, height from attempts order by id").all();
+    // The canonical author journal also holds earlier rehearsal phases. Log only this drill
+    // anchor's key, so another anchor's row can never stand in for this crash window.
+    return db.prepare("select tx_hash, state, broadcasts, height from attempts where key = ? order by id").all(["preprod", raw.deploy.address, operator.authorKey, 1, commitment, "00".repeat(32)].join("/"));
   } finally {
     db.close();
   }
@@ -68,7 +74,8 @@ const operator = registryOperator({
   source,
   prover: provingService(`${HOME}/.cache/orynq-midnight/zk`),
   journalPath: JOURNAL,
-  authorKeyFile: `${SECRETS}/author-relay.key`,
+  authorKeyFile: AUTHOR,
+  verifyLanded: submissionVerification(SECRETS, source, raw.deploy),
   registry: raw.deploy.address,
 });
 if (mode === "recover") {

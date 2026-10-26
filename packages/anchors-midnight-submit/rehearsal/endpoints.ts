@@ -1,6 +1,6 @@
 import { blockfrostEndpoints, midnightSource, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 
-// Every broadcast and every read goes through Blockfrost preprod, the path a mainnet submitter takes.
+// By default every broadcast/read goes through Blockfrost preprod, matching the mainnet path.
 
 // Wallet sync only: the saved wallet state indexes Midnight's hosted indexer's event ids, which Blockfrost's do not match, so Blockfrost would mean a resync from genesis.
 export const WALLET_SYNC: SourceEndpoints = {
