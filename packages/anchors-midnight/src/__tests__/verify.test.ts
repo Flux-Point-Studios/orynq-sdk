@@ -383,7 +383,8 @@ describe("golden: the preprod rehearsal's anchors, replayed", () => {
     ]);
   });
 
-  it.each(f.anchors.map((a: { name: string }) => [a.name, a]))("%s: reproduces the recorded verdict check for check", async (_, a) => {
+  type RecordedAnchor = { name: string; txHash: string; expect: VerifyRequest["expect"]; checks: string[] } & Pick<VerifyResult, "status" | "assurance" | "author" | "verifiedFields">;
+  it.each<[string, RecordedAnchor]>(f.anchors.map((a: RecordedAnchor) => [a.name, a]))("%s: reproduces the recorded verdict check for check", async (_, a) => {
     const r = await verifyRecorded(a);
     expect({ status: r.status, assurance: r.assurance, author: r.author, verifiedFields: r.verifiedFields, checks: lines(r) }).toEqual({
       status: a.status,
@@ -431,7 +432,8 @@ describe("golden: FPS's mainnet anchors against the pinned registry, replayed", 
     ]);
   });
 
-  it.each(f.runs.map((r: { name: string }) => [r.name, r]))("%s: reproduces the recorded verdict check for check", async (_, r) => {
+  type RecordedRun = { name: string; request: Omit<VerifyRequest, "network">; registries?: RegistryInfo[]; checks: string[] } & Pick<VerifyResult, "status" | "assurance" | "block" | "anchor" | "author" | "verifiedFields" | "notes">;
+  it.each<[string, RecordedRun]>(f.runs.map((r: RecordedRun) => [r.name, r]))("%s: reproduces the recorded verdict check for check", async (_, r) => {
     const out = await replay(r);
     expect({ status: out.status, assurance: out.assurance, block: out.block, anchor: out.anchor, author: out.author, verifiedFields: out.verifiedFields, notes: out.notes, checks: lines(out) }).toEqual({
       status: r.status,
