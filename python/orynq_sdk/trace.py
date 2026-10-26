@@ -40,8 +40,8 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 
@@ -113,18 +113,21 @@ def sha256_hex(data: str) -> str:
 Visibility = Literal["public", "private", "secret"]
 TraceStatus = Literal["running", "completed", "failed", "cancelled"]
 TraceEventKind = Literal[
-    "command", "output", "decision", "observation", "error", "custom"
+    "command", "output", "decision", "observation", "error", "custom",
+    "governance-attestation", "tool-receipt",
 ]
 
 
 # Default visibility per kind — matches DEFAULT_EVENT_VISIBILITY in the TS types.
 _DEFAULT_VISIBILITY: Dict[str, Visibility] = {
-    "command": "private",
+    "command": "public",
     "output": "private",
-    "decision": "public",
-    "observation": "private",
+    "decision": "private",
+    "observation": "public",
     "error": "private",
     "custom": "private",
+    "governance-attestation": "public",
+    "tool-receipt": "private",
 }
 
 
@@ -208,13 +211,51 @@ class TraceBundle:
     content: str = ""
     manifest_hash: str = ""
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Return the TypeScript TraceBundle wire shape for JSON interchange.
+
+        ``manifest_hash`` hashes this port's public-view content; it is not a
+        TypeScript storage-manifest commitment and is therefore not exported as
+        ``manifestHash``.
+        """
+        run = self.private_run
+        private_run: Dict[str, Any] = {
+            "id": run.id,
+            "schemaVersion": run.schema_version,
+            "agentId": run.agent_id,
+            "status": run.status,
+            "startedAt": run.started_at,
+            "rollingHash": run.rolling_hash,
+            "nextSeq": run.next_seq,
+            "nextSpanSeq": run.next_span_seq,
+            "events": [{**e.to_dict_without_hash(), "hash": e.hash} for e in run.events],
+            "spans": [{**_span_header(s), "hash": s.hash} for s in run.spans],
+        }
+        for key, value in (("endedAt", run.ended_at), ("durationMs", run.duration_ms),
+                           ("rootHash", run.root_hash), ("metadata", run.metadata)):
+            if value is not None:
+                private_run[key] = value
+        return {
+            "formatVersion": self.format_version,
+            "publicView": self.public_view,
+            "privateRun": private_run,
+            "merkleRoot": self.merkle_root,
+            "rootHash": self.root_hash,
+        }
+
 
 # ---------------------------------------------------------------------------
 # Builder API
 # ---------------------------------------------------------------------------
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _duration_ms(started_at: str, ended_at: str) -> int:
+    delta = (datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
+             - datetime.fromisoformat(started_at.replace("Z", "+00:00")))
+    return delta // timedelta(milliseconds=1)
 
 
 def create_trace(
@@ -285,7 +326,7 @@ def add_span(
         event_ids=[],
         child_span_ids=[],
         parent_span_id=parent_span_id,
-        metadata=dict(metadata) if metadata else None,
+        metadata=dict(metadata) if metadata is not None else None,
     )
     run.next_span_seq += 1
     run.spans.append(span)
@@ -364,32 +405,34 @@ def close_span(
     span.status = status
     ended_at = _now_iso()
     span.ended_at = ended_at
-    span.duration_ms = int(
-        (datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
-         - datetime.fromisoformat(span.started_at.replace("Z", "+00:00"))).total_seconds() * 1000
-    )
+    span.duration_ms = _duration_ms(span.started_at, ended_at)
 
-    # Span hash = sha256(domain + canonical(span_header) + "|" + event hashes joined)
-    # Matches the TS computeSpanHash() shape (verified via test_two_events_change_root_hash).
-    event_hashes = [_get_event(run, eid).hash or "" for eid in span.event_ids]
-    span_header = {
+    # Both membership-ID arrays are part of the TS span header. Empty spans
+    # have no trailing separator; event hashes follow sequence order.
+    events = sorted((_get_event(run, eid) for eid in span.event_ids), key=lambda e: e.seq)
+    event_hashes = [event.hash or "" for event in events]
+    hash_input = HASH_DOMAIN_SPAN + canonical_json(_span_header(span))
+    if event_hashes:
+        hash_input += "|" + "|".join(event_hashes)
+    span.hash = sha256_hex(hash_input)
+
+
+def _span_header(span: TraceSpan) -> Dict[str, Any]:
+    header: Dict[str, Any] = {
         "id": span.id,
         "spanSeq": span.span_seq,
         "name": span.name,
         "status": span.status,
         "visibility": span.visibility,
         "startedAt": span.started_at,
-        "endedAt": span.ended_at,
-        "durationMs": span.duration_ms,
+        "eventIds": list(span.event_ids),
+        "childSpanIds": list(span.child_span_ids),
     }
-    if span.parent_span_id is not None:
-        span_header["parentSpanId"] = span.parent_span_id
-    if span.metadata is not None:
-        span_header["metadata"] = span.metadata
-
-    span.hash = sha256_hex(
-        HASH_DOMAIN_SPAN + canonical_json(span_header) + "|" + "|".join(event_hashes)
-    )
+    for key, value in (("parentSpanId", span.parent_span_id), ("metadata", span.metadata),
+                       ("endedAt", span.ended_at), ("durationMs", span.duration_ms)):
+        if value is not None:
+            header[key] = value
+    return header
 
 
 def finalize_trace(run: TraceRun) -> TraceBundle:
@@ -414,10 +457,7 @@ def finalize_trace(run: TraceRun) -> TraceBundle:
     run.status = "completed"
     ended_at = _now_iso()
     run.ended_at = ended_at
-    run.duration_ms = int(
-        (datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
-         - datetime.fromisoformat(run.started_at.replace("Z", "+00:00"))).total_seconds() * 1000
-    )
+    run.duration_ms = _duration_ms(run.started_at, ended_at)
 
     span_hashes_sorted = [s.hash or "" for s in sorted(run.spans, key=lambda x: x.span_seq)]
     merkle_root = _build_merkle_root(span_hashes_sorted)
@@ -469,10 +509,10 @@ def _build_merkle_root(leaves: List[str]) -> str:
       - each leaf is `sha256("poi-trace:leaf:v1|" + spanHash)`
       - each internal node is `sha256("poi-trace:node:v1|" + left + "|" + right)`
       - odd levels duplicate the last node (TS convention)
-      - empty leaves -> root = sha256("poi-trace:node:v1|empty")
+      - empty leaves -> root = ""
     """
     if not leaves:
-        return sha256_hex(HASH_DOMAIN_NODE + "empty")
+        return ""
 
     nodes = [sha256_hex(HASH_DOMAIN_LEAF + h) for h in leaves]
     while len(nodes) > 1:

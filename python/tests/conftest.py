@@ -70,19 +70,11 @@ def sample_invoice_base():
 @pytest.fixture
 def hash_vectors():
     """Load cross-language hash vectors from fixtures."""
-    # Try multiple possible paths
-    possible_paths = [
-        Path(__file__).parent.parent.parent / "t-backend" / "contracts" / "fixtures" / "hash" / "hash_vectors.json",
-        Path(__file__).parent.parent.parent / "fixtures" / "hash-vectors.json",
-    ]
-
-    for vectors_path in possible_paths:
-        if vectors_path.exists():
-            with open(vectors_path, encoding='utf-8') as f:
-                data = json.load(f)
-                return data.get("vectors", [])
-
-    return []
+    vectors_path = Path(__file__).resolve().parents[2] / "fixtures" / "hash-vectors.json"
+    data = json.loads(vectors_path.read_text(encoding="utf-8"))
+    vectors = data["vectors"]
+    assert vectors, f"Required hash vectors are empty: {vectors_path}"
+    return vectors
 
 
 @pytest.fixture
