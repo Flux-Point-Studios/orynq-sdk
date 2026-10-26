@@ -183,11 +183,11 @@ export function midnightSource(endpoints: SourceEndpoints): MidnightSource {
       if (error instanceof HttpUnavailable) throw error;
       throw new HttpUnavailable(redact(`${endpoints.operator} ${what}: HTTP request unavailable`));
     } finally { clearTimeout(timer); }
-    if (!res.ok) throw new Error(redact(`${endpoints.operator} ${what}: HTTP ${res.status}: ${text.slice(0, 300)}`));
+    if (!res.ok) throw new Error(redact(`${endpoints.operator} ${what}: HTTP ${res.status}: ${redact(text).slice(0, 300)}`));
     try {
       return JSON.parse(text);
     } catch {
-      throw new Error(redact(`${endpoints.operator} ${what}: answered with something other than JSON: ${text.slice(0, 120)}`));
+      throw new Error(redact(`${endpoints.operator} ${what}: answered with something other than JSON: ${redact(text).slice(0, 120)}`));
     }
   };
   const answer = (method: string, a: RpcAnswer | undefined) => {
@@ -200,7 +200,7 @@ export function midnightSource(endpoints: SourceEndpoints): MidnightSource {
   };
   const graphql = async <T>(query: string, variables: Record<string, unknown>): Promise<T> => {
     const out = (await post(endpoints.indexer, "indexer", { query, variables })) as { data?: T; errors?: unknown };
-    if (out.errors !== undefined || !out.data) throw new Error(redact(`${endpoints.operator} indexer: ${JSON.stringify(out.errors ?? out).slice(0, 300)}`));
+    if (out.errors !== undefined || !out.data) throw new Error(redact(`${endpoints.operator} indexer: ${redact(JSON.stringify(out.errors ?? out)).slice(0, 300)}`));
     return out.data;
   };
   return {

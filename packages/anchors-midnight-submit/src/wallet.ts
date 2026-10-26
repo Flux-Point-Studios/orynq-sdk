@@ -115,19 +115,19 @@ export interface StateSaveFailure {
 export type StateSave = { saved: true } | { saved: false; failures: StateSaveFailure[] };
 
 // A failed part's error by its name and, for a schema error from the wallet SDK, what each step
-// that threw said and threw, never the state it was given.
+// that threw said and the underlying error's name, never its message (which can quote state).
 function describeFailure(error: unknown): string {
   const thrown = (issue: unknown): string[] => {
     if (typeof issue !== "object" || issue === null) return [];
     const i = issue as { _tag?: string; message?: string; actual?: unknown; issue?: unknown; issues?: unknown };
-    if (i._tag === "Unexpected") return [i.actual instanceof Error ? `${i.message}: ${i.actual.name}: ${i.actual.message}` : String(i.message)];
+    if (i._tag === "Unexpected") return [i.actual instanceof Error ? `${i.message}: ${i.actual.name}` : String(i.message)];
     return [i.issue, ...[i.issues].flat()].flatMap(thrown);
   };
   const e = error as { name?: string; message?: string; issue?: unknown; cause?: { issue?: unknown } };
   if (e?.issue !== undefined) return [e.name, ...thrown(e.issue)].join(": ");
   // A wallet error wrapping a schema error quotes the state in its message.
   if (e?.cause?.issue !== undefined) return `${e.name}: ${describeFailure(e.cause)}`;
-  return `${e?.name ?? "Error"}: ${e?.message ?? String(error)}`;
+  return e?.name ?? "Error";
 }
 
 // A sub-wallet's class, as far as it reads a serialized state back, as its restore() does.

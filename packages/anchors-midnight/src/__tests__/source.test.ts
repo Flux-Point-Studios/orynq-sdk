@@ -94,6 +94,19 @@ describe("midnightSource", () => {
     }
   });
 
+  it("redacts an echoed credential before applying diagnostic byte limits", async () => {
+    handler = () => ({ status: 500, text: "x".repeat(284) + TOKEN });
+    const status = await failure(source().node.call("system_chain"));
+    handler = () => ({ text: "x".repeat(104) + TOKEN });
+    const nonJson = await failure(source().node.call("system_chain"));
+    handler = () => ({ json: { errors: [{ message: "x".repeat(270) + TOKEN }] } });
+    const graphql = await failure(source().indexer.head());
+    for (const message of [status, nonJson, graphql]) {
+      expect(message).toContain("<redacted>");
+      expect(message).not.toContain(TOKEN.slice(0, 12));
+    }
+  });
+
   it("asks the indexer for a transaction by hash with GraphQL variables and maps what it returns", async () => {
     handler = (b) => ({
       json: {

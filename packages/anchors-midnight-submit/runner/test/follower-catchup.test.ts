@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { followerChain } from "../../../anchors-midnight/src/__tests__/follower-chain.js";
 import { followerPolicyDigest } from "../follower-block.js";
 import { openFollowerState } from "../follower-state.js";
-import { openFollowerCatchup } from "../follower-catchup.js";
+import { openFollowerCatchup, type FollowerStartupDiagnostic } from "../follower-catchup.js";
 import { batchAuthors, batchScope } from "./batch-fixture.js";
 
 const now = 1_800_000_000_000, day = 86_400_000, timestamp = (height: number) => now + (height - 1365) * day / 4;
@@ -72,6 +72,35 @@ it("authenticates startup without storing it before the complete-history floor",
   expect(state.coverage().floor!.timestamp).toBeLessThanOrEqual(now - day);
   expect(state.coverage().floor!.height).toBeLessThanOrEqual(1350);
   await expect(follower.start()).rejects.toThrow(/start|already/i);
+});
+
+it("reports bounded startup phases and work counters without upstream or configuration text", async () => {
+  const events: FollowerStartupDiagnostic[] = [];
+  const follower = openFollowerCatchup({ state, node: url, authors, clock: () => ({ wallTime: now, monotonicMillis: 0 }), startupDiagnostic: event => events.push(event) });
+  await follower.start();
+  expect(events.map(event => [event.phase, event.outcome])).toEqual([["policy", "start"], ["head", "start"], ["finality", "start"], ["policy", "start"], ["clock", "start"], ["clock", "success"]]);
+  for (const event of events) {
+    expect(event.elapsedMs).toBeGreaterThanOrEqual(0); expect(event.elapsedMs).toBeLessThanOrEqual(86_400_000);
+    expect(event.requests).toBeGreaterThanOrEqual(0); expect(event.requests).toBeLessThanOrEqual(256);
+    expect(event.responseBytes).toBeGreaterThanOrEqual(0); expect(event.responseBytes).toBeLessThanOrEqual(64 * 1024 * 1024);
+    expect(Object.keys(event).sort()).toEqual(["category", "elapsedMs", "outcome", "phase", "requests", "responseBytes"]);
+  }
+  expect(events.at(-1)!.requests).toBeGreaterThan(0); expect(events.at(-1)!.responseBytes).toBeGreaterThan(0);
+  expect(JSON.stringify(events)).not.toContain(url);
+  expect(state.head()).toBeNull();
+});
+
+it.each(["clock", "source-or-integrity", "policy"] as const)("retains only the bounded %s startup failure category", async category => {
+  const events: FollowerStartupDiagnostic[] = [];
+  if (category === "clock") tip = 1364;
+  if (category === "source-or-integrity") responseFault = "rpc-error";
+  const follower = openFollowerCatchup({ state, node: url, authors, clock: () => ({ wallTime: now, monotonicMillis: 0 }), startupDiagnostic: event => events.push(event) });
+  if (category === "policy") serial = 0;
+  await expect(follower.start()).rejects.toThrow();
+  expect(events.at(-1)).toMatchObject({ outcome: "failure", category });
+  expect(JSON.stringify(events)).not.toContain("fixture proof unavailable");
+  expect(JSON.stringify(events)).not.toContain(url);
+  expect(state.head()).toBeNull();
 });
 
 it("appends bounded complete ranges from the actual durable cursor across turns", async () => {
