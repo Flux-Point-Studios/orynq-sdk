@@ -1,5 +1,8 @@
 # Hosted standing service
 
+For independently authenticated checkpoint advancement, weekly CI ownership,
+retained-history preservation and rollback, see [checkpoint operations](../../../docs/checkpoints/OPERATIONS.md).
+
 The service composes the authenticated follower, certified census, retained publisher,
 session, journal and controller. It compounds existing SDK receipts by retaining their
 portable proof objects and anchoring canonical certified batch sets to the approved registry.

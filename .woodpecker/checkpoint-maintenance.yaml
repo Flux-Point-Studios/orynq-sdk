@@ -1,0 +1,72 @@
+# Configure cron checkpoint-weekly as 0 4 * * 1 UTC in Woodpecker. The repository's
+# existing all-events approval policy and maintainer PR review remain in force.
+when:
+  - event: pull_request
+    path:
+      include:
+        - docs/checkpoints/**
+        - packages/anchors-midnight/src/checkpoint-advance.ts
+        - packages/anchors-midnight/scripts/checkpoint-advance.ts
+        - tools/checkpoint-maintenance/**
+        - .woodpecker/checkpoint-maintenance.yaml
+  - event: cron
+    cron: checkpoint-weekly
+    branch: main
+  - event: manual
+    branch: main
+
+labels:
+  platform: linux/amd64
+
+clone:
+  - name: clone
+    image: woodpeckerci/plugin-git@sha256:9802cb7852dcf31f9c5c1d1ddeadfb9002d4fae85751f7b6a792eedb267bcc59
+    settings:
+      recursive: false
+
+steps:
+  - name: replay-accepted-checkpoint-history
+    image: &node node:24-bookworm@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
+    commands:
+      - corepack enable
+      - pnpm install --frozen-lockfile
+      - node --test tools/checkpoint-maintenance/publish.test.mjs
+      - pnpm exec tsx packages/anchors-midnight/scripts/checkpoint-advance.ts verify --network mainnet --history docs/checkpoints/mainnet.json
+
+  - name: derive-and-replay-successor
+    image: *node
+    commands:
+      - corepack enable
+      - pnpm exec tsx packages/anchors-midnight/scripts/checkpoint-advance.ts derive --network mainnet --node https://midnight-proofs-a.fluxpointstudios.com/midnight/mainnet/rpc --history docs/checkpoints/mainnet.json --out /woodpecker/checkpoint-candidate/mainnet.json
+      - pnpm exec tsx packages/anchors-midnight/scripts/checkpoint-advance.ts verify --network mainnet --history /woodpecker/checkpoint-candidate/mainnet.json
+    when:
+      - event: cron
+        branch: main
+      - event: manual
+        branch: main
+
+  # No dependency, SDK or repository code executes with this credential unless its
+  # exact source hash matches the reviewed constant. Import the verified byte snapshot
+  # through a data URL to close the check/execute replacement window. Ambient preload
+  # settings are removed. The publisher imports Node builtins only and can open only
+  # a candidate-specific PR in this repository, never merge or force-update main.
+  - name: propose-reviewed-checkpoint-update
+    image: *node
+    environment:
+      CHECKPOINT_PUBLISH: '1'
+      CHECKPOINT_GITHUB_TOKEN:
+        from_secret: checkpoint_review_token
+    commands:
+      - |
+        env -u NODE_OPTIONS -u NODE_PATH node --input-type=module - /woodpecker/checkpoint-candidate/mainnet.json <<'NODE'
+        import { readFileSync } from 'node:fs';
+        import { createHash } from 'node:crypto';
+        const source = readFileSync('tools/checkpoint-maintenance/publish.mjs');
+        if (createHash('sha256').update(source).digest('hex') !== '8efb39d0517dc496883bbd0f999219a0e1f713d7d650bb500287e1bfebbe6c23') throw new Error('Checkpoint publisher source differs from its reviewed pin');
+        await import('data:text/javascript;base64,' + source.toString('base64'));
+        NODE
+    when:
+      - event: cron
+        branch: main
+      - event: manual
+        branch: main
