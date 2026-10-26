@@ -19,6 +19,7 @@ import type {
   CertifiedReceiptResult,
 } from "./types.js";
 import { waitForCertification, waitForAnchor } from "./polling.js";
+import { merkleRoot } from "./merkle.js";
 import { stripPrefix, ensureHex, isZeroHash, assertHex32 } from "./hex.js";
 import { u8aToHex, stringToU8a } from "@polkadot/util";
 
@@ -553,7 +554,11 @@ export async function submitCertifiedReceipt(
   // pre-existing behaviour.
   const receiptInput: ReceiptInput = {
     contentHash: effectiveContentHash,
-    rootHash: input.rootHash || contentHashHex,
+    // A blob receipt (no schema hash) is certified only when its base root is the Merkle root of
+    // the uploaded chunk hashes; a receipt class named by a schema hash supplies its own root.
+    rootHash: input.schemaHash === undefined || isZeroHash(input.schemaHash)
+      ? merkleRoot(manifest.chunks.map((chunk) => chunk.sha256))
+      : input.rootHash || contentHashHex,
     manifestHash: uploadResult.storageLocatorHash || input.manifestHash || contentHashHex,
     // Always pass effectiveReceiptIdHex (derived OR caller-supplied) so
     // the gateway-side blob path and the on-chain receipt agree on the
