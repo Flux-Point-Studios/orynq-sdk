@@ -14,6 +14,8 @@ The full public suite passed **2,880 tests**, with **45 existing skips** in cred
 
 The first complete private run passed 940 tests and failed 46. Thirty-seven failures came from the pending merge's dirty-tree guard or the invocation's `NODE_OPTIONS` heap setting, which the independent verifier intentionally refuses. The corrected invocation uses a bounded cgroup with no injected Node options. The remaining failures exposed older fixtures that no longer satisfied main's guards: redacted error output, isolated author binding namespaces, an explicitly retired prior journal row, an actual version-1 schema, and broadcast-before-clock-advance ordering. Two fixtures also assumed stable serialized byte lengths or no filesystem inode reuse. Those fixtures now model the intended conditions deterministically; all 11 selected regression cases passed. Production guard code was unchanged. Full logs: `full-private.log`, `isolate-main-failures.log`, `green-main-fixtures.log`.
 
+The final clean private run passed **986/986 tests in 71 files**, with no skips, in 817.87 seconds (`final-full-private.log`). The separate journal suite passed **46/46 tests** (`final-journal.log`), and final private type checking passed (`final-private-typecheck.log`). The private run used a 4 GiB cgroup, zero swap and low scheduling priority. Both the reviewed head and requested main remain ancestors of this branch. The final evidence commit requires its own Woodpecker approval and green CI, followed by materios adversarial review; these local results do not substitute for that gate.
+
 The third and fourth preprod calls finalized at blocks **3153023** and **3153053**. Both returned **valid=true, assurance=consensus-verified** from an independent final-tarball installation. It authenticated the preprod trust-root walk through 1,065 authority changes and checked npm integrity and package realpaths. Exact transaction hashes, fees, statements, package hashes and outputs are in [round2-rehearsal.json](round2-rehearsal.json). This is the genuine cryptographic/runtime regression; the fast gas tests use fixture proof bytes and the real ledger transcript evaluator, and make no cryptographic proof claim themselves.
 
 The substrate sweep identified the existing prover, submission journal and GRANDPA verifier as the reusable components. Research queries were `site.github.com midnight ledger ContractCallPrototype gas transcript` and `site.docs.midnight.network ContractCallPrototype Transcript gas`; the pinned ledger-8 declarations and [Midnight's ledger source](https://github.com/midnightntwrk/midnight-ledger) supplied the existing transcript/gas primitive. No new dependency or replacement queue was introduced.
@@ -52,10 +54,11 @@ The simulator's comment/log wording uses the observability-only TDD exception. O
 
 ## Reproduction
 
+On Gemtek, bound each command with `systemd-run --user --scope -p MemoryMax=8G -p MemorySwapMax=0` before its `nice` prefix (4 GiB suffices for the private suite). Do not export `NODE_OPTIONS`: the independent verifier refuses runtime injection, including heap flags. Commit the tested tooling before the rehearsal composition suite, whose clean-tree guard is intentional.
+
 ```sh
 export COMPACTC=/home/deci/.cache/orynq-midnight/compactc/compactc
 export MIDNIGHT_PP=/home/deci/.cache/orynq-midnight/zk
-export NODE_OPTIONS=--max-old-space-size=4096
 export CARGO_BUILD_JOBS=2
 export CARGO_TARGET_DIR=/home/deci/work/scratch-midnight-prover-onchain-20261026/native-target
 export ORYNQ_MIDNIGHT_PARAMS_DIR="$MIDNIGHT_PP"
