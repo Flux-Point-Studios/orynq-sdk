@@ -1,23 +1,29 @@
 # Proof presentation rehearsal — 2026-10-26
 
-Status: **local native ledger passed; PREPROD waiting for human faucet funding; MAINNET not attempted**.
+Status: **local native ledger passed; PREPROD faucet payment located; wallet sync and deployment awaiting authorized indexer access; MAINNET not attempted**.
 
-The brief forbids reading `~/.secrets`. The W3 runbook places both funded preprod wallet seeds, their saved state and its Blockfrost credential there. None was read, and their current balances remain unknown. An authorized W3 signer outside that directory remains one route to completion. No standing service, node or container was modified.
+The brief forbids reading `~/.secrets`. None was read. The fresh preprod wallet is retained outside that directory. No standing service, node or container was modified.
 
 Read-only requests to the public `https://rpc.preprod.midnight.network` succeeded on 2026-10-26: chain `Midnight Preprod`, genesis `df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b`, runtime `midnight` spec `1000300`, transaction version `3`. Public chain reads are available and match the supported runtime.
 
-A fresh preprod-only wallet was created with the existing key utility outside the forbidden directory, under `/home/deci/.local/state/codex-tasks/midnight-prover-onchain/preprod-wallet/`. Its directory is 0700 and its mnemonic is 0600; no secret was printed. Fund its **unshielded** address through `https://faucet.preprod.midnight.network/`:
+A fresh preprod-only wallet was created with the existing key utility outside the forbidden directory, under `/home/deci/.local/state/codex-tasks/midnight-prover-onchain/preprod-wallet/`. Its directory is 0700 and its mnemonic is 0600; no secret was printed. Its **unshielded** address is:
 
 `mn_addr_preprod1pju7t5t0lej86fyp6c63gyhy823e5zh2py4m4lkzpjhvf0sv4ylsrzw2pz`
 
-The faucet's W3 runbook requires a human CAPTCHA, and this session has no browser surface available. Funding was requested from deci. The fresh wallet supplies signing access without relaxing the restriction. After funding, sync it, register its tNIGHT for tDUST using the existing wallet API, and perform the three-transaction rehearsal below. Do not delete this wallet as part of build cleanup.
+deci completed the faucet on 2026-10-26. A bounded scan of the public preprod RPC located the payment, and ledger-8 decoding found a native-token output of **5,000,000,000 STAR (5,000 tNIGHT)** owned by this exact address:
 
-The W3 unshielded addresses are:
+| Funding field | Value |
+|---|---|
+| Faucet intent identifier | `00e16532647cbcc331c19697c9cdd8eaeb1bfe03eabb8843cfba30f80f06668f99` |
+| Final transaction hash | `bdba9f29be53f71572fb12c4620d6fd6d43d1df41f22c2554a14fd4f45473164` |
+| Block height | `3150901` |
+| Block hash | `9b8bbba8a68ef0fd4f6babc57d0ee8547962d10c89447fbd17c598a1435ccafa` |
 
-- A: `mn_addr_preprod18hnkqxax2qyjrkm8ats9dkmr9vlwh0v6mvtfhtt4t5tvzq5t4l7sc2xpu6`
-- B: `mn_addr_preprod1jyy8gesdrewxa9sz6ujm63wx4w390psjtce9ueq5ps3u3hy5077s2859zm`
+The faucet identifier belongs to the final transaction's `identifiers()` set; it is not its `transactionHash()`. The payment's block and output are located from chain bytes, without relying on the retired indexer. This is funding evidence, not proof-contract deployment evidence.
 
-Funding the W3 addresses alone does not resolve access to their existing signers; the fresh address above is the immediately usable alternative.
+The remaining prerequisite is an authorized indexer. The hosted preprod GraphQL endpoint returned **HTTP 410** and the replacement Blockfrost endpoint returned **HTTP 403** without authentication. Midnight's [environment reference](https://docs.midnight.network/relnotes/network) documents the preprod indexer retirement. No Blockfrost credential is present in the task environment or at the requested allowed path, `/home/deci/.local/state/codex-tasks/midnight-prover-preprod/blockfrost.project_id`. Supply a preprod token there with mode 0600, or an authorized compatible indexer/RPC endpoint. Do not paste a token into a transcript. The existing wallet API then syncs, registers NIGHT for DUST, and pays the rehearsal fees. Retain the wallet through build cleanup.
+
+A checkpoint refresh started from the committed preprod fixture's set 9497 at block 2834399. Successful intermediate checks reached set 10250 after block 3058673. The retired RPC then returned HTTP 403 to historical header reads, including a six-header batch with a 547-byte method/parameter payload. Increasing aggregate response budgets and reducing batches did not complete the walk. No consensus-verified faucet result or proof-contract finality result is claimed. Resume with an authorized supported RPC; the retained checkpoint progress records only completed verifications.
 
 ## Local evidence
 
@@ -41,6 +47,6 @@ The same fresh consumer then verified that existing transaction through the **li
 
 ## Completion criteria for preprod
 
-Use the private `proofReleaseOperator` with `network: 'preprod'`, an explicit supplied wallet and source, a task-specific journal and a one-hour expiry. Prepare/submit the three `PROOF_RELEASE_LABELS` sequentially. Its journal permits retries of the same bytes and requires the pinned deployment to land before either call. Record every transaction hash, landed height and block hash.
+Use the private `proofReleaseOperator` with `network: 'preprod'`, an explicit supplied wallet and source, a task-specific journal and a one-hour expiry. Deploy through that operator, then generate each call through the public SDK `post` function. Its supplied wallet journals the final bytes through the release operator before broadcasting them. The journal permits retries of the same bytes and requires the pinned deployment to land before either call. Record every transaction hash, landed height and block hash.
 
 Install the packed updated anchors-midnight and midnight-prover packages in a new consumer directory. Use the public `verifyPosted` example in `ONCHAIN.md`, an independently authenticated preprod checkpoint and RPC-only source with the deployment and both call block hints. Record two `valid: true`, `assurance: 'consensus-verified'` results. Only then change the package status to preprod-rehearsed. Local replay and recorded registry finality tests cannot substitute for this check.

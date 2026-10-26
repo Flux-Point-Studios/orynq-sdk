@@ -1,6 +1,6 @@
 # Midnight proofs
 
-This package generates local Compact proofs and supplies an immutable on-chain presentation contract, `post` with a caller-supplied wallet, and `verifyPosted` from transaction bytes to authenticated GRANDPA-final execution. No preprod or mainnet proof-contract deployment is recorded. See [on-chain API, replay policy, relay design and rehearsal state](ONCHAIN.md). The supported stack is Compact 0.31.1, compact-runtime 0.16.0, onchain-runtime-v3 3.1.2, ledger-v8 8.1.3 and zkir-v2 2.1.1; the native verifier is built from the same ledger 8.1.3 and onchain-runtime 3.1.2 release ([official support matrix](https://docs.midnight.network/relnotes/support-matrix)).
+This package generates local Compact proofs and supplies an immutable on-chain presentation contract, `post` with a caller-supplied wallet, and `verifyPosted` from transaction bytes to authenticated GRANDPA-final execution. The preprod wallet is funded; wallet sync awaits authorized indexer access. No preprod or mainnet proof-contract deployment is recorded, so the package is not yet preprod-rehearsed. See [on-chain API, replay policy, relay design and rehearsal state](ONCHAIN.md). The supported stack is Compact 0.31.1, compact-runtime 0.16.0, onchain-runtime-v3 3.1.2, ledger-v8 8.1.3 and zkir-v2 2.1.1; the native verifier is built from the same ledger 8.1.3 and onchain-runtime 3.1.2 release ([official support matrix](https://docs.midnight.network/relnotes/support-matrix)).
 
 `RealMidnightProver` implements two statements:
 

@@ -1,6 +1,6 @@
 # Prepared proof-contract release intent
 
-This is review material, not an approval. No live mainnet runner or deployment was executed. Preprod awaits human faucet funding as recorded in [the rehearsal](../../midnight-prover/onchain/REHEARSAL.md). CTO review and preprod finality evidence precede execution.
+This is review material, not an approval. No live mainnet runner or deployment was executed. The preprod faucet payment is located at block 3150901; wallet sync and deployment await authorized indexer access as recorded in [the rehearsal](../../midnight-prover/onchain/REHEARSAL.md). Recompilation reproduced the code, initial-state and verifier-key pins unchanged. The DUST figures below are authorization ceilings; funded proof-contract fees remain unmeasured. CTO review and preprod finality evidence precede execution.
 
 ## Exact proposed authorization text
 

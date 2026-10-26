@@ -1,5 +1,11 @@
 # Validation record
 
+## Funded preprod follow-up — 2026-10-26
+
+At base `f0422aad55152e7973a4960b690e05e4b7528ddd`, Woodpecker pipeline **202 passed all three workflows** (`anchor-worker`, `ci`, `release`). An isolated follow-up checkout reproduced both sets of circuits and the committed on-chain pins, built the complete workspace, passed all **30 focused public proof/finality tests** and **14 private release tests**, and installed newly packed anchors-midnight and midnight-prover tarballs in a fresh consumer directory. Both packages resolved inside that consumer's own `node_modules`; its prover reported the same code and initial-state hashes as the prepared release intent.
+
+The faucet payment is located in preprod block **3150901**, with an exact 5,000 tNIGHT output for the retained wallet. [REHEARSAL.md](REHEARSAL.md) records both the faucet identifier and the distinct final transaction hash. The retired indexer returns HTTP 410; its replacement requires an authorized credential outside the brief's forbidden `~/.secrets` tree. No proof-contract deployment, proof call or `verifyPosted` network verdict exists yet. Fresh installation and local tests do not substitute for those results. Scratch scripts and logs are retained at `/home/deci/work/scratch-midnight-proof-preprod-20261026/`.
+
 All local builds and tests run at `nice -n 10` in the task's isolated checkout, with Node's heap bounded to 2–4 GiB. Native builds use two jobs; the native on-chain replay command also ran under an 8 GiB virtual-memory limit. No funded wallet, service or container is used by these tests.
 
 ## RED → GREEN
