@@ -78,6 +78,9 @@ export function packedFiles(tarball) {
   return fail("missing tar terminator");
 }
 
+const treeIdentity = (files) => ({ files: files.size, sha256: hash(JSON.stringify([...files].map(([name, bytes]) => [name, hash(bytes)]).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))) });
+export const packedTreeIdentity = (tarball) => treeIdentity(packedFiles(tarball));
+
 export function packageTreeIdentity(tarball, directory) {
   const expected = packedFiles(tarball);
   const actual = new Map();
@@ -95,5 +98,5 @@ export function packageTreeIdentity(tarball, directory) {
   walk(directory);
   if (actual.size !== expected.size) fail("installed file set differs from tarball");
   for (const [name, bytes] of expected) if (!actual.get(name)?.equals(bytes)) fail(`installed file differs from tarball: ${name}`);
-  return { files: expected.size, sha256: hash(JSON.stringify([...expected].map(([name, bytes]) => [name, hash(bytes)]).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))) };
+  return treeIdentity(expected);
 }

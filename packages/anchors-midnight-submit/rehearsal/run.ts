@@ -39,8 +39,9 @@ type Raw = Record<string, any>;
 const raw: Raw = existsSync(RAW) ? JSON.parse(readFileSync(RAW, "utf8")) : {};
 const save = () => writeFileSync(RAW, JSON.stringify(raw, (_, v) => (typeof v === "bigint" ? v.toString() : v), 1));
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
-type TracedBundle = { label: string; kind: 1 | 2; rootHash: string; manifestHash: string; merkleRoot: string; modelManifestHash: string };
+type TracedBundle = { toolingCommit: string; label: string; kind: 1 | 2; rootHash: string; manifestHash: string; merkleRoot: string; modelManifestHash: string };
 const bundles: TracedBundle[] = JSON.parse(readFileSync(new URL("./bundles/index.json", import.meta.url), "utf8"));
+if (bundles.some(bundle => bundle.toolingCommit !== commit)) throw new Error("Rehearsal bundles were traced by different tooling; regenerate them before a fresh rehearsal");
 const bundle = (label: string) => {
   const b = bundles.find((x) => x.label === label);
   if (!b) throw new Error(`bundles/index.json holds no bundle ${label}`);

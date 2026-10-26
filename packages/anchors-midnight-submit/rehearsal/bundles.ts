@@ -13,6 +13,9 @@ import { fileURLToPath } from "node:url";
 import { createAnchorEntryFromBundle } from "@fluxpointstudios/orynq-sdk-anchors-cardano";
 import { addEvent, addSpan, closeSpan, createManifest, createTrace, finalizeTrace, manifestFromAnthropic } from "@fluxpointstudios/orynq-sdk-process-trace";
 
+import { toolingCommit } from "./tooling.js";
+const commit = toolingCommit();
+
 const REPO = fileURLToPath(new URL("../../../", import.meta.url));
 const A = `${REPO}packages/anchors-midnight`;
 const B = `${REPO}packages/anchors-midnight-submit`;
@@ -68,7 +71,7 @@ for (const job of jobs) {
   bundle.manifestHash = manifest.manifestHash;
   const entry = createAnchorEntryFromBundle(bundle);
   writeFileSync(new URL(`${job.label}.json`, OUT), JSON.stringify(bundle, null, 1));
-  index.push({ label: job.label, kind: job.kind, exit: r.status, rootHash: entry.rootHash, manifestHash: entry.manifestHash, merkleRoot: entry.merkleRoot, modelManifestHash: bundle.modelManifestHash });
+  index.push({ toolingCommit: commit, label: job.label, kind: job.kind, exit: r.status, rootHash: entry.rootHash, manifestHash: entry.manifestHash, merkleRoot: entry.merkleRoot, modelManifestHash: bundle.modelManifestHash });
   console.log(job.label, job.kind, r.status, entry.rootHash.slice(0, 16));
 }
 writeFileSync(new URL("index.json", OUT), JSON.stringify(index, null, 1));

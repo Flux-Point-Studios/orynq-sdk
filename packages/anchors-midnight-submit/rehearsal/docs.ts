@@ -7,12 +7,16 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import { toolingCommit } from "./tooling.js";
+const commit = toolingCommit();
+
 const VERIFY = fileURLToPath(new URL("../../anchors-midnight/", import.meta.url));
 const SEED = `${process.env.HOME}/.secrets/orynq-midnight-preprod/known-authors-root.seed`;
 const OUT = new URL("./evidence/known-authors/", import.meta.url);
 const tool = (...args: string[]) => execFileSync(process.execPath, ["--import", "tsx", "scripts/known-authors.ts", ...args], { encoding: "utf8", cwd: VERIFY });
 
 const raw = JSON.parse(readFileSync(new URL("./evidence/raw.json", import.meta.url), "utf8"));
+if (raw.toolingCommit !== commit) throw new Error("KNOWN_AUTHORS drill and rehearsal tooling revisions differ");
 mkdirSync(OUT, { recursive: true });
 if (!existsSync(SEED)) writeFileSync(new URL("root.pub", OUT), tool("new-root-key", SEED));
 const checkpoint = JSON.parse(readFileSync(`${VERIFY}src/__tests__/fixtures/preprod-finality.json`, "utf8")).checkpoints.own;
@@ -34,3 +38,6 @@ docs.forEach((authors, i) => {
   console.log(`serial ${serial}: ${authors.map((a) => `${a.id} [${a.validFrom}, ${a.validTo ?? "open"}]`).join(", ")}`);
 });
 console.log("trust root", readFileSync(new URL("root.pub", OUT), "utf8").trim());
+
+raw.phaseCommits.documents = commit;
+writeFileSync(new URL("./evidence/raw.json", import.meta.url), JSON.stringify(raw, null, 1));

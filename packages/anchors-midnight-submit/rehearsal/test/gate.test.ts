@@ -181,7 +181,10 @@ describe("the evidence gate", () => {
 
     it("refuses an anchor by the wrong key, and anchors out of order", () => {
       expect(failuresOf((r) => (r.raw.anchors["rotation-new-after"].author = r.raw.rotation.keys.relay1))[0]).toMatch(/^rotation anchor rotation-new-after: written by [0-9a-f]{64}, not relay2/);
-      expect(failuresOf((r) => (r.raw.anchors["rotation-old-after"].blockHeight = 1060))[0]).toMatch(/^the rotation anchors are not four anchors in increasing blocks/);
+      expect(failuresOf((r) => {
+        r.raw.anchors["rotation-old-after"].blockHeight = 1060;
+        for (const values of Object.values(r.verified.rotation) as Array<Record<string, any>>) values["rotation-old-after"].block.height = 1060;
+      })[0]).toMatch(/^the rotation anchors are not four anchors in increasing blocks/);
     });
   });
 

@@ -18,7 +18,7 @@ import { windowHits } from "../../anchors-midnight/src/__tests__/privacy-scan.js
 import { abortedDrills, INVALID_TRANSACTION, judge, parseCrashLog, parseCrashStatus, ROTATION_EXPECTED, ROTATION_LABELS, unrecordedAnchors } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
 import { toolingCommit, installedPins } from "./tooling.js";
-import { packedFiles } from "./evidence-integrity.mjs";
+import { packedFiles, packedTreeIdentity } from "./evidence-integrity.mjs";
 
 const head = toolingCommit();
 const [dir, out] = process.argv.slice(2) as [string, string];
@@ -75,6 +75,7 @@ const { failures, facts } = judge({ raw, verified, crash, crashStatus, head });
 try {
   const tarball = readFileSync(`${dir}/evidence/verify-package.tgz`);
   if (createHash("sha256").update(tarball).digest("hex") !== verified.package.sha256 || `sha512-${createHash("sha512").update(tarball).digest("base64")}` !== verified.package.integrity) throw new Error("tarball hashes differ");
+  if (JSON.stringify(packedTreeIdentity(tarball)) !== JSON.stringify(verified.package.installedTree)) throw new Error("installed tree fingerprint differs");
   const manifest = JSON.parse((packedFiles(tarball).get("package.json") as Buffer).toString("utf8"));
   if (manifest.name !== verified.package.name || manifest.version !== verified.package.version) throw new Error("tarball manifest differs");
 } catch { failures.push("the verifier package tarball is absent or differs from the verified identity"); }
@@ -107,6 +108,7 @@ for (const [name, negative] of Object.entries(raw.negatives ?? {}) as Array<[str
     if (tx.transactionHash() !== negative.txHash || actions.length !== 1 || !(actions[0] instanceof L.MaintenanceUpdate) || String(actions[0].address) !== raw.deploy.address || negative.address !== raw.deploy.address) throw new Error("negative transaction binding differs");
   } catch { failures.push(`negative ${name}: serialized bytes do not bind the recorded transaction and deployed update address`); }
 }
+if (bundles.some((bundle: any) => bundle.toolingCommit !== head)) failures.push("rehearsal bundles were not traced at the composing commit");
 failures.push(...unrecordedAnchors(raw, journalLanded), ...unopened, ...aborted.failures);
 if (failures.length) {
   for (const failure of failures) process.stderr.write(`GATE: ${failure}\n`);

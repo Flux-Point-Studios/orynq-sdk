@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { entropyToMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import * as L from "@midnight-ntwrk/ledger-v8";
+import { packedTreeIdentity } from "../evidence-integrity.mjs";
 import { forgeKnownAuthors } from "../gate.mjs";
 import { installedPins } from "../tooling.js";
 import { REGISTRY_VERIFIER_KEY_SHA256 } from "../../../anchors-midnight/src/registry.js";
@@ -53,12 +54,13 @@ export interface Rehearsal {
 }
 
 export function honestRehearsal(): Rehearsal {
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: new URL(".", import.meta.url), encoding: "utf8" }).trim();
   const keys = { relay1: h(), relay2: h() };
   const bundles: Array<Record<string, any>> = [];
   const anchors: Record<string, Anchor> = {};
   const openings: Rehearsal["openings"] = {};
   const anchor = (name: string, kind: 1 | 2, height: number, wallet = "walletA", author = keys.relay1, extra: Anchor = {}) => {
-    const bundle = { label: name, kind, exit: 0, rootHash: h(), manifestHash: h(), merkleRoot: h(), modelManifestHash: h() };
+    const bundle = { toolingCommit: commit, label: name, kind, exit: 0, rootHash: h(), manifestHash: h(), merkleRoot: h(), modelManifestHash: h() };
     bundles.push(bundle);
     const txHash = h();
     let commitment = h();
@@ -103,7 +105,7 @@ export function honestRehearsal(): Rehearsal {
   const [deployAddress, deployTxHash] = [h(), h()];
   const raw = {
     chain: Object.fromEntries(["hosted", "blockfrost"].map(name => [name, { chain: "Midnight Preprod", genesis: "df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b", specVersion: 1000300, ledgerVersion: "8.1.3" }])),
-    toolingCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: new URL(".", import.meta.url), encoding: "utf8" }).trim(),
+    toolingCommit: commit,
     phaseCommits: {},
     pins: installedPins(),
     funding: { walletA: { registration: { txHash: h() } }, walletB: { registration: { txHash: h() } } },
@@ -129,7 +131,7 @@ export function honestRehearsal(): Rehearsal {
     rotation: { keys },
   };
 
-  raw.phaseCommits = Object.fromEntries(["chain", "funding", "deploy", "kind1", "kind2", "sameblock", "negatives", "rotation"].map(phase => [phase, raw.toolingCommit]));
+  raw.phaseCommits = Object.fromEntries(["chain", "funding", "deploy", "kind1", "kind2", "sameblock", "negatives", "rotation", "documents"].map(phase => [phase, raw.toolingCommit]));
   for (const [, negative] of Object.entries(raw.negatives) as Array<[string, any]>) {
     const action = new L.MaintenanceUpdate(deployAddress, [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority([], 0, 1n))], 0n);
     const tx = L.Transaction.fromParts("preprod", undefined, undefined, L.Intent.new(new Date("2026-10-06T00:00:00Z")).addMaintenanceUpdate(action)).mockProve().bind();
@@ -169,7 +171,7 @@ export function honestRehearsal(): Rehearsal {
       resolved: "file:fluxpointstudios-orynq-sdk-anchors-midnight-0.1.0.tgz",
       integrity: `sha512-${createHash("sha512").update(tarball).digest("base64")}`,
       sha256: createHash("sha256").update(tarball).digest("hex"),
-      installedTree: { files: 2, sha256: "01".repeat(32) },
+      installedTree: packedTreeIdentity(tarball),
     },
     trustRoot: root,
     shippedTrustRoots: [],
@@ -209,7 +211,7 @@ export function honestRehearsal(): Rehearsal {
   const T2 = anchors["crash-after-broadcast"]!;
   const row = (a: Anchor, state: string, broadcasts: number) => ({ tx_hash: a.txHash, state, broadcasts, height: state === "landed" ? a.blockHeight : null });
   const receipt = (a: Anchor) => ({ txHash: a.txHash, blockHeight: a.blockHeight, blockHash: a.blockHash, kind: a.kind, commitment: a.commitment, attribute: a.attribute, author: a.author });
-  const ev = (mode: string, label: string, event: string, extra: Record<string, unknown>) => ({ at: "2026-10-05T00:00:00.000Z", mode, label, event, ...extra });
+  const ev = (mode: string, label: string, event: string, extra: Record<string, unknown>) => ({ commit, at: "2026-10-05T00:00:00.000Z", mode, label, event, ...extra });
   const crash = [
     ev("kill-before", "crash-before-broadcast", "dying before broadcast", { txHash: T1.txHash, rows: [row(T1, "pending", 0)] }),
     ev("recover", "crash-before-broadcast", "restarted", { rows: [row(T1, "pending", 0)] }),
@@ -232,7 +234,7 @@ export function honestRehearsal(): Rehearsal {
     "journal-crash.sqlite": landedIn((n) => n.startsWith("crash-")),
     "journal-deploy.sqlite": [{ tx_hash: raw.deploy.txHash, state: "landed" }],
   };
-  bundles.push({ label: "unused-extra", kind: 1, exit: 0, rootHash: h(), manifestHash: h(), merkleRoot: h(), modelManifestHash: h() });
+  bundles.push({ toolingCommit: commit, label: "unused-extra", kind: 1, exit: 0, rootHash: h(), manifestHash: h(), merkleRoot: h(), modelManifestHash: h() });
   return { raw, verified, crash, crashStatus, bundles, journals, documents, root, rootSeed: hex(rootSeed), openings, tarball };
 }
 

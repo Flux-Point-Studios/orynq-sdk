@@ -3,7 +3,7 @@
 // its wallet, prover and chain replaced). A failure in one run must leave a deploy the next run
 // finishes and records as the one that landed, and a node's refusal of an anchor's bytes in
 // raw.json, which the evidence gate requires.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { chmodSync, copyFileSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
@@ -35,7 +35,7 @@ function rehearsal(bundles: string[] = []) {
   for (const file of ["gate.mjs", "wallets.json", "tooling.ts"]) symlinkSync(`${HERE}${file}`, `${root}/rehearsal/${file}`);
   symlinkSync(OFFLINE, `${root}/rehearsal/endpoints.ts`);
   symlinkSync(OFFLINE, `${root}/src/index.ts`);
-  writeFileSync(`${root}/rehearsal/bundles/index.json`, JSON.stringify(bundles.map((label) => ({ label, kind: 1, rootHash: h(), manifestHash: h(), merkleRoot: h(), modelManifestHash: h() }))));
+  writeFileSync(`${root}/rehearsal/bundles/index.json`, JSON.stringify(bundles.map((label) => ({ toolingCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: HERE, encoding: "utf8" }).trim(), label, kind: 1, rootHash: h(), manifestHash: h(), merkleRoot: h(), modelManifestHash: h() }))));
   const chainFile = `${root}/chain.json`;
   writeFileSync(chainFile, JSON.stringify({ network: "preprod", aheadMs: 0, sent: [], landed: {}, discarded: [] } satisfies OfflineChain));
   const chain = (): OfflineChain => JSON.parse(readFileSync(chainFile, "utf8"));

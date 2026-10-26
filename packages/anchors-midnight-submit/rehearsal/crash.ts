@@ -11,6 +11,9 @@ import { source, WALLET_SYNC } from "./endpoints.js";
 import { CRASH_WINDOWS } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
 
+import { toolingCommit } from "./tooling.js";
+const commit = toolingCommit();
+
 const [mode, label] = process.argv.slice(2) as ["kill-before" | "kill-after" | "recover", keyof typeof CRASH_WINDOWS];
 // Each label has the one kill mode the evidence gate expects, and dies with the gate's words.
 const crashWindow = CRASH_WINDOWS[label];
@@ -20,6 +23,7 @@ const SECRETS = `${HOME}/.secrets/orynq-midnight-preprod`;
 const JOURNAL = `${SECRETS}/journal-crash.sqlite`;
 const RAW = new URL("./evidence/raw.json", import.meta.url);
 const raw = JSON.parse(readFileSync(RAW, "utf8"));
+if (raw.toolingCommit !== commit) throw new Error("Crash drill and rehearsal tooling revisions differ");
 const bundles: Array<{ label: string; rootHash: string; manifestHash: string; merkleRoot: string }> = JSON.parse(readFileSync(new URL("./bundles/index.json", import.meta.url), "utf8"));
 const b = bundles.find((x) => x.label === label);
 if (!b) throw new Error(`bundles/index.json holds no bundle ${label}`);
@@ -31,7 +35,7 @@ const rows = () => {
     db.close();
   }
 };
-const say = (event: string, extra: Record<string, unknown> = {}) => console.log(JSON.stringify({ at: new Date().toISOString(), mode, label, event, ...extra }));
+const say = (event: string, extra: Record<string, unknown> = {}) => console.log(JSON.stringify({ commit, at: new Date().toISOString(), mode, label, event, ...extra }));
 
 const wallet = await openWallet({
   network: "preprod",

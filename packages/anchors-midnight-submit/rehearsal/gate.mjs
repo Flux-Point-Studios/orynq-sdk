@@ -164,7 +164,7 @@ export function judge({ raw, verified, crash, crashStatus, head = raw.toolingCom
     if (identity?.chain !== "Midnight Preprod" || identity.genesis !== genesis) failures.push(`the ${operator} path did not record Midnight Preprod's chain identity`);
   }
   if (!/^[0-9a-f]{40}$/.test(head ?? "") || raw.toolingCommit !== head || verified.toolingCommit !== head) failures.push("the writer, verifier and composer do not name one committed tooling revision");
-  for (const phase of ["chain", "funding", "deploy", "kind1", "kind2", "sameblock", "negatives", "rotation"]) if (raw.phaseCommits?.[phase] !== head) failures.push(`rehearsal phase ${phase} was not recorded at the composing commit`);
+  for (const phase of ["chain", "funding", "deploy", "kind1", "kind2", "sameblock", "negatives", "rotation", "documents"]) if (raw.phaseCommits?.[phase] !== head) failures.push(`rehearsal phase ${phase} was not recorded at the composing commit`);
   if (!Array.isArray(verified.execution?.execArgv) || verified.execution.execArgv.length !== 0 || (verified.execution.nodeOptions !== null && verified.execution.nodeOptions !== "")) failures.push("the verifier did not record an execution without preloaded code or runtime arguments");
   if (!/^[0-9a-f]{64}$/.test(verified.verifierKeys?.anchor ?? "") || !/^[0-9a-f]{64}$/.test(verified.verifierKeys?.anchor_hiding ?? "")) failures.push("the verifier did not record its packed registry verifier keys");
 
@@ -207,6 +207,8 @@ export function judge({ raw, verified, crash, crashStatus, head = raw.toolingCom
   for (const [kind, min] of Object.entries(MIN_ANCHORS)) {
     if ((facts.anchors.byKind[kind] ?? 0) < min) failures.push(`${facts.anchors.byKind[kind] ?? 0} kind-${kind} anchors verified valid, fewer than ${min}`);
   }
+
+  if (crash.some(event => event.commit !== head)) failures.push("the crash drill did not record the composing tooling revision");
 
   // Every anchor the crash drill landed is a recorded anchor, and each window behaved.
   for (const e of crash.filter((e) => e.event === "landed")) {
