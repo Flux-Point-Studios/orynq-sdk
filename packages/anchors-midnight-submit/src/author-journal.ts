@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { linkSync, lstatSync, mkdirSync, realpathSync, unlinkSync } from "node:fs";
+import { closeSync, fsyncSync, linkSync, lstatSync, openSync, mkdirSync, realpathSync, unlinkSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { readPrivateFile, writePrivateFile, type MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
@@ -40,6 +40,10 @@ export function authorJournal(network: MidnightNetwork, author: string, file: st
     writePrivateFile(temporary, JSON.stringify({ path, device: stat.dev, inode: stat.ino }));
     try { linkSync(temporary, binding); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
     check();
+    for (const directory of [dirname(path), bindingRoot]) {
+      const descriptor = openSync(directory, "r");
+      try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
+    }
     return journal;
   } catch (error) { journal.close(); throw error; }
   finally { try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; } }
