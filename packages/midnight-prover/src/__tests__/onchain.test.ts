@@ -12,7 +12,7 @@ const expected = { circuit: "proveCapability" as const, commitment, contextDiges
 const genesisHash = digest("genesis");
 const eventDigest = digest("event");
 const rolling = { circuit: "proveRolling1" as const, genesisHash, rootHash: digest(`poi-trace:roll:v1|${genesisHash}|${eventDigest}`), anchorHash: digest("anchor"), contextDigest, notAfter };
-const build = (statement = expected, witness = { capability }) => buildProofCall({ network: "preprod", address: "ab".repeat(32), statement, witness });
+const build = (statement = expected, witness = { capability }) => buildProofCall({ state: proofInitialState(), network: "preprod", address: "ab".repeat(32), statement, witness });
 
 describe("immutable on-chain proof presentations", () => {
   it("deploys only the pinned immutable state", () => {
@@ -40,19 +40,19 @@ describe("immutable on-chain proof presentations", () => {
   });
 
   it("checks the exact rolling relation", () => {
-    const call = buildProofCall({ network: "preprod", address: "ab".repeat(32), statement: rolling, witness: { eventDigest } });
+    const call = buildProofCall({ state: proofInitialState(), network: "preprod", address: "ab".repeat(32), statement: rolling, witness: { eventDigest } });
     expect(Buffer.from(call.after.presentations.lookup(presentationId(rolling)).rootHash).toString("hex")).toBe(rolling.rootHash);
     expect(JSON.stringify(call.program.slice(5))).not.toContain("popeq");
     expect(call.program[3]).toBe("lt");
-    expect(() => buildProofCall({ network: "preprod", address: "ab".repeat(32), statement: { ...rolling, rootHash: digest("wrong") }, witness: { eventDigest } })).toThrow(/rolling root mismatch/);
+    expect(() => buildProofCall({ state: proofInitialState(), network: "preprod", address: "ab".repeat(32), statement: { ...rolling, rootHash: digest("wrong") }, witness: { eventDigest } })).toThrow(/rolling root mismatch/);
   });
 
   it.each(["A".repeat(64), "g".repeat(64)])("rejects noncanonical private hex %s", eventDigest => {
-    expect(() => buildProofCall({ network: "preprod", address: "ab".repeat(32), statement: rolling, witness: { eventDigest } })).toThrow(/noncanonical hex digest/);
+    expect(() => buildProofCall({ state: proofInitialState(), network: "preprod", address: "ab".repeat(32), statement: rolling, witness: { eventDigest } })).toThrow(/canonical event digest/);
   });
 
   it("rejects noncanonical genesis in the circuit", () => {
-    expect(() => buildProofCall({ network: "preprod", address: "ab".repeat(32), statement: { ...rolling, genesisHash: "A".repeat(64) }, witness: { eventDigest } })).toThrow(/noncanonical hex digest/);
+    expect(() => buildProofCall({ state: proofInitialState(), network: "preprod", address: "ab".repeat(32), statement: { ...rolling, genesisHash: "A".repeat(64) }, witness: { eventDigest } })).toThrow(/noncanonical hex digest/);
   });
 
   it("rejects an expired deadline in the circuit", () => {

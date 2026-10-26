@@ -5,7 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import * as rt from "@midnight-ntwrk/compact-runtime";
-import { buildProofDeploy, buildProofCall, presentationId } from "../src/onchain.js";
+import { buildProofDeploy, buildProofCall, proofInitialState, presentationId } from "../src/onchain.js";
 import { proofProvider } from "../src/proof-material.js";
 import { assertPostedProof } from "../src/posted.js";
 import { ledger } from "../onchain/managed/contract/index.js";
@@ -48,7 +48,7 @@ const evidence: Array<{ circuit: string; txHash: string; bytes: number }> = [];
 const calls = [
   { statement: capabilityStatement, witness: { capability } },
   { statement: rollingStatement, witness: { eventDigest } },
-].map(input => ({ ...input, built: buildProofCall({ ...input, network: "preprod", address: deploy.address }) }));
+].map(input => ({ ...input, built: buildProofCall({ ...input, state: proofInitialState(), network: "preprod", address: deploy.address }) }));
 for (const { statement, built } of calls) {
   const tx = (await built.tx.prove(provider, L.CostModel.initialCostModel())).bind();
   const bytes = tx.serialize();

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import * as rt from "@midnight-ntwrk/compact-runtime";
 import * as L from "@midnight-ntwrk/ledger-v8";
+import { contractStateOnNode, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { Contract, ledger, pureCircuits, type Presentation } from "../onchain/managed/contract/index.js";
 
 export type ProofStatement = {
@@ -28,6 +29,29 @@ export function proofArtifact(path: string): Uint8Array {
 export function proofInitialState(): L.ContractState {
   return L.ContractState.deserialize(proofArtifact("initial-state.bin"));
 }
+
+export function assertProofState(state: L.ContractState): void {
+  const shape = L.ContractState.deserialize(state.serialize());
+  const initial = proofInitialState();
+  shape.data = initial.data;
+  if (!Buffer.from(shape.serialize()).equals(Buffer.from(initial.serialize()))) throw new Error("Contract differs from the pinned immutable proof contract");
+}
+
+export async function proofStateOnNode(source: MidnightSource, address: string): Promise<L.ContractState> {
+  bytes32(address);
+  const raw = await contractStateOnNode(source, address);
+  if (raw === null) throw new Error("Proof contract is not deployed");
+  const state = L.ContractState.deserialize(Buffer.from(raw.replace(/^0x/, ""), "hex"));
+  assertProofState(state);
+  return state;
+}
+
+export function assertProofWitness(witness: ProofWitness): void {
+  if ("eventDigest" in witness && !/^[0-9a-f]{64}$/.test(witness.eventDigest)) throw new Error("A canonical event digest is required");
+}
+
+export const PROOF_MAX_ATTEMPTS = 3;
+export const isProofGasError = (error: unknown): boolean => error instanceof Error && /\bran out of gas budget\b/.test(error.message);
 
 export function assertProofDeploy(bytes: Uint8Array, stage: "unproven" | "final"): string {
   const tx = stage === "unproven" ? L.Transaction.deserialize("signature", "pre-proof", "pre-binding", bytes) : L.Transaction.deserialize("signature", "proof", "binding", bytes);
@@ -61,10 +85,11 @@ export function presentationId(statement: ProofStatement): Uint8Array {
   return pureCircuits.presentationId(presentation(statement));
 }
 
-export function buildProofCall({ network, address, statement, witness }: { network: ProofNetwork; address: string; statement: ProofStatement; witness: ProofWitness }) {
+export function buildProofCall({ network, address, statement, witness, state }: { network: ProofNetwork; address: string; statement: ProofStatement; witness: ProofWitness; state: L.ContractState }) {
   bytes32(address);
+  assertProofWitness(witness);
   const record = presentation(statement);
-  const state = proofInitialState();
+  assertProofState(state);
   const contract = new Contract<undefined>({
     capability: ({ privateState }) => {
       if (!("capability" in witness) || witness.capability.length !== 32) throw new Error("A 32-byte capability is required");
@@ -85,10 +110,15 @@ export function buildProofCall({ network, address, statement, witness }: { netwo
   ledgerQuery.effects = query.effects;
   const operation = state.operation(statement.circuit);
   if (!operation) throw new Error("Missing pinned proof operation");
-  const call = new L.PrePartitionContractCall(address, statement.circuit, operation,
-    new L.PreTranscript(ledgerQuery, result.proofData.publicTranscript), result.proofData.privateTranscriptOutputs,
-    result.proofData.input, result.proofData.output, L.communicationCommitmentRandomness(), statement.circuit);
+  const randomness = L.communicationCommitmentRandomness();
+  const commitment = L.communicationCommitment(result.proofData.input, result.proofData.output, randomness);
+  const [guaranteed, fallible] = L.partitionTranscripts([new L.PreTranscript(ledgerQuery, result.proofData.publicTranscript, commitment)], L.LedgerParameters.initialParameters())[0]!;
+  if (!guaranteed || fallible) throw new Error("Proof requires one guaranteed transcript");
+  const gas = guaranteed.gas;
+  const transcript = { ...guaranteed, gas: { readTime: gas.readTime * 3n, computeTime: gas.computeTime * 3n, bytesWritten: gas.bytesWritten * 4n, bytesDeleted: gas.bytesDeleted * 4n } };
+  const call = new L.ContractCallPrototype(address, statement.circuit, operation, transcript, undefined,
+    result.proofData.privateTranscriptOutputs, result.proofData.input, result.proofData.output, randomness, statement.circuit);
   const ttl = new Date(statement.notAfter * 1000);
-  const tx = L.Transaction.fromParts(network).addCalls({ tag: "first" }, [call], L.LedgerParameters.initialParameters(), ttl);
+  const tx = L.Transaction.fromParts(network, undefined, undefined, L.Intent.new(ttl).addCall(call));
   return { tx, after: ledger(result.context.currentQueryContext.state), program: result.proofData.publicTranscript, ttl };
 }

@@ -16,12 +16,17 @@ const hash = (value: string) => createHash("sha256").update(value).digest("hex")
 const contextDigest = hash("orynq:onchain:synthetic-integration");
 const statement = { circuit: "proveCapability" as const, contextDigest, notAfter: fixture.deadline as number, commitment: createHash("sha256").update(new Uint8Array(32).fill(19)).update(Buffer.from(contextDigest, "hex")).digest("hex") };
 const request = { network: "preprod" as const, address: fixture.address as string, deployTxHash: fixture.deployTxHash as string, txHash: fixture.calls[0].txHash as string, statement };
-const options = { source: { network: "preprod" } as MidnightSource, checkpoints: [{} as FinalityCheckpoint] };
+const options = { source: { network: "preprod" } as MidnightSource, trustRoot: { genesis: "df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b", checkpoints: [{} as FinalityCheckpoint] } };
 const result = (name: string, height: number, index = 1) => ({ bytes: file(`${name}.bin`), block: { height, hash: "ab".repeat(32) }, timestamp: fixture.timestamp * 1000, extrinsicIndex: index });
 beforeEach(() => finalized.mockReset());
 
 // GRANDPA and execution checks have their own recorded-RPC tests. Here their result is the seam.
 describe("posted proof composition with authenticated transaction results", () => {
+  it("refuses preprod trust roots relabelled as mainnet before reading transactions", async () => {
+    finalized.mockResolvedValueOnce(result("deploy", 100)).mockResolvedValueOnce(result("proveCapability", 101));
+    await expect(verifyPosted({ ...request, network: "mainnet" }, { ...options, source: { network: "mainnet" } as MidnightSource, trustRoot: { genesis: "df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b", checkpoints: options.trustRoot.checkpoints } })).rejects.toThrow(/genesis/);
+    expect(finalized).not.toHaveBeenCalled();
+  });
   it("accepts exact real proof bytes at their historical authenticated timestamp", async () => {
     finalized.mockResolvedValueOnce(result("deploy", 100)).mockResolvedValueOnce(result("proveCapability", 101));
     await expect(verifyPosted(request, options)).resolves.toMatchObject({ valid: true, assurance: "consensus-verified", txHash: request.txHash, timestamp: fixture.timestamp * 1000, block: { height: 101 } });

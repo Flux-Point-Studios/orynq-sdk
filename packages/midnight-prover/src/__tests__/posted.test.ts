@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { describe, expect, it, vi } from "vitest";
-import { buildProofCall, buildProofDeploy } from "../onchain.js";
+import { proofInitialState, buildProofCall, buildProofDeploy } from "../onchain.js";
 import { assertPostedProof, verifyPosted } from "../posted.js";
 import { proofProvider } from "../proof-material.js";
 import { withFixtureProof } from "../../tests/fixture-prover.js";
@@ -13,7 +13,7 @@ const statement = { circuit: "proveCapability" as const, contextDigest, commitme
 const deployment = buildProofDeploy("preprod", new Date(statement.notAfter * 1000));
 const zkir = proofProvider("unused");
 // Fixture proof bytes exercise decoding only; finality acceptance is tested independently.
-const call = async () => (await buildProofCall({ network: "preprod", address: deployment.address, statement, witness: { capability } }).tx.prove(withFixtureProof(zkir), L.CostModel.initialCostModel())).bind().serialize();
+const call = async () => (await buildProofCall({ state: proofInitialState(), network: "preprod", address: deployment.address, statement, witness: { capability } }).tx.prove(withFixtureProof(zkir), L.CostModel.initialCostModel())).bind().serialize();
 
 describe("posted proof verification", () => {
   it("decodes the expected presentation from the transaction's own transcript", async () => {
@@ -42,7 +42,7 @@ describe("posted proof verification", () => {
   it("requires finality trust supplied independently of the posted receipt", async () => {
     const transactions = vi.fn();
     const source = { network: "preprod", indexer: { transactions } } as unknown as MidnightSource;
-    await expect(verifyPosted({ network: "preprod", address: deployment.address, deployTxHash: "11".repeat(32), txHash: "22".repeat(32), statement }, { source, checkpoints: [] })).rejects.toThrow(/checkpoint/);
+    await expect(verifyPosted({ network: "preprod", address: deployment.address, deployTxHash: "11".repeat(32), txHash: "22".repeat(32), statement }, { source, trustRoot: { genesis: "df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b", checkpoints: [] } })).rejects.toThrow(/checkpoint/);
     expect(transactions).not.toHaveBeenCalled();
   });
 });

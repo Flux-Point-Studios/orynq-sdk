@@ -6,7 +6,7 @@ This extends the existing local prover and consumes the anchor package's GRANDPA
 
 ## Contract and trust
 
-`onchain/orynq.compact` preserves the capability relation `SHA256(capability32 || context32)`, the exact `poi-trace:roll:v1|` rolling relation, lowercase ASCII hex checks for both rolling digests, and the ledger's `blockTimeLt(notAfter)` assertion. A presentation contains its circuit kind, commitment or genesis/root/anchor, context and deadline. Each circuit inserts that record into a map keyed by `persistentHash<Presentation>(record)`. It never reads the previous map value. The only equality assertion in the public transcript checks the clock predicate. Independently prepared calls can therefore apply successively without sharing an old-state assertion, and different records remain available. Storage grows with distinct presentations; an identical presentation overwrites only its identical key.
+`onchain/orynq.compact` preserves the capability relation `SHA256(capability32 || context32)`, the exact `poi-trace:roll:v1|` rolling relation, lowercase ASCII hex checks for both rolling digests, and the ledger's `blockTimeLt(notAfter)` assertion. A presentation contains its circuit kind, commitment or genesis/root/anchor, context and deadline. Each circuit inserts that record into a map keyed by `persistentHash<Presentation>(record)`. It never reads the previous map value. The only equality assertion in the public transcript checks the clock predicate. Calls share no old-value equality assertion, but their gas budgets depend on trie depth. The SDK reads the current contract state for every attempt and declares ×3 read/compute and ×4 written/deleted bytes through `ContractCallPrototype`. This headroom accommodates ordinary concurrent insertions; arbitrary growth can still exhaust it. Different records remain available after successful calls. Storage grows with distinct presentations; an identical presentation overwrites only its identical key.
 
 The transaction's guaranteed transcript is the receipt. Verification reconstructs the expected record from those bytes, rather than consulting a mutable latest-value slot. A valid receipt proves the relation at its authenticated block time. It does not prove inference correctness, task authorization, or the existence of the supplied Cardano anchor hash. Archival verification remains valid after the presentation deadline; an authorization broker must additionally require its current time to precede that deadline.
 
@@ -23,6 +23,7 @@ import { post } from '@fluxpointstudios/orynq-sdk-midnight-prover';
 
 const submitted = await post({
   network: 'preprod',
+  source, // A preprod MidnightSource with node contract-state access.
   address: deployedAddress,
   statement: {
     circuit: 'proveCapability',
@@ -35,7 +36,9 @@ const submitted = await post({
 });
 ```
 
-The developer supplies `wallet.network`, `wallet.payFee(provenTransaction, ttl)` and `wallet.submit(finalizedTransaction)`. The existing private submit package's `OperatorWallet` satisfies this interface. `post` generates the contract proof locally with pinned keys and parameters before handing a transaction to the wallet. No witness, unproven transaction, proof-server request or private transcript is passed to the wallet. The wallet is responsible for its own key custody, fee cap, DUST balancing and local proving of its fee spend. `submitted.txHash` identifies the **final** transaction after balancing; submission is not finality. A durable application should journal the final bytes before its wallet broadcasts them, as the private release operator does.
+The developer supplies `wallet.network`, `wallet.payFee(provenTransaction, ttl)`, `wallet.submit(finalizedTransaction)` and `wallet.discard(finalizedTransaction)`. Set the source's network explicitly. The existing private submit package's `OperatorWallet` supplies the wallet operations. `post` generates the contract proof locally with pinned keys and parameters before handing a transaction to the wallet. No witness, unproven transaction, proof-server request or private transcript is passed to the wallet. The wallet is responsible for its own key custody, fee cap, DUST balancing and local proving of its fee spend. `submitted.txHash` identifies the **final** transaction after balancing; submission is not finality. A durable application should journal the final bytes before its wallet broadcasts them, as the private release operator does.
+
+`post` allows three total proving/submission attempts. Only an explicit “ran out of gas budget” rejection triggers a fresh state read, proof and fee balance; it discards the rejected fee reservation. The wallet must report that error only for a definitive rejection, never an uncertain broadcast. Other errors propagate without replacement. A durable wallet must additionally respect its journal retirement rules; the release runner does so before another confirmation. Deadlines never extend during SDK retries. The low-level `buildProofCall` requires an explicit current `state`; it never substitutes the empty deployment state.
 
 Use `circuit: 'proveRolling1'` with `genesisHash`, `rootHash`, `anchorHash`, `contextDigest`, `notAfter`, and witness `{eventDigest}` for one exact rolling step. Multiple links are separate presentations; a caller verifies their continuity.
 
@@ -54,10 +57,13 @@ const result = await verifyPosted({
   deployTxHash: deploymentBlockHint.txHash,
   txHash: proofBlockHint.txHash,
   statement: expectedStatement,
-}, { source, checkpoints: trustedCheckpoints });
+}, { source, trustRoot: {
+  genesis: 'df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b',
+  checkpoints: trustedCheckpoints,
+} });
 ```
 
-Block hints locate bytes and confer no trust. Checkpoints must come from the caller's independently authenticated network configuration, never from an untrusted proof or indexer. The verifier checks canonical transaction bytes and hashes, complete block-body roots, exact bare Midnight extrinsic inclusion, checkpoint-rooted GRANDPA finality, authenticated successful execution and timestamp, the exact pinned immutable deployment, deployment ordering, target contract/circuit, and the expected presentation. It refuses partial success. The finality helper uses the same pinned runtime metadata and storage proofs as anchors-midnight. The mainnet read-RPC supports these reads without a new contract-state allowlist entry because this verifier uses deployment and call bytes, not `midnight_contractState`.
+Block hints locate bytes and confer no trust. The trusted genesis/checkpoint bundle must match the requested network; relabelling only the request and source is refused. Checkpoints must come from the caller's independently authenticated network configuration, never from an untrusted proof or indexer. The verifier checks canonical transaction bytes and hashes, complete block-body roots, exact bare Midnight extrinsic inclusion, checkpoint-rooted GRANDPA finality, authenticated successful execution and timestamp, the exact pinned immutable deployment, deployment ordering, target contract/circuit, and the expected presentation. It refuses partial success. The finality helper uses the same pinned runtime metadata and storage proofs as anchors-midnight. The mainnet read-RPC supports these reads without a new contract-state allowlist entry because this verifier uses deployment and call bytes, not `midnight_contractState`.
 
 The npm artifact includes the contract, keys, initial state and pins. **Posted-proof verification needs no Rust toolchain or native executable.** Consensus execution establishes cryptographic proof validity. Local off-chain envelope verification and the integration test still use the native verifier; JavaScript ledger WASM alone does not perform cryptographic verification. `assertPostedProof` is only a transcript decoder and is not an authorization verdict.
 

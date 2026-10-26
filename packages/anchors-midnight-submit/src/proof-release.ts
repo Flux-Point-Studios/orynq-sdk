@@ -3,7 +3,7 @@ import { join } from "node:path";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { type MidnightNetwork, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { chainView, openJournal, type AnchorKey } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
-import { assertProofDeploy, assertPostedProof, buildProofDeploy, buildProofCall, proofProvider, PROOF_PINS, type ProofStatement } from "@fluxpointstudios/orynq-sdk-midnight-prover";
+import { assertProofDeploy, assertPostedProof, buildProofDeploy, buildProofCall, proofStateOnNode, proofProvider, PROOF_PINS, type ProofStatement } from "@fluxpointstudios/orynq-sdk-midnight-prover";
 import { PROOF_RELEASE_CAPABILITY, PROOF_RELEASE_EVENT, proofReleaseStatements } from "../runner/proof-release-intent.js";
 import { assertConfirmedHash, assertKnownRuntime, confirmedSends, declaredFee, finalTransaction, finalizeChecked, type FeeWallet, type PreparedBytes } from "./submission.js";
 
@@ -86,7 +86,7 @@ export function proofReleaseOperator(options: {
       if (notAfter * 1000 <= Date.now()) throw new Error("Proof release approval has expired");
       const ttl = new Date(notAfter * 1000);
       const statement = proofReleaseStatements(notAfter).find(value => value.circuit === label);
-      const tx = label === "deploy" ? buildProofDeploy(network, ttl).tx : buildProofCall({ network, address: address(), statement: statement!, witness: label === "proveCapability" ? { capability: PROOF_RELEASE_CAPABILITY } : { eventDigest: PROOF_RELEASE_EVENT } }).tx;
+      const tx = label === "deploy" ? buildProofDeploy(network, ttl).tx : buildProofCall({ network, address: address(), state: await proofStateOnNode(source, address()), statement: statement!, witness: label === "proveCapability" ? { capability: PROOF_RELEASE_CAPABILITY } : { eventDigest: PROOF_RELEASE_EVENT } }).tx;
       const { bytes } = await finalizeChecked(wallet, prover, tx, ttl, bytes => { describe(label, bytes, ttl); });
       return describe(label, bytes, ttl, wallet.addresses.unshielded);
     },

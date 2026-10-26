@@ -34,12 +34,24 @@ export interface PostedProofRequest {
   statement: ProofStatement;
 }
 
-export async function verifyPosted(request: PostedProofRequest, options: { source: MidnightSource; checkpoints: readonly FinalityCheckpoint[] }) {
-  if (options.checkpoints.length === 0) throw new Error("An independently trusted finality checkpoint is required");
+export interface ProofTrustRoot {
+  genesis: string;
+  checkpoints: readonly FinalityCheckpoint[];
+}
+
+const GENESIS: Record<ProofNetwork, string> = {
+  mainnet: "1941ca8e2bb88146c14dea084d3be7eb6e96ca7135429c543848b628124f2854",
+  preprod: "df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b",
+};
+
+export async function verifyPosted(request: PostedProofRequest, options: { source: MidnightSource; trustRoot: ProofTrustRoot }) {
+  if (!options.trustRoot || options.trustRoot.genesis !== GENESIS[request.network]) throw new Error("Proof trust-root genesis mismatch");
+  if (options.trustRoot.checkpoints.length === 0) throw new Error("An independently trusted finality checkpoint is required");
   if (options.source.network !== request.network) throw new Error("Proof source network mismatch");
-  const deploy = await verifyFinalizedTransaction(request.deployTxHash, options);
+  const verification = { source: options.source, checkpoints: options.trustRoot.checkpoints };
+  const deploy = await verifyFinalizedTransaction(request.deployTxHash, verification);
   if (assertProofDeploy(deploy.bytes, "final") !== request.address) throw new Error("Proof deployment address mismatch");
-  const call = await verifyFinalizedTransaction(request.txHash, options);
+  const call = await verifyFinalizedTransaction(request.txHash, verification);
   if (deploy.block.height > call.block.height || (deploy.block.height === call.block.height && (deploy.block.hash !== call.block.hash || deploy.extrinsicIndex >= call.extrinsicIndex))) throw new Error("Proof call precedes its deployment");
   assertPostedProof(call.bytes, request.address, request.statement, call.timestamp);
   return { valid: true as const, assurance: "consensus-verified" as const, txHash: request.txHash, address: request.address, block: call.block, timestamp: call.timestamp, presentationId: Buffer.from(presentationId(request.statement)).toString("hex"), statement: request.statement };
