@@ -109,7 +109,7 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
   const abort = new AbortController(), stop = () => abort.abort();
   let follower: ReturnType<typeof openFollowerState> | undefined, census: ReturnType<typeof openCensusState> | undefined;
   let journal: ReturnType<typeof openJournal> | undefined, operator: ReturnType<typeof registryOperator> | undefined, wallet: OperatorWallet | undefined;
-  let status: ReturnType<typeof openStandingStatus> | undefined;
+  let status: ReturnType<typeof openStandingStatus> | undefined, failure: unknown;
   try {
     const stat = fstatSync(fd);
     if (!stat.isFile() || stat.mode & 0o077 || (process.getuid && stat.uid !== process.getuid())) throw new Error("Shared execution lock is not private and owned");
@@ -168,12 +168,13 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
         status!.hold(loop, reason); sample();
         if (reason !== previous) { console.log(JSON.stringify({ event: "standing-hold", loop, reason })); previous = reason; }
       } });
-  } finally {
+  } catch (error) { failure = error; throw error; }
+  finally {
     abort.abort();
     try { status?.phase("stopping"); }
     finally {
       process.removeListener("SIGTERM", stop); process.removeListener("SIGINT", stop);
-      try { if (wallet && (await wallet.close())?.saved !== true) throw new Error("Standing final wallet save failed"); }
+      try { if (wallet && (await wallet.close())?.saved !== true) throw new Error("Standing final wallet save failed", { cause: failure }); }
       finally { try { operator?.close(); journal?.close(); census?.close(); follower?.close(); status?.phase("stopped"); } finally { closeSync(fd); } }
     }
   }
@@ -184,10 +185,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (process.argv.length !== 4 || process.argv[2] !== "--config") throw new Error("Expected --config with an owner-only configuration file");
     await runStandingService(parseStandingConfig(readPrivateJson(process.argv[3]!, "Standing configuration")));
   };
-  // The service's errors name files and checks, never what a file holds, so the cause chain prints whole.
+  // The service's errors name files and checks, never what a file holds. Provider text can ride
+  // in a cause, so each message prints on one line, without control characters, at most 512 long.
   run().catch(error => {
-    let reasons = "";
-    for (let cause: unknown = error, depth = 0; cause instanceof Error && depth < 8; cause = cause.cause, depth++) if (!reasons.includes(cause.message)) reasons += `${reasons ? ": " : ""}${cause.message}`;
-    console.error(reasons || "Standing service stopped before completion"); process.exitCode = 1;
+    const reasons: string[] = [];
+    for (let cause: unknown = error; cause instanceof Error && reasons.length < 8; cause = cause.cause) reasons.push(cause.message.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").slice(0, 512));
+    console.error(reasons.join(": ") || "Standing service stopped before completion"); process.exitCode = 1;
   });
 }

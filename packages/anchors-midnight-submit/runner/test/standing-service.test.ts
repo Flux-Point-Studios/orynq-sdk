@@ -43,10 +43,22 @@ it("names why it stopped, and never what a refused file holds", () => {
   const refused = run();
   expect(refused.status).toBe(1);
   expect(refused.stderr).toContain(`Standing signed author policy is unreadable: ${authors} can be read or written by group or others`);
+  writeFileSync(authors, "abandon ability able"); chmodSync(authors, 0o600);
+  const policy = run();
+  expect(policy.status).toBe(1); expect(policy.stderr).toContain("Standing signed author policy is not JSON"); expect(policy.stderr).not.toContain("abandon");
   writeFileSync(path, "abandon ability able");
   const garbled = run();
   expect(garbled.status).toBe(1); expect(garbled.stderr).toContain("Standing configuration is not JSON"); expect(garbled.stderr).not.toContain("abandon");
 }, 270_000);
+
+it("prints why it stopped on one bounded line, whatever text a cause carries", () => {
+  const path = join(tmpdir(), "forged\nline", "a".repeat(200), "b".repeat(200), "c".repeat(200), "config.json");
+  const result = spawnSync(process.execPath, ["--import", "tsx", "runner/standing-service.ts", "--config", path], { encoding: "utf8", timeout: 120_000 });
+  const printed = result.stderr.trimEnd(), prefix = "Standing configuration is unreadable: ";
+  expect(result.status).toBe(1);
+  expect(printed.startsWith(prefix)).toBe(true); expect(printed).not.toContain("\n"); expect(printed).toContain("forged line");
+  expect(printed.length).toBe(prefix.length + 512);
+}, 150_000);
 
 it("excludes a second real service process while the original inherited lock remains open", () => {
   const root = mkdtempSync(join(tmpdir(), "standing-service-lock-")); roots.push(root);
