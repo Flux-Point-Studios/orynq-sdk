@@ -32,9 +32,8 @@ export interface ChainView {
   // The network this view reads: the journal settles only that network's rows from it.
   network: string;
   lookup(txHash: string): Promise<{ status: "SUCCESS" | "PARTIAL_SUCCESS" | "FAILURE" | null; height: number; blockHash: string } | null>;
-  // The newest block the indexer has read, once the node holds it: its hash, and its time as the
-  // node records it. A transaction the indexer has not seen by a time past its TTL can no longer
-  // be included. Null while the node holds no such block.
+  // The configured node's finalized block and Timestamp.Now, bound to pinned network identity.
+  // Null when finalized chain time is unavailable. The name is retained for API compatibility.
   indexedThrough(): Promise<{ hash: string; time: Date; height?: number } | null>;
   // Independent node confirmation. Absence must cover every finalized block from `since`
   // through the current finalized head, including merged/possibly wrapped intent bytes.
@@ -89,7 +88,11 @@ interface Row {
   scan_hash: string | null;
 }
 
-const keyOf = (k: AnchorKey) => [k.network, k.registry, k.author, k.kind, k.commitment, k.attribute].join("/");
+const keyOf = (k: AnchorKey) => {
+  const fields = [k.network, k.registry, k.author, String(k.kind), k.commitment, k.attribute];
+  if (fields.some(field => typeof field !== "string" || field.includes("/")) || !k.network || !Number.isSafeInteger(k.kind) || k.kind < 0) throw new Error("Malformed journal key");
+  return fields.join("/");
+};
 const view = (r: Row): JournalRow => ({
   txHash: r.tx_hash,
   state: r.state,

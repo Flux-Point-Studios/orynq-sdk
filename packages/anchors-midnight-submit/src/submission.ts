@@ -165,7 +165,7 @@ export function confirmedSends(journalling: Journalling, key: AnchorKey, what: s
       // Journalled bytes the human confirmed as expired, or that chain time has carried past their
       // TTL, are not sent again, since no node includes them: the chain lands or retires them.
       // While chain time is unknown nothing is sent: bytes no send of which returned are refused.
-      const past = live?.state === "pending" ? await pastTtl(live.ttl) : false;
+      const past = live?.state === "pending" ? (prepared.journal?.expired === true ? true : await pastTtl(live.ttl)) : false;
       if (past === null && live?.broadcasts === 0) throw new Error(`${unknownTime("journalled")}; nothing was sent`);
       try {
         const journalled = live && past !== false ? live : await journalOnce(journalling, key, async () => ({ bytes: prepared.bytes, ttl: prepared.ttl }), prepared.txHash);

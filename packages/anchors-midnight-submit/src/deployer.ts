@@ -164,12 +164,13 @@ export function registryDeployer(options: DeployerOptions) {
       const finalHash = await chain.finalHash(row.height);
       if (finalHash === null) throw new Error("The deploy block is not finalized yet; journalled bytes were retained");
       if (finalHash !== row.blockHash) throw new Error(`The deploy's reported block ${row.blockHash} is orphaned; journalled bytes were retained`);
-      const [landed] = (await source.indexer.transactions(row.txHash)).filter((t) => t.hash === row.txHash);
-      if (!landed) throw new Error(`the indexer lost deploy transaction ${row.txHash}`);
-      const landedBytes = new Uint8Array(Buffer.from(landed.raw, "hex"));
-      if (finalTransaction(landedBytes).transactionHash() !== row.txHash) throw new Error("The deploy indexer returned bytes for a different transaction");
-      const address = assertRegistryDeployBytes(landedBytes, "final");
-      if (address !== confirmedAddress) throw new Error("The indexed deploy address differs from the confirmed address");
+      const inclusion = await chain.confirm?.({ key, bytes, since: null, hint: { status: "SUCCESS", height: row.height, blockHash: row.blockHash } });
+      if (inclusion?.state !== "landed" || inclusion.height !== row.height || inclusion.blockHash !== row.blockHash) {
+        throw new Error("The finalized deploy block does not contain the confirmed transaction's exact bytes; retained contract state may come from a merged or unsupported transaction");
+      }
+      // The exact bytes in the finalized body have already been checked as the immutable
+      // registry deploy, so an unavailable indexer cannot replace or hide its address.
+      const address = confirmedAddress;
       return { network, address, txHash: row.txHash, blockHeight: row.height, blockHash: row.blockHash };
     },
 
