@@ -4,7 +4,8 @@
 // KNOWN_AUTHORS documents and trust root, each request and the result the live run gave.
 //   node --import tsx record-golden.ts ../../anchors-midnight/src/__tests__/fixtures/preprod-rehearsal.json
 import { readFileSync, writeFileSync } from "node:fs";
-import { blockfrostEndpoints, knownAuthors, midnightSource, verifyMidnightAnchor, REGISTRY_VERIFIER_KEY_SHA256 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { knownAuthors, verifyMidnightAnchor, REGISTRY_VERIFIER_KEY_SHA256 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { source as live } from "./endpoints.js";
 import { recordingSource } from "../../anchors-midnight/src/__tests__/recorded-source.js";
 
 const here = (p: string) => new URL(p, import.meta.url);
@@ -20,7 +21,6 @@ const registry = {
   runtimeSpecVersion: 1000300,
   circuits: { anchor: { vkSha256: REGISTRY_VERIFIER_KEY_SHA256.anchor }, anchor_hiding: { vkSha256: REGISTRY_VERIFIER_KEY_SHA256.anchor_hiding } },
 };
-const live = midnightSource(blockfrostEndpoints("preprod", `${process.env.HOME}/.secrets/blockfrost-midnight-preprod.project_id`));
 const { source, recording } = recordingSource(live, "preprod");
 const kind2 = Object.entries(raw.anchors as Record<string, any>).find(([, a]) => a.kind === 2)!;
 const picks: Array<[string, any]> = [["git-head", raw.anchors["git-head"]], kind2, ["revoked-new-after", raw.anchors["revoked-new-after"]]];

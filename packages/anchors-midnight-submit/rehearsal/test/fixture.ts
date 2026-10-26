@@ -2,6 +2,13 @@
 // what run.ts and crash.ts record, what verify-all.mjs returns, the journals, the drill's
 // KNOWN_AUTHORS documents (signed by a fresh Ed25519 trust root), the kind-2 openings and the
 // 0600 secrets compose.ts scans for. Tests break one thing.
+import { execFileSync } from "node:child_process";
+import { entropyToMnemonic } from "@scure/bip39";
+import { wordlist } from "@scure/bip39/wordlists/english.js";
+import * as L from "@midnight-ntwrk/ledger-v8";
+import { forgeKnownAuthors } from "../gate.mjs";
+import { installedPins } from "../tooling.js";
+import { REGISTRY_VERIFIER_KEY_SHA256 } from "../../../anchors-midnight/src/registry.js";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -41,6 +48,7 @@ export interface Rehearsal {
   documents: Array<{ document: string; signatures: Array<{ key: string; signature: string }> }>;
   root: string;
   rootSeed: string;
+  tarball: Buffer;
   openings: Record<string, { txHash: string; rootHash: string; manifestHash: string; merkleRoot: string; salt: string }>;
 }
 
@@ -94,7 +102,10 @@ export function honestRehearsal(): Rehearsal {
   const refusal = (custom: number) => ({ code: 1010, message: "Invalid Transaction", data: `Custom error: ${custom}` });
   const [deployAddress, deployTxHash] = [h(), h()];
   const raw = {
-    chain: { hosted: { chain: "Midnight Preprod", specVersion: 1000300 } },
+    chain: Object.fromEntries(["hosted", "blockfrost"].map(name => [name, { chain: "Midnight Preprod", genesis: "df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b", specVersion: 1000300, ledgerVersion: "8.1.3" }])),
+    toolingCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: new URL(".", import.meta.url), encoding: "utf8" }).trim(),
+    phaseCommits: {},
+    pins: installedPins(),
     funding: { walletA: { registration: { txHash: h() } }, walletB: { registration: { txHash: h() } } },
     deploy: {
       address: deployAddress,
@@ -118,6 +129,12 @@ export function honestRehearsal(): Rehearsal {
     rotation: { keys },
   };
 
+  raw.phaseCommits = Object.fromEntries(["chain", "funding", "deploy", "kind1", "kind2", "sameblock", "negatives", "rotation"].map(phase => [phase, raw.toolingCommit]));
+  for (const [name, negative] of Object.entries(raw.negatives) as Array<[string, any]>) {
+    const action = new L.MaintenanceUpdate(deployAddress, [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority([], 0, 1n))], 0n);
+    const tx = L.Transaction.fromParts("preprod", undefined, undefined, L.Intent.new(new Date("2026-10-06T00:00:00Z")).addMaintenanceUpdate(action)).mockProve().bind();
+    Object.assign(negative, { txHash: tx.transactionHash(), bytes: Buffer.from(tx.serialize()).toString("hex"), address: deployAddress, operator: "blockfrost" });
+  }
   const rootSeed = randomBytes(32);
   const root = hex(ed25519PublicKey(rootSeed));
   const relay = (key: string, id: string, validFrom: number, validTo: number | null) => ({ key, id, role: "relay", validFrom, validTo });
@@ -139,16 +156,20 @@ export function honestRehearsal(): Rehearsal {
   };
   const negative = (status: string, assurance: string, ...failed: string[]) => ({ status, assurance, block: null, commitment: null, author: null, verifiedFields: [], finality: null, failed: failed.map((c) => `${c}: as recorded`), notes: [] });
   const signatureFails = "refused: the known-authors document's signature by a trust root does not verify";
-  const tarball = randomBytes(64);
+  const tarball = fakeTarball("0.1.0");
   const verified = {
     verifier: "@fluxpointstudios/orynq-sdk-anchors-midnight (packed tarball), separate process, no wallet",
     source: "blockfrost preprod",
+    toolingCommit: raw.toolingCommit,
+    execution: { nodeOptions: null, execArgv: [] },
+    verifierKeys: REGISTRY_VERIFIER_KEY_SHA256,
     package: {
       name: "@fluxpointstudios/orynq-sdk-anchors-midnight",
       version: "0.1.0",
       resolved: "file:fluxpointstudios-orynq-sdk-anchors-midnight-0.1.0.tgz",
       integrity: `sha512-${createHash("sha512").update(tarball).digest("base64")}`,
       sha256: createHash("sha256").update(tarball).digest("hex"),
+      installedTree: { files: 2, sha256: "01".repeat(32) },
     },
     trustRoot: root,
     shippedTrustRoots: [],
@@ -178,6 +199,12 @@ export function honestRehearsal(): Rehearsal {
     },
   };
 
+  const forged = forgeKnownAuthors(documents[2], root, signKnownAuthors, randomBytes(32));
+  for (const [name, value] of Object.entries(forged)) {
+    const outcome = verified.forgedDocuments[name as keyof typeof verified.forgedDocuments].outcome;
+    Object.assign(verified.forgedDocuments[name as keyof typeof verified.forgedDocuments], value.signed, { trustRoots: value.trustRoots, consumerOutcome: outcome });
+  }
+
   const T1 = anchors["crash-before-broadcast"]!;
   const T2 = anchors["crash-after-broadcast"]!;
   const row = (a: Anchor, state: string, broadcasts: number) => ({ tx_hash: a.txHash, state, broadcasts, height: state === "landed" ? a.blockHeight : null });
@@ -206,7 +233,7 @@ export function honestRehearsal(): Rehearsal {
     "journal-deploy.sqlite": [{ tx_hash: raw.deploy.txHash, state: "landed" }],
   };
   bundles.push({ label: "unused-extra", kind: 1, exit: 0, rootHash: h(), manifestHash: h(), merkleRoot: h(), modelManifestHash: h() });
-  return { raw, verified, crash, crashStatus, bundles, journals, documents, root, rootSeed: hex(rootSeed), openings };
+  return { raw, verified, crash, crashStatus, bundles, journals, documents, root, rootSeed: hex(rootSeed), openings, tarball };
 }
 
 // Writes the rehearsal where the scripts read it: DIR/evidence/{raw.json, verified.json,
@@ -229,6 +256,7 @@ export function writeRehearsal(dir: string, home: string, r: Rehearsal) {
   const json = (p: string, v: unknown) => writeFileSync(p, JSON.stringify(v, null, 1));
   json(`${dir}/evidence/raw.json`, r.raw);
   json(`${dir}/evidence/verified.json`, r.verified);
+  writeFileSync(`${dir}/evidence/verify-package.tgz`, r.tarball);
   writeFileSync(`${dir}/evidence/crash.log`, r.crash.map((e) => `${JSON.stringify(e)}\n`).join(""));
   writeFileSync(`${dir}/evidence/crash.log.status`, r.crashStatus.map((l) => `${l}\n`).join(""));
   json(`${dir}/bundles/index.json`, r.bundles);
@@ -237,6 +265,8 @@ export function writeRehearsal(dir: string, home: string, r: Rehearsal) {
   const secret = (name: string, text: string) => writeFileSync(`${secrets}/${name}`, `${text}\n`, { mode: 0o600 });
   for (const name of ["author-relay.key", "author-relay-2.key", "salt.key"]) secret(name, h());
   secret("known-authors-root.seed", r.rootSeed);
+  for (const name of ["wallet-a.mnemonic", "wallet-b.mnemonic"]) secret(name, entropyToMnemonic(randomBytes(32), wordlist));
+  writeFileSync(`${home}/.secrets/blockfrost-midnight-preprod.project_id`, `preprod${randomBytes(16).toString("hex")}\n`, { mode: 0o600 });
   secret("receipts.json", JSON.stringify(r.openings));
   for (const [name, rows] of Object.entries(r.journals)) {
     const db = new DatabaseSync(`${secrets}/${name}`);
@@ -322,13 +352,23 @@ export function fakeChain(r: Rehearsal, verdicts: Record<string, { status: strin
 // the way npm installs a packed tarball, with the tarball beside it and npm's lock entry for it,
 // or linked to its source the way npm installs a directory.
 export const FAKE_TARBALL = "fluxpointstudios-orynq-sdk-anchors-midnight-0.0.0-fake.tgz";
+export function fakeTarball(version = "0.0.0-fake"): Buffer {
+  const root = scratch("tarball"), stage = `${root}/package`;
+  cpSync(new URL("./fake-verifier", import.meta.url).pathname, stage, { recursive: true });
+  const manifest = JSON.parse(readFileSync(`${stage}/package.json`, "utf8")); manifest.version = version;
+  writeFileSync(`${stage}/package.json`, JSON.stringify(manifest));
+  execFileSync("tar", ["--format=ustar", "-czf", `${root}/package.tgz`, "-C", root, "package"]);
+  return readFileSync(`${root}/package.tgz`);
+}
 export function fakeConsumer(consumer: string, install: "copy" | "link" = "copy") {
   const source = new URL("./fake-verifier", import.meta.url).pathname;
   const target = `${consumer}/node_modules/@fluxpointstudios/orynq-sdk-anchors-midnight`;
   mkdirSync(`${consumer}/node_modules/@fluxpointstudios`, { recursive: true });
   if (install === "link") return symlinkSync(source, target);
   cpSync(source, target, { recursive: true });
-  const tarball = readFileSync(`${source}/index.js`);
+  const tarball = fakeTarball();
+  // fakeTarball normalizes the manifest bytes exactly as npm would unpack them.
+  writeFileSync(`${target}/package.json`, JSON.stringify(JSON.parse(readFileSync(`${target}/package.json`, "utf8"))));
   writeFileSync(`${consumer}/${FAKE_TARBALL}`, tarball);
   const entry = { version: "0.0.0-fake", resolved: `file:${FAKE_TARBALL}`, integrity: `sha512-${createHash("sha512").update(tarball).digest("base64")}` };
   writeFileSync(`${consumer}/package-lock.json`, JSON.stringify({ name: "consumer", lockfileVersion: 3, packages: { "node_modules/@fluxpointstudios/orynq-sdk-anchors-midnight": entry } }, null, 1));

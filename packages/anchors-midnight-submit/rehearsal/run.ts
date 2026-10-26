@@ -24,7 +24,9 @@ import {
 import { source, WALLET_SYNC } from "./endpoints.js";
 import { NODE_NEGATIVES } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
+import { toolingCommit, installedPins } from "./tooling.js";
 
+const commit = toolingCommit();
 const HOME = process.env.HOME!;
 const SECRETS = `${HOME}/.secrets/orynq-midnight-preprod`;
 const ZK = `${HOME}/.cache/orynq-midnight/zk`;
@@ -281,29 +283,36 @@ const phases: Record<string, () => Promise<void>> = {
 
   async sameblock() {
     if (raw.sameBlock?.coLanded) return log("same-block pair already recorded");
-    raw.sameBlock = { rounds: [] };
+    raw.sameBlock ??= { rounds: [] };
     const rounds = bundles.filter((b) => /^same-block-a-\d+$/.test(b.label)).length;
     for (let round = 1; round <= rounds; round++) {
+      if (raw.sameBlock.rounds.some((entry: { round: number }) => entry.round === round)) continue;
       const [bundleA, bundleB] = [bundle(`same-block-a-${round}`), bundle(`same-block-b-${round}`)];
-      let arrived = 0;
+      let arrived = 0, finished = 0;
       let release!: () => void;
       const together = new Promise<void>((r) => (release = r));
       const gate = (w: ReturnType<typeof instrument>) => ({
         ...w,
         async submit(tx: L.FinalizedTransaction) {
-          if (++arrived === 2) release();
+          if (++arrived + finished >= 2) release();
           await together;
           return w.submit(tx);
         },
       });
-      const opA = await operator("walletA", `${SECRETS}/author-relay.key`, gate);
-      const opB = await operator("walletB", `${SECRETS}/author-relay.key`, gate);
-      const [a, b] = await Promise.all([anchored(bundleA.label, () => opA.anchor(entryOf(bundleA))), anchored(bundleB.label, () => opB.anchor(entryOf(bundleB)))]).finally(() => {
-        opA.close();
-        opB.close();
-      });
-      await recordAnchor(`same-block-a-${round}`, "walletA", a, { bundle: bundleA.label, round });
-      await recordAnchor(`same-block-b-${round}`, "walletB", b, { bundle: bundleB.label, round });
+      const opened: Array<Awaited<ReturnType<typeof operator>>> = [];
+      const side = async (which: "walletA" | "walletB", selected: TracedBundle) => {
+        try {
+          if (raw.anchors?.[selected.label]) return raw.anchors[selected.label];
+          const op = await operator(which, `${SECRETS}/author-relay.key`, gate); opened.push(op);
+          const receipt = await anchored(selected.label, () => op.anchor(entryOf(selected)));
+          await recordAnchor(selected.label, which, receipt, { bundle: selected.label, round });
+          return receipt;
+        } finally { if (++finished + arrived >= 2) release(); }
+      };
+      const outcomes = await Promise.allSettled([side("walletA", bundleA), side("walletB", bundleB)]).finally(() => opened.forEach(op => op.close()));
+      const failed = outcomes.find(result => result.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
+      const [a, b] = outcomes.map(result => (result as PromiseFulfilledResult<any>).value);
       raw.sameBlock.rounds.push({ round, a: { txHash: a.txHash, height: a.blockHeight }, b: { txHash: b.txHash, height: b.blockHeight } });
       save();
       if (a.blockHeight === b.blockHeight) {
@@ -335,21 +344,28 @@ const phases: Record<string, () => Promise<void>> = {
       },
     };
     for (const [name, update] of Object.entries(cases)) {
-      if (raw.negatives[name]) continue;
+      if (raw.negatives[name]) {
+        if (typeof raw.negatives[name].onChain !== "number") {
+          raw.negatives[name].onChain = (await source.indexer.transactions(raw.negatives[name].txHash)).length;
+          save();
+        }
+        continue;
+      }
       const ttl = new Date(Date.now() + 15 * 60_000);
       const tx = L.Transaction.fromParts("preprod", undefined, undefined, L.Intent.new(ttl).addMaintenanceUpdate(update()));
       const final = await w.payFee(await prover.prove(tx), ttl);
       const txHash = final.transactionHash();
       try {
         await w.submit(final);
-        raw.negatives[name] = { txHash, rejected: false, note: "THE NODE ACCEPTED A MAINTENANCE UPDATE" };
+        raw.negatives[name] = { txHash, bytes: Buffer.from(final.serialize()).toString("hex"), address, operator: source.operator, rejected: false, note: "THE NODE ACCEPTED A MAINTENANCE UPDATE" };
       } catch (error) {
         // Only the node's own JSON-RPC answer is a rejection; any other failure may have delivered
         // the bytes, so the case stays unresolved. A recorded case is never sent again: its outcome
         // stands until someone looks at it.
         const refusal = nodeRefusal(error);
-        raw.negatives[name] = refusal ? { txHash, rejected: true, by: "node author_submitExtrinsic", refusal } : { txHash, rejected: null, unresolved: (error as Error).message.slice(0, 400) };
+        raw.negatives[name] = refusal ? { txHash, bytes: Buffer.from(final.serialize()).toString("hex"), address, operator: /^([^ ]+) node:/.exec((error as Error).message)?.[1], rejected: true, by: "node author_submitExtrinsic", refusal } : { txHash, bytes: Buffer.from(final.serialize()).toString("hex"), address, operator: source.operator, rejected: null, unresolved: (error as Error).message.slice(0, 400) };
       }
+      save();
       await new Promise((r) => setTimeout(r, 20_000));
       raw.negatives[name].onChain = (await source.indexer.transactions(txHash)).length;
       save();
@@ -380,6 +396,13 @@ const phases: Record<string, () => Promise<void>> = {
 
 try {
   for (const name of process.argv.slice(2)) {
+    if (!Object.hasOwn(phases, name)) throw new Error(`Unknown rehearsal phase ${name}`);
+    raw.toolingCommit ??= commit;
+    raw.phaseCommits ??= {};
+    if (raw.toolingCommit !== commit || Object.values(raw.phaseCommits).some(value => value !== commit)) throw new Error("Rehearsal evidence was recorded by different tooling; archive it before a fresh rehearsal");
+    raw.phaseCommits[name] = commit;
+    raw.pins = installedPins();
+    save();
     log(`phase ${name}`);
     await phases[name]!();
   }

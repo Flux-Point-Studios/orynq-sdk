@@ -10,14 +10,18 @@ out=$(realpath -m "$1")
 C=${CONSUMER:?set CONSUMER to the directory that installed only the packed verify package}
 rm -rf "$C/evidence"
 mkdir -p "$C/evidence"
-cp gate.mjs verify-all.mjs "$C/"
+cp gate.mjs verify-all.mjs evidence-integrity.mjs "$C/"
 cp evidence/raw.json evidence/crash.log evidence/crash.log.status "$C/evidence/"
 cp bundles/index.json "$C/evidence/bundles.json"
 cp -r evidence/known-authors "$C/evidence/"
 set +e
-(cd "$C" && nice -n 19 node verify-all.mjs evidence "$HOME/.secrets/blockfrost-midnight-preprod.project_id" > evidence/verified.json)
+(cd "$C" && env -u NODE_OPTIONS nice -n 19 node verify-all.mjs evidence "$HOME/.secrets/blockfrost-midnight-preprod.project_id" > evidence/verified.json)
 verified=$?
 set -e
 cp "$C/evidence/verified.json" evidence/verified.json
+if [ "$verified" -eq 0 ]; then
+  tarball=$(env -u NODE_OPTIONS node -e 'const fs=require("node:fs"); const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8")).package.resolved; if(!/^file:[^/]+\.tgz$/.test(p)) process.exit(1); process.stdout.write(p.slice(5));' "$C/evidence/verified.json")
+  cp "$C/$tarball" evidence/verify-package.tgz
+fi
 if [ "$verified" -ne 0 ]; then echo "verify-all exited $verified: see the GATE lines above and evidence/verified.json" >&2; exit "$verified"; fi
-nice -n 19 node --import tsx compose.ts . "$out"
+env -u NODE_OPTIONS nice -n 19 node --import tsx compose.ts . "$out"

@@ -8,8 +8,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 const chain = JSON.parse(readFileSync(process.env.FAKE_CHAIN, "utf8"));
 const SEVERITY = ["invalid", "conflict", "unavailable", "unverified-finality", "unauthenticated", "author-revoked"];
 
-export const { KNOWN_AUTHORS_TRUST_ROOTS, knownAuthors, openKnownAuthors, signKnownAuthors } = await import(process.env.ORYNQ_VERIFY_DIST);
-export const REGISTRY_VERIFIER_KEY_SHA256 = { anchor: "85dc57a4", anchor_hiding: "081384ce" };
+export const { KNOWN_AUTHORS_TRUST_ROOTS, knownAuthors, openKnownAuthors, signKnownAuthors, REGISTRY_VERIFIER_KEY_SHA256 } = await import(process.env.ORYNQ_VERIFY_DIST);
 export const blockfrostEndpoints = (network) => ({ operator: "blockfrost", network });
 export const midnightSource = (endpoints) => ({ operator: endpoints.operator, network: endpoints.network });
 

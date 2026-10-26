@@ -8,6 +8,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname } from "node:path";
+import { packageTreeIdentity } from "./evidence-integrity.mjs";
 import { fileURLToPath } from "node:url";
 import { forgeKnownAuthors, judge, parseCrashLog, parseCrashStatus, ROTATION_LABELS } from "./gate.mjs";
 
@@ -21,6 +22,7 @@ const refuse = (why) => {
   process.stderr.write(`verify-all: ${why}\n`);
   process.exit(1);
 };
+if (process.execArgv.length || process.env.NODE_OPTIONS?.trim()) refuse("preloaded code or runtime arguments are not permitted");
 const resolved = realpathSync(fileURLToPath(import.meta.resolve(PACKAGE)));
 if (!resolved.startsWith(`${here}/node_modules/`)) refuse(`${PACKAGE} resolves to ${resolved}, outside ${here}/node_modules/: install the packed tarball into this directory`);
 const lockFile = `${here}/package-lock.json`;
@@ -30,6 +32,11 @@ if (!/^file:[^/]+\.tgz$/.test(lock.resolved ?? "")) refuse(`npm installed ${PACK
 const tarballPath = `${here}/${lock.resolved.slice("file:".length)}`;
 const tarball = existsSync(tarballPath) ? readFileSync(tarballPath) : null;
 if (!tarball || `sha512-${createHash("sha512").update(tarball).digest("base64")}` !== lock.integrity) refuse(`${tarballPath} does not have the integrity ${lock.integrity} npm recorded when it installed ${PACKAGE}`);
+const packageDirectory = `${here}/node_modules/${PACKAGE}`;
+if (!resolved.startsWith(`${realpathSync(packageDirectory)}/`)) refuse("the verify entry escapes its installed package");
+let installedTree;
+try { installedTree = packageTreeIdentity(tarball, packageDirectory); }
+catch (error) { refuse(error.message); }
 const { blockfrostEndpoints, knownAuthors, midnightSource, openKnownAuthors, signKnownAuthors, verifyMidnightAnchor, KNOWN_AUTHORS_TRUST_ROOTS, REGISTRY_VERIFIER_KEY_SHA256 } = await import(PACKAGE);
 
 const [dir, projectIdFile] = process.argv.slice(2);
@@ -71,7 +78,10 @@ const verify = async (txHash, expect, options = {}, extra = {}) =>
 const out = {
   verifier: "@fluxpointstudios/orynq-sdk-anchors-midnight (packed tarball), separate process, no wallet",
   source: "blockfrost preprod",
-  package: { name: PACKAGE, version: lock.version, resolved: lock.resolved, integrity: lock.integrity, sha256: createHash("sha256").update(tarball).digest("hex") },
+  toolingCommit: raw.toolingCommit,
+  execution: { nodeOptions: process.env.NODE_OPTIONS ?? null, execArgv: [...process.execArgv] },
+  verifierKeys: REGISTRY_VERIFIER_KEY_SHA256,
+  package: { name: PACKAGE, version: lock.version, resolved: lock.resolved, integrity: lock.integrity, sha256: createHash("sha256").update(tarball).digest("hex"), installedTree },
   trustRoot: root,
   shippedTrustRoots: [...KNOWN_AUTHORS_TRUST_ROOTS],
   knownAuthorsDocuments: signed.map((s) => {
@@ -106,7 +116,10 @@ for (const [name, { signed: forged, trustRoots }] of Object.entries(forgeKnownAu
   } catch (error) {
     outcome = `refused: ${error.message}`;
   }
-  out.forgedDocuments[name] = { ...forged, trustRoots, outcome };
+  let consumerOutcome = "opened";
+  try { knownAuthors({ documents: trustRoots.includes(root) ? [...signed, forged] : [forged], trustRoots }); }
+  catch (error) { consumerOutcome = `refused: ${error.message}`; }
+  out.forgedDocuments[name] = { ...forged, trustRoots, outcome, consumerOutcome };
   process.stderr.write(`forged ${name}: ${outcome}\n`);
 }
 
