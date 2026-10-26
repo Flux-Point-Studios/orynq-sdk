@@ -12,9 +12,11 @@ import { CRASH_WINDOWS } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
 import { authorJournalPath, submissionVerification } from "./submission-verification.js";
 import { entryCommitment } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { assertSourceRuntime } from "./source-runtime.js";
 
 import { toolingCommit } from "./tooling.js";
 const commit = toolingCommit();
+assertSourceRuntime();
 
 const [mode, label] = process.argv.slice(2) as ["kill-before" | "kill-after" | "recover", keyof typeof CRASH_WINDOWS];
 // Each label has the one kill mode the evidence gate expects, and dies with the gate's words.

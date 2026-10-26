@@ -24,6 +24,20 @@ const FORGED: Record<string, string> = {
 };
 
 describe("the evidence gate", () => {
+  it("requires both preprod identities, one tooling revision and phases, and no verifier preloads", () => {
+    expect(failuresOf(r => { r.raw.chain.hosted.chain = "Midnight Mainnet"; })).toContain("the hosted path did not record Midnight Preprod's chain identity");
+    expect(failuresOf(r => { r.raw.chain.blockfrost.genesis = "ab".repeat(32); })).toContain("the blockfrost path did not record Midnight Preprod's chain identity");
+    expect(failuresOf(r => { r.verified.toolingCommit = "ab".repeat(20); })).toContain("the writer, verifier and composer do not name one committed tooling revision");
+    expect(failuresOf(r => { r.raw.phaseCommits.kind1 = "ab".repeat(20); })).toContain("rehearsal phase kind1 was not recorded at the composing commit");
+    expect(failuresOf(r => { r.verified.execution.execArgv = ["--import", "hook.mjs"]; })).toContain("the verifier did not record an execution without preloaded code or runtime arguments");
+  });
+
+  it("refuses null commitments, missing absence checks, and a hosted refusal relabelled as Blockfrost", () => {
+    expect(failuresOf(r => { r.raw.anchors["git-head"].commitment = null; r.verified.anchors["git-head"].commitment = null; })).toContain("anchor git-head: commitments must be 32-byte hex values");
+    expect(failuresOf(r => { delete r.raw.negatives["ReplaceAuthority, unsigned"].onChain; }).join("\n")).toContain("not checked");
+    expect(failuresOf(r => { r.raw.negatives["ReplaceAuthority, unsigned"].operator = "midnight"; }).join("\n")).toContain("blockfrost");
+  });
+
   it("passes a complete, honest rehearsal and counts what it may claim", () => {
     const r = honestRehearsal();
     const { failures, facts } = run(r);

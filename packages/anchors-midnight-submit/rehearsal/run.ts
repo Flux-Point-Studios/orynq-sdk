@@ -26,8 +26,10 @@ import { NODE_NEGATIVES } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
 import { toolingCommit, installedPins } from "./tooling.js";
 import { authorJournalPath, submissionVerification } from "./submission-verification.js";
+import { assertSourceRuntime } from "./source-runtime.js";
 
 const commit = toolingCommit();
+assertSourceRuntime();
 const HOME = process.env.HOME!;
 const SECRETS = `${HOME}/.secrets/orynq-midnight-preprod`;
 const ZK = `${HOME}/.cache/orynq-midnight/zk`;
