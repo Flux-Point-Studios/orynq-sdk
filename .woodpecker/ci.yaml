@@ -36,7 +36,7 @@ steps:
           pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:circuits
           pnpm build
           pnpm typecheck
-          pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover lint
+          pnpm lint
           pnpm exec vitest run --maxWorkers=2
           pnpm vectors:verify
         '

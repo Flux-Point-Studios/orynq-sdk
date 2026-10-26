@@ -94,7 +94,7 @@ export class OpenClawRecorder {
 
     // A failed scan or anchor pass is logged and the loop carries on: under
     // launchd KeepAlive a throw here is a crash-restart, not a recovery.
-    while (true) {
+    for (;;) {
       await this.logFailure("scan", () => this.scanOnce());
 
       if (this.cfg.anchor.enabled && Date.now() >= nextAnchorAt) {
