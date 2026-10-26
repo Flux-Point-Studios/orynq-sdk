@@ -28,6 +28,15 @@ import {
   type PreparedDeploy,
 } from "../src/index.js";
 
+// Provider errors and flags are untrusted terminal text. Keep diagnostics on one physical
+// line so they cannot manufacture a confirmation summary/prompt in a driving PTY.
+export function terminalDiagnostic(message: string): string {
+  return message.replace(/[\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]/g, character => {
+    const common: Record<string, string> = { "\n": "\\n", "\r": "\\r", "\t": "\\t" };
+    return common[character] ?? `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`;
+  });
+}
+
 export const home = homedir();
 // Where the FPS mainnet keys and the deploy wallet's mnemonic live.
 export const SECRETS = `${home}/.secrets/orynq-midnight-mainnet`;
@@ -55,7 +64,7 @@ export interface Mainnet {
 // required.
 export function mainnetScript<F extends string>({ name, noun, does, flags }: { name: string; noun: "deploy" | "anchor"; does: string; flags: Record<F, string | undefined> }) {
   const fail = (message: string): never => {
-    process.stderr.write(`${name}: ${message}\n`);
+    process.stderr.write(`${name}: ${terminalDiagnostic(message)}\n`);
     process.exit(1);
   };
   const what = `a mainnet ${noun}`;

@@ -30,9 +30,11 @@ function checkedLedgerVersion(version: unknown): string {
 // returns what it read.
 export async function assertChainIdentity(source: MidnightSource, network: MidnightNetwork): Promise<ChainFacts> {
   const want = NETWORK_IDENTITY[network];
-  const chain = await source.node.call<string>("system_chain");
-  if (chain !== want.chain) throw new Error(`the node serves ${chain}, not ${want.chain}`);
-  const genesis = (await source.node.call<string>("chain_getBlockHash", [0])).replace(/^0x/, "");
+  const chain = await source.node.call<unknown>("system_chain");
+  if (chain !== want.chain) throw new Error(`the node serves ${Object.values(NETWORK_IDENTITY).some(identity => identity.chain === chain) ? chain : "an unrecognized chain"}, not ${want.chain}`);
+  const rawGenesis = await source.node.call<unknown>("chain_getBlockHash", [0]);
+  if (typeof rawGenesis !== "string" || !/^(?:0x)?[0-9a-f]{64}$/.test(rawGenesis)) throw new Error("the node returned an invalid genesis hash");
+  const genesis = rawGenesis.replace(/^0x/, "");
   if (genesis !== want.genesis) throw new Error(`genesis ${genesis} is not ${want.chain}'s ${want.genesis}`);
   const specVersion = await assertKnownRuntime(source, network);
   const ledgerVersion = checkedLedgerVersion(await source.node.call<unknown>("midnight_ledgerVersion"));
@@ -64,6 +66,8 @@ function bytesSummary({ chain, wallet, dust, prepared, noun }: { chain: ChainFac
     journal &&
     (journal.state === "landed"
       ? `these bytes landed; confirming sends nothing and reads the ${noun} back`
+      : journal.expired === null
+        ? "chain time is unknown; confirming sends nothing until the chain can settle these bytes"
       : journal.expired
         ? `these bytes expired at ${prepared.ttl.toISOString()} and the chain does not show them landed; confirming sends nothing and waits until the chain lands or retires them`
         : journal.broadcasts > 0

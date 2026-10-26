@@ -13,7 +13,9 @@ export const finalTransaction = (bytes: Uint8Array) => L.Transaction.deserialize
 // checked before every submission, so a runtime upgrade stops the submitter instead of
 // producing transactions no verifier can place.
 export async function assertKnownRuntime(source: MidnightSource, network: MidnightNetwork): Promise<number> {
-  const { specVersion } = await source.node.call<{ specVersion: number }>("state_getRuntimeVersion");
+  const runtime = await source.node.call<unknown>("state_getRuntimeVersion");
+  const specVersion = runtime && typeof runtime === "object" ? (runtime as { specVersion?: unknown }).specVersion : undefined;
+  if (typeof specVersion !== "number" || !Number.isSafeInteger(specVersion) || specVersion < 0) throw new Error("the node returned an invalid runtime version");
   if (!(KNOWN_RUNTIME_SPEC_VERSIONS as readonly number[]).includes(specVersion)) {
     throw new Error(`the ${network} node runs runtime ${specVersion}, which is not one this submitter knows (${KNOWN_RUNTIME_SPEC_VERSIONS.join(", ")})`);
   }
