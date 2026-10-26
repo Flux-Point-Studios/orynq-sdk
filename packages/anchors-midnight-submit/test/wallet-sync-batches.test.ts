@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { Effect, Stream, Chunk, type Scope } from "effect";
+import { V1Builder } from "@midnight-ntwrk/wallet-sdk-dust-wallet/v1";
 import { WalletFacade } from "@midnight-ntwrk/wallet-sdk-facade";
 import { createWalletMnemonicFile } from "../src/keys.js";
 import { openWallet, type OperatorWallet } from "../src/wallet.js";
@@ -22,6 +23,7 @@ const batching = (subWallet: object) => (subWallet.constructor as unknown as { c
 
 describe("the wallet's sync", () => {
   it.each(["preprod", "mainnet"] as const)("on %s applies the indexer's events to the shielded and DUST wallets 1000 at a time", async (network) => {
+    const selection = vi.spyOn(V1Builder.prototype, "withCoinSelection");
     const init = vi.spyOn(WalletFacade, "init");
     const mnemonicFile = join(dir, `${network}.mnemonic`);
     createWalletMnemonicFile(mnemonicFile);
@@ -29,6 +31,10 @@ describe("the wallet's sync", () => {
     const facade = await init.mock.results[0]!.value;
     expect(batching(facade.shielded)).toEqual({ size: 1000 });
     expect(batching(facade.dust)).toEqual({ size: 1000 });
+    const select = selection.mock.calls.at(-1)![0]({} as never, () => ({} as never));
+    const small = { value: 1n }, large = { value: 9n }, empty = { value: 0n };
+    expect(select([small, empty, large] as never)).toBe(large);
+    expect(select([empty] as never)).toBeUndefined();
   });
 });
 

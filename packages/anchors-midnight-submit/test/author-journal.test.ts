@@ -1,5 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { authorJournal, defaultAuthorBindingRoot } from "../src/author-journal.js";
@@ -22,6 +24,18 @@ describe("account author journal binding", () => {
     authorJournal("preprod", "cd".repeat(32), copied, root).close();
     const record = JSON.parse(readFileSync(join(root, `preprod-${author}.json`), "utf8"));
     expect(record.path).toBe(journal);
+  });
+  it("atomically chooses one journal when separate processes first bind the same author", async () => {
+    const root = join(dir, "concurrent-bindings");
+    const files = [join(dir, "first.sqlite"), join(dir, "second.sqlite")];
+    const code = `const { authorJournal } = await import(process.argv[1]); try { authorJournal("preprod", process.argv[2], process.argv[3], process.argv[4]).close(); } catch (error) { process.stderr.write(error.message); process.exitCode = 1; }`;
+    const children = files.map(file => spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", code, new URL("../src/author-journal.ts", import.meta.url).href, author, file, root], { stdio: "ignore" }));
+    const statuses = await Promise.all(children.map(async child => (await once(child, "close"))[0]));
+    expect(statuses.sort()).toEqual([0, 1]);
+    const record = JSON.parse(readFileSync(join(root, `preprod-${author}.json`), "utf8"));
+    expect(files).toContain(record.path);
+    authorJournal("preprod", author, record.path, root).close();
+    expect(() => authorJournal("preprod", author, files.find(file => file !== record.path)!, root)).toThrow("already bound to another journal");
   });
   it("fails closed on a deleted or replaced bound journal", () => {
     const root = join(dir, "deleted-bindings"); const journal = join(dir, "deleted.sqlite");

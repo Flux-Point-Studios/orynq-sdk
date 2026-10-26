@@ -29,6 +29,7 @@ import {
   confirmedSends,
   declaredFee,
   finalTransaction,
+  landedRow,
   finalizeChecked,
   registryStateOnNode,
   submitJournalled,
@@ -90,6 +91,7 @@ export interface OperatorOptions {
   registry: string;
   ttlMinutes?: number;
   pollMillis?: number;
+  settleTimeoutMillis?: number;
 }
 
 export interface RegistryOperator {
@@ -153,7 +155,7 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
   const journal = authorJournal(network, author, options.journalPath, options.bindingRoot);
   const chain = options.chain ?? chainView(source, network);
   const ttlMillis = (options.ttlMinutes ?? 15) * 60_000;
-  const journalling = { journal, chain, wallet, network, pollMillis: options.pollMillis ?? 3_000 };
+  const journalling = { journal, chain, wallet, network, pollMillis: options.pollMillis ?? 3_000, ...(options.settleTimeoutMillis === undefined ? {} : { settleTimeoutMillis: options.settleTimeoutMillis }) };
   const assertKindRole = (kind: number) => {
     if (![1, 2, 3].includes(kind)) throw new Error("Unknown anchor kind");
     if (role === "batch" && kind !== 3) throw new Error("A batch author writes kind 3 only");
@@ -261,7 +263,8 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
       ...(held ? { journal: held } : {}),
     };
   };
-  const complete = async (key: AnchorKey, row: JournalRow & { height: number; blockHash: string }) => {
+  const complete = async (key: AnchorKey, included: JournalRow & { height: number; blockHash: string }) => {
+    const row = await landedRow(journalling, key, await journal.relocate(included.txHash, chain));
     const written = receipt(key, row);
     const held = journal.live(key);
     if (!held || held.txHash !== row.txHash) throw new Error("the landed anchor has no matching journal bytes");
@@ -287,7 +290,9 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
     anchorBatch: async (batch) => (await write({ ...batch, kind: 3 })).receipt,
     async anchorHiding(entry, attribute) {
       const { receipt: written, opening } = await write({ kind: 2, entry, attribute });
-      return { ...written, opening: opening! };
+      const result = { ...written, opening: opening! };
+      Object.defineProperty(result, "verification", { value: written.verification, enumerable: false });
+      return result;
     },
     async journalled(request) {
       const { key } = intent(request);

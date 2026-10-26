@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { chmodSync } from "node:fs";
+import { chmodSync, copyFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import {
@@ -458,6 +458,7 @@ describe("registryOperator.relocate", () => {
     const prepared = await operator.prepare({ kind: 1, entry: entry() });
     const landed = await operator.submit(prepared);
     net.reorg(prepared.txHash, { height: 640, hash: "ef".repeat(32) });
+    expect(await operator.submit(prepared)).toEqual({ ...landed, blockHeight: 640, blockHash: net.blockHash(640) });
     expect(await operator.relocate(prepared)).toEqual({ ...landed, blockHeight: 640, blockHash: net.blockHash(640) });
     expect(w.submitted.map((t) => t.transactionHash())).toEqual([prepared.txHash]);
     expect(rows(journalPath)).toEqual([{ tx_hash: prepared.txHash, state: "landed" }]);
@@ -474,7 +475,7 @@ describe("registryOperator.relocate", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(rows(journalPath)).toEqual([{ tx_hash: prepared.txHash, state: "pending" }]);
     net.advance(15 * MINUTE + 5 * MINUTE + 1_000);
-    await expect(relocated).rejects.toThrow(EXPIRED);
+    await expect(relocated).rejects.toThrow(/was orphaned from block 500.*expired without landing again/);
     expect(w.submitted.map((t) => t.transactionHash())).toEqual([prepared.txHash]);
     expect(rows(journalPath)).toEqual([{ tx_hash: prepared.txHash, state: "failed" }]);
     expect(await operator.journalled({ kind: 1, entry: e })).toBeNull();
@@ -559,7 +560,9 @@ describe("mandatory operator consensus completion", () => {
   it("refuses copied author keys routed to a second journal", () => {
     const { operator } = setup();
     try {
-      expect(() => setup()).toThrow("already bound to another journal");
+      const copiedKey = fresh("copied-author.key");
+      copyFileSync(authorKeyFile, copiedKey);
+      expect(() => setup({ authorKeyFile: copiedKey })).toThrow("already bound to another journal");
     } finally { operator.close(); }
   });
 });

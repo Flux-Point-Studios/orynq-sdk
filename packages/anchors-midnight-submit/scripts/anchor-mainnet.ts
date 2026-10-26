@@ -164,8 +164,9 @@ await run(async (connect) => {
     registry: plan.registry,
   });
   try {
+    await operator.reconcile();
     for (const planned of plan.entries) {
-      const resumed = await operator.journalled(planned);
+      const resumed = await operator.held(planned);
       const done = recorded().find((row) => row.label === planned.label);
       if (done) {
         if (resumed?.journal?.state !== "landed" || resumed.txHash !== done.txHash) {
