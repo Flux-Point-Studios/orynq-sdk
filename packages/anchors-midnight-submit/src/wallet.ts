@@ -114,8 +114,15 @@ export interface StateSaveFailure {
 }
 export type StateSave = { saved: true } | { saved: false; failures: StateSaveFailure[] };
 
+const STATE_FILE_ERRNOS = new Set([
+  "EACCES", "EBUSY", "EDQUOT", "EEXIST", "EFBIG", "EIO", "EISDIR", "ELOOP",
+  "EMFILE", "ENAMETOOLONG", "ENFILE", "ENOENT", "ENOSPC", "ENOTDIR", "EPERM",
+  "EROFS", "EXDEV",
+]);
+
 // A failed part's error by its name and, for a schema error from the wallet SDK, what each step
 // that threw said and the underlying error's name, never its message (which can quote state).
+// File failures retain only recognized errno codes; their messages can quote private paths.
 function describeFailure(error: unknown): string {
   const thrown = (issue: unknown): string[] => {
     if (typeof issue !== "object" || issue === null) return [];
@@ -123,11 +130,12 @@ function describeFailure(error: unknown): string {
     if (i._tag === "Unexpected") return [i.actual instanceof Error ? `${i.message}: ${i.actual.name}` : String(i.message)];
     return [i.issue, ...[i.issues].flat()].flatMap(thrown);
   };
-  const e = error as { name?: string; message?: string; issue?: unknown; cause?: { issue?: unknown } };
+  const e = error as { name?: string; code?: unknown; issue?: unknown; cause?: { issue?: unknown } };
   if (e?.issue !== undefined) return [e.name, ...thrown(e.issue)].join(": ");
   // A wallet error wrapping a schema error quotes the state in its message.
   if (e?.cause?.issue !== undefined) return `${e.name}: ${describeFailure(e.cause)}`;
-  return e?.name ?? "Error";
+  const code = typeof e?.code === "string" && STATE_FILE_ERRNOS.has(e.code) ? `: ${e.code}` : "";
+  return `${e?.name ?? "Error"}${code}`;
 }
 
 // A sub-wallet's class, as far as it reads a serialized state back, as its restore() does.
