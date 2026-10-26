@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { censusBatch, certHash, memberSnapshot, parseMemberSnapshot, type ReceiptRecord } from "@fluxpointstudios/orynq-sdk-core/checkpoint";
 import { batchAnchorCommitment, type BatchMember } from "../src/batch-plan.js";
-import { parseBatchSet, verifyBatchSet, type VerifyOptions } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { parseBatchSet, verifyBatchSet, type BlockHint, type VerifyOptions } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { publishRetainedObjects, type PublicationOptions } from "./publisher.js";
 import type { Census } from "./census.js";
 
@@ -165,13 +165,15 @@ export function openCensusState(path: string, input: { network: "mainnet" | "pre
 
   return {
     currentPlan,
-    async publishLandedSet(value: unknown, options: { verify: () => VerifyOptions; publication: PublicationOptions }): Promise<{ objects: number; readbacks: number }> {
+    async publishLandedSet(value: unknown, options: { verify: (hints: readonly BlockHint[]) => VerifyOptions; publication: PublicationOptions }): Promise<{ objects: number; readbacks: number }> {
       const publication = { network: options.publication.network, targets: options.publication.targets.map(target => ({ url: target.url, apiKey: target.apiKey })) }, loadVerification = options.verify;
       const set = parseBatchSet(value), body = JSON.stringify(set), plan = getPlan(set.commitment);
       assertSet(set, plan.plan, plan.commitment);
       if (plan.state !== "confirmed" && plan.state !== "landed") throw new Error("Landed set requires a confirmed census plan");
       if (publication.network !== scope.network) throw new Error("Landed set publication network differs from census scope");
-      const verify = async () => { if ((await verifyBatchSet(set, loadVerification())).status !== "valid") throw new Error("Landed set lacks a current valid consensus proof"); };
+      // An RPC-only source finds a transaction only through a block hint; the set carries its landing block, which the proof rechecks.
+      const hints = [{ txHash: set.midnight.txHash, blockHeight: set.midnight.blockHeight, blockHash: set.midnight.blockHash }];
+      const verify = async () => { if ((await verifyBatchSet(set, loadVerification(hints))).status !== "valid") throw new Error("Landed set lacks a current valid consensus proof"); };
       await verify();
       transaction(() => {
         const current = getPlan(set.commitment); assertSet(set, current.plan, current.commitment);
