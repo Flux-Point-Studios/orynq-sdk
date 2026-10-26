@@ -16,14 +16,17 @@
 // The FPS mainnet keys an operator loads are the ones the chain file pins, a test's throwaway
 // keys, when it pins any.
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import * as L from "@midnight-ntwrk/ledger-v8";
-import { midnightSource, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { decodeAnchorTransaction, midnightSource, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints, type VerifyResult } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { ledgerNode } from "../../anchors-midnight/src/__tests__/ledger-node.js";
 import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS } from "../src/custody.js";
 import { NETWORK_IDENTITY, type OperatorWallet, type StateSave, type WalletOptions } from "../src/index.js";
 import { costParametersOf } from "../src/wallet.js";
 import { prover } from "./prover.js";
 import { offlineBlocks, offlineHeight, offlineRpcHeader } from "./offline-blocks.js";
+import { registryOperator as realRegistryOperator, type OperatorOptions, type PreparedAnchor, type AnchorReceipt } from "../src/operator.js";
+import { verifyConfirmedAnchor as realVerifyConfirmedAnchor } from "../src/confirmed-anchor.js";
 
 export * from "../src/index.js";
 
@@ -264,8 +267,29 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
   };
 }
 
-// The CLI's consensus-verification seam has a synthetic verified chain in this offline fixture.
-// Production calls the SDK verifier; the explicit fault proves a refusal cannot write results.
-export async function verifyConfirmedAnchor(_source: unknown, _prepared: unknown, _receipt: unknown): Promise<void> {
-  if (FAULTS.has("consensus-unverified")) throw new Error("offline consensus verification did not establish a known-author finalized anchor");
+// This fixture is an explicitly synthetic chain. Its verifier seam still exercises the real
+// operator's complete exact-field gate and the CLI's cached verification path.
+function syntheticVerifier(registry: string): NonNullable<OperatorOptions["verifyLanded"]> {
+  return async (request, { source }) => {
+    const [transaction] = await source.indexer.transactions(request.txHash);
+    if (!transaction) throw new Error("offline verifier cannot find the exact transaction");
+    const [anchor] = decodeAnchorTransaction(Buffer.from(transaction.raw.replace(/^0x/, ""), "hex"), [registry]).calls;
+    if (!anchor) throw new Error("offline verifier cannot find the exact anchor");
+    return {
+      status: FAULTS.has("consensus-unverified") ? "unverified-finality" : "valid",
+      assurance: FAULTS.has("consensus-unverified") ? "multi-path" : "consensus-verified",
+      network: request.network, txHash: request.txHash, operators: ["synthetic-offline-test-only"],
+      registry: { generation: 1, address: registry }, block: { height: transaction.block.height, hash: transaction.block.hash }, anchor,
+      author: { status: "known", key: anchor.author, id: "synthetic-offline-test-only", role: anchor.kind === 3 ? "batch" : "relay", validFrom: 0, validTo: null },
+      verifiedFields: [], notes: [], checks: [], finality: null, knownAuthorsSerial: 1,
+    } satisfies VerifyResult;
+  };
+}
+
+export function registryOperator(options: OperatorOptions) {
+  return realRegistryOperator({ ...options, bindingRoot: `${dirname(FILE)}/author-bindings`, verifyLanded: syntheticVerifier(options.registry) });
+}
+
+export async function verifyConfirmedAnchor(source: Parameters<typeof realVerifyConfirmedAnchor>[0], prepared: PreparedAnchor, receipt: AnchorReceipt) {
+  return realVerifyConfirmedAnchor(source, prepared, receipt, syntheticVerifier(prepared.registry));
 }
