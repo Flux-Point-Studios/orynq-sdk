@@ -17,7 +17,7 @@ export async function withResultsLock<T>(file: string, operation: () => T, waitM
       const held = readFileSync(lock, "utf8");
       let record: { pid?: unknown; token?: unknown };
       try { record = JSON.parse(held); } catch { throw new Error("incomplete results lock"); }
-      if (!Number.isSafeInteger(record.pid) || (record.pid as number) < 1 || (record.pid as number) > 0x7fffffff || typeof record.token !== "string" || !/^[0-9a-f]{32}$/.test(record.token)) throw new Error("invalid results lock");
+      if (!record || typeof record !== "object" || !Number.isSafeInteger(record.pid) || (record.pid as number) < 1 || (record.pid as number) > 0x7fffffff || typeof record.token !== "string" || !/^[0-9a-f]{32}$/.test(record.token)) throw new Error("invalid results lock");
       try { process.kill(record.pid as number, 0); }
       catch (error) {
         const code = (error as NodeJS.ErrnoException).code;

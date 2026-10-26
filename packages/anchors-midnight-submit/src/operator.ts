@@ -16,9 +16,12 @@ import {
   type MidnightSource,
   type RegistryCallArgs,
   type RegistryWitnesses,
+  type VerifyResult,
 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { verifyConfirmedAnchor, type LandedVerifier } from "./confirmed-anchor.js";
+import { authorJournal } from "./author-journal.js";
 import { batchAnchorCommitment, type BatchAnchorData } from "./batch-plan.js";
-import { chainView, openJournal, type AnchorKey, type ChainView, type JournalRow, type Submission } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
+import { chainView, type AnchorKey, type ChainView, type JournalRow, type Submission } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { MAINNET_AUTHOR_KEYS, MAINNET_BATCH_AUTHOR_KEYS, RETIRED_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS, agentDriven, refuseMainnetSecretsPath } from "./custody.js";
 import {
   assertConfirmedHash,
@@ -35,6 +38,7 @@ import {
 } from "./submission.js";
 
 export interface AnchorReceipt {
+  readonly verification?: VerifyResult;
   network: MidnightNetwork;
   registry: string;
   txHash: string;
@@ -73,6 +77,10 @@ export interface OperatorOptions {
   prover: Prover;
   journalPath: string;
   chain?: ChainView;
+  // Typed custom custody/test namespace; production CLIs expose no override.
+  bindingRoot?: string;
+  // Custom trust integration must return a full report; the same strict completion gate applies.
+  verifyLanded?: LandedVerifier | undefined;
   // The author secret's file, which only its owner may read; the key itself is never an argument.
   authorKeyFile: string;
   authorRole?: "relay" | "batch";
@@ -92,6 +100,8 @@ export interface RegistryOperator {
   // The attempt the journal still holds live for `request` once settled from the chain, rebuilt
   // from its journalled bytes and marked with how the journal holds it, or null when none is.
   journalled(request: AnchorRequest): Promise<PreparedAnchor | null>;
+  // Reads a row after the caller reconciled once; landed rows need no chain request.
+  held(request: AnchorRequest): Promise<PreparedAnchor | null>;
   // New final bytes for `request`, checked to carry exactly that anchor; nothing is journalled or sent.
   prepare(request: AnchorRequest): Promise<PreparedAnchor>;
   // Sends the bytes a human confirmed, journalled or new, through the journal at most once, and
@@ -140,7 +150,7 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
     }
     if (network !== "mainnet" && MAINNET_SALT_KEY_IDS.includes(id)) throw new Error(`${options.saltKeyFile} holds the FPS mainnet salt key ${id}; a ${network} operator never uses it`);
   }
-  const journal = openJournal(options.journalPath);
+  const journal = authorJournal(network, author, options.journalPath, options.bindingRoot);
   const chain = options.chain ?? chainView(source, network);
   const ttlMillis = (options.ttlMinutes ?? 15) * 60_000;
   const journalling = { journal, chain, wallet, network, pollMillis: options.pollMillis ?? 3_000 };
@@ -229,7 +239,8 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
   const write = async (request: AnchorRequest) => {
     await assertKnownRuntime(source, network);
     const planned = intent(request);
-    return { receipt: receipt(planned.key, await submitJournalled(journalling, planned.key, () => build(planned))), opening: planned.opening };
+    const row = await submitJournalled(journalling, planned.key, () => build(planned));
+    return { receipt: await complete(planned.key, row), opening: planned.opening };
   };
 
   const describe = (key: AnchorKey, bytes: Uint8Array, ttl: Date, payer: string | undefined, held?: PreparedAnchor["journal"]): PreparedAnchor => {
@@ -250,6 +261,15 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
       ...(held ? { journal: held } : {}),
     };
   };
+  const complete = async (key: AnchorKey, row: JournalRow & { height: number; blockHash: string }) => {
+    const written = receipt(key, row);
+    const held = journal.live(key);
+    if (!held || held.txHash !== row.txHash) throw new Error("the landed anchor has no matching journal bytes");
+    const prepared = describe(key, held.bytes, row.ttl, row.payer);
+    const report = await verifyConfirmedAnchor(source, prepared, written, options.verifyLanded);
+    Object.defineProperty(written, "verification", { value: report, enumerable: false });
+    return written;
+  };
   const confirmed = (key: AnchorKey) => confirmedSends(journalling, key, "anchor", "this anchor");
   const submit = async (prepared: PreparedAnchor) => {
     const { bytes, ttl, journal: held, ...fields } = prepared;
@@ -258,7 +278,7 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
     assertExact(snapshot.bytes, key);
     assertConfirmedHash(snapshot);
     await assertKnownRuntime(source, network);
-    return receipt(key, await confirmed(key).submit(snapshot));
+    return complete(key, await confirmed(key).submit(snapshot));
   };
 
   return {
@@ -272,6 +292,11 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
     async journalled(request) {
       const { key } = intent(request);
       const row = await confirmed(key).held();
+      return row && describe(key, row.bytes, row.ttl, row.payer, { state: row.state, broadcasts: row.broadcasts, expired: row.expired });
+    },
+    async held(request) {
+      const { key } = intent(request);
+      const row = await confirmed(key).held({ reconcile: false });
       return row && describe(key, row.bytes, row.ttl, row.payer, { state: row.state, broadcasts: row.broadcasts, expired: row.expired });
     },
     async prepare(request) {
