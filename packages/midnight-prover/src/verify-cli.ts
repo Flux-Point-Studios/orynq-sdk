@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { RealMidnightProver } from "./real-prover.js";
+import { RealMidnightProver, NativeVerifierConfigurationError } from "./real-prover.js";
 
 const MAX_INPUT_BYTES = 4 * 1024 * 1024;
 
@@ -7,7 +7,7 @@ async function main(): Promise<void> {
   const artifactsDir = process.env["MIDNIGHT_ARTIFACT_REGISTRY"];
   const nativeFlag = process.argv.indexOf("--native-verifier");
   const nativeVerifierPath = nativeFlag >= 0 ? process.argv[nativeFlag + 1] : process.env["MIDNIGHT_NATIVE_VERIFIER"];
-  if (!artifactsDir || !nativeVerifierPath || !isAbsolute(artifactsDir) || !isAbsolute(nativeVerifierPath)) throw new Error("Missing trusted verifier configuration");
+  if (!artifactsDir || !nativeVerifierPath || !isAbsolute(artifactsDir) || !isAbsolute(nativeVerifierPath)) throw new NativeVerifierConfigurationError("configuration");
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of process.stdin) {
@@ -29,7 +29,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  process.stdout.write(JSON.stringify({ valid: false }) + "\n");
-  process.exitCode = 1;
-  if (!(error instanceof Error)) process.stderr.write("Unexpected verification failure\n");
+  const configuration = error instanceof NativeVerifierConfigurationError;
+  process.stdout.write(JSON.stringify(configuration ? { valid: false, code: "configuration-error" } : { valid: false }) + "\n");
+  process.exitCode = configuration ? 2 : 1;
+  process.stderr.write(configuration ? "Native Midnight verifier configuration error\n" : "Malformed or invalid verification request\n");
 });
