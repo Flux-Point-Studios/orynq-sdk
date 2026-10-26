@@ -259,7 +259,6 @@ const secrets: Array<[string, Uint8Array]> = [
   ["author-relay-2.key", readAuthorSecret(`${SECRETS}/author-relay-2.key`)],
   ["salt.key", readAuthorSecret(`${SECRETS}/salt.key`)],
   ["known-authors-root.seed", hex(readPrivateFile(`${SECRETS}/known-authors-root.seed`))],
-  ["submission-verifier.seed", readAuthorSecret(`${SECRETS}/submission-verifier.seed`)],
   ...Object.entries(openings).flatMap(([label, o]) => (["rootHash", "manifestHash", "merkleRoot", "salt"] as const).map((f): [string, Uint8Array] => [`${label}.${f}`, hex(o[f])])),
 ];
 const bytes = new Uint8Array(Buffer.from(body));

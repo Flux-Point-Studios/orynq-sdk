@@ -1,13 +1,10 @@
-// The live preprod submitter still performs the real SDK consensus verification. This local
-// policy authenticates only the drill's fresh preprod authors and immutable registry deployment;
-// its root is separate from the rotation/revocation policy whose verdicts the pack measures.
-import { existsSync } from "node:fs";
+// Live preprod submissions require independently reviewed checkpoint/author onboarding under
+// the shipped policy roots. A test fixture or a freshly made root cannot bootstrap live trust.
 import {
-  authorKey, createAuthorKeyFile, openKnownAuthors, readAuthorSecret, signKnownAuthors,
+  authorKey, knownAuthors, readAuthorSecret, readPrivateFile,
   verifyMidnightAnchor, REGISTRY_VERIFIER_KEY_SHA256,
-  type MidnightSource, type RegistryInfo,
+  type MidnightSource, type RegistryInfo, type SignedKnownAuthors,
 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import checkpoint from "../../anchors-midnight/src/__tests__/fixtures/preprod-finality.json" with { type: "json" };
 
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");
 export function authorJournalPath(secrets: string, authorFile: string): string {
@@ -15,12 +12,19 @@ export function authorJournalPath(secrets: string, authorFile: string): string {
 }
 
 export function submissionVerification(secrets: string, source: MidnightSource, deploy: { address: string; txHash: string; blockHeight: number; blockHash: string }) {
-  const rootFile = `${secrets}/submission-verifier.seed`;
   const authorFiles = ["author-relay.key", "author-relay-2.key"].map(file => `${secrets}/${file}`);
-  for (const file of [...authorFiles, rootFile]) if (!existsSync(file)) createAuthorKeyFile(file);
-  const authors = authorFiles.map((file, i) => ({ key: hex(authorKey(readAuthorSecret(file))), id: `rehearsal-submit-relay-${i + 1}`, role: "relay", validFrom: deploy.blockHeight, validTo: null }));
-  const signed = signKnownAuthors(JSON.stringify({ format: "orynq-known-authors/v1", serial: 1, issued: "2026-01-01T00:00:00.000Z", networks: { preprod: { authors, checkpoints: [checkpoint.checkpoints.own] } } }), readAuthorSecret(rootFile));
-  const policy = openKnownAuthors(signed, [signed.signatures[0]!.key]);
+  let documents: SignedKnownAuthors[];
+  try { documents = JSON.parse(readPrivateFile(`${secrets}/submission-known-authors.json`)); }
+  catch { throw new Error("Preprod rehearsal requires owner-only submission-known-authors.json containing independently reviewed signed author/checkpoint policy"); }
+  if (!Array.isArray(documents) || documents.length === 0) throw new Error("Preprod submission policy must contain signed documents");
+  const policy = knownAuthors({ documents }); // Deliberately use shipped trust roots, never an input root.
+  if (policy.checkpoints("preprod").length === 0) throw new Error("Preprod submission policy has no reviewed consensus checkpoint; onboarding is required");
+  for (const document of documents) {
+    let networks: unknown;
+    try { networks = Object.keys(JSON.parse(document.document).networks); } catch { throw new Error("Malformed preprod submission policy"); }
+    if (JSON.stringify(networks) !== '["preprod"]') throw new Error("Rehearsal submission policy must name preprod alone");
+  }
+  for (const file of authorFiles) if (policy.author("preprod", hex(authorKey(readAuthorSecret(file))), deploy.blockHeight).status !== "known") throw new Error("Both fresh rehearsal author keys need signed preprod onboarding before submission");
   const registry: RegistryInfo = {
     generation: 1, address: deploy.address, deployTxHash: deploy.txHash, deployHeight: deploy.blockHeight,
     deployBlockHash: deploy.blockHash, runtimeSpecVersion: 1000300,

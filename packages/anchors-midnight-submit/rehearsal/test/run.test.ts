@@ -32,7 +32,8 @@ function rehearsal(bundles: string[] = []) {
   chmodSync(secrets, 0o700);
   for (const key of ["author-relay.key", "salt.key"]) createAuthorKeyFile(`${secrets}/${key}`);
   copyFileSync(`${HERE}run.ts`, `${root}/rehearsal/run.ts`);
-  for (const file of ["gate.mjs", "wallets.json", "tooling.ts", "submission-verification.ts", "source-runtime.ts"]) symlinkSync(`${HERE}${file}`, `${root}/rehearsal/${file}`);
+  for (const file of ["gate.mjs", "wallets.json", "tooling.ts", "source-runtime.ts"]) symlinkSync(`${HERE}${file}`, `${root}/rehearsal/${file}`);
+  symlinkSync(OFFLINE, `${root}/rehearsal/submission-verification.ts`);
   symlinkSync(OFFLINE, `${root}/rehearsal/endpoints.ts`);
   symlinkSync(OFFLINE, `${root}/src/index.ts`);
   writeFileSync(`${root}/rehearsal/bundles/index.json`, JSON.stringify(bundles.map((label) => ({ toolingCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: HERE, encoding: "utf8" }).trim(), label, kind: 1, rootHash: h(), manifestHash: h(), merkleRoot: h(), modelManifestHash: h() }))));

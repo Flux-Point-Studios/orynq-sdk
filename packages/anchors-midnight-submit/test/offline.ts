@@ -29,6 +29,7 @@ import { registryOperator as realRegistryOperator, type OperatorOptions, type Pr
 import { verifyConfirmedAnchor as realVerifyConfirmedAnchor } from "../src/confirmed-anchor.js";
 
 export * from "../src/index.js";
+export { authorJournalPath } from "../rehearsal/submission-verification.js";
 
 export interface OfflineChain {
   // The network whose chain name and genesis the node reports.
@@ -284,6 +285,10 @@ function syntheticVerifier(registry: string): NonNullable<OperatorOptions["verif
       verifiedFields: [], notes: [], checks: [], finality: null, knownAuthorsSerial: 1,
     } satisfies VerifyResult;
   };
+}
+
+export function submissionVerification(_secrets: string, _source: unknown, deploy: { address: string }) {
+  return syntheticVerifier(deploy.address);
 }
 
 export function registryOperator(options: OperatorOptions) {
