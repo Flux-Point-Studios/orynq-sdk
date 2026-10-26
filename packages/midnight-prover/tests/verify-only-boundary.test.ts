@@ -6,7 +6,7 @@ import { expect, it } from "vitest";
 
 const native = resolve(import.meta.dirname, "../native");
 
-it.each(["unchanged", "source", "dependencies", "new-module", "source-symlink", "build-script"])("requires security re-review for %s boundary", async mutation => {
+it.each(["unchanged", "source", "dependencies", "new-module", "source-symlink", "main-symlink", "enclosing-workspace", "build-script"])("requires security re-review for %s boundary", async mutation => {
   const directory = await mkdtemp(join(tmpdir(), "orynq-verify-only-boundary-"));
   const target = join(directory, "native");
   try {
@@ -17,6 +17,12 @@ it.each(["unchanged", "source", "dependencies", "new-module", "source-symlink", 
     if (mutation === "dependencies") await writeFile(join(target, "Cargo.lock"), "\n# dependency review required\n", { flag: "a" });
     if (mutation === "new-module") await writeFile(join(target, "src/signing.rs"), "// new production module\n");
     if (mutation === "source-symlink") await symlink("main.rs", join(target, "src/alias.rs"));
+    if (mutation === "main-symlink") {
+      await copyFile(join(target, "src/main.rs"), join(directory, "external.rs"));
+      await rm(join(target, "src/main.rs"));
+      await symlink("../../external.rs", join(target, "src/main.rs"));
+    }
+    if (mutation === "enclosing-workspace") await writeFile(join(directory, "Cargo.toml"), '[workspace]\nmembers=["native"]\n');
     if (mutation === "build-script") await writeFile(join(target, "build.rs"), "fn main() {}\n");
     const result = spawnSync("bash", [join(target, "check-verify-only-boundary.sh")], { encoding: "utf8" });
     expect(result.error).toBeUndefined();
