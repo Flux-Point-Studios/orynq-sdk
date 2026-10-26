@@ -24,7 +24,7 @@ import { openStandingDelivery } from "./standing-delivery.js";
 import { openStandingController } from "./standing-controller.js";
 import { StandingFeeCap } from "./standing-budget.js";
 import { openStandingStatus } from "./standing-status.js";
-import { flushDirectory } from "./state.js";
+import { flushDirectory, readPrivateJson } from "./state.js";
 
 export function parseStandingConfig(value: unknown) {
   const object = (input: unknown, fields: string[]) => {
@@ -109,7 +109,7 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
   const abort = new AbortController(), stop = () => abort.abort();
   let follower: ReturnType<typeof openFollowerState> | undefined, census: ReturnType<typeof openCensusState> | undefined;
   let journal: ReturnType<typeof openJournal> | undefined, operator: ReturnType<typeof registryOperator> | undefined, wallet: OperatorWallet | undefined;
-  let status: ReturnType<typeof openStandingStatus> | undefined;
+  let status: ReturnType<typeof openStandingStatus> | undefined, failure: unknown;
   try {
     const stat = fstatSync(fd);
     if (!stat.isFile() || stat.mode & 0o077 || (process.getuid && stat.uid !== process.getuid())) throw new Error("Shared execution lock is not private and owned");
@@ -120,7 +120,7 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
     ensurePrivateDir(config.stateRoot); flushDirectory(dirname(config.stateRoot));
     const authors = () => {
       abort.signal.throwIfAborted();
-      let documents: unknown; try { documents = JSON.parse(readPrivateFile(config.knownAuthorsFile)); } catch { throw new Error("Standing signed author policy is unreadable"); }
+      const documents = readPrivateJson(config.knownAuthorsFile, "Standing signed author policy");
       if (!Array.isArray(documents)) throw new Error("Standing signed author policy must be a list");
       return knownAuthors({ documents });
     };
@@ -135,8 +135,7 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
       const endpoints = networkEndpoints(config.network, { blockfrostProjectIdFile: config.wallet.blockfrost }), source = midnightSource(endpoints);
       await assertChainIdentity(source, config.network);
       if (!(await registryStateOnNode(source, config.registry))) throw new Error("Standing node lacks the immutable registry");
-      let record: { addresses?: { unshielded: string; shielded: string; dust: string } };
-      try { record = JSON.parse(readPrivateFile(config.wallet.record)); } catch { throw new Error("Standing wallet record is unreadable"); }
+      const record = readPrivateJson(config.wallet.record, "Standing wallet record") as { addresses?: { unshielded: string; shielded: string; dust: string } };
       if (!record.addresses || Object.keys(record.addresses).sort().join(",") !== "dust,shielded,unshielded" || Object.values(record.addresses).some(address => typeof address !== "string" || !address)) throw new Error("Standing wallet record lacks addresses");
       wallet = await openWallet({ network: config.network, mnemonicFile: config.wallet.mnemonic, endpoints, source, zkDir: config.wallet.zk, stateFile: config.wallet.state, expectedAddresses: record.addresses });
       await syncWithCheckpoints(wallet, { timeoutMs: 180 * 60_000, progressMs: 60_000, checkpointMs: 5 * 60_000, signal: abort.signal, write: line => { status!.phase("wallet-sync"); console.log(line); } });
@@ -169,12 +168,13 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
         status!.hold(loop, reason); sample();
         if (reason !== previous) { console.log(JSON.stringify({ event: "standing-hold", loop, reason })); previous = reason; }
       } });
-  } finally {
+  } catch (error) { failure = error; throw error; }
+  finally {
     abort.abort();
     try { status?.phase("stopping"); }
     finally {
       process.removeListener("SIGTERM", stop); process.removeListener("SIGINT", stop);
-      try { if (wallet && (await wallet.close())?.saved !== true) throw new Error("Standing final wallet save failed"); }
+      try { if (wallet && (await wallet.close())?.saved !== true) throw new Error("Standing final wallet save failed", { cause: failure }); }
       finally { try { operator?.close(); journal?.close(); census?.close(); follower?.close(); status?.phase("stopped"); } finally { closeSync(fd); } }
     }
   }
@@ -183,8 +183,13 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const run = async () => {
     if (process.argv.length !== 4 || process.argv[2] !== "--config") throw new Error("Expected --config with an owner-only configuration file");
-    let input: unknown; try { input = JSON.parse(readPrivateFile(process.argv[3]!)); } catch { throw new Error("Standing configuration is unreadable"); }
-    await runStandingService(parseStandingConfig(input));
+    await runStandingService(parseStandingConfig(readPrivateJson(process.argv[3]!, "Standing configuration")));
   };
-  run().catch(error => { console.error(error instanceof Error && error.message === "Agent-driven mainnet anchoring is forbidden" ? error.message : "Standing service stopped before completion"); process.exitCode = 1; });
+  // The service's errors name files and checks, never what a file holds. Provider text can ride
+  // in a cause, so each message prints on one line, without control characters, at most 512 long.
+  run().catch(error => {
+    const reasons: string[] = [];
+    for (let cause: unknown = error; cause instanceof Error && reasons.length < 8; cause = cause.cause) reasons.push(cause.message.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").slice(0, 512));
+    console.error(reasons.join(": ") || "Standing service stopped before completion"); process.exitCode = 1;
+  });
 }

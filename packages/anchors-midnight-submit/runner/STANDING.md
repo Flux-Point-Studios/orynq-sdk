@@ -35,6 +35,11 @@ The configuration file must be private and owner-controlled. Its exact fields ar
 }
 ```
 
+Every file the configuration names must also be owner-only (mode 0600) and owned by the
+service's user, the public wallet `record` and signed author policy included; only `zk`, whose
+public parameters are checked by hash, is exempt. The service refuses any other file and names it
+and the reason as it stops.
+
 `genesis` names Materios. The signed author policy supplies Midnight's original finality
 checkpoint. Policy and the compiled mainnet batch-author pin must authorize the configured
 author. Copy the released signed public policy into `knownAuthorsFile`; updates may append
@@ -78,8 +83,11 @@ verify` after installation. The operator enables/starts anchor mode at their own
 after policy publication, two-store readback, independent restore and monitoring checks pass.
 Agents must not start an anchor unit or change environment markers to bypass its gate.
 
-`status.json` and journal progress contain public state only. Holds use bounded reason codes;
-raw provider errors and credentials are not logged. A hold does not prove absence or coverage.
+`status.json` and journal progress contain public state only. Holds use bounded reason codes
+and log no provider error. A stop prints why on one line: each error in its cause chain, control
+characters replaced, at most 512 characters each. Those messages name files and checks, never a
+file's contents. A provider error among them carries its HTTP status and at most 300 characters
+of its body. A hold does not prove absence or coverage.
 An independent watch must verify liveness and cap accounting, and alert on cap hits before
 the rollout is declared complete. The hard limits remain 0.01 DUST per transaction, 0.1 DUST
 per rolling day and one anchor per batch in the immutable approved registry.

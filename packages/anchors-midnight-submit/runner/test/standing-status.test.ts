@@ -39,6 +39,12 @@ it.each([{sequence:0,active:true,lastAt:null},{sequence:1,active:false,lastAt:nu
   const path=join(directory,"status.json"),saved=JSON.parse(readFileSync(path,"utf8"));saved.cap=cap;writeFileSync(path,JSON.stringify(saved),{mode:0o600});
   expect(()=>openStandingStatus(directory,scope,()=>2000)).toThrow(/cap history/);
 });
+it("refuses retained monitoring state that is not JSON without quoting it",()=>{
+  const directory=root();writeFileSync(join(directory,"status.json"),"abandon ability able",{mode:0o600});
+  let thrown:unknown;try{openStandingStatus(directory,scope);}catch(error){thrown=error;}
+  expect((thrown as Error).message).toBe("Standing retained monitoring state is not JSON");
+  expect((thrown as Error).cause).toBeUndefined();
+});
 it("refreshes a sync heartbeat without resetting the phase's original start",async()=>{
   let now=1000;const status=openStandingStatus(root(),scope,()=>now);status.phase("wallet-sync");now+=180_000;
   const progress={applied:1,highest:2,connected:true};

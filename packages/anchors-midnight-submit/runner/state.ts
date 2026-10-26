@@ -1,5 +1,6 @@
 import { appendFileSync, closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { readPrivateFile } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { ensurePrivateDir } from "../src/keys.js";
 import { ANCHORS_JOURNAL, DEPLOY_JOURNAL, STATE, home } from "../scripts/mainnet-session.js";
 
@@ -42,6 +43,22 @@ export function flushDirectory(path: string): void {
     fsyncSync(fd);
   } finally {
     closeSync(fd);
+  }
+}
+
+// The JSON in an owner-only file. A refusal keeps why as its cause, which names the file and never
+// what it holds; a parse failure drops its cause, since JSON.parse quotes the text it could not read.
+export function readPrivateJson(path: string, what: string): unknown {
+  let text: string;
+  try {
+    text = readPrivateFile(path);
+  } catch (error) {
+    throw new Error(`${what} is unreadable`, { cause: error });
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`${what} is not JSON`);
   }
 }
 
