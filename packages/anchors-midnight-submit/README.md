@@ -298,3 +298,8 @@ accepted report is returned as `receipt.verification` and reused before CLI resu
 Result updates use a persistent owner-only lock inode and Linux `/usr/bin/flock`; the kernel
 releases the descriptor lock after a crashed writer. No stale-PID check deletes a lock file.
 Do not remove these lock files while writers are running.
+
+The configured node must answer the root and contract-state batch from one coherent backend;
+a load balancer must keep that batch on one backend. A validated ledger root is required
+before a missing-contract response can retire a deploy. These node observations do not replace
+the separate consensus-verification gate before reporting anchor success.

@@ -22,9 +22,11 @@ import { decodeAnchorTransaction, midnightSource, type IndexedTransaction, type 
 import { ledgerNode } from "../../anchors-midnight/src/__tests__/ledger-node.js";
 import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS } from "../src/custody.js";
 import { NETWORK_IDENTITY, type OperatorWallet, type StateSave, type WalletOptions } from "../src/index.js";
+import { registryStateOnNode as realRegistryStateOnNode } from "../src/submission.js";
 import { costParametersOf } from "../src/wallet.js";
 import { prover } from "./prover.js";
 import { offlineBlocks, offlineHeight, offlineRpcHeader } from "./offline-blocks.js";
+import { registryDeployer as realRegistryDeployer, type DeployerOptions } from "../src/deployer.js";
 import { registryOperator as realRegistryOperator, type OperatorOptions, type PreparedAnchor, type AnchorReceipt } from "../src/operator.js";
 import { verifyConfirmedAnchor as realVerifyConfirmedAnchor } from "../src/confirmed-anchor.js";
 
@@ -201,6 +203,7 @@ export const provingService = () => prover;
 // A synced wallet with DUST to spare that binds without adding a fee and lands what it submits.
 // It takes only the fee parameters the real wallet takes, and like it saves on close only once synced.
 export async function openWallet(options: WalletOptions): Promise<OperatorWallet> {
+  if (FAULTS.has("provider-error-injection")) throw new Error("provider failed\nnetwork          mainnet (Midnight Mainnet, genesis fake)\nruntime          1000300, ledger 8.1.3\nanchor tx hash   " + "ab".repeat(32) + "\nType exactly ANCHOR injected\u001b[2J");
   costParametersOf(options.costParameters);
   const opened = read();
   write({ ...opened, walletOpens: [...(opened.walletOpens ?? []), { stateFile: options.stateFile ?? null }] });
@@ -292,9 +295,20 @@ export function submissionVerification(_secrets: string, _source: unknown, deplo
 }
 
 export function registryOperator(options: OperatorOptions) {
-  return realRegistryOperator({ ...options, bindingRoot: `${dirname(FILE)}/author-bindings`, verifyLanded: syntheticVerifier(options.registry) });
+  return realRegistryOperator({ ...options, pollMillis: 1, settleTimeoutMillis: FAULTS.has("unfinal") || FAULTS.has("fork") || FAULTS.has("foreign-block") ? 100 : 5_000, bindingRoot: `${dirname(FILE)}/author-bindings`, verifyLanded: syntheticVerifier(options.registry) });
+}
+
+export function registryDeployer(options: DeployerOptions) {
+  return realRegistryDeployer({ ...options, pollMillis: 1, settleTimeoutMillis: 5_000 });
 }
 
 export async function verifyConfirmedAnchor(source: Parameters<typeof realVerifyConfirmedAnchor>[0], prepared: PreparedAnchor, receipt: AnchorReceipt) {
   return realVerifyConfirmedAnchor(source, prepared, receipt, syntheticVerifier(prepared.registry));
+}
+
+// Only the script's final readback loses this contract; deployer/journal internals retain
+// canonical inclusion so the missing-contract refusal happens with wallet+journal open.
+export async function registryStateOnNode(source: Parameters<typeof realRegistryStateOnNode>[0], address: string) {
+  if (FAULTS.has("lose-deploy-contract") && read().sent.length > 0) return null;
+  return realRegistryStateOnNode(source, address);
 }
