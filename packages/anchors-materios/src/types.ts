@@ -76,10 +76,10 @@ export interface ReceiptInput {
   receiptId?: string;
   /**
    * Optional schema discriminator hash (32 bytes hex). Identifies the receipt
-   * class to cert-daemon's verifier. Default (omitted/zero) = legacy blob
-   * (chunk-Merkle must equal `rootHash`).
+   * class on chain. Default (omitted/zero) = legacy blob (chunk-Merkle
+   * must equal `rootHash`).
    *
-   * Set to one of the registered discriminator values when the receipt's
+   * A schema-aware verifier can use these discriminator values when the receipt's
    * `base_root_sha256` is a *semantic* root (not the chunk-Merkle of the
    * uploaded bytes):
    *
@@ -88,9 +88,14 @@ export interface ReceiptInput {
    *   sha256("orynq_trace_v1")               — orynq trace receipts (drain.mjs)
    *   sha256("ai_capability_observation_v1") — attested AI model observations
    *
-   * The cert-daemon's TRUSTED_DISCRIMINATOR_SCHEMAS set (operator-kit
-   * daemon/schemas/__init__.py) enumerates accepted values. Receipts with
-   * unknown schemaHash are rejected by the verifier.
+   * Deployment note (2026-10-26): the deployed operator-kit cert-daemon
+   * at 3ec33237 verifies the chunk-Merkle root even for a non-zero
+   * discriminator. Setting this field alone does not enable semantic-root
+   * certification: `rootHash` must still equal the uploaded chunks' Merkle
+   * root on that deployment. The schema-aware verifier and its
+   * TRUSTED_DISCRIMINATOR_SCHEMAS allowlist are on operator-kit's unmerged
+   * fix/substrate-ws-retry branch. Check the verifier deployed by your
+   * committee before submitting a semantic root.
    */
   schemaHash?: string;
 }
