@@ -186,7 +186,7 @@ describe("the evidence gate", () => {
   });
 
   describe("forged KNOWN_AUTHORS documents count only with the verify package's answer from the check each targets", () => {
-    const answered = (name: string, outcome: string) => (r: Rehearsal) => (r.verified.forgedDocuments[name] = { outcome });
+    const answered = (name: string, outcome: string) => (r: Rehearsal) => (r.verified.forgedDocuments[name] = { ...r.verified.forgedDocuments[name], outcome });
 
     // The allow-list refuses a stranger's key beside the root's signature before any signature
     // is verified, so a verifier that skipped Ed25519 verification gives that answer too.

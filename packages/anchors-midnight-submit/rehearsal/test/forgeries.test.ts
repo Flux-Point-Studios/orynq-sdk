@@ -77,7 +77,7 @@ describe("the forged KNOWN_AUTHORS documents", () => {
     skip.signatureCheck = true;
     expect(answer(strangersKey, [r.root])).toBe(NO_TRUST_ROOT);
     const name = "serial 3 with every author window reopened, under the trust root's signature on serial 3";
-    r.verified.forgedDocuments[name] = { outcome: NO_TRUST_ROOT };
+    r.verified.forgedDocuments[name] = { ...r.verified.forgedDocuments[name], outcome: NO_TRUST_ROOT };
     expect(judge({ raw: r.raw, verified: r.verified, crash: r.crash, crashStatus: parseCrashStatus(r.crashStatus.join("\n")) }).failures).toEqual([
       `forged KNOWN_AUTHORS document "${name}": ${NO_TRUST_ROOT}, not ${SIGNATURE_FAILS}`,
     ]);

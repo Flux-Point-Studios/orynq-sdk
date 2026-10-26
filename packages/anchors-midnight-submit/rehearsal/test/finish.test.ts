@@ -22,7 +22,7 @@ function finish(verdicts: Record<string, { status: string; assurance: string }> 
     env: { ...process.env, HOME: `${root}/home`, CONSUMER: `${root}/consumer`, FAKE_CHAIN: `${root}/chain.json`, FAKE_LOG: `${root}/asked.log`, ORYNQ_VERIFY_DIST: VERIFY_DIST, ...consumer },
     timeout: 120_000,
   });
-  const verified = existsSync(`${root}/rehearsal/evidence/verified.json`) ? JSON.parse(readFileSync(`${root}/rehearsal/evidence/verified.json`, "utf8")) : null;
+  const verified = existsSync(`${root}/rehearsal/evidence/verified.json`) && readFileSync(`${root}/rehearsal/evidence/verified.json`, "utf8").trim() ? JSON.parse(readFileSync(`${root}/rehearsal/evidence/verified.json`, "utf8")) : null;
   const asked = readFileSync(`${root}/asked.log`, "utf8").split("\n").filter(Boolean).map((l) => l.split(" ")[0]);
   return { run, verified, asked, pack: existsSync(out) ? JSON.parse(readFileSync(out, "utf8")) : null };
 }
