@@ -8,6 +8,7 @@ import {
   verifyMateriosCheckpointAnchor,
   type MateriosCheckpointClaim,
   type MateriosCheckpointOptions,
+  MATERIOS_CHECKPOINT_WALLET_PINS,
 } from "../index.js";
 import { createKoiosCheckpointSource, createKoiosProvider, KoiosError } from "../providers/index.js";
 
@@ -47,11 +48,13 @@ function editTx(txHash: string, change: (row: Record<string, any>) => void): Edi
 }
 
 function options(over: Partial<MateriosCheckpointOptions> = {}, edit?: Edit): MateriosCheckpointOptions {
-  return {
+  const out = {
     source: createKoiosCheckpointSource({ network: "mainnet", retries: 0, fetchFn: replay(edit) }),
-    anchorWallets: [wallets.worker, wallets.lucid],
+    anchorWallets: MATERIOS_CHECKPOINT_WALLET_PINS,
     ...over,
   };
+  // Existing attack vectors select wallet identities; resolve each to its explicit reviewed pin.
+  return { ...out, anchorWallets: out.anchorWallets.map((pin) => typeof pin === "string" ? MATERIOS_CHECKPOINT_WALLET_PINS.find((p) => p.address === pin)! : pin) };
 }
 
 function receiptFields(receiptId: string) {
@@ -463,6 +466,14 @@ describe("Koios checkpoint source", () => {
     expect(await source.addressTransactions(wallets.worker, 7)).toHaveLength(1003);
     expect(seen.map((s) => s.split(" ")[0])).toEqual([0, 1000, 1003].map((o) => `https://api.koios.rest/api/v1/address_txs?offset=${o}`));
     expect(JSON.parse(seen[0]!.split(" ")[1]!)).toEqual({ _addresses: [wallets.worker], _after_block_height: 7 });
+  });
+
+  it("rejects a repeated page before unbounded pagination can consume memory", async () => {
+    const row = { tx_hash: "ab".repeat(32) };
+    const seen: string[] = [];
+    const source = createKoiosCheckpointSource({ network: "mainnet", retries: 0, fetchFn: answering([[row], [row]], seen) });
+    await expect(source.addressTransactions(wallets.worker, 0)).rejects.toThrow(/repeated.*pagination/);
+    expect(seen).toHaveLength(2);
   });
 
   it("throws on an answer that drifted from what Koios sends, rather than reporting a mismatch", async () => {

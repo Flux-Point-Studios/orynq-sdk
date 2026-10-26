@@ -21,7 +21,7 @@ lists its inputs and trust assumptions.
 | Endpoint | Operator | Public? |
 |---|---|---|
 | `wss://materios.fluxpointstudios.com/rpc` | Materios partner-chain network | YES — same kind of public Substrate RPC any Polkadot.js apps user connects to; consensus is multi-operator |
-| `https://cardano-preprod.blockfrost.io/api/v0` | Blockfrost (independent indexer) | YES — third-party, free tier, no FPS relationship |
+| `https://cardano-mainnet.blockfrost.io/api/v0` | Blockfrost (independent indexer) | YES — third-party, free tier, no FPS relationship |
 
 The script does NOT touch:
 
@@ -43,7 +43,7 @@ Input:  content_hash  (sha256 of canonical observation pre-image)
   4. Query OrinqReceipts.Receipts[receipt_id] → cert_hash + record
   5. Compute the checkpoint leaf locally:
        leaf = sha256("materios-checkpoint-v1" || chain_id || receipt_id || cert_hash)
-  6. Pull recent Cardano preprod transactions with metadata label 8746 via Blockfrost.
+  6. Pull recent Cardano mainnet transactions with metadata label 8746 via Blockfrost.
   7. Decode each metadata payload. Keep only those with:
         p     == "materios"
         v     == 2
@@ -59,7 +59,7 @@ unproven.
 ## Run
 
 ```bash
-export BLOCKFROST_PROJECT_ID_PREPROD=preprodXXXX...
+export BLOCKFROST_PROJECT_ID_MAINNET=mainnetXXXX...
 pip install -e packages/orynq-observe   # for substrate-interface + httpx
 python e2e-proof/04-independent-verify/verify.py \
     --content-hash <64_char_hex_from_demo_1>
@@ -75,7 +75,7 @@ Output:
     "chain_id": "0x0e46e33f..."
   },
   "cardano": {
-    "blockfrost_base": "https://cardano-preprod.blockfrost.io/api/v0",
+    "blockfrost_base": "https://cardano-mainnet.blockfrost.io/api/v0",
     "scanned_label_8746_count": 50
   },
   "matched_receipt": {
