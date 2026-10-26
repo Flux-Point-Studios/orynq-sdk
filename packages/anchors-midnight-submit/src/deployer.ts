@@ -137,11 +137,24 @@ export function registryDeployer(options: DeployerOptions) {
     async submit(prepared: PreparedDeploy): Promise<Deployment> {
       // Only bytes that deploy exactly the registry leave, and only the ones the human confirmed:
       // the confirmation token names their transaction hash, the summary their address.
-      const deploys = assertRegistryDeployBytes(prepared.bytes, "final");
-      assertConfirmedHash(prepared);
-      if (deploys !== prepared.address) throw new Error(`the bytes deploy ${deploys}, not the confirmed ${prepared.address}; nothing was sent`);
+      // Own a snapshot before the first await: callers may replace the object, mutate its
+      // byte buffer (including Buffer.slice views), or expose bytes through a changing getter.
+      const bytes = new Uint8Array(prepared.bytes);
+      const { network: preparedNetwork, txHash, address: confirmedAddress, ttl, declaredFee, payer, journal: held } = prepared;
+      const snapshot: PreparedBytes = {
+        network: preparedNetwork,
+        txHash,
+        bytes,
+        ttl: new Date(ttl.getTime()),
+        declaredFee,
+        ...(payer === undefined ? {} : { payer }),
+        ...(held === undefined ? {} : { journal: { ...held } }),
+      };
+      const deploys = assertRegistryDeployBytes(bytes, "final");
+      assertConfirmedHash(snapshot);
+      if (deploys !== confirmedAddress) throw new Error(`the bytes deploy ${deploys}, not the confirmed ${confirmedAddress}; nothing was sent`);
       await assertKnownRuntime(source, network);
-      const row = await confirmed.submit(prepared);
+      const row = await confirmed.submit(snapshot);
       const [landed] = (await source.indexer.transactions(row.txHash)).filter((t) => t.hash === row.txHash);
       if (!landed) throw new Error(`the indexer lost deploy transaction ${row.txHash}`);
       const address = assertRegistryDeployBytes(new Uint8Array(Buffer.from(landed.raw, "hex")), "final");

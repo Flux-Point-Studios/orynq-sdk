@@ -130,6 +130,57 @@ describe("registryDeployer", () => {
     deployer.close();
   });
 
+  it.each(["replacement", "Buffer mutation", "getter"] as const)("pins the checked deploy bytes before any await (%s)", async mode => {
+    const { deployer, wallet: w, rows, net } = setup();
+    const prepared = await deployer.prepare();
+    const original = prepared.bytes.slice();
+    const originalHash = prepared.txHash;
+    const originalAddress = prepared.address;
+    const mutable = (await mutableDeploy("preprod")).serialize();
+    let reads = 0;
+    if (mode === "Buffer mutation") prepared.bytes = Buffer.from(original);
+    if (mode === "getter") Object.defineProperty(prepared, "bytes", { get: () => ++reads <= 2 ? original : mutable });
+    const call = net.source.node.call.bind(net.source.node);
+    net.source.node.call = async <T>(method: string, params?: unknown[]): Promise<T> => {
+      const result = await call<T>(method, params);
+      if (method === "state_getRuntimeVersion") {
+        if (mode === "replacement") prepared.bytes = mutable;
+        if (mode === "Buffer mutation") {
+          expect(mutable.byteLength).toBe(prepared.bytes.byteLength);
+          prepared.bytes.set(mutable);
+        }
+      }
+      return result;
+    };
+    try {
+      const result = await deployer.submit(prepared).catch(error => error);
+      expect(w.submitted.map(tx => hex(tx.serialize()))).toEqual([hex(original)]);
+      expect(rows()).toEqual([{ tx_hash: originalHash, state: "landed" }]);
+      expect(result).toMatchObject({ txHash: originalHash, address: originalAddress });
+      if (mode === "getter") expect(reads).toBe(1);
+    } finally { deployer.close(); }
+  });
+
+  it("discards the checked bytes when the caller replaces them during the runtime check", async () => {
+    const { deployer, wallet: w, rows, net } = setup();
+    const prepared = await deployer.prepare();
+    const originalHash = prepared.txHash;
+    const mutable = (await mutableDeploy("preprod")).serialize();
+    const call = net.source.node.call.bind(net.source.node);
+    net.source.node.call = async <T>(method: string, params?: unknown[]): Promise<T> => {
+      const result = await call<T>(method, params);
+      if (method === "state_getRuntimeVersion") prepared.bytes = mutable;
+      return result;
+    };
+    net.lag(true);
+    try {
+      await expect(deployer.submit(prepared)).rejects.toThrow(/chain time is unknown/);
+      expect(w.submitted).toEqual([]);
+      expect(rows()).toEqual([]);
+      expect(w.discarded).toEqual([originalHash]);
+    } finally { deployer.close(); }
+  });
+
   it("never sends a second deploy of the registry: bytes prepared after one is journalled are discarded", async () => {
     const { deployer, wallet: w } = setup();
     const first = await deployer.submit(await deployer.prepare());

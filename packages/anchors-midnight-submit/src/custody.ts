@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 
@@ -23,8 +23,13 @@ export const MAINNET_SALT_KEY_IDS: readonly string[] = ["448a1b1a6a289af3e432a95
 export function refuseMainnetSecretsPath(network: MidnightNetwork, file: string): void {
   if (network === "mainnet") return;
   const real = (path: string) => (existsSync(path) ? realpathSync(path) : resolve(path));
-  const inside = relative(real(join(homedir(), ".secrets", "orynq-midnight-mainnet")), real(file));
-  if (inside !== ".." && !inside.startsWith(`..${sep}`) && !isAbsolute(inside)) {
-    throw new Error(`${file} lies in the FPS mainnet secrets directory; a ${network} process never opens it`);
+  // homedir() follows HOME; userInfo() uses the operating system account record instead.
+  // Keep both roots protected so moving HOME cannot redirect the mainnet secrets guard.
+  const homes = new Set([homedir(), userInfo().homedir]);
+  for (const home of homes) {
+    const inside = relative(real(join(home, ".secrets", "orynq-midnight-mainnet")), real(file));
+    if (inside !== ".." && !inside.startsWith(`..${sep}`) && !isAbsolute(inside)) {
+      throw new Error(`${file} lies in the FPS mainnet secrets directory; a ${network} process never opens it`);
+    }
   }
 }
