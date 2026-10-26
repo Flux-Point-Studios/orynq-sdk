@@ -40,6 +40,11 @@ service's user, the public wallet `record` and signed author policy included; on
 public parameters are checked by hash, is exempt. The service refuses any other file and names it
 and the reason as it stops.
 
+Each proof store `keyFile` must contain a single ASCII token of 8–4096 non-space printable
+characters (a trailing newline is allowed). Invalid files are refused before publication and
+only their paths are named. Publication errors discard underlying transport messages, which
+can quote HTTP header values.
+
 `genesis` names Materios. The signed author policy supplies Midnight's original finality
 checkpoint. Policy and the compiled mainnet batch-author pin must authorize the configured
 author. Copy the released signed public policy into `knownAuthorsFile`; updates may append

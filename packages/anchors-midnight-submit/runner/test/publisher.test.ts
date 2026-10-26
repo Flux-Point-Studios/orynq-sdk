@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server } from "node:http";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from "undici";
 import { certHash, decodeReceiptRecord } from "@fluxpointstudios/orynq-sdk-core/checkpoint";
 import { openCensusState } from "../census-state.js";
-import { publishCensusPlan } from "../publisher.js";
+import { publishCensusPlan, readProofStoreKey } from "../publisher.js";
 import type { Census } from "../census.js";
 import { openFollowerState } from "../follower-state.js";
 import { followerPolicyDigest, type FollowerBlock } from "../follower-block.js";
@@ -71,6 +71,35 @@ afterEach(async () => {
   state.close(); rmSync(directory, { recursive: true, force: true });
 });
 const options = () => ({ network: "preprod" as const, targets: urls.map((url, i) => ({ url, apiKey: `fixture-writer-${i}` })) });
+
+it.each(["synthetic mnemonic words never leave this file", "writer-key\0secret", "writer-key\rsecret", "writer-key\u0080secret", "x".repeat(4097)])("refuses a malformed proof-store key before IO without quoting it", async key => {
+  const file = join(directory, "writer.key");
+  writeFileSync(file, key, { mode: 0o600 });
+  expect(() => readProofStoreKey(file)).toThrow(`${file} does not hold a retained proof store API key`);
+  const input = options(); input.targets[0]!.apiKey = key;
+  const error = await publishCensusPlan(state, input).catch((error: Error) => error);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toBe("Invalid retained proof store publication configuration");
+  expect((error as Error).cause).toBeUndefined();
+  expect(calls).toEqual([]);
+});
+
+it("loads a bounded ASCII token from an owner-only file, allowing a trailing newline", () => {
+  const file = join(directory, "writer.key");
+  writeFileSync(file, "fixture-writer-0\n", { mode: 0o600 });
+  expect(readProofStoreKey(file)).toBe("fixture-writer-0");
+});
+
+it("drops transport errors that could quote publication credentials", async () => {
+  const original = getGlobalDispatcher(), mock = new MockAgent(); mock.disableNetConnect(); setGlobalDispatcher(mock);
+  for (const url of urls) mock.get(url).intercept({ path: /./, method: "GET" }).replyWithError(new Error("fixture-writer-0"));
+  try {
+    const error = await publishCensusPlan(state, options()).catch((error: Error) => error);
+    expect(error).toMatchObject({ message: "Retained proof store publication request failed" });
+    expect((error as Error).cause).toBeUndefined();
+    expect(calls).toEqual([]);
+  } finally { setGlobalDispatcher(original); await mock.close(); }
+});
 
 it("publishes members before plans, reads exact bytes from both copies and only then acknowledges", async () => {
   await publishCensusPlan(state, options());

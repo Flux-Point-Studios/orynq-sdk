@@ -233,9 +233,9 @@ describe("saving a wallet's sync state", () => {
       expect(failed).toBe(true); await expect(pending).rejects.toThrow(/interrupted/i); expect(unsubscribed).toBe(true);
     } finally { source.complete(); state.mockRestore(); await wallet.close(); }
   });
-  const TRAPPED = { saved: false, failures: [{ part: "shielded", error: "ParseError: Could not serialize local state: RuntimeError: unreachable" }] };
+  const TRAPPED = { saved: false, failures: [{ part: "shielded", error: "ParseError: Could not serialize local state: RuntimeError" }] };
   const trappedLine = (stateFile: string) =>
-    `${stateFile}: the preprod wallet's sync state was not saved (shielded: ParseError: Could not serialize local state: RuntimeError: unreachable); the file keeps its last good save, and the next open resumes from it and replays the events since`;
+    `${stateFile}: the preprod wallet's sync state was not saved (shielded: ParseError: Could not serialize local state: RuntimeError); the file keeps its last good save, and the next open resumes from it and replays the events since`;
 
   it("returns a failed part as a value, keeps the last good save byte for byte, and says the next open resumes from it", async () => {
     const { wallet, stateFile } = await open("trap");
@@ -355,6 +355,21 @@ describe("saving a wallet's sync state", () => {
     );
     expect(refused).toMatch(new RegExp(`^${stateFile.replaceAll(".", "\\.")} does not restore \\(shielded: .+\\); move it aside to sync from genesis$`));
     expect(refused).not.toContain("c01dc0ffee");
+  });
+
+  it.each(["shielded", "dust"] as const)("never quotes a corrupt %s ledger header in a restore error", async part => {
+    const { wallet, stateFile } = await open(`bad-header-${part}`);
+    expect(await wallet.saveState()).toEqual({ saved: true });
+    await wallet.close();
+    const saved = readWalletState(stateFile, "preprod", wallet.addresses, OFFLINE.indexer)!;
+    const corrupt = JSON.parse(saved[part]);
+    const secret = "synthetic-private-header-value";
+    corrupt.state = Buffer.from(secret + "x".repeat(100)).toString("hex");
+    writeWalletState(stateFile, "preprod", wallet.addresses, OFFLINE.indexer, { ...saved, [part]: JSON.stringify(corrupt) });
+    const message = await open(`bad-header-${part}`).then(() => "", (error: Error) => error.message);
+    expect(message).toContain("Could not deserialize local state");
+    expect(message).not.toContain(secret.slice(0, 10));
+    expect(message).not.toContain(corrupt.state.slice(0, 10));
   });
 
   // A directory at the state file's path fails the rename as root too, which CI runs as.
