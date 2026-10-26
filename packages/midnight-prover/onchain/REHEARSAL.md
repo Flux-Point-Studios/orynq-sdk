@@ -1,5 +1,26 @@
 # Proof presentation rehearsal — 2026-10-26
 
+## Round 2: third and fourth presentations
+
+The fixed SDK posted both circuits to the existing deployment, starting with two presentations and ending with four. No new deployment, funding or NIGHT registration was needed. Both posts used the same retained funded preprod wallet. Contract source, code hash, verifier keys and initial-state bytes are unchanged from the reviewed baseline. Machine-readable evidence: [round2-rehearsal.json](round2-rehearsal.json).
+
+| Presentation | Final transaction hash | Block | Fresh `verifyPosted` result |
+|---|---|---:|---|
+| Third, `proveCapability` | `69d0430e58e9b8c3bc13322a7023454d275684c6dd2c3fc3426d9c843e63f40c` | 3153023 | `valid=true, assurance=consensus-verified` |
+| Fourth, `proveRolling1` | `12e49654535c268c0a423eb5a12a73991f219c6c642f042eb42acecce7632e9a` | 3153053 | `valid=true, assurance=consensus-verified` |
+
+Each call read the current contract state and declared three times the transcript's read/compute gas and four times its written/deleted bytes. Neither post required a retry. Each declared and burned 2 SPECK; each indexer-reported required fee was 1 SPECK. The two additional posts burned 4 SPECK. These remain preprod observations, not mainnet estimates.
+
+A new `consumer-final` directory installed the final prover tarball and the rebuilt anchor verifier tarball. Import realpaths stayed inside that consumer; npm lockfile SHA-512 integrity and recorded SHA-256 checks passed. Verification used a genesis-tagged preprod trust root, independently replayed 1,065 authority changes in 426 requests, then authenticated both posts in 26 further requests. Both verdicts were recorded at 2026-10-26T22:27:35.077Z. Package hashes and the complete public outputs are in the JSON above.
+
+The wallet saved and closed after both landed records were checked. The completed scratch process retained a background handle; an independent check required both landed journal rows and the saved-wallet-close event before terminating only that task's scope. No standing or node service was touched. The wallet, journals, tarballs, transaction bytes and one-off scripts remain under the task-specific state/scratch directories; the scratch-script TDD exception applies. No mainnet action, real runner approval, PR merge, tag or publication occurred.
+
+Implementation: `364dbb2df88a9bf4854fe80b2c7ad1e3b7275ae9`. The local merge integrates requested main `44583e7` without rewriting the shared PR branch. The final evidence commit and its CI gate are recorded on PR #194. Local regression evidence and the main guard audit are in [VALIDATION.md](VALIDATION.md).
+
+## Original deployment and first two presentations
+
+The following records the earlier rehearsal at the reviewed baseline; the round-2 results above supersede its SDK and CI status.
+
 Status: **preprod-rehearsed**. The immutable contract was deployed on Midnight PREPROD, both witnesses were proven locally through SDK `post`, and a fresh tarball installation independently verified both calls through authenticated execution and GRANDPA finality. No mainnet proof-contract deployment or runner execution occurred.
 
 Machine-readable receipts, exact statements, verifier outputs, package checksums and provenance: [preprod-rehearsal.json](preprod-rehearsal.json).

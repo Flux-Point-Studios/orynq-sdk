@@ -4,7 +4,7 @@ This is review material, not an approval. PREPROD is rehearsed: the pinned immut
 
 ## Preprod fee check
 
-All three transactions declared and burned **2 SPECK (0.000000000000002 DUST)** each, **6 SPECK total**. The indexer's required fee was **1 SPECK** each; it is distinct from the full declaration burned by a DUST spend. Exact hashes, blocks and both consensus-verified verdicts are in [the rehearsal](../../midnight-prover/onchain/REHEARSAL.md). These are measured preprod fees, not mainnet forecasts. The 0.01 DUST per-transaction, 0.1 DUST shared rolling-day and 0.03 DUST initial reservation figures below remain authorization ceilings. Both circuits and all synthetic statement fields remain unchanged.
+The original deployment and first two calls each declared and burned **2 SPECK (0.000000000000002 DUST)** each, **6 SPECK total**. The indexer's required fee was **1 SPECK** each; it is distinct from the full declaration burned by a DUST spend. Exact hashes, blocks and both consensus-verified verdicts are in [the rehearsal](../../midnight-prover/onchain/REHEARSAL.md). These are measured preprod fees, not mainnet forecasts. The 0.01 DUST per-transaction, 0.1 DUST shared rolling-day and 0.03 DUST initial reservation figures below remain authorization ceilings. The round-2 third and fourth posts also each declared 2 SPECK against a required 1 SPECK, and both passed fresh-tarball consensus verification. Both circuits and all synthetic statement fields remain unchanged.
 
 ## Operator release window
 
