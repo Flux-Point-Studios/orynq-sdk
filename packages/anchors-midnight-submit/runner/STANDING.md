@@ -56,6 +56,11 @@ and catches up under bounded HTTP work. `midnightReadRpcUrl` is an explicit read
 wallet submission and sync continue to use the existing Blockfrost endpoint selection.
 The hosted read proxy keeps the provider credential server-side. Midnight's former public
 mainnet RPC is retired; activate the restricted proxy before using this configuration.
+`standing-startup` journal events record the policy, head, finality and clock phase, elapsed
+milliseconds, HTTP request count and response bytes. Failures report only fixed categories;
+source and integrity failures share a category because both remain refusals. These events
+contain no provider error text or configuration values. Startup keeps its 90-second,
+256-request, 64 MiB response budget and the authenticated clock checks.
 Once caught up, the follower waits sixty seconds between idle polls to amortize read quota
 over several blocks. Successful catch-up continues immediately; source errors retry after
 five seconds. The controller still runs every fifteen seconds and refuses a head older than

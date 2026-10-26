@@ -3,7 +3,16 @@ import { followerPolicyDigest, openFollowerReader, type FollowerBlock } from "./
 import type { openFollowerState } from "./follower-state.js";
 import { assertStandingFreshClock } from "./standing-clock.js";
 
-export function openFollowerCatchup(options: { state: ReturnType<typeof openFollowerState>; node: string; authors: () => KnownAuthors; signal?: AbortSignal; clock?: () => { wallTime: number; monotonicMillis: number } }) {
+export interface FollowerStartupDiagnostic {
+  phase: "policy" | "head" | "finality" | "clock";
+  outcome: "start" | "success" | "failure";
+  category: "cancelled" | "deadline" | "request-budget" | "byte-budget" | "policy" | "clock" | "source-or-integrity" | null;
+  elapsedMs: number;
+  requests: number;
+  responseBytes: number;
+}
+
+export function openFollowerCatchup(options: { state: ReturnType<typeof openFollowerState>; node: string; authors: () => KnownAuthors; signal?: AbortSignal; clock?: () => { wallTime: number; monotonicMillis: number }; startupDiagnostic?: (event: FollowerStartupDiagnostic) => void }) {
   const { state, signal } = options, scope = state.scope(), loadAuthors = options.authors;
   const clock = options.clock ?? (() => ({ wallTime: Date.now(), monotonicMillis: performance.now() }));
   const initial = loadAuthors(), checkpoints = initial.checkpoints(scope.network), day = 86_400_000, maximumBytes = 64 * 1024 * 1024;
@@ -57,11 +66,28 @@ export function openFollowerCatchup(options: { state: ReturnType<typeof openFoll
   return {
     async start() {
       return turn(async () => {
-        if (startup) throw new Error("Follower startup was already captured"); policy();
-        const hint = await reference(await source.node.call("chain_getFinalizedHead"));
-        const verified = await probe(hint.ref, hint.parentHash); policy();
-        assertStandingFreshClock({ ...clock(), chainTime: verified.timestamp });
-        startup = structuredClone(verified); return verified;
+        if (startup) throw new Error("Follower startup was already captured");
+        const started = performance.now();
+        let phase: FollowerStartupDiagnostic["phase"] = "policy";
+        // Only fixed categories and local counters leave this boundary, never provider errors,
+        // file contents, endpoint URLs or policy values. Work and freshness limits stay intact.
+        const report = (outcome: FollowerStartupDiagnostic["outcome"], category: FollowerStartupDiagnostic["category"] = null) => options.startupDiagnostic?.({
+          phase, outcome, category, elapsedMs: Math.min(86_400_000, Math.max(0, Math.floor(performance.now() - started))),
+          requests: 256 - budget.requests, responseBytes: maximumBytes - budget.bytes,
+        });
+        const enter = (next: typeof phase) => { phase = next; report("start"); };
+        try {
+          enter("policy"); policy();
+          enter("head"); const hint = await reference(await source.node.call("chain_getFinalizedHead"));
+          enter("finality"); const verified = await probe(hint.ref, hint.parentHash);
+          enter("policy"); policy();
+          enter("clock"); assertStandingFreshClock({ ...clock(), chainTime: verified.timestamp });
+          startup = structuredClone(verified); report("success"); return verified;
+        } catch (error) {
+          const reason = budget.abort.signal.reason;
+          report("failure", signal?.aborted ? "cancelled" : reason === "turn-deadline" ? "deadline" : reason === "request-budget" || reason === "byte-budget" ? reason : phase === "policy" ? "policy" : phase === "clock" ? "clock" : "source-or-integrity");
+          throw error;
+        }
       });
     },
     async turn() {
