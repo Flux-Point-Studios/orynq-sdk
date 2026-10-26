@@ -1,7 +1,7 @@
 # Rehearsal closeout acceptance
 
 These are code and offline evidence checks. No live transaction, real wallet, project credential
-or signing seed was loaded during this closeout.
+or production signing seed was loaded during this closeout. Tests load only synthetic seeds.
 
 | Issue | Acceptance item | Implementation and focused coverage |
 |---|---|---|

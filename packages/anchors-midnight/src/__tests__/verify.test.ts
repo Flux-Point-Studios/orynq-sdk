@@ -373,7 +373,7 @@ describe.each(["mainnet", "preprod"] as const)("golden: the verifier on a real %
 describe("golden: the preprod rehearsal's anchors, replayed", () => {
   const f = JSON.parse(readFileSync(new URL("./fixtures/preprod-rehearsal.json", import.meta.url), "utf8"));
   const verifyRecorded = (a: { txHash: string; expect: VerifyRequest["expect"] }) =>
-    verifyMidnightAnchor({ network: "preprod", txHash: a.txHash, expect: a.expect }, { source: replaySource(f.recording), registries: [f.registry], knownAuthors: knownAuthors({ documents: f.documents, trustRoots: [f.trustRoot] }) });
+    verifyMidnightAnchor({ network: "preprod", txHash: a.txHash, expect: a.expect }, { source: replaySource(f.recording), registries: [f.registry], knownAuthors: knownAuthors({ documents: f.documents, trustRoots: [f.trustRoot] }), ...(f.consensusPolicy ? { checkpoints: knownAuthors({ documents: f.consensusPolicy }).checkpoints("preprod") } : {}) });
 
   it("holds the rehearsal's verdicts: both relay-1 anchors valid and the revoked key's anchor author-revoked, all consensus-verified", () => {
     expect(f.anchors.map((a: VerifyResult & { name: string }) => [a.name, a.status, a.assurance])).toEqual([

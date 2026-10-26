@@ -11,14 +11,19 @@ export function authorJournalPath(secrets: string, authorFile: string): string {
   return `${secrets}/journal-author-${hex(authorKey(readAuthorSecret(authorFile)))}.sqlite`;
 }
 
-export function submissionVerification(secrets: string, source: MidnightSource, deploy: { address: string; txHash: string; blockHeight: number; blockHash: string }) {
-  const authorFiles = ["author-relay.key", "author-relay-2.key"].map(file => `${secrets}/${file}`);
+export function submissionConsensusPolicy(secrets: string) {
   let documents: SignedKnownAuthors[];
   try { documents = JSON.parse(readPrivateFile(`${secrets}/submission-known-authors.json`)); }
   catch { throw new Error("Preprod rehearsal requires owner-only submission-known-authors.json containing independently reviewed signed author/checkpoint policy"); }
   if (!Array.isArray(documents) || documents.length === 0) throw new Error("Preprod submission policy must contain signed documents");
   const policy = knownAuthors({ documents }); // Deliberately use shipped trust roots, never an input root.
   if (policy.checkpoints("preprod").length === 0) throw new Error("Preprod submission policy has no reviewed consensus checkpoint; onboarding is required");
+  return { policy, documents };
+}
+
+export function submissionVerification(secrets: string, source: MidnightSource, deploy: { address: string; txHash: string; blockHeight: number; blockHash: string }) {
+  const { policy } = submissionConsensusPolicy(secrets);
+  const authorFiles = ["author-relay.key", "author-relay-2.key"].map(file => `${secrets}/${file}`);
   // Global signed policies must retain the shipped mainnet checkpoint history as a prefix.
   // Only their preprod section is consumed here; the request guard below excludes mainnet.
   for (const file of authorFiles) if (policy.author("preprod", hex(authorKey(readAuthorSecret(file))), deploy.blockHeight).status !== "known") throw new Error("Both fresh rehearsal author keys need signed preprod onboarding before submission");
