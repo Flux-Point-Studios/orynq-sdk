@@ -597,7 +597,9 @@ function checkpointTransaction(row: unknown): CheckpointTransaction {
     if (typeof address !== "string") throw new KoiosError(`${at} has an input without an address`);
     return address;
   });
-  return { txHash: row.tx_hash, blockHeight: height as number | null, metadata, inputAddresses };
+  const slot = row.absolute_slot ?? null;
+  if (slot !== null && (!Number.isSafeInteger(slot) || Number(slot) < 0)) throw new KoiosError(`${at} has a malformed absolute slot`);
+  return { txHash: row.tx_hash, blockHeight: height as number | null, slot: slot as number | null, metadata, inputAddresses };
 }
 
 /**
@@ -636,6 +638,7 @@ export function createKoiosCheckpointSource(config: KoiosConfig): MateriosCheckp
     // Koios caps each answer at a page; an empty page ends the listing.
     async addressTransactions(address, fromBlockHeight) {
       const hashes: string[] = [];
+      const seen = new Set<string>();
       for (;;) {
         const page = await client.post<unknown>(`/address_txs?offset=${hashes.length}`, {
           _addresses: [address],
@@ -645,6 +648,9 @@ export function createKoiosCheckpointSource(config: KoiosConfig): MateriosCheckp
         if (page.length === 0) return hashes;
         for (const row of page) {
           if (!isRecord(row) || typeof row.tx_hash !== "string") throw new KoiosError("Koios address_txs row without a tx hash");
+          const id = row.tx_hash.toLowerCase();
+          if (seen.has(id)) throw new KoiosError("Koios address_txs repeated a transaction; pagination did not advance");
+          seen.add(id);
           hashes.push(row.tx_hash);
         }
       }

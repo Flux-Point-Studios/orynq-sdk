@@ -30,6 +30,7 @@ overrides:
   hono: ^4.13.11
   fastify: ^5.12.6
   ip-address@10: ^10.7.4
+  effect: 3.21.5
 
 patchedDependencies:
   '@midnight-ntwrk/wallet-sdk-dust-wallet@4.2.0':
@@ -248,8 +249,8 @@ importers:
         specifier: 2.0.1
         version: 2.0.1
       effect:
-        specifier: 3.21.4
-        version: 3.21.4
+        specifier: 3.21.5
+        version: 3.21.5
       rxjs:
         specifier: 7.8.2
         version: 7.8.2
@@ -1767,45 +1768,45 @@ packages:
       '@leichtgewicht/ip-codec': 2.0.5
       utf8-codec: 1.0.0
 
-  /@effect/platform@0.71.7(effect@3.21.4):
+  /@effect/platform@0.71.7(effect@3.21.5):
     resolution: {integrity: sha512-Ttw8OhbcP1x5cPgcX4VdnDSWrskVdUrf9bO3eDd++TTcQzEiYVu9GZJaSMvz6Yqzfzt+1tIKoKi2jp6dLdJ9dg==}
     peerDependencies:
-      effect: ^3.11.10
+      effect: 3.21.5
     dependencies:
-      effect: 3.21.4
+      effect: 3.21.5
       find-my-way-ts: 0.1.6
       multipasta: 0.2.7
     dev: false
 
-  /@effect/platform@0.96.3(effect@3.21.4):
+  /@effect/platform@0.96.3(effect@3.21.5):
     resolution: {integrity: sha512-LzvIj4HYE++TcTv/cVTCI/GRvQTV0ymwRmgjZMzNB5dU4OS05pTN36RKN0npiOm5orLJgw4yjIv1dNZoYGh/vg==}
     peerDependencies:
-      effect: ^3.21.5
+      effect: 3.21.5
     dependencies:
-      effect: 3.21.4
+      effect: 3.21.5
       find-my-way-ts: 0.1.6
       msgpackr: 1.12.1
       multipasta: 0.2.7
     dev: false
 
-  /@effect/schema@0.66.16(effect@3.21.4)(fast-check@3.23.2):
+  /@effect/schema@0.66.16(effect@3.21.5)(fast-check@3.23.2):
     resolution: {integrity: sha512-sT/k5NOgKslGPzs3DUaCFuM6g2JQoIIT8jpwEorAZooplPIMK2xIspr7ECz6pp6Dc7Wz/ppXGk7HVyGZQsIYEQ==}
     deprecated: this package has been merged into the main effect package
     peerDependencies:
-      effect: ^3.1.3
+      effect: 3.21.5
       fast-check: ^3.13.2
     dependencies:
-      effect: 3.21.4
+      effect: 3.21.5
       fast-check: 3.23.2
     dev: false
 
-  /@effect/schema@0.68.27(effect@3.21.4):
+  /@effect/schema@0.68.27(effect@3.21.5):
     resolution: {integrity: sha512-/rmIb+4QaQTecdTfeYSZtNikIV+BeIbYDl/hpgBTaS96en7pKNW5hcygFQhdocjKguIL7Y/be+oUrVafWV60ew==}
     deprecated: this package has been merged into the main effect package
     peerDependencies:
-      effect: ^3.5.7
+      effect: 3.21.5
     dependencies:
-      effect: 3.21.4
+      effect: 3.21.5
       fast-check: 3.23.2
     dev: false
 
@@ -2379,7 +2380,7 @@ packages:
     dependencies:
       '@anastasia-labs/cardano-multiplatform-lib-browser': 6.0.2-3
       '@anastasia-labs/cardano-multiplatform-lib-nodejs': 6.0.2-3
-      '@effect/schema': 0.66.16(effect@3.21.4)(fast-check@3.23.2)
+      '@effect/schema': 0.66.16(effect@3.21.5)(fast-check@3.23.2)
       '@emurgo/cardano-message-signing-nodejs': 1.1.0
       '@lucid-evolution/core-types': 0.1.24
       '@lucid-evolution/core-utils': 0.1.16
@@ -2389,7 +2390,7 @@ packages:
       '@lucid-evolution/uplc': 0.2.21
       '@lucid-evolution/utils': 0.1.68(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)
       '@lucid-evolution/wallet': 0.1.74(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)
-      effect: 3.21.4
+      effect: 3.21.5
     transitivePeerDependencies:
       - '@dcspark/cardano-multiplatform-lib-asmjs'
       - '@dcspark/cardano-multiplatform-lib-browser'
@@ -2417,13 +2418,13 @@ packages:
     dependencies:
       '@anastasia-labs/cardano-multiplatform-lib-browser': 6.0.2-3
       '@anastasia-labs/cardano-multiplatform-lib-nodejs': 6.0.2-3
-      '@effect/platform': 0.71.7(effect@3.21.4)
-      '@effect/schema': 0.68.27(effect@3.21.4)
+      '@effect/platform': 0.71.7(effect@3.21.5)
+      '@effect/schema': 0.68.27(effect@3.21.5)
       '@lucid-evolution/core-types': 0.1.24
       '@lucid-evolution/core-utils': 0.1.16
       '@lucid-evolution/utils': 0.1.68(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)
       '@lucid-evolution/wallet': 0.1.74(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)
-      effect: 3.21.4
+      effect: 3.21.5
     transitivePeerDependencies:
       - '@dcspark/cardano-multiplatform-lib-asmjs'
       - '@dcspark/cardano-multiplatform-lib-browser'
@@ -2456,7 +2457,7 @@ packages:
       '@anastasia-labs/cardano-multiplatform-lib-browser': 6.0.2-3
       '@anastasia-labs/cardano-multiplatform-lib-nodejs': 6.0.2-3
       '@cardano-sdk/core': 0.46.14
-      '@effect/schema': 0.68.27(effect@3.21.4)
+      '@effect/schema': 0.68.27(effect@3.21.5)
       '@harmoniclabs/plutus-data': 1.2.4(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)
       '@harmoniclabs/uplc': 1.2.4(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)(@harmoniclabs/plutus-data@1.2.4)
       '@lucid-evolution/core-types': 0.1.24
@@ -2466,7 +2467,7 @@ packages:
       '@lucid-evolution/uplc': 0.2.21
       bip39: 3.1.0
       cbor-x: 1.6.4
-      effect: 3.21.4
+      effect: 3.21.5
     transitivePeerDependencies:
       - '@dcspark/cardano-multiplatform-lib-asmjs'
       - '@dcspark/cardano-multiplatform-lib-browser'
@@ -2715,7 +2716,7 @@ packages:
   /@midnight-ntwrk/wallet-sdk-abstractions@2.1.0:
     resolution: {integrity: sha512-mMcHFBrNxlZhurknS9J979HhrHQ0EsKdm6Kwaq7SAk/tStLOU2/sAoQzLUzzxr8Y60PcilTJdIKhaCgaydPATg==}
     dependencies:
-      effect: 3.21.4
+      effect: 3.21.5
     dev: false
 
   /@midnight-ntwrk/wallet-sdk-address-format@3.1.2:
@@ -2736,7 +2737,7 @@ packages:
       '@midnight-ntwrk/wallet-sdk-prover-client': 1.2.2
       '@midnight-ntwrk/wallet-sdk-utilities': 1.2.1
       '@midnight-ntwrk/zkir-v2': 2.1.1
-      effect: 3.21.4
+      effect: 3.21.5
       rxjs: 7.8.2
     transitivePeerDependencies:
       - '@fastify/websocket'
@@ -2757,7 +2758,7 @@ packages:
       '@midnight-ntwrk/wallet-sdk-indexer-client': 1.2.3(ws@8.21.0)
       '@midnight-ntwrk/wallet-sdk-runtime': 1.0.5
       '@midnight-ntwrk/wallet-sdk-utilities': 1.2.1
-      effect: 3.21.4
+      effect: 3.21.5
       rxjs: 7.8.2
     transitivePeerDependencies:
       - '@fastify/websocket'
@@ -2802,7 +2803,7 @@ packages:
     dependencies:
       '@graphql-typed-document-node/core': 3.2.0(graphql@16.14.2)
       '@midnight-ntwrk/wallet-sdk-utilities': 1.2.1
-      effect: 3.21.4
+      effect: 3.21.5
       graphql: 16.14.2
       graphql-http: 1.23.1(graphql@16.14.2)
       graphql-ws: 6.3.0(graphql@16.14.2)(ws@8.21.0)
@@ -2822,7 +2823,7 @@ packages:
       '@polkadot/util': 14.0.3
       '@types/bn.js': 5.2.0
       bn.js: 5.2.5
-      effect: 3.21.4
+      effect: 3.21.5
     transitivePeerDependencies:
       - bufferutil
       - supports-color
@@ -2832,11 +2833,11 @@ packages:
   /@midnight-ntwrk/wallet-sdk-prover-client@1.2.2:
     resolution: {integrity: sha512-Xbniz3S/ab1uxiEJd3OaBxLkDfygPIAWgNZfApwAeac/U8yUVUjrqJ9aWyruztMY2MZHN7QxUjlcAWDK84hX3A==}
     dependencies:
-      '@effect/platform': 0.96.3(effect@3.21.4)
+      '@effect/platform': 0.96.3(effect@3.21.5)
       '@midnight-ntwrk/ledger-v8': 8.1.3
       '@midnight-ntwrk/wallet-sdk-utilities': 1.2.1
       '@midnight-ntwrk/zkir-v2': 2.1.1
-      effect: 3.21.4
+      effect: 3.21.5
       web-worker: 1.5.0
     dev: false
 
@@ -2845,7 +2846,7 @@ packages:
     dependencies:
       '@midnight-ntwrk/wallet-sdk-abstractions': 2.1.0
       '@midnight-ntwrk/wallet-sdk-utilities': 1.2.1
-      effect: 3.21.4
+      effect: 3.21.5
       rxjs: 7.8.2
     dev: false
 
@@ -2859,7 +2860,7 @@ packages:
       '@midnight-ntwrk/wallet-sdk-indexer-client': 1.2.3(ws@8.21.0)
       '@midnight-ntwrk/wallet-sdk-runtime': 1.0.5
       '@midnight-ntwrk/wallet-sdk-utilities': 1.2.1
-      effect: 3.21.4
+      effect: 3.21.5
       rxjs: 7.8.2
     transitivePeerDependencies:
       - '@fastify/websocket'
@@ -2880,7 +2881,7 @@ packages:
       '@midnight-ntwrk/wallet-sdk-indexer-client': 1.2.3(ws@8.21.0)
       '@midnight-ntwrk/wallet-sdk-runtime': 1.0.5
       '@midnight-ntwrk/wallet-sdk-utilities': 1.2.1
-      effect: 3.21.4
+      effect: 3.21.5
       rxjs: 7.8.2
     transitivePeerDependencies:
       - '@fastify/websocket'
@@ -2894,7 +2895,7 @@ packages:
   /@midnight-ntwrk/wallet-sdk-utilities@1.2.1:
     resolution: {integrity: sha512-K85cpwKGpAbc4hb7EnlxyGOHNqYLFYZwsxm3AMjIdDglxWYCn04HmuTQiq5SQyWc5WlAgSMomQBGGg4z3vlp4A==}
     dependencies:
-      effect: 3.21.4
+      effect: 3.21.5
       rxjs: 7.8.2
     dev: false
 
@@ -5612,8 +5613,8 @@ packages:
   /ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
 
-  /effect@3.21.4:
-    resolution: {integrity: sha512-B89v/xSgPbl1J2Ai2u18jxq3odpFauU1rC6/eSs4FeNHi72kwKdJp12VGigvRV2lK+kRnx+OOz41XV8guZd4gQ==}
+  /effect@3.21.5:
+    resolution: {integrity: sha512-t2QChwBMRDhz4nKW8KbHtMiGG+ExhIIB6iIf42Be6sNKUF8ryDJ6MFnupyosAMkqPNMWEdvMnkPeSUaHzdzPGg==}
     dependencies:
       '@standard-schema/spec': 1.1.0
       fast-check: 3.23.2

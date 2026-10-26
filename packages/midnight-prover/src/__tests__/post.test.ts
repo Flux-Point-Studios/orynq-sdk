@@ -10,7 +10,7 @@ vi.mock("../proof-material.js", async importOriginal => {
   return { proofProvider: (dir: string) => withFixtureProof(original.proofProvider(dir)) };
 });
 
-const source = { network: "preprod", operator: "test", node: { batch: async () => ["00".repeat(32), Buffer.from(proofInitialState().serialize()).toString("hex")] } } as unknown as MidnightSource;
+const source = { network: "preprod", operator: "test", node: { batch: async () => [Array(33).fill(0), Buffer.from(proofInitialState().serialize()).toString("hex")] } } as unknown as MidnightSource;
 const discard = vi.fn(async () => {});
 const capability = new Uint8Array(32).fill(13);
 const contextDigest = "ac".repeat(32);

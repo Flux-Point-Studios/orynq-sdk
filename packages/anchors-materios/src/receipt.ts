@@ -55,11 +55,11 @@ export async function submitReceipt(
   const rootHex = assertHex32(input.rootHash, "rootHash");
   const manifestHex = assertHex32(input.manifestHash, "manifestHash");
   // schemaHash defaults to legacy (32 zero bytes) when caller omits it,
-  // preserving the prior behaviour for plain blob receipts. Callers using
-  // semantic-root receipt classes (compute_metering_v2*, orynq_trace_v1,
-  // ai_capability_observation_v1) MUST pass the matching discriminator from
-  // operator-kit daemon/schemas/, otherwise cert-daemon rejects the
-  // receipt with a Merkle mismatch.
+  // preserving the prior behaviour for plain blob receipts. A discriminator
+  // identifies a receipt class on chain; it does not guarantee that the
+  // deployed committee supports semantic roots. The operator-kit 3ec33237
+  // deployment still requires the uploaded chunks' Merkle root for every
+  // class. See ReceiptInput.schemaHash before submitting a semantic root.
   const schemaHex = input.schemaHash
     ? assertHex32(input.schemaHash, "schemaHash")
     : "00".repeat(32);
@@ -547,15 +547,14 @@ export async function submitCertifiedReceipt(
   }
 
   // 3. Submit receipt on-chain. Forward `schemaHash` and `receiptId`
-  // from the caller's input so semantic-root receipt classes
-  // (compute_metering_v2*, orynq_trace_v1, ai_capability_observation_v1)
-  // land on chain with the right discriminator. Omitting schemaHash falls
-  // back to legacy (zero bytes) = chunk-Merkle path, preserving
-  // pre-existing behaviour.
+  // from the caller's input to preserve its on-chain receipt class and id.
+  // Omitting schemaHash falls back to legacy (zero bytes) = chunk-Merkle.
   const receiptInput: ReceiptInput = {
     contentHash: effectiveContentHash,
     // A blob receipt (no schema hash) is certified only when its base root is the Merkle root of
-    // the uploaded chunk hashes; a receipt class named by a schema hash supplies its own root.
+    // the uploaded chunk hashes. Non-zero schema hashes preserve the caller's root, but the
+    // operator-kit 3ec33237 deployment also requires a chunk-Merkle root for those classes;
+    // a semantic root needs a committee running the schema-aware verifier (see ReceiptInput).
     rootHash: !input.schemaHash || isZeroHash(input.schemaHash)
       ? merkleRoot(manifest.chunks.map((chunk) => chunk.sha256))
       : input.rootHash || contentHashHex,

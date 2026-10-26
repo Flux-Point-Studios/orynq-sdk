@@ -78,7 +78,7 @@ KNOWN_AUTHORS lists on any network, since those are Flux Point Studios keys. Wit
 a dry run that prints the plan (network, registry, kind, commitment, attribute, your author key)
 and sends nothing. `--submit` needs a person at a terminal: stdin and stderr must both be a TTY, or
 it stops before reading any file, and you must type the commitment's first 8 characters to send.
-Sending also needs a registry generation deployed on the network and a Midnight submitter. This
+Sending also needs an authenticated KNOWN_AUTHORS policy, a registry generation deployed on the network and a Midnight submitter. This
 release pins a registry generation on mainnet only and has no submitter, so `--submit` stops
 before it asks you to confirm. The TTY check stops scripts and models that run commands through a
 pipe. It is not proof of a person: a program that wraps the command in a pseudo-terminal can type
@@ -100,7 +100,9 @@ const result = await bootstrapAndTrace({
 });
 
 console.log("Trace URL:", result.urls.blobStatus);
-console.log("Cert hash:", result.certHash);
+console.log("Content hash:", result.contentHash); // --content-hash
+console.log("Submitted base root:", result.rootHash); // chunk Merkle root
+console.log("Cert hash:", result.certHash); // --certificate-hash; absent while pending
 ```
 
 ### Primitives

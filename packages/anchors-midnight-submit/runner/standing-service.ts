@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { closeSync, constants, fstatSync, mkdirSync, openSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, mkdirSync, openSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { knownAuthors, midnightSource, readPrivateFile, rpcOnlySource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { knownAuthors, midnightSource, rpcOnlySource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { openJournal } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { agentDriven, MAINNET_BATCH_AUTHOR_KEYS } from "../src/custody.js";
 import { ensurePrivateDir } from "../src/keys.js";
@@ -15,6 +15,7 @@ import { openWallet, type OperatorWallet } from "../src/wallet.js";
 import { syncWithCheckpoints } from "../src/sync.js";
 import { provingService } from "../src/zk.js";
 import { readCensus } from "./census.js";
+import { readProofStoreKey } from "./publisher.js";
 import { openCensusState } from "./census-state.js";
 import { followerPolicyDigest } from "./follower-block.js";
 import { openFollowerCatchup } from "./follower-catchup.js";
@@ -25,6 +26,7 @@ import { openStandingController } from "./standing-controller.js";
 import { StandingFeeCap } from "./standing-budget.js";
 import { openStandingStatus } from "./standing-status.js";
 import { flushDirectory, readPrivateJson } from "./state.js";
+import { readCheckpointHistory } from "./checkpoint-history.js";
 
 export function parseStandingConfig(value: unknown) {
   const object = (input: unknown, fields: string[]) => {
@@ -101,6 +103,26 @@ export async function runStandingLoops(options: {
   catch (error) { abort.abort(); await Promise.allSettled(jobs); throw error; }
 }
 
+export async function startStandingFollower<T>(options: { catchup: { start(): Promise<T> }; signal: AbortSignal; hold(error: unknown): void; retryMs?: number }): Promise<T> {
+  const retryMs = options.retryMs ?? 5000;
+  if (!Number.isSafeInteger(retryMs) || retryMs < 0 || retryMs > 60_000) throw new Error("Invalid standing startup retry delay");
+  for (;;) {
+    options.signal.throwIfAborted();
+    try { return await options.catchup.start(); }
+    catch (error) {
+      options.signal.throwIfAborted();
+      options.hold(error);
+      if (error instanceof Error && /restart required/i.test(error.message)) throw error;
+      await new Promise<void>(resolve => {
+        const done = () => { clearTimeout(timer); options.signal.removeEventListener("abort", done); resolve(); };
+        const timer = setTimeout(done, retryMs);
+        options.signal.addEventListener("abort", done, { once: true });
+        if (options.signal.aborted) done();
+      });
+    }
+  }
+}
+
 export async function runStandingService(config: ReturnType<typeof parseStandingConfig>) {
   if (config.mode === "anchor" && config.network === "mainnet" && agentDriven()) throw new Error("Agent-driven mainnet anchoring is forbidden");
   const lockPath = config.network === "mainnet" ? join(homedir(), ".local/state/orynq-midnight/runner/execution.lock") : join(config.stateRoot, "execution.lock");
@@ -127,8 +149,17 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
     const initial = authors();
     if (!initial.authors(config.network).some(row => row.key === config.author && row.role === "batch") || (config.network === "mainnet" && !MAINNET_BATCH_AUTHOR_KEYS.includes(config.author))) throw new Error("Standing batch author is not pinned and authorized");
     follower = openFollowerState(join(config.stateRoot, "follower.sqlite"), { network: config.network, genesis: config.genesis, registry: config.registry, author: config.author, policyDigest: followerPolicyDigest(initial.checkpoints(config.network)), runtimeSpecVersion: 1000300 });
+    const advancementFile = join(config.stateRoot, "checkpoint-history.json");
+    if (existsSync(advancementFile)) await follower.retainCheckpointHistory(initial.checkpoints(config.network), readCheckpointHistory(advancementFile));
     status = openStandingStatus(config.stateRoot, { ...follower.scope(), mode: config.mode });
-    const catchup = openFollowerCatchup({ state: follower, node: config.midnightReadRpcUrl, authors, signal: abort.signal });
+    const catchup = openFollowerCatchup({ state: follower, node: config.midnightReadRpcUrl, authors, signal: abort.signal,
+      startupDiagnostic: event => console.log(JSON.stringify({ event: "standing-startup", ...event })) });
+    const startup = () => startStandingFollower({ catchup, signal: abort.signal, hold: error => {
+      const message = error instanceof Error ? error.message : "";
+      const reason = /policy|author|checkpoint/i.test(message) ? "policy" : /clock|stale/i.test(message) ? "warmup" : "source";
+      status!.hold("follower", reason);
+      console.log(JSON.stringify({ event: "standing-startup-hold", reason }));
+    } });
     let controller: ReturnType<typeof openStandingController> | undefined;
     if (config.mode === "anchor") {
       status.phase("wallet-sync");
@@ -139,17 +170,17 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
       if (!record.addresses || Object.keys(record.addresses).sort().join(",") !== "dust,shielded,unshielded" || Object.values(record.addresses).some(address => typeof address !== "string" || !address)) throw new Error("Standing wallet record lacks addresses");
       wallet = await openWallet({ network: config.network, mnemonicFile: config.wallet.mnemonic, endpoints, source, zkDir: config.wallet.zk, stateFile: config.wallet.state, expectedAddresses: record.addresses });
       await syncWithCheckpoints(wallet, { timeoutMs: 180 * 60_000, progressMs: 60_000, checkpointMs: 5 * 60_000, signal: abort.signal, write: line => { status!.phase("wallet-sync"); console.log(line); } });
-      const publication = { network: config.network, targets: config.stores.map(target => ({ url: target.url, apiKey: readPrivateFile(target.keyFile) })) };
+      const publication = { network: config.network, targets: config.stores.map(target => ({ url: target.url, apiKey: readProofStoreKey(target.keyFile) })) };
       census = openCensusState(join(config.stateRoot, "census.sqlite"), config);
       journal = openJournal(join(config.stateRoot, "attempts.sqlite"));
-      const startup = await catchup.start(), session = openStandingSession({ state: follower, verifiedStart: startup, authors });
+      const verifiedStart = await startup(), session = openStandingSession({ state: follower, verifiedStart, authors });
       operator = registryOperator({ network: config.network, wallet, source, prover: provingService(config.wallet.zk), journalPath: join(config.stateRoot, "attempts.sqlite"), chain: follower.chainView(), authorKeyFile: config.wallet.author, authorRole: "batch", registry: config.registry, ttlMinutes: 10 });
       if (operator.authorKey !== config.author) throw new Error("Standing author file differs from the policy scope");
       const censusReader = () => readCensus({ rpcUrl: config.materiosRpcUrl, genesis: config.genesis, signal: abort.signal });
       const delivery = openStandingDelivery({ wallet, follower, session, census, journal, readCensus: censusReader, publication });
       controller = openStandingController({ census, follower, session, delivery, journal, operator, readCensus: censusReader, publication,
         verify: hints => ({ source: rpcOnlySource({ network: config.network, node: config.midnightReadRpcUrl, hints, signal: abort.signal, httpBudget: { requests: 256, bytes: 64 * 1024 * 1024, abort: new AbortController() } }), knownAuthors: authors() }) });
-    } else await catchup.start();
+    } else await startup();
     let previous = "";
     const sample = () => {
       status!.sample(follower!.coverage());

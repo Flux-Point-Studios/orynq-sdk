@@ -1,6 +1,6 @@
 import * as L from "@midnight-ntwrk/ledger-v8";
 import type { MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { assertProofWitness, buildProofCall, isProofGasError, PROOF_MAX_ATTEMPTS, proofStateOnNode, type ProofNetwork, type ProofStatement, type ProofWitness } from "./onchain.js";
+import { assertProofWitness, buildProofCall, proofStateOnNode, type ProofNetwork, type ProofStatement, type ProofWitness } from "./onchain.js";
 import { assertPostedProof } from "./posted.js";
 import { proofProvider } from "./proof-material.js";
 
@@ -37,9 +37,9 @@ export async function post(options: {
         return { txHash: final.transactionHash(), address: options.address, statement };
       } catch (error) {
         // Only an explicit gas rejection permits new bytes; an ambiguous send may have landed.
-        if (!isProofGasError(error)) throw error;
+        if (!(error instanceof Error) || !/\bran out of gas budget\b/.test(error.message)) throw error;
         if (final) await options.wallet.discard(final);
-        if (attempt >= PROOF_MAX_ATTEMPTS) throw error;
+        if (attempt >= 3) throw error;
       }
     }
   } finally {

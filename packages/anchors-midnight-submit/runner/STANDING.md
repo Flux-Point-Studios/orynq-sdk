@@ -1,5 +1,8 @@
 # Hosted standing service
 
+For independently authenticated checkpoint advancement, weekly CI ownership,
+retained-history preservation and rollback, see [checkpoint operations](../../../docs/checkpoints/OPERATIONS.md).
+
 The service composes the authenticated follower, certified census, retained publisher,
 session, journal and controller. It compounds existing SDK receipts by retaining their
 portable proof objects and anchoring canonical certified batch sets to the approved registry.
@@ -40,6 +43,11 @@ service's user, the public wallet `record` and signed author policy included; on
 public parameters are checked by hash, is exempt. The service refuses any other file and names it
 and the reason as it stops.
 
+Each proof store `keyFile` must contain a single ASCII token of 8–4096 non-space printable
+characters (a trailing newline is allowed). Invalid files are refused before publication and
+only their paths are named. Publication errors discard underlying transport messages, which
+can quote HTTP header values.
+
 `genesis` names Materios. The signed author policy supplies Midnight's original finality
 checkpoint. Policy and the compiled mainnet batch-author pin must authorize the configured
 author. Copy the released signed public policy into `knownAuthorsFile`; updates may append
@@ -51,6 +59,11 @@ and catches up under bounded HTTP work. `midnightReadRpcUrl` is an explicit read
 wallet submission and sync continue to use the existing Blockfrost endpoint selection.
 The hosted read proxy keeps the provider credential server-side. Midnight's former public
 mainnet RPC is retired; activate the restricted proxy before using this configuration.
+`standing-startup` journal events record the policy, head, finality and clock phase, elapsed
+milliseconds, HTTP request count and response bytes. Failures report only fixed categories;
+source and integrity failures share a category because both remain refusals. These events
+contain no provider error text or configuration values. Startup keeps its 90-second,
+256-request, 64 MiB response budget and the authenticated clock checks.
 Once caught up, the follower waits sixty seconds between idle polls to amortize read quota
 over several blocks. Successful catch-up continues immediately; source errors retry after
 five seconds. The controller still runs every fifteen seconds and refuses a head older than

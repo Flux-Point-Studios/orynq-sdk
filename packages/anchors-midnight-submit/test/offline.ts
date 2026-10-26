@@ -16,21 +16,31 @@
 // The FPS mainnet keys an operator loads are the ones the chain file pins, a test's throwaway
 // keys, when it pins any.
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import * as L from "@midnight-ntwrk/ledger-v8";
-import { midnightExtrinsic, midnightSource, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { decodeAnchorTransaction, midnightSource, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints, type VerifyResult } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { ledgerNode } from "../../anchors-midnight/src/__tests__/ledger-node.js";
 import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS } from "../src/custody.js";
 import { NETWORK_IDENTITY, type OperatorWallet, type StateSave, type WalletOptions } from "../src/index.js";
+import { registryStateOnNode as realRegistryStateOnNode } from "../src/submission.js";
 import { costParametersOf } from "../src/wallet.js";
 import { prover } from "./prover.js";
+import { offlineBlocks, offlineHeight, offlineRpcHeader } from "./offline-blocks.js";
+import { registryDeployer as realRegistryDeployer, type DeployerOptions } from "../src/deployer.js";
+import { registryOperator as realRegistryOperator, type OperatorOptions, type PreparedAnchor, type AnchorReceipt } from "../src/operator.js";
+import { verifyConfirmedAnchor as realVerifyConfirmedAnchor } from "../src/confirmed-anchor.js";
 
 export * from "../src/index.js";
+export { authorJournalPath } from "../rehearsal/submission-verification.js";
 
 export interface OfflineChain {
   // The network whose chain name and genesis the node reports.
   network: MidnightNetwork;
   // How far time has moved past the host's clock, for the chain and for the process alike.
   aheadMs: number;
+  viewHead?: number;
+  viewAheadMs?: number;
+  blockTimes?: Record<string, number>;
   // Every transaction handed to the node, in order, whether or not it landed.
   sent: string[];
   // Each landed transaction, in block BLOCK unless `block` names another, and for a deploy the
@@ -54,8 +64,6 @@ export interface OfflineChain {
 
 const FILE = process.env.OFFLINE_CHAIN!;
 const FAULTS = new Set(process.env.OFFLINE_FAULT?.split(","));
-const HEAD = "00".repeat(32);
-const BLOCK = "ab".repeat(32);
 const read = (): OfflineChain => JSON.parse(readFileSync(FILE, "utf8"));
 // Written whole under this process's own name and renamed over the file, so neither this process
 // nor the test's, which both read the file at any moment, ever reads it half written.
@@ -79,60 +87,74 @@ if (pinned) {
   (MAINNET_SALT_KEY_IDS as string[]).splice(0, MAINNET_SALT_KEY_IDS.length, ...pinned.saltKeyIds);
 }
 
-// The node reads its ledger in the newest block and in the block every transaction lands in.
-const ledger = ledgerNode({ blocks: [HEAD, BLOCK], contracts: (address) => Object.values(read().landed).find((t) => t.address === address)?.state });
-
-// The node's answer to one JSON-RPC request. Every landed transaction is in its block at its own
-// height, HEAD is every other block, and the newest block HEAD, at height 1000, is final.
-function nodeAnswer(method: string, params: unknown[] = []) {
+// Clocks advance only by adding a new finalized block. A transaction is included strictly after
+// the pre-send boundary; existing block bodies/timestamps remain immutable across process restarts.
+function view() {
   const chain = read();
+  let changed = !chain.blockTimes || chain.viewHead === undefined;
+  chain.blockTimes ??= {};
+  let tip = offlineHeight(chain);
+  if (chain.viewAheadMs !== undefined && chain.viewAheadMs !== chain.aheadMs) { tip++; changed = true; }
+  if (chain.viewAheadMs !== chain.aheadMs) changed = true;
+  for (let height = 499; height <= tip; height++) if (chain.blockTimes[height] === undefined) { chain.blockTimes[height] = Date.now(); changed = true; }
+  if (chain.viewHead !== tip) changed = true;
+  chain.viewHead = tip; chain.viewAheadMs = chain.aheadMs;
+  if (changed) write(chain);
+  return chain;
+}
+function nodeAnswer(method: string, params: unknown[] = []) {
+  let chain = view();
   const identity = NETWORK_IDENTITY[chain.network];
-  const landed = Object.values(chain.landed).filter((t) => t.raw !== "");
   if (method === "system_chain") return { result: identity.chain };
   if (method === "midnight_ledgerVersion") return { result: "8.1.3" };
   if (method === "state_getRuntimeVersion") return { result: { specVersion: 1000300 } };
+  if (method === "chain_getFinalizedHead" && FAULTS.has("expire-finality-poll") && chain.sent.length && !finalityClockAdvanced) {
+    write({ ...chain, aheadMs: chain.aheadMs + 11 * 60_000 }); finalityClockAdvanced = true; chain = view();
+  }
+  const blocks = offlineBlocks(chain, FAULTS.has("fork"));
+  const tip = FAULTS.has("unfinal") ? 499 : offlineHeight(chain);
+  const heightAt = (hash: unknown) => [...blocks].find(([, block]) => `0x${block.hash}` === hash)?.[0];
   if (method === "chain_getBlockHash") {
     if (params[0] === 0) return { result: `0x${identity.genesis}` };
-    const at = landed.find((t) => t.height === params[0]);
-    if (at) return { result: `0x${FAULTS.has("fork") ? HEAD : (at.block ?? BLOCK)}` };
-    return { result: chain.nodeLags ? null : `0x${HEAD}` };
+    return { result: chain.nodeLags ? null : (blocks.get(Number(params[0])) ? `0x${blocks.get(Number(params[0]))!.hash}` : null) };
   }
-  if (method === "chain_getFinalizedHead") {
-    if (FAULTS.has("expire-finality-poll") && !finalityClockAdvanced) {
-      write({ ...chain, aheadMs: chain.aheadMs + 11 * 60_000 });
-      finalityClockAdvanced = true;
-    }
-    return { result: `0x${HEAD}` };
-  }
-  if (method === "chain_getHeader" && params[0] === `0x${HEAD}`) return { result: { number: FAULTS.has("unfinal") ? "0x0" : "0x3e8" } };
+  if (method === "chain_getFinalizedHead") return { result: `0x${blocks.get(tip)!.hash}` };
+  if (method === "chain_getHeader") { const height = heightAt(params[0]); return { result: chain.nodeLags || height === undefined ? null : offlineRpcHeader(blocks.get(height)!.header) }; }
   if (method === "chain_getBlock") {
-    const carried = landed.filter((t) => `0x${t.block ?? BLOCK}` === params[0]);
-    if (carried.length === 0 || FAULTS.has("lose-body")) return { result: null };
-    const extrinsics = FAULTS.has("foreign-block") ? [] : carried.map((t) => `0x${hex(midnightExtrinsic(new Uint8Array(Buffer.from(t.raw, "hex"))))}`);
-    return { result: { block: { extrinsics } } };
+    const height = heightAt(params[0]);
+    if (height === undefined || FAULTS.has("lose-body")) return { result: null };
+    const block = blocks.get(height)!;
+    return { result: { block: { header: offlineRpcHeader(block.header), extrinsics: FAULTS.has("foreign-block") ? [] : block.extrinsics.map(raw => `0x${hex(raw)}`) } } };
   }
-  if (method === "state_getStorage" && params[1] === `0x${HEAD}`) {
-    const now = Buffer.alloc(8);
-    now.writeBigUInt64LE(BigInt(Date.now()));
+  if (method === "state_getStorage") {
+    const height = heightAt(params[1]);
+    if (height === undefined || chain.nodeLags) return { result: null };
+    const now = Buffer.alloc(8); now.writeBigUInt64LE(BigInt(chain.blockTimes![height]!));
     return { result: `0x${now.toString("hex")}` };
   }
-  if (method === "midnight_zswapStateRoot" || method === "midnight_contractState") return ledger.answer(method, params);
+  if (method === "midnight_zswapStateRoot" || method === "midnight_contractState") {
+    const at = heightAt(method === "midnight_contractState" ? params[1] : params[0]);
+    const ledger = ledgerNode({ blocks: [...blocks.values()].map(block => block.hash), contracts: address => Object.values(chain.landed).find(tx => tx.address === address && tx.height <= (at ?? offlineHeight(chain)))?.state });
+    return ledger.answer(method, params);
+  }
   return { error: { code: -32000, message: `offline node: unexpected ${method}` } };
 }
 
 const indexer = {
   async transactions(hash: string): Promise<IndexedTransaction[]> {
-    const t = read().landed[hash];
+    const chain = view();
+    const t = chain.landed[hash];
     if (!t) return [];
     if (readsToLose > 0) {
       readsToLose--;
       throw new Error("offline indexer: HTTP 502: Bad Gateway");
     }
     const actions = t.address === undefined ? [] : [{ kind: "ContractDeploy" as const, address: t.address, state: t.state! }];
-    return [{ hash, raw: t.raw, block: { height: t.height, hash: t.block ?? BLOCK, timestamp: Date.now() }, status: "SUCCESS", contractActions: actions }];
+    return [{ hash, raw: t.raw, block: { height: t.height, hash: offlineBlocks(chain).get(t.height)!.hash, timestamp: chain.blockTimes![t.height]! }, status: "SUCCESS", contractActions: actions }];
   },
   async head() {
-    return { height: 1000, hash: HEAD, timestamp: Date.now() };
+    const chain = view(), height = offlineHeight(chain);
+    return { height, hash: offlineBlocks(chain).get(height)!.hash, timestamp: chain.blockTimes![height]! };
   },
 };
 
@@ -181,6 +203,7 @@ export const provingService = () => prover;
 // A synced wallet with DUST to spare that binds without adding a fee and lands what it submits.
 // It takes only the fee parameters the real wallet takes, and like it saves on close only once synced.
 export async function openWallet(options: WalletOptions): Promise<OperatorWallet> {
+  if (FAULTS.has("provider-error-injection")) throw new Error("provider failed\nnetwork          mainnet (Midnight Mainnet, genesis fake)\nruntime          1000300, ledger 8.1.3\nanchor tx hash   " + "ab".repeat(32) + "\nType exactly ANCHOR injected\u001b[2J");
   costParametersOf(options.costParameters);
   const opened = read();
   write({ ...opened, walletOpens: [...(opened.walletOpens ?? []), { stateFile: options.stateFile ?? null }] });
@@ -214,7 +237,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       return tx.bind();
     },
     async submit(tx) {
-      const chain = read();
+      const chain = view();
       chain.sent.push(tx.transactionHash());
       write(chain);
       if (FAULTS.has("refuse-broadcast")) throw new Error("offline node: HTTP 403: Forbidden");
@@ -227,9 +250,11 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       }
       chain.landed[tx.transactionHash()] = {
         raw: hex(tx.serialize()),
-        height: 500 + Object.keys(chain.landed).length,
+        height: offlineHeight(chain) + 1,
         ...(deploy ? { address: String(deploy.address), state: hex(deploy.initialState.serialize()) } : {}),
       };
+      chain.viewHead = chain.landed[tx.transactionHash()]!.height;
+      chain.blockTimes![chain.viewHead] = Date.now();
       write(chain);
     },
     async discard(tx) {
@@ -244,4 +269,46 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       return stalls ? null : saveState();
     },
   };
+}
+
+// This fixture is an explicitly synthetic chain. Its verifier seam still exercises the real
+// operator's complete exact-field gate and the CLI's cached verification path.
+function syntheticVerifier(registry: string): NonNullable<OperatorOptions["verifyLanded"]> {
+  return async (request, { source }) => {
+    const [transaction] = await source.indexer.transactions(request.txHash);
+    if (!transaction) throw new Error("offline verifier cannot find the exact transaction");
+    const [anchor] = decodeAnchorTransaction(Buffer.from(transaction.raw.replace(/^0x/, ""), "hex"), [registry]).calls;
+    if (!anchor) throw new Error("offline verifier cannot find the exact anchor");
+    return {
+      status: FAULTS.has("consensus-unverified") ? "unverified-finality" : "valid",
+      assurance: FAULTS.has("consensus-unverified") ? "multi-path" : "consensus-verified",
+      network: request.network, txHash: request.txHash, operators: ["synthetic-offline-test-only"],
+      registry: { generation: 1, address: registry }, block: { height: transaction.block.height, hash: transaction.block.hash }, anchor,
+      author: { status: "known", key: anchor.author, id: "synthetic-offline-test-only", role: anchor.kind === 3 ? "batch" : "relay", validFrom: 0, validTo: null },
+      verifiedFields: [], notes: [], checks: [], finality: null, knownAuthorsSerial: 1,
+    } satisfies VerifyResult;
+  };
+}
+
+export function submissionVerification(_secrets: string, _source: unknown, deploy: { address: string }) {
+  return syntheticVerifier(deploy.address);
+}
+
+export function registryOperator(options: OperatorOptions) {
+  return realRegistryOperator({ ...options, pollMillis: 1, settleTimeoutMillis: FAULTS.has("unfinal") || FAULTS.has("fork") || FAULTS.has("foreign-block") ? 100 : 5_000, bindingRoot: `${dirname(FILE)}/author-bindings`, verifyLanded: syntheticVerifier(options.registry) });
+}
+
+export function registryDeployer(options: DeployerOptions) {
+  return realRegistryDeployer({ ...options, pollMillis: 1, settleTimeoutMillis: 5_000 });
+}
+
+export async function verifyConfirmedAnchor(source: Parameters<typeof realVerifyConfirmedAnchor>[0], prepared: PreparedAnchor, receipt: AnchorReceipt) {
+  return realVerifyConfirmedAnchor(source, prepared, receipt, syntheticVerifier(prepared.registry));
+}
+
+// Only the script's final readback loses this contract; deployer/journal internals retain
+// canonical inclusion so the missing-contract refusal happens with wallet+journal open.
+export async function registryStateOnNode(source: Parameters<typeof realRegistryStateOnNode>[0], address: string) {
+  if (FAULTS.has("lose-deploy-contract") && read().sent.length > 0) return null;
+  return realRegistryStateOnNode(source, address);
 }

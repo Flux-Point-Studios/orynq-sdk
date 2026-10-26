@@ -22,7 +22,7 @@ const client = (httpSignal?: AbortSignal) => midnightSource({ operator: "fixture
 it("rejects a pre-aborted HTTP request without sending it or exposing the abort reason", async () => {
   const abort = new AbortController(); abort.abort("fixture-sensitive-abort-reason");
   const result = await client(abort.signal).node.call("system_chain").catch(error => error);
-  expect(result).toBeInstanceOf(Error); expect(result.message).toMatch(/unavailable|abort/i);
+  expect(result).toBeInstanceOf(Error); if (!(result instanceof Error)) throw new Error("Expected cancellation failure"); expect(result.message).toMatch(/unavailable|abort/i);
   expect(result.message).not.toContain("fixture-sensitive-abort-reason"); expect(requests).toBe(0);
 });
 

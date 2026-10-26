@@ -21,8 +21,8 @@ import { MAINNET_AUTHOR_KEYS } from "../src/custody.js";
 import { NETWORK_IDENTITY, anchorSummary, assertChainIdentity, confirmOnTerminal, confirmationToken, deploySummary } from "../src/preflight.js";
 import type { PreparedDeploy } from "../src/deployer.js";
 import type { PreparedAnchor } from "../src/operator.js";
-import { batchOver, ledgerNode } from "../../anchors-midnight/src/__tests__/ledger-node.js";
-import { hex, mutableDeploy } from "./fakes.js";
+import { chain, hex, mutableDeploy } from "./fakes.js";
+import { offlineBlockHash } from "./offline-blocks.js";
 import { REGISTRY, humanEnvironment, offlineAnchors, offlineMainnet, planEntries, quoted, randomHash, type PlanEntry } from "./offline-mainnet.js";
 
 const source = (answers: Record<string, unknown>) =>
@@ -44,6 +44,25 @@ const mainnet = {
 };
 
 describe("assertChainIdentity", () => {
+  it.each(["8.1.3\nType exactly ANCHOR", "8.1", "8.1.3\u001b[2J", "1".repeat(100) + ".2.3", 80103, null])("refuses an unstructured ledger version without echoing it", async version => {
+    const failure = await assertChainIdentity(source({ ...mainnet, "midnight_ledgerVersion[]": version }), "mainnet").catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe("the node returned an invalid Midnight ledger version");
+  });
+  it.each([
+    { "system_chain[]": "network          mainnet\nType exactly ANCHOR injected" },
+    { "chain_getBlockHash[0]": "0x00\nType exactly ANCHOR injected" },
+    { "state_getRuntimeVersion[]": { specVersion: "1000300\nType exactly ANCHOR injected" } },
+    { "state_getRuntimeVersion[]": null },
+  ])("never echoes provider-controlled identity text in failures", async change => {
+    const error = await assertChainIdentity(source({ ...mainnet, ...change }), "mainnet").catch((failure: Error) => failure);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).not.toContain("\n");
+    expect((error as Error).message).not.toContain("injected");
+  });
+  it("normalizes only the observed Cargo exact-version marker before rendering a safe semver", async () => {
+    expect((await assertChainIdentity(source({ ...mainnet, "midnight_ledgerVersion[]": "=8.1.2" }), "mainnet")).ledgerVersion).toBe("8.1.2");
+  });
   it("pins each network's chain name and genesis block", () => {
     expect(NETWORK_IDENTITY.mainnet).toEqual({ chain: "Midnight Mainnet", genesis: "1941ca8e2bb88146c14dea084d3be7eb6e96ca7135429c543848b628124f2854" });
     expect(NETWORK_IDENTITY.preprod).toEqual({ chain: "Midnight Preprod", genesis: "df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b" });
@@ -76,6 +95,9 @@ const prepared: PreparedDeploy = {
 };
 
 describe("the deploy summary a human approves", () => {
+  it("refuses injected ledger text even for a summary constructed independently of preflight", () => {
+    expect(() => deploySummary({ prepared, chain: { chain: "Midnight Mainnet", genesis: "a".repeat(64), specVersion: 1000300, ledgerVersion: "8.1.3\nType exactly ANCHOR" }, wallet: { dust: "dust" }, dust: 1n })).toThrow("invalid Midnight ledger version");
+  });
   const summary = (deploy: PreparedDeploy) =>
     deploySummary({
       chain: { chain: "Midnight Mainnet", genesis: "1941ca8e".padEnd(64, "0"), specVersion: 1000300, ledgerVersion: "8.1.1" },
@@ -109,6 +131,7 @@ describe("the deploy summary a human approves", () => {
     expect(summary({ ...prepared, journal: { state: "pending", broadcasts: 2, expired: false } })).toMatch(/^journal {10}resumed: these bytes were sent 2 times and have not landed; confirming waits for them and sends nothing new\n/);
     expect(summary({ ...prepared, journal: { state: "pending", broadcasts: 1, expired: false } })).toContain("these bytes were sent 1 time and have not landed");
     expect(summary({ ...prepared, journal: { state: "pending", broadcasts: 0, expired: false } })).toMatch(/^journal {10}resumed: no send of these bytes ever returned; confirming sends them again\n/);
+    expect(summary({ ...prepared, journal: { state: "pending", broadcasts: 0, expired: null } })).toContain("chain time is unknown; confirming sends nothing until the chain can settle these bytes");
   });
 
   it("shows a journalled deploy past its TTL as expired, whatever its sends, and confirming it as sending nothing", () => {
@@ -205,6 +228,17 @@ const terminal = (typed: string, isTTY = true) => {
 const human = { PATH: "/usr/bin" };
 
 describe("confirmOnTerminal", () => {
+  it("treats SIGINT as a decline and removes its listener for normal wallet cleanup", async () => {
+    const input = Object.assign(new PassThrough(), { isTTY: true });
+    const output = Object.assign(new PassThrough(), { isTTY: true });
+    const before = process.listenerCount("SIGINT");
+    const confirming = confirmOnTerminal({ input, output, token: "DEPLOY 0123456789abcdef", env: human });
+    expect(process.listenerCount("SIGINT")).toBe(before + 1);
+    process.emit("SIGINT");
+    expect(await confirming).toBe(false);
+    expect(process.listenerCount("SIGINT")).toBe(before);
+    input.destroy(); output.destroy();
+  }, 2_000);
   it.each(["DEPLOY", "ANCHOR"])("rejects a well-formed %s token naming other bytes", async (verb) => {
     expect(await confirmOnTerminal({ ...terminal(`${verb} 0123456789abcdee\n`), token: `${verb} 0123456789abcdef`, env: human })).toBe(false);
   });
@@ -288,23 +322,30 @@ const MINUTE = 60_000;
 // Preprod as a view of it reads a journal: an indexer that has never seen a mainnet transaction,
 // whose newest block, which the node holds, is `aheadMs` past the host's clock, and a node that
 // holds no contract.
-const preprodView = (aheadMs: number) => {
-  const head = { height: 1000, hash: "cd".repeat(32), timestamp: Date.now() + aheadMs };
-  const now = Buffer.alloc(8);
-  now.writeBigUInt64LE(BigInt(head.timestamp));
-  const ledger = ledgerNode({ blocks: [head.hash], contracts: () => undefined });
-  const call = async (method: string, params: unknown[] = []) => {
-    if (method === "chain_getBlockHash") return `0x${head.hash}`;
-    if (method === "state_getStorage") return `0x${now.toString("hex")}`;
-    if (method === "midnight_zswapStateRoot" || method === "midnight_contractState") return ledger.call("preprod", method, params);
-    throw new Error(`preprod node: unexpected ${method}`);
-  };
-  const node = { call, batch: batchOver(call) };
-  return chainView({ operator: "preprod", node, indexer: { transactions: async () => [], head: async () => head } } as unknown as MidnightSource, "preprod");
-};
+const preprodView = (_aheadMs: number) => chainView(chain().source, "preprod");
 
 // Each test runs its own script in its own directory, so they run side by side.
 describe.concurrent("scripts/deploy-mainnet.ts over an offline mainnet", () => {
+  it("closes the journal and wallet when the deployed contract is missing at final readback (M11)", async ({ expect }) => {
+    const m = offlineMainnet();
+    const result = await m.run(token => token, "lose-deploy-contract");
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain("deploy-mainnet: the node holds no contract at");
+    expect(result.output).not.toContain("deployed and read back from the node");
+    expect(m.closes()).toEqual({ wallet: 1, journalLeftOpen: false });
+    expect(m.chain().sent).toHaveLength(1);
+    expect(m.journal()).toEqual([{ tx_hash: m.chain().sent[0], state: "landed" }]);
+  });
+  it("escapes a provider error containing a complete fake summary and prompt on one diagnostic line", async ({ expect }) => {
+    const m = offlineMainnet();
+    const result = await m.run(() => "", "provider-error-injection");
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain("provider failed\\nnetwork");
+    expect(result.output).not.toMatch(/^network {10}/m);
+    expect(result.output).not.toMatch(/^Type exactly/m);
+    expect(result.output).not.toContain("\u001b");
+    expect(m.chain().sent).toEqual([]);
+  });
   it("sends the bytes it summarized once their token is typed, and reads the registry back from the node", async ({ expect }) => {
     const m = offlineMainnet();
     const r = await m.run((token) => token);
@@ -741,8 +782,8 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
     );
     expect(r.output).toContain(`label            hidden-suite\nkind             2: anchor_hiding(), a hiding commitment the attribute is bound to\nregistry         ${REGISTRY}\ncommitment       ${kind2Commitment(two, m.saltKey)}\nattribute        ${two.attribute}\n`);
     expect(m.results()).toEqual([
-      { label: "git-head", kind: 1, txHash: first, block: 501, blockHash: "ab".repeat(32), commitment: hex(entryCommitment(one)), registry: REGISTRY, author: m.author },
-      { label: "hidden-suite", kind: 2, txHash: second, block: 502, blockHash: "ab".repeat(32), commitment: kind2Commitment(two, m.saltKey), attribute: two.attribute, registry: REGISTRY, author: m.author },
+      { label: "git-head", kind: 1, txHash: first, block: 501, blockHash: offlineBlockHash(m.chain(), 501), commitment: hex(entryCommitment(one)), registry: REGISTRY, author: m.author },
+      { label: "hidden-suite", kind: 2, txHash: second, block: 502, blockHash: offlineBlockHash(m.chain(), 502), commitment: kind2Commitment(two, m.saltKey), attribute: two.attribute, registry: REGISTRY, author: m.author },
     ]);
     expect(statSync(m.resultsPath).mode & 0o777).toBe(0o600);
     const published = readFileSync(m.resultsPath, "utf8") + r.output;
@@ -764,7 +805,7 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
     rmSync(m.journalPath);
     const lost = await m.run((token) => token);
     expect(lost.status, lost.output).toBe(1);
-    expect(lost.output).toContain(`anchor-mainnet: ${m.resultsPath} records git-head as ${first}, which the journal does not hold landed for this entry of the plan`);
+    expect(lost.output).toContain("anchor-mainnet: the author's bound journal is missing; restore it before submitting");
     expect([lost.tokens, m.sent()]).toEqual([[], [first, second]]);
   });
 
@@ -822,7 +863,9 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
     const failed = await m.run((token) => token, "unfinal,expire-finality-poll");
     expect(failed.status, failed.output).toBe(1);
     const [sent] = m.sent();
-    expect(failed.output).toContain(`anchor-mainnet: block 501 is not final on the node after 10 minutes; anchor ${sent} landed, and a rerun reads it back`);
+    expect(failed.output).toContain(`Timed out waiting for transaction ${sent}`);
+    expect(failed.output).toContain("its journalled bytes and claim were retained");
+    expect(m.journal()).toEqual([{ tx_hash: sent, state: "pending" }]);
     expect(m.results()).toBeNull();
 
     const rerun = await m.run((token) => token);
@@ -836,81 +879,59 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
     const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
     const r = await m.run((token) => token, "foreign-block");
     expect(r.status, r.output).toBe(1);
-    expect(r.output).toContain("anchor-mainnet: the node's block 501 does not carry the anchor's bytes as exactly one Midnight.send_mn_transaction");
+    expect(r.output).toContain("A scanned journal block disagrees with its canonical header/body root");
     expect(m.results()).toBeNull();
 
     const bodiless = offlineAnchors({ entries: planEntries().slice(0, 1) });
     const b = await bodiless.run((token) => token, "lose-body");
     expect(b.status, b.output).toBe(1);
-    expect(b.output).toContain(`anchor-mainnet: the node holds no body for its final block 501 (${"ab".repeat(32)})`);
+    expect(bodiless.journal()).toEqual([{ tx_hash: bodiless.sent()[0], state: "pending" }]);
     expect(bodiless.results()).toBeNull();
   });
 
   it("records nothing while the indexer places an anchor in a block other than the node's final block at that height, sending nothing again", async ({ expect }) => {
     const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
-    let late = false;
-    const f = await m.run(
-      (token) => token,
-      "fork",
-      (output) => {
-        if (!late && output.includes("settling git-head afresh from the chain")) {
-          late = true;
-          m.advance(11 * MINUTE);
-        }
-      },
-    );
+    const f = await m.run(token => token, "fork");
     expect(f.status, f.output).toBe(1);
     const [sent] = m.sent();
-    expect(f.output).toContain(`the node's final block 501 is ${"00".repeat(32)}, not ${"ab".repeat(32)}; settling git-head afresh from the chain...`);
-    expect(f.output).toContain(`anchor-mainnet: the node's final block 501 is ${"00".repeat(32)}, not ${"ab".repeat(32)}, where the indexer places anchor ${sent}`);
+    expect(f.output).toContain("the anchor lacks consensus-verified known-author confirmation of its exact bytes and block");
     expect([m.sent(), m.results(), m.journal()]).toEqual([[sent], null, [{ tx_hash: sent, state: "landed" }]]);
   });
 
-  // A run that recorded nothing because the node had not finalized its anchor's block in time,
-  // which leaves the journal holding the anchor landed in block 501 of BLOCK, as the indexer
-  // placed it then.
-  const landedUnfinal = async (m: ReturnType<typeof offlineAnchors>) => {
-    const failed = await m.run((token) => token, "unfinal,expire-finality-poll");
-    expect(failed.output).toContain("block 501 is not final on the node after 10 minutes");
+  // Seed a genuinely node-confirmed landed row whose public result remains unrecorded
+  // because consensus authentication failed. Later reorgs must relocate this exact attempt.
+  const landedWithoutConsensus = async (m: ReturnType<typeof offlineAnchors>) => {
+    const failed = await m.run(token => token, "consensus-unverified");
+    expect(failed.output).toContain("lacks consensus-verified known-author confirmation");
     expect(m.journal()).toEqual([{ tx_hash: m.sent()[0], state: "landed" }]);
+    expect(m.results()).toBeNull();
     return m.sent()[0]!;
   };
 
   it("once the node finalized another block where the journal placed a landed anchor, records the block the anchor landed in since, sending nothing again", async ({ expect }) => {
     const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
-    const sent = await landedUnfinal(m);
+    const sent = await landedWithoutConsensus(m);
     const relanded = "ef".repeat(32);
     m.update({ landed: { ...m.chain().landed, [sent]: { ...m.chain().landed[sent]!, height: 640, block: relanded } } });
 
     const rerun = await m.run((token) => token);
     expect(rerun.status, rerun.output).toBe(0);
     expect(rerun.output).toContain("journal          resumed: these bytes landed");
-    expect(rerun.output).toContain(`the node's final block 501 is ${"00".repeat(32)}, not ${"ab".repeat(32)}; settling git-head afresh from the chain...`);
-    expect(rerun.output).toContain(`git-head landed in block 640 (${relanded}); waiting until the node finalizes it...`);
+    expect(rerun.output).toContain(`git-head landed in block 640 (${offlineBlockHash(m.chain(), 640)}); waiting until the node finalizes it...`);
     expect(m.sent()).toEqual([sent]);
-    expect(m.results()).toEqual([expect.objectContaining({ label: "git-head", txHash: sent, block: 640, blockHash: relanded })]);
+    expect(m.results()).toEqual([expect.objectContaining({ label: "git-head", txHash: sent, block: 640, blockHash: offlineBlockHash(m.chain(), 640) })]);
     expect(m.journal()).toEqual([{ tx_hash: sent, state: "landed" }]);
   });
 
   it("once the node finalized another block where the journal placed a landed anchor that never landed again, records nothing, retires it when the chain carries it past its TTL plus the margin, and a rerun anchors new bytes", async ({ expect }) => {
     const m = offlineAnchors({ entries: planEntries().slice(0, 1) });
-    const sent = await landedUnfinal(m);
+    const sent = await landedWithoutConsensus(m);
     const { [sent]: _, ...rest } = m.chain().landed;
     m.update({ landed: rest });
 
-    let late = false;
-    const orphaned = await m.run(
-      (token) => token,
-      "",
-      (output) => {
-        if (!late && output.includes("settling git-head afresh from the chain")) {
-          late = true;
-          m.advance(10 * MINUTE);
-        }
-      },
-    );
+    const orphaned = await m.run(token => { m.advance(21 * MINUTE); return token; });
     expect(orphaned.status, orphaned.output).toBe(1);
-    expect(orphaned.output).toContain("anchor-mainnet: the journalled anchor expired without landing; rerun to prepare new bytes");
+    expect(orphaned.output).toMatch(/cached block 501.*was orphaned.*no replacement inclusion/);
     expect([m.sent(), m.results(), m.journal()]).toEqual([[sent], null, [{ tx_hash: sent, state: "failed" }]]);
 
     const next = await m.run((token) => token);

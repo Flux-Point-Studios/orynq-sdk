@@ -27,6 +27,7 @@ export interface FakeTool {
   chain?: Partial<ChainFacts>;
   payer?: string;
   fee?: string;
+  ttl?: string;
   // The deploy's transaction in each run, the last one for every run after.
   txHashes?: string[];
   journal?: PreparedBytes["journal"];
@@ -52,7 +53,7 @@ if (run <= (fake.syncFailures ?? 0)) {
 const bytes: Omit<PreparedBytes, "txHash"> = {
   network: "mainnet",
   bytes: new Uint8Array(8142),
-  ttl: new Date(Date.now() + 15 * 60_000),
+  ttl: new Date(fake.ttl ?? Date.now() + 15 * 60_000),
   declaredFee: BigInt(fake.fee ?? "2"),
   payer: fake.payer ?? "mn_addr1hdg7gg557cwmd9v67jv37z38zvprt7d46xqhk7c4a7hfask6jwrs7qesvq",
   ...(fake.journal ? { journal: fake.journal } : {}),

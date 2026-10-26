@@ -1,9 +1,26 @@
-import { headerFromRpc, headerHash, rpcOnlySource, type BlockRef, type KnownAuthors, type RpcHeader } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { DEFAULT_MAX_SET_CHANGES, headerFromRpc, headerHash, rpcOnlySource, type BlockRef, type KnownAuthors, type RpcHeader } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { followerPolicyDigest, openFollowerReader, type FollowerBlock } from "./follower-block.js";
 import type { openFollowerState } from "./follower-state.js";
 import { assertStandingFreshClock } from "./standing-clock.js";
 
-export function openFollowerCatchup(options: { state: ReturnType<typeof openFollowerState>; node: string; authors: () => KnownAuthors; signal?: AbortSignal; clock?: () => { wallTime: number; monotonicMillis: number } }) {
+export interface FollowerStartupDiagnostic {
+  phase: "policy" | "head" | "finality" | "clock";
+  outcome: "start" | "success" | "failure";
+  category: "cancelled" | "deadline" | "request-budget" | "byte-budget" | "policy" | "clock" | "source-or-integrity" | null;
+  elapsedMs: number;
+  requests: number;
+  responseBytes: number;
+}
+
+export function followerStartupBudget(distance: number) {
+  if (!Number.isSafeInteger(distance) || distance < 0) throw new Error("Invalid follower checkpoint distance");
+  // Each set-change batch can need proof, header and resync requests. Startup gets its own
+  // distance-sized allowance; ordinary catch-up turns retain 90 s / 256 requests / 64 MiB.
+  const batches = Math.ceil(Math.min(DEFAULT_MAX_SET_CHANGES, Math.max(1, Math.ceil(distance / 300))) / 32);
+  return { requests: 256 + batches * 8, timeoutMs: Math.min(45 * 60_000, 90_000 + batches * 48_000) };
+}
+
+export function openFollowerCatchup(options: { state: ReturnType<typeof openFollowerState>; node: string; authors: () => KnownAuthors; signal?: AbortSignal; clock?: () => { wallTime: number; monotonicMillis: number }; startupDiagnostic?: (event: FollowerStartupDiagnostic) => void }) {
   const { state, signal } = options, scope = state.scope(), loadAuthors = options.authors;
   const clock = options.clock ?? (() => ({ wallTime: Date.now(), monotonicMillis: performance.now() }));
   const initial = loadAuthors(), checkpoints = initial.checkpoints(scope.network), day = 86_400_000, maximumBytes = 64 * 1024 * 1024;
@@ -16,17 +33,25 @@ export function openFollowerCatchup(options: { state: ReturnType<typeof openFoll
     pending.add(operation); operation.then(() => pending.delete(operation), () => pending.delete(operation)); return operation;
   }
   source.node = { call: (method, params) => track(original.call(method, params)), batch: calls => track(original.batch(calls)) };
-  const reader = openFollowerReader({ source, checkpoints });
+  const reader = openFollowerReader({ source, checkpoints, advances: state.checkpointHistory() });
   let active = false, startup: FollowerBlock | null = null, candidate: number | null = null, distance = 14_400;
   let fatal: Error | null = null;
   let rememberedAuthors = initial;
   let rememberedHead = state.head();
-  async function turn<T>(run: () => Promise<T>) {
+  let requestLimit = 256;
+  async function turn<T>(run: (resize: (limits: { requests: number; timeoutMs: number }) => void) => Promise<T>) {
     if (fatal) throw fatal;
     if (active) throw new Error("Follower turn is already active"); active = true;
-    budget.requests = 256; budget.bytes = maximumBytes; budget.abort = new AbortController();
-    const timer = setTimeout(() => budget.abort.abort("turn-deadline"), 90_000);
-    try { signal?.throwIfAborted(); return await run(); }
+    requestLimit = 256; budget.requests = requestLimit; budget.bytes = maximumBytes; budget.abort = new AbortController();
+    const began = performance.now();
+    let timer = setTimeout(() => budget.abort.abort("turn-deadline"), 90_000);
+    const resize = (limits: { requests: number; timeoutMs: number }) => {
+      const used = requestLimit - budget.requests;
+      if (limits.requests < used || limits.requests > 768 || limits.timeoutMs < 90_000 || limits.timeoutMs > 45 * 60_000) throw new Error("Invalid follower startup allowance");
+      requestLimit = limits.requests; budget.requests = requestLimit - used;
+      clearTimeout(timer); timer = setTimeout(() => budget.abort.abort("turn-deadline"), Math.max(1, limits.timeoutMs - (performance.now() - began)));
+    };
+    try { signal?.throwIfAborted(); return await run(resize); }
     finally { clearTimeout(timer); budget.abort.abort("turn-complete"); await Promise.allSettled([...pending]); active = false; }
   }
   function policy() {
@@ -56,12 +81,32 @@ export function openFollowerCatchup(options: { state: ReturnType<typeof openFoll
   }
   return {
     async start() {
-      return turn(async () => {
-        if (startup) throw new Error("Follower startup was already captured"); policy();
-        const hint = await reference(await source.node.call("chain_getFinalizedHead"));
-        const verified = await probe(hint.ref, hint.parentHash); policy();
-        assertStandingFreshClock({ ...clock(), chainTime: verified.timestamp });
-        startup = structuredClone(verified); return verified;
+      return turn(async resize => {
+        if (startup) throw new Error("Follower startup was already captured");
+        const started = performance.now();
+        let phase: FollowerStartupDiagnostic["phase"] = "policy";
+        // Only fixed categories and local counters leave this boundary, never provider errors,
+        // file contents, endpoint URLs or policy values. Work and freshness limits stay intact.
+        const report = (outcome: FollowerStartupDiagnostic["outcome"], category: FollowerStartupDiagnostic["category"] = null) => options.startupDiagnostic?.({
+          phase, outcome, category, elapsedMs: Math.min(86_400_000, Math.max(0, Math.floor(performance.now() - started))),
+          requests: requestLimit - budget.requests, responseBytes: maximumBytes - budget.bytes,
+        });
+        const enter = (next: typeof phase) => { phase = next; report("start"); };
+        try {
+          enter("policy"); policy();
+          enter("head"); const hint = await reference(await source.node.call("chain_getFinalizedHead"));
+          const nearest = Math.max(...checkpoints.filter(row => row.startsAfter.height < hint.ref.height).map(row => row.startsAfter.height));
+          if (!Number.isSafeInteger(nearest)) throw new Error("Follower startup lacks an earlier pinned checkpoint");
+          resize(followerStartupBudget(hint.ref.height - nearest));
+          enter("finality"); const verified = await probe(hint.ref, hint.parentHash);
+          enter("policy"); policy();
+          enter("clock"); assertStandingFreshClock({ ...clock(), chainTime: verified.timestamp });
+          startup = structuredClone(verified); report("success"); return verified;
+        } catch (error) {
+          const reason = budget.abort.signal.reason;
+          report("failure", signal?.aborted ? "cancelled" : reason === "turn-deadline" ? "deadline" : reason === "request-budget" || reason === "byte-budget" ? reason : phase === "policy" ? "policy" : phase === "clock" ? "clock" : "source-or-integrity");
+          throw error;
+        }
       });
     },
     async turn() {

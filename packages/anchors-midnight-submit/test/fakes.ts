@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { SyncProgress } from "@midnight-ntwrk/wallet-sdk-abstractions";
-import { buildRegistryDeploy, registryInitialState, type IndexedTransaction, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { buildRegistryDeploy, registryInitialState, headerHash, midnightExtrinsic, orderedTrieRoot, type BlockHeader, type IndexedTransaction, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { batchOver, ledgerNode, type NodeVersion } from "../../anchors-midnight/src/__tests__/ledger-node.js";
 import { prover } from "./prover.js";
 
@@ -42,30 +42,41 @@ export const deployed = (() => {
 // node's finalized chain reaches that newest block, at height 1000, and holds each landed
 // transaction's block at its height and an anchorless block at every other; `reorg` moves a
 // landed transaction to another block, or off the chain, as a reorg that orphans its block does.
-export function chain({ spec = 1000300, state = deployed.state, node = "2.1.0" }: { spec?: number; state?: L.ContractState; node?: NodeVersion } = {}) {
+export function chain({ spec = 1000300, state = deployed.state, node = "2.1.0", network = "preprod" }: { spec?: number; state?: L.ContractState; node?: NodeVersion; network?: "mainnet" | "preprod" } = {}) {
   const landed = new Map<string, IndexedTransaction>();
   let lags = false;
   const contracts = new Map([[deployed.address, state]]);
-  const HEAD = "00".repeat(32);
-  const ledger = ledgerNode({
-    blocks: [HEAD],
-    contracts: (address) => {
-      const held = contracts.get(address);
-      return held && hex(held.serialize());
-    },
-    version: node,
-  });
+  let tip = 499;
+  let blocks = new Map<number, { hash: string; header: BlockHeader; extrinsics: Uint8Array[] }>();
+  const times = new Map<number, number>([[499, Date.now()]]);
+  const rebuild = () => {
+    if (blocks.size) return;
+    let parent = "0f".repeat(32);
+    for (let height = 499; height <= tip; height++) {
+      const txs = [...landed.values()].filter(tx => tx.block.height === height);
+      const extrinsics = txs.map(tx => midnightExtrinsic(Buffer.from(tx.raw, "hex")));
+      const header: BlockHeader = { parentHash: Buffer.from(parent, "hex"), number: height, stateRoot: Buffer.alloc(32, height % 251), extrinsicsRoot: orderedTrieRoot(extrinsics), digest: [] };
+      const hash = hex(headerHash(header)); blocks.set(height, { hash, header, extrinsics }); parent = hash;
+    }
+  };
+  const blockAt = (height: number) => { rebuild(); const block = blocks.get(height); if (!block) throw new Error(`missing synthetic block ${height}`); return block; };
+  const rpcHeader = (header: BlockHeader) => ({ parentHash: `0x${hex(header.parentHash)}`, number: `0x${header.number.toString(16)}`, stateRoot: `0x${hex(header.stateRoot)}`, extrinsicsRoot: `0x${hex(header.extrinsicsRoot)}`, digest: { logs: [] } });
+  const heightOf = (at: unknown) => { rebuild(); return [...blocks].find(([, block]) => `0x${block.hash}` === at)?.[0]; };
+  const pushHead = (height: number) => { const now = Date.now(); for (let h = tip + 1; h <= height; h++) times.set(h, now); tip = height; blocks = new Map(); };
+  const heldAt = (at: unknown[]) => !at.length || heightOf(at[0]) !== undefined;
   const call = async (method: string, params: unknown[] = []) => {
     if (method === "state_getRuntimeVersion") return { specVersion: spec };
-    if (method === "midnight_zswapStateRoot" || method === "midnight_contractState") return ledger.call("test", method, params);
-    if (method === "chain_getBlockHash" && params[0] === 1000) return lags ? null : `0x${HEAD}`;
-    if (method === "chain_getBlockHash") return `0x${[...landed.values()].find((t) => t.block.height === params[0])?.block.hash ?? "0f".repeat(32)}`;
-    if (method === "chain_getFinalizedHead") return `0x${HEAD}`;
-    if (method === "chain_getHeader" && params[0] === `0x${HEAD}`) return { number: "0x3e8" };
-    if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && params[1] === `0x${HEAD}`) {
-      const now = Buffer.alloc(8);
-      now.writeBigUInt64LE(BigInt(Date.now()));
-      return `0x${now.toString("hex")}`;
+    if (method === "midnight_zswapStateRoot" || method === "midnight_contractState") {
+      const nodeLedger = ledgerNode({ blocks: [...(rebuild(), blocks.values())].map(block => block.hash), contracts: address => { const held = contracts.get(address); return held && hex(held.serialize()); }, version: node });
+      return nodeLedger.call("test", method, params);
+    }
+    if (method === "chain_getBlockHash" && params[0] === 0) return network === "mainnet" ? "0x1941ca8e2bb88146c14dea084d3be7eb6e96ca7135429c543848b628124f2854" : "0xdf831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b";
+    if (method === "chain_getBlockHash") return `0x${blockAt(params[0] as number).hash}`;
+    if (method === "chain_getFinalizedHead") return `0x${blockAt(tip).hash}`;
+    if (method === "chain_getHeader") { const h = heightOf(params[0]); return lags || h === undefined ? null : rpcHeader(blockAt(h).header); }
+    if (method === "chain_getBlock") { const h = heightOf(params[0]); if (h === undefined) throw new Error("missing synthetic block"); const block = blockAt(h); return { block: { header: rpcHeader(block.header), extrinsics: block.extrinsics.map(raw => `0x${hex(raw)}`) } }; }
+    if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && heldAt(params.slice(1))) {
+      const now = Buffer.alloc(8); now.writeBigUInt64LE(BigInt(times.get(heightOf(params[1])!) ?? Date.now())); return `0x${now.toString("hex")}`;
     }
     throw new Error(`unexpected ${method}`);
   };
@@ -74,10 +85,10 @@ export function chain({ spec = 1000300, state = deployed.state, node = "2.1.0" }
     node: { call, batch: batchOver(call) },
     indexer: {
       async transactions(hash: string) {
-        return landed.has(hash) ? [landed.get(hash)!] : [];
+        const tx = landed.get(hash); return tx ? [{ ...tx, block: { ...tx.block, hash: blockAt(tx.block.height).hash } }] : [];
       },
       async head() {
-        return { height: 1000, hash: HEAD, timestamp: Date.now() };
+        return { height: tip, hash: blockAt(tip).hash, timestamp: times.get(tip)! };
       },
       async latestAction() {
         return null;
@@ -92,20 +103,24 @@ export function chain({ spec = 1000300, state = deployed.state, node = "2.1.0" }
       throw new Error('test node: author_submitExtrinsic failed: {"code":1010,"message":"Invalid Transaction","data":"the TTL is behind the chain\'s time"}');
     }
     const txHash = tx.transactionHash();
-    landed.set(txHash, { hash: txHash, raw: hex(tx.serialize()), block: { height: 500 + landed.size, hash: "ab".repeat(32), timestamp: Date.now() }, status: "SUCCESS", contractActions: [] });
+    const height = Math.max(500 + landed.size, tip + 1);
+    landed.set(txHash, { hash: txHash, raw: hex(tx.serialize()), block: { height, hash: "", timestamp: Date.now() }, status: "SUCCESS", contractActions: [] });
+    times.set(height, Date.now()); pushHead(Math.max(1000, tip + 1));
     for (const intent of tx.intents?.values() ?? []) for (const action of intent.actions) if (action instanceof L.ContractDeploy) contracts.set(String(action.address), action.initialState);
   };
   const advance = (millis: number) => {
     if (!vi.isFakeTimers()) vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(Date.now() + millis);
+    pushHead(tip + 1);
   };
   const lag = (on: boolean) => void (lags = on);
   const reorg = (txHash: string, to?: { height: number; hash: string }) => {
     const moved = landed.get(txHash)!;
     if (to) landed.set(txHash, { ...moved, block: { ...moved.block, ...to } });
     else landed.delete(txHash);
+    blocks = new Map();
   };
-  return { source, land, advance, lag, reorg };
+  return { source, land, advance, lag, reorg, blockHash: (height: number) => blockAt(height).hash };
 }
 
 // A wallet named `name` that binds without adding a fee, records what it is asked to submit (and

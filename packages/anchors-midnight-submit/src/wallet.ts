@@ -50,10 +50,10 @@ export const DEFAULT_COST_PARAMETERS: CostParameters = { additionalFeeOverhead: 
 // How long a fee waits for the DUST sync to apply every event the indexer announced.
 const DUST_SYNC_WAIT_MS = 120_000;
 
-// How many of the indexer's events the shielded and DUST wallets apply at once. With the SDK's
-// default of 10, a sync from genesis spends more than half its time on the work done once per
-// batch; batches of 1000 apply DUST events more than twice as fast on preprod and reach the same
-// state. Each batch holds the event loop while it applies, and batches of 5000 were barely faster.
+// Upper bound on shielded/DUST sync groups. The SDK flushes partial groups after 1 ms;
+// it does not wait for 1000 events. Historical review measurements under load found up to
+// 5.5 s DUST and 5.2–6.9 s shielded event-loop stalls for a full group. These are observations,
+// not latency guarantees. Larger groups did not materially improve throughput.
 const SYNC_BATCH_SIZE = 1000;
 
 // The cost parameters a wallet runs with. An overhead of at least 1 SPECK keeps every computed fee
@@ -114,20 +114,28 @@ export interface StateSaveFailure {
 }
 export type StateSave = { saved: true } | { saved: false; failures: StateSaveFailure[] };
 
+const STATE_FILE_ERRNOS = new Set([
+  "EACCES", "EBUSY", "EDQUOT", "EEXIST", "EFBIG", "EIO", "EISDIR", "ELOOP",
+  "EMFILE", "ENAMETOOLONG", "ENFILE", "ENOENT", "ENOSPC", "ENOTDIR", "EPERM",
+  "EROFS", "EXDEV",
+]);
+
 // A failed part's error by its name and, for a schema error from the wallet SDK, what each step
-// that threw said and threw, never the state it was given.
+// that threw said and the underlying error's name, never its message (which can quote state).
+// File failures retain only recognized errno codes; their messages can quote private paths.
 function describeFailure(error: unknown): string {
   const thrown = (issue: unknown): string[] => {
     if (typeof issue !== "object" || issue === null) return [];
     const i = issue as { _tag?: string; message?: string; actual?: unknown; issue?: unknown; issues?: unknown };
-    if (i._tag === "Unexpected") return [i.actual instanceof Error ? `${i.message}: ${i.actual.name}: ${i.actual.message}` : String(i.message)];
+    if (i._tag === "Unexpected") return [i.actual instanceof Error ? `${i.message}: ${i.actual.name}` : String(i.message)];
     return [i.issue, ...[i.issues].flat()].flatMap(thrown);
   };
-  const e = error as { name?: string; message?: string; issue?: unknown; cause?: { issue?: unknown } };
+  const e = error as { name?: string; code?: unknown; issue?: unknown; cause?: { issue?: unknown } };
   if (e?.issue !== undefined) return [e.name, ...thrown(e.issue)].join(": ");
   // A wallet error wrapping a schema error quotes the state in its message.
   if (e?.cause?.issue !== undefined) return `${e.name}: ${describeFailure(e.cause)}`;
-  return `${e?.name ?? "Error"}: ${e?.message ?? String(error)}`;
+  const code = typeof e?.code === "string" && STATE_FILE_ERRNOS.has(e.code) ? `: ${e.code}` : "";
+  return `${e?.name ?? "Error"}${code}`;
 }
 
 // A sub-wallet's class, as far as it reads a serialized state back, as its restore() does.

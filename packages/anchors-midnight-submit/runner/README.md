@@ -152,8 +152,8 @@ the exact bytes. A rerun shows the bytes the journal still holds, marked `journa
 confirming them sends nothing new: at most the same bytes again, if no send of them ever returned.
 The runner confirms these again as the same transaction (`confirm` with `resumed: true` in the
 audit log), and they count once against the daily cap. It confirms other bytes for a transaction
-only when the journal holds each earlier set `failed`, or holds none of them, which means they were
-never sent. `test/mainnet.test.ts` shows this with the real `deploy-mainnet` over the offline
+only when the journal holds each earlier set `failed`. A missing journal or missing row cannot prove
+that earlier confirmed bytes were never sent; recover that history before confirming other bytes. `test/mainnet.test.ts` shows this with the real `deploy-mainnet` over the offline
 mainnet: a run whose readback fails after the broadcast is retried, and the node is handed the
 deploy exactly once.
 
@@ -163,8 +163,9 @@ token is written. Status and used markers are flushed too, including their direc
 a missing status snapshot is rebuilt from the audit's confirmation history. The shared execution
 lock prevents two tools from passing the daily-cap check concurrently. Resumed bytes need fresh
 headroom when their earlier reservation has aged out. A missing or invalid validity deadline, or one
-without `Z` or an offset, gets `NO` rather than an unbounded, shortened or zone-dependent
-reservation; the gate refuses a confirmation record whose times lack one rather than read them in
+without `Z` or an offset, or more than one hour after confirmation, gets `NO`. Historical
+reservations clamp their deadline to one hour after confirmation and repeated hashes reserve their
+largest recorded fee once; the gate refuses a confirmation record whose times lack one rather than read them in
 the runner's zone.
 
 **Expiry.** No attempt starts after the approval expires. A tool that has confirmed nothing is
@@ -285,6 +286,11 @@ done
 The anchors fixture still refers to `/home/deci/orynq-midnight-mainnet-plan.template.json` and
 its existing digest. A changed template requires a new intent and a new chat approval.
 
+Confirmation framing retains at most 65,536 characters between prompts, consumes each prompt once,
+and requires one complete summary with unique known fields. Duplicate or interleaved summaries
+receive `NO`. Progress joins split lines and flushes a final unterminated line while keeping a
+4,096-character status tail. The full original tool output remains in the log.
+
 ## Tests
 
 `pnpm test` runs them with the package's suite:
@@ -300,7 +306,7 @@ its existing digest. A changed template requires a new intent and a new chat app
 - `plan.test.ts` ports `fill-registry.mjs`'s tests.
 - `run.test.ts` covers the run over the fake tool: a match, every mismatch, sync retries, a
   resumed transaction, the journal guard (bytes it still holds pending or landed, bytes it
-  retired, bytes it never held), three confirmations at most, the daily cap, an approval withdrawn during the sync,
+  retired, and missing history held for recovery), three confirmations at most, the daily cap, an approval withdrawn during the sync,
   expiry between attempts, before the next backoff ends and during an attempt, a tool that
   confirmed before expiry left to finish, a gate refusal, anchors waiting for the deploy, a
   mismatched anchor after a confirmed one, a `script` a stray signal ended retried rather than
@@ -308,6 +314,7 @@ its existing digest. A changed template requires a new intent and a new chat app
   rewritten with the same values, a finished approval kept used by its `done` record once its used
   marker and status are lost, and an approval whose times name no offset, which runs nothing in
   either zone.
+- `output.test.ts` and `security-closeout.test.ts` cover split prompts, duplicate summaries, bounded output, rolled-back journals, deadline bounds, approval-identity recovery and expiry at the final confirmation check.
 - `state.test.ts` checks that each audit line is synced to disk before its file is closed.
 - `review.test.ts` covers reservations held past the validity deadline, one confirmation per item
   per attempt, a wrong-action `NO`, the pinned approval identity, confirmation limits and daily

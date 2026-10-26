@@ -1,18 +1,18 @@
 // verify-all.mjs end to end, laid out as it runs: copied into a consumer directory whose only
 // package is the verify package (here a stand-in that answers as the W2 verifier does over a
 // described chain), reading the evidence the rehearsal copied beside it.
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, cpSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
-import { KNOWN_AUTHORS_TRUST_ROOTS } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { signKnownAuthors } from "../../../anchors-midnight/src/known-authors.js";
 import { FAKE_TARBALL, VERIFY_DIST, fakeChain, fakeConsumer, honestRehearsal, removeScratch, scratch, writeRehearsal, type Rehearsal } from "./fixture.js";
 
 const HERE = new URL("..", import.meta.url).pathname;
 const PACKAGE = "@fluxpointstudios/orynq-sdk-anchors-midnight";
 
 // HOME is a directory that does not exist, so verify-all.mjs reads no secret and no saved state.
-function verifyAll(edit: (r: Rehearsal) => void = () => {}, verdicts: Record<string, { status: string; assurance: string }> = {}, install: "copy" | "link" = "copy", afterInstall: (consumer: string) => void = () => {}) {
+function verifyAll(edit: (r: Rehearsal) => void = () => {}, verdicts: Record<string, { status: string; assurance: string }> = {}, install: "copy" | "link" = "copy", afterInstall: (consumer: string) => void = () => {}, runtime: { args?: string[]; env?: NodeJS.ProcessEnv } = {}) {
   const root = scratch("verify-all");
   const r = honestRehearsal();
   const chain = fakeChain(r, verdicts);
@@ -22,15 +22,15 @@ function verifyAll(edit: (r: Rehearsal) => void = () => {}, verdicts: Record<str
   const evidence = `${consumer}/evidence`;
   fakeConsumer(consumer, install);
   afterInstall(consumer);
-  for (const script of ["verify-all.mjs", "gate.mjs"]) copyFileSync(`${HERE}${script}`, `${consumer}/${script}`);
+  for (const script of ["verify-all.mjs", "gate.mjs", "evidence-integrity.mjs"]) copyFileSync(`${HERE}${script}`, `${consumer}/${script}`);
   cpSync(`${root}/rehearsal/evidence`, evidence, { recursive: true });
   copyFileSync(`${root}/rehearsal/bundles/index.json`, `${evidence}/bundles.json`);
   writeFileSync(`${root}/chain.json`, JSON.stringify(chain));
   writeFileSync(`${root}/asked.log`, "");
-  const run = spawnSync(process.execPath, ["verify-all.mjs", evidence, "/nonexistent/project-id"], {
+  const run = spawnSync(process.execPath, [...(runtime.args ?? []), "verify-all.mjs", evidence, "/nonexistent/project-id"], {
     cwd: consumer,
     encoding: "utf8",
-    env: { ...process.env, HOME: `${root}/no-home`, FAKE_CHAIN: `${root}/chain.json`, FAKE_LOG: `${root}/asked.log`, ORYNQ_VERIFY_DIST: VERIFY_DIST },
+    env: { ...process.env, HOME: `${root}/no-home`, FAKE_CHAIN: `${root}/chain.json`, FAKE_LOG: `${root}/asked.log`, ORYNQ_VERIFY_DIST: VERIFY_DIST, ...runtime.env },
     timeout: 60_000,
   });
   const lines = readFileSync(`${root}/asked.log`, "utf8").split("\n").filter(Boolean).map((l) => l.split(" "));
@@ -45,6 +45,25 @@ const lockEntry = (consumer: string, edit: (entry: Record<string, string>) => vo
 afterAll(removeScratch);
 
 describe("verify-all.mjs", () => {
+  it("requires the consensus checkpoint policy to authenticate under the packed package's shipped roots", () => {
+    const { run, out, asked } = verifyAll(r => { r.consensusPolicy[0]!.signatures[0]!.key = r.root; });
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("no signature by a trust root");
+    expect(out).toBeNull(); expect(asked).toEqual([]);
+  });
+
+  it("refuses consensus checkpoints introduced by the fresh drill author-policy root", () => {
+    const { run, out, asked } = verifyAll(r => {
+      const checkpoints = JSON.parse(r.consensusPolicy[0]!.document).networks.preprod.checkpoints;
+      r.documents = r.documents.map(signed => {
+        const document = JSON.parse(signed.document); document.networks.preprod.checkpoints = checkpoints;
+        return signKnownAuthors(JSON.stringify(document), Buffer.from(r.rootSeed, "hex"));
+      });
+    });
+    expect(run.status).toBe(1); expect(out).toBeNull(); expect(asked).toEqual([]);
+    expect(run.stderr).toContain("drill author policies must not supply consensus checkpoints");
+  });
+
   it("verifies every recorded anchor, crash-drill anchors included, through Blockfrost preprod alone, and exits 0 only with an empty gate", () => {
     const { r, run, out, asked, sources } = verifyAll();
     expect(run.status, run.stderr).toBe(0);
@@ -77,7 +96,7 @@ describe("verify-all.mjs", () => {
     expect(reopened).toMatchObject({ signatures: r.documents[2]!.signatures, trustRoots: [r.root] });
     expect(reopened.document).not.toBe(r.documents[2]!.document);
     expect(out.forgedDocuments["that document signed by a stranger, under the trust root's key"]).toMatchObject({ document: reopened.document, trustRoots: [r.root], signatures: [{ key: r.root }] });
-    expect(out).toMatchObject({ trustRoot: r.root, shippedTrustRoots: [...KNOWN_AUTHORS_TRUST_ROOTS], knownAuthorsDocuments: [1, 2, 3].map((serial) => ({ serial, networks: ["preprod"] })) });
+    expect(out).toMatchObject({ trustRoot: r.root, shippedTrustRoots: [r.consensusRoot], consensusPolicy: r.consensusPolicy, consensusCheckpointCount: 1, knownAuthorsDocuments: [1, 2, 3].map((serial) => ({ serial, networks: ["preprod"] })) });
   });
 
   it("records the tarball npm installed the verify package from, with the integrity npm checked", () => {
@@ -90,6 +109,7 @@ describe("verify-all.mjs", () => {
       resolved: `file:${FAKE_TARBALL}`,
       integrity: `sha512-${createHash("sha512").update(tarball).digest("base64")}`,
       sha256: createHash("sha256").update(tarball).digest("hex"),
+      installedTree: { files: 2, sha256: expect.stringMatching(/^[0-9a-f]{64}$/) },
     });
   });
 
@@ -108,7 +128,7 @@ describe("verify-all.mjs", () => {
 
   it("imports nothing but node built-ins, gate.mjs and the verify package", () => {
     const text = readFileSync(`${HERE}verify-all.mjs`, "utf8");
-    expect([...text.matchAll(/^import .* from "([^"]+)";$/gm)].map(([, from]) => from).sort()).toEqual(["./gate.mjs", "node:crypto", "node:fs", "node:path", "node:url"]);
+    expect([...text.matchAll(/^import .* from "([^"]+)";$/gm)].map(([, from]) => from).sort()).toEqual(["./evidence-integrity.mjs", "./gate.mjs", "node:crypto", "node:fs", "node:path", "node:url"]);
     expect([...text.matchAll(/\bimport\(([^)]*)\)/g)].map(([, what]) => what)).toEqual(["PACKAGE"]);
   });
 
@@ -118,6 +138,40 @@ describe("verify-all.mjs", () => {
     expect(out).toBeNull();
     expect(asked).toEqual([]);
     expect(run.stderr).toMatch(/^verify-all: @fluxpointstudios\/orynq-sdk-anchors-midnight resolves to \/\S+\/test\/fake-verifier\/index\.js, outside \/\S+\/consumer\/node_modules\/: install the packed tarball into this directory$/m);
+  });
+
+
+  it.each(["modified", "extra", "missing"])("refuses %s installed files even when npm lock/tarball identity matches", (kind) => {
+    const { run, asked, out } = verifyAll(undefined, {}, "copy", consumer => {
+      const at = `${consumer}/node_modules/${PACKAGE}`;
+      if (kind === "modified") writeFileSync(`${at}/index.js`, `${readFileSync(`${at}/index.js`, "utf8")}\nthrow new Error('MUTANT_LOADED');`);
+      if (kind === "extra") writeFileSync(`${at}/injected.js`, "export const injected=true;");
+      if (kind === "missing") unlinkSync(`${at}/package.json`);
+    });
+    expect(run.status).not.toBe(0); expect(asked).toEqual([]); expect(out).toBeNull();
+    expect(run.stderr).not.toContain("MUTANT_LOADED");
+  });
+
+  it.each([{ args: ["--enable-source-maps"] }, { env: { NODE_OPTIONS: "--no-warnings" } }])("refuses inherited preloads/runtime flags before package loading", runtime => {
+    const { run, asked, out } = verifyAll(undefined, {}, "copy", undefined, runtime);
+    expect(run.status).toBe(1); expect(asked).toEqual([]); expect(out).toBeNull();
+    expect(run.stderr).toContain("preloaded code or runtime arguments are not permitted");
+  });
+
+  it("tests the knownAuthors consumer path, not only openKnownAuthors, with each forged document", () => {
+    const { run, out } = verifyAll(undefined, {}, "copy", consumer => {
+      const at = `${consumer}/node_modules/${PACKAGE}`;
+      let source = readFileSync(`${at}/index.js`, "utf8").replace("export function knownAuthors(options = {})", "function checkedKnownAuthors(options = {})");
+      source += `\nexport function knownAuthors(options) { try { return checkedKnownAuthors(options); } catch { return checkedKnownAuthors({ ...options, documents: options.documents.slice(0, -1) }); } }\n`;
+      writeFileSync(`${at}/index.js`, source);
+      const stage = `${consumer}/mutant/package`; cpSync(at, stage, { recursive: true });
+      execFileSync("tar", ["--format=ustar", "-czf", `${consumer}/${FAKE_TARBALL}`, "-C", `${consumer}/mutant`, "package"]);
+      lockEntry(consumer, e => { e.integrity = `sha512-${createHash("sha512").update(readFileSync(`${consumer}/${FAKE_TARBALL}`)).digest("base64")}`; });
+    });
+    expect(run.status).toBe(1);
+    expect(out.gate.failures).toEqual(expect.arrayContaining([expect.stringContaining("knownAuthors answered opened")]));
+    const forgery = out.forgedDocuments["serial 3 with every author window reopened, under the trust root's signature on serial 3"];
+    expect(forgery.outcome).toContain("does not verify"); expect(forgery.consumerOutcome).toBe("opened");
   });
 
   it("exits non-zero when an anchor is left at unverified-finality", () => {

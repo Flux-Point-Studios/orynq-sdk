@@ -26,13 +26,13 @@ labels:
 # The private t-backend submodule is not a CI build input.
 clone:
   - name: clone
-    image: woodpeckerci/plugin-git
+    image: woodpeckerci/plugin-git@sha256:9802cb7852dcf31f9c5c1d1ddeadfb9002d4fae85751f7b6a792eedb267bcc59
     settings:
       recursive: false
 
 steps:
   - name: pack
-    image: node:24-bookworm
+    image: node:24-bookworm@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
     commands:
       - corepack enable
       - pnpm install --frozen-lockfile
@@ -40,6 +40,7 @@ steps:
       - tools/compactc/install.sh "$$HOME/.cache/midnight/compactc" "$$HOME/.cache/midnight/zk-params"
       - COMPACTC="$$HOME/.cache/midnight/compactc/compactc" MIDNIGHT_PP="$$HOME/.cache/midnight/zk-params" pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:circuits
       - pnpm build
+      - pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover verify:artifacts
       - node scripts/pack-unpublished.mjs /woodpecker/npm-publish
 
   - name: publish
@@ -53,7 +54,7 @@ steps:
         branch: main
 
   - name: post-publish-check
-    image: node:24-bookworm
+    image: node:24-bookworm@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
     commands:
       - node tools/release-guard/post-publish-check.mjs /woodpecker/npm-publish
     when:

@@ -1,0 +1,21 @@
+# Native verifier dependency policy
+
+The blocking Rust advisory check scans the committed lockfile. Compatible fixes are selected for rustls 0.23.46, rustls-webpki 0.103.16, webpki-root-certs 1.0.10 and Tokio 1.53.3. No cryptographic arithmetic is backported or substituted.
+
+Three upstream informational exceptions are explicit: RUSTSEC-2026-0253 for lru's panic-safety API, RUSTSEC-2025-0141 for unmaintained bincode, and RUSTSEC-2024-0436 for unmaintained paste. Storage keys in this binary are fixed ledger types; the CLI accepts no user-defined destructors. Prover-key initialization is not called by the verifier. These exceptions do not cover new advisories.
+
+## Reviewed verifier-only exception: RUSTSEC-2026-0387
+
+The fresh 2026-10-26 RustSec database reports a timing-variability advisory for crypto-bigint 0.5.5. Affected operations include subtraction, zero counting, division, Montgomery multiplication, UintRef equality and BoxedMontyForm inversion when processing **secret integers**. The advisory fixes this only at 0.7.6 or later. Midnight's pinned `k256 0.13.4 -> elliptic-curve 0.13.8 -> crypto-bigint ^0.5` closure cannot use that major version without an upstream-compatible migration.
+
+The accepted exception is limited to the native verifier executable, with the following reviewed call boundary:
+
+- `Request` in `src/main.rs` accepts only a circuit ID, serialized transaction and serialized reference state. `deny_unknown_fields` refuses caller-supplied keys, paths or extra private inputs.
+- The only configuration reads are the registry, public verifier key and public constructor state. Official Orynq artifact bytes additionally match compiled SHA-256 pins. No signer key, mnemonic, credential, witness or entropy file is read.
+- Admission allows one standard intent containing one `ContractAction::Call`, and refuses coin offers, unshielded offers, DUST actions, deployment and maintenance. All deserialized transaction/state data is supplied by the caller or is a public pinned artifact.
+- The final operation is `Transaction::well_formed` with genuine proof and signature verification enabled. Ledger's signature adapter (`ledger/src/structure.rs`, pinned revision b5d3e965) calls `VerifyingKey::verify`; base-crypto's adapter calls `k256::schnorr::VerifyingKey::verify`. These consume public signatures, public keys and message bytes. `SigningKey::{sample,from_bytes,sign}` are separate upstream APIs and are never called by this executable.
+- Zero-knowledge proof verification follows `VerifierKey::verify -> midnight_zk_stdlib::verify -> utils/plonk_api::verify -> CircuitTranscript(proof) -> prepare/pairing`. Its values are public proof/transcript values; batch-verification coefficients derive from transcript summaries. The `ZkStdLib::new` OsRng path is synthesis/proving, not this verification path; verifier-key reading only configures the verifier. No private verifier RNG or witness is introduced by this call path. This analysis does not apply to the JS/WASM prover, a signer, or any future executable that handles secret integers.
+
+`check-verify-only-boundary.sh` refuses a changed production source inventory, source symlinks, build script or enclosing Cargo workspace and verifies committed source, manifest, dependency-lock and artifact-pin hashes. A source/API/dependency change therefore requires another security review before an exception can remain active. The checker has no automatic pin-update mode. Updating hashes without reviewing this argument is not sufficient. The hashes enforce a review checkpoint through the normal repository review policy; they cannot attest by themselves that a human review occurred.
+
+The maintenance review and an independent call-path review accepted this narrow policy on 2026-10-26. The CI gate visibly names the exception and verifies the boundary before enabling it. Residual risk: the vulnerable crypto-bigint version remains in the dependency closure, and the original advisory remains true for other applications. It is not described as fixed or withdrawn. Any change to this executable's inputs, operations, native dependency graph or artifact identities invalidates this analysis and requires re-review; the exception never authorizes secret-bearing signing or proving use.

@@ -33,7 +33,7 @@
     "test": "vitest run",
     "test:slow": "vitest run --config vitest.slow.config.ts",
     "test:journal": "vitest run test-journal",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.tests.json",
     "clean": "rimraf dist"
   },
   "dependencies": {

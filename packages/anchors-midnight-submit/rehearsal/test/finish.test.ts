@@ -12,7 +12,7 @@ function finish(verdicts: Record<string, { status: string; assurance: string }> 
   const r = honestRehearsal();
   writeRehearsal(`${root}/rehearsal`, `${root}/home`, r);
   afterWrite(`${root}/rehearsal`);
-  for (const script of ["finish.sh", "gate.mjs", "verify-all.mjs", "compose.ts", "wallets.json"]) symlinkSync(`${HERE}${script}`, `${root}/rehearsal/${script}`);
+  for (const script of ["finish.sh", "gate.mjs", "verify-all.mjs", "evidence-integrity.mjs", "tooling.ts", "compose.ts", "wallets.json"]) symlinkSync(`${HERE}${script}`, `${root}/rehearsal/${script}`);
   fakeConsumer(`${root}/consumer`);
   writeFileSync(`${root}/chain.json`, JSON.stringify(fakeChain(r, verdicts)));
   writeFileSync(`${root}/asked.log`, "");
@@ -22,7 +22,7 @@ function finish(verdicts: Record<string, { status: string; assurance: string }> 
     env: { ...process.env, HOME: `${root}/home`, CONSUMER: `${root}/consumer`, FAKE_CHAIN: `${root}/chain.json`, FAKE_LOG: `${root}/asked.log`, ORYNQ_VERIFY_DIST: VERIFY_DIST, ...consumer },
     timeout: 120_000,
   });
-  const verified = existsSync(`${root}/rehearsal/evidence/verified.json`) ? JSON.parse(readFileSync(`${root}/rehearsal/evidence/verified.json`, "utf8")) : null;
+  const verified = existsSync(`${root}/rehearsal/evidence/verified.json`) && readFileSync(`${root}/rehearsal/evidence/verified.json`, "utf8").trim() ? JSON.parse(readFileSync(`${root}/rehearsal/evidence/verified.json`, "utf8")) : null;
   const asked = readFileSync(`${root}/asked.log`, "utf8").split("\n").filter(Boolean).map((l) => l.split(" ")[0]);
   return { run, verified, asked, pack: existsSync(out) ? JSON.parse(readFileSync(out, "utf8")) : null };
 }
@@ -52,6 +52,15 @@ describe("finish.sh", () => {
     expect(asked).toEqual([]);
     expect(pack).toBeNull();
     expect(run.stderr).toMatch(/CONSUMER: set CONSUMER to the directory that installed only the packed verify package/);
+  });
+
+
+  it("clears inherited NODE_OPTIONS before either verifier or composer starts", () => {
+    const marker = `${scratch("preload")}/executed`;
+    const code = `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(marker)},'preloaded');`;
+    const { run, pack } = finish({}, { NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(code)}` });
+    expect(run.status, run.stderr).toBe(0); expect(pack).not.toBeNull(); expect(existsSync(marker)).toBe(false);
+    expect(pack.verifier.package.installedTree.files).toBe(2);
   });
 
   it("stops at the verifier's gate: no pack, and the gate's reasons kept in evidence/verified.json", () => {

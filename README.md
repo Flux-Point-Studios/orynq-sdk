@@ -423,3 +423,7 @@ pnpm audit --audit-level=high
 ## License
 
 [MIT](LICENSE)
+
+## Retained dependency hardening
+
+The workspace keeps its tested `braces` 3.0.3 nesting-depth patch and direct development dependency. Upstream still has no newer patched release. GHSA-vfj7-8cjw-p6xm / CVE-2026-93687 was withdrawn on 2026-10-23 at 12:53:02Z, so the audit ignore is removed; the patch remains defense in depth against parser depth exhaustion. Audit results are not suppressed for this advisory. When upstream ships a compatible fix, retire the patch and direct patch target together only after the existing dependency-security depth test and audit pass.

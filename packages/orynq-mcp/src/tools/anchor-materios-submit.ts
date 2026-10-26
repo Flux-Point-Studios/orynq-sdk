@@ -24,10 +24,13 @@
  *   - safeTool / toolError (../errors.js)
  */
 
+import { createHash } from "node:crypto";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   MateriosProvider,
+  merkleRoot,
+  prepareBlobData,
   submitCertifiedReceipt,
   waitForAnchor,
 } from "@fluxpointstudios/orynq-sdk-anchors-materios";
@@ -93,15 +96,28 @@ export function registerAnchorMateriosSubmit(
         // Sensible preprod default matching the chain spec we're pointed at
         "https://materios.fluxpointstudios.com/preprod-blobs";
 
+      // Plan the exact uploaded bytes once, so dry-run and submission expose the same identities.
+      // The trace's semantic root remains inside the blob; this is a plain blob receipt.
+      const content = Buffer.from(JSON.stringify({
+        publicView: bundle.publicView,
+        manifestHash: bundle.manifestHash,
+      }), "utf-8");
+      const contentHash = `0x${createHash("sha256").update(content).digest("hex")}`;
+      const receiptId = `0x${createHash("sha256").update(Buffer.from(contentHash.slice(2), "hex")).digest("hex")}`;
+      const { manifest } = prepareBlobData(receiptId, content);
+      const rootHash = merkleRoot(manifest.chunks.map((chunk) => chunk.sha256));
+      const manifestHash = `0x${createHash("sha256").update(JSON.stringify(manifest)).digest("hex")}`;
+
       if (!confirm) {
         return safeTool(async () => ({
           traceId,
           status: "dry-run",
           wouldSubmit: {
             rpcUrl: config.materiosRpcUrl,
-            contentHash: bundle.rootHash,
-            rootHash: bundle.rootHash,
-            manifestHash: bundle.manifestHash,
+            receiptId,
+            contentHash,
+            rootHash,
+            manifestHash,
             blobGatewayUrl,
             waitForL1Anchor,
             timeoutSeconds,
@@ -117,17 +133,6 @@ export function registerAnchorMateriosSubmit(
         });
         await provider.connect();
         try {
-          // The bundle content itself is what operators persist to the
-          // blob gateway. We serialize the public view + manifest — that's
-          // the minimum needed for independent verification.
-          const content = Buffer.from(
-            JSON.stringify({
-              publicView: bundle.publicView,
-              manifestHash: bundle.manifestHash,
-            }),
-            "utf-8",
-          );
-
           // Gateway auth: prefer signerKeypair (sr25519-sig-based) over
           // apiKey. Why: sig-based means we don't need a shared secret
           // baked into env vars — any Substrate keypair with MATRA can
@@ -155,11 +160,10 @@ export function registerAnchorMateriosSubmit(
           const result = await submitCertifiedReceipt(
             provider,
             {
-              contentHash: bundle.rootHash,
-              rootHash: bundle.rootHash,
-              // `manifestHash` is optional on TraceBundle; fall back to rootHash
-              // so we always submit a non-empty string to the pallet.
-              manifestHash: bundle.manifestHash ?? bundle.rootHash,
+              receiptId,
+              contentHash,
+              rootHash,
+              manifestHash,
             },
             content,
             {
@@ -207,6 +211,8 @@ export function registerAnchorMateriosSubmit(
             traceId,
             status: "submitted",
             receiptId: result.receiptId,
+            contentHash,
+            rootHash,
             certHash: result.certHash ?? null,
             materiosBlockHash: result.blockHash ?? null,
             l1Anchor,

@@ -3,7 +3,19 @@
   "compilerOptions": {
     "noEmit": true,
     "allowJs": true,
-    "checkJs": false
+    "checkJs": false,
+    "baseUrl": ".",
+    "paths": {
+      "@fluxpointstudios/orynq-sdk-anchors-midnight": [
+        "../../anchors-midnight/src/index.ts"
+      ],
+      "@fluxpointstudios/orynq-sdk-anchors-midnight/journal": [
+        "../../anchors-midnight/src/journal.ts"
+      ]
+    }
   },
-  "include": ["*.ts", "test/**/*.ts"]
+  "include": [
+    "*.ts",
+    "test/**/*.ts"
+  ]
 }

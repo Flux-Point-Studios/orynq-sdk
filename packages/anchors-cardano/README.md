@@ -43,12 +43,12 @@ Two encodings of it are on Cardano mainnet, as Koios renders the label's value:
 | 13350325 to 13406781 (2026-04-28 17:07 to 2026-05-12 00:17) | 291 | the Lucid-based worker, flat | `0e46e33f639a56cc8780fd871d9a15e16d99af248526f907cb560cb40849f7bf`, the chain the receipts are on, whose anchored block ranges start again near zero on 2026-04-28 | `bc0531cb311281565036fb397a376f0e0fa37005589655f97a7924b2729a164c`, the previous chain's genesis, which the cert-daemon kept until 2026-05-12 |
 | 13618944 to 13941551 (2026-06-30 23:43 to 2026-09-14 22:26) | 1672 | anchor-worker-materios, detailed-schema | `5663079a485b93fdc9e386b862b4cf8d25499427df6b8c5f018535acfd2e5020`, the worker's hard-coded fallback | `0e46e33f639a56cc8780fd871d9a15e16d99af248526f907cb560cb40849f7bf`, the chain the receipts are on |
 
-So the verifier does not compare `chain`. The leaf and the manifest hash already commit to `genesis`, and a pinned wallet's record that carries the claim's root and manifest proves the batch, whatever its label. For a receipt the cert-daemon batched in the first window, claim `genesis` `bc0531cb…`; if its Cert is dcbor-v1, give `certHash`, because the Cert rebuild accepts a dcbor-v1 Cert only on genesis `0e46e33f…`.
+So the verifier does not compare `chain`. The leaf and the manifest hash already commit to `genesis`, and a pinned wallet's record that carries the claim's root and manifest proves the batch, whatever its label. For a receipt the cert-daemon batched in the first window, claim `genesis` `bc0531cb…`; its dcbor-v1 Cert can also be rebuilt from `cert`: `certFormat.chainId` selects the certificate domain while `genesis` retains the historical checkpoint commitment domain.
 
 ### Verifying a receipt's anchor
 
 ```ts
-import { verifyMateriosCheckpointAnchor } from "@fluxpointstudios/orynq-sdk-anchors-cardano";
+import { verifyMateriosCheckpointAnchor, MATERIOS_CHECKPOINT_WALLET_PINS } from "@fluxpointstudios/orynq-sdk-anchors-cardano";
 import { createKoiosCheckpointSource } from "@fluxpointstudios/orynq-sdk-anchors-cardano/providers";
 
 const result = await verifyMateriosCheckpointAnchor(
@@ -64,7 +64,7 @@ const result = await verifyMateriosCheckpointAnchor(
   },
   {
     source: createKoiosCheckpointSource({ network: "mainnet" }),
-    anchorWallets: ["addr1v8jk9tqygmwd7xvf86pkz2033ahf0zrzdeesz0wy25my7xqgduf4l"],
+    anchorWallets: MATERIOS_CHECKPOINT_WALLET_PINS, // reviewed historical windows through 2026-10-24
   },
 );
 if (!result.verified) console.error(result.refusal);
@@ -81,8 +81,8 @@ What a caller supplies:
 | `manifest` | The batch's `blockRangeStart` and `blockRangeEnd`; `cardanoNetworkId` only if the daemon set `CARDANO_NETWORK_ID`. |
 | `anchorId` (optional) | An anchor id to cross-check, from `OrinqReceipts.Anchors` or the batch record. |
 | `cardano` | The batch record's `cardanoTxHash`, or `scanFromBlockHeight`: a Cardano block height at or below the anchor's, from which the verifier lists the pinned wallets' transactions and takes the earliest that anchors the root and passes every check. |
-| `anchorWallets` | The wallets you trust to fund anchors. `addr1v8jk9tqygmwd7xvf86pkz2033ahf0zrzdeesz0wy25my7xqgduf4l` funds every anchor the live path writes; `addr1qx2h3pcsp6l9lxc0nujfdrczrmmstvju024xxvjcu2ywptslud3z94x5tgw8p0aefdjm8wxwrt0j49y384nuxgsjd9xq89stdk` funded the Lucid-based worker's flat anchors. |
-| `minConfirmations` (optional) | Confirmations the tx's block needs, counting that block as one. The default, 15, is the depth the gateway's L1 check calls settled; 2160, Cardano's security parameter k, is the depth past which no rollback can reach. |
+| `anchorWallets` | Explicit `{address, encoding, fromSlot, toSlot}` pins, with inclusive Cardano absolute-slot bounds. A bare wallet address is refused: possession of a still-live historical key must not authorize later records or another encoding. The exported historical pins cover the documented Lucid window and the detailed-schema worker through 2026-10-24; review new windows before extending them. `addr1v8jk9tqygmwd7xvf86pkz2033ahf0zrzdeesz0wy25my7xqgduf4l` funds every anchor the live path writes; `addr1qx2h3pcsp6l9lxc0nujfdrczrmmstvju024xxvjcu2ywptslud3z94x5tgw8p0aefdjm8wxwrt0j49y384nuxgsjd9xq89stdk` funded the Lucid-based worker's flat anchors. |
+| `minConfirmations` (optional) | Confirmations the tx's block needs, counting that block as one. The default, 15, is the depth the gateway's L1 check calls settled; 2160, Cardano's security parameter k, gives a stronger finality margin under the consensus assumptions. The 2025-11-21 partition means 15 cannot be described as a never-rolled-back depth. |
 
 The result names the first check that failed in `refusal`, lists every check run in `checks`, and reports the leaf, root, manifest hash, anchor id, tx, encoding, block height and confirmations it established. The checks, in order:
 
@@ -93,7 +93,7 @@ The result names the first check that failed in `refusal`, lists every check run
 | `root` | The path does not have the shape a tree of exactly `count` leaves gives the leaf's index (`rootFromPath`). |
 | `anchor_id` | `sha256(root ‖ manifest_hash)` differs from the claimed anchor id. |
 | `tx` | The tx is not in a Cardano block, or a scan finds no pinned-wallet tx anchoring the root. |
-| `wallet` | The tx spends an input from an address outside `anchorWallets`, or spends none. |
+| `wallet` | The tx spends no input, an unpinned input, or uses a pinned key outside its encoding/slot window; missing slot evidence also refuses. |
 | `record` | Label 8746 is absent or decodes to no `p: "materios"`, `v: 2` record. The verifier reports its `chain` label and does not compare it. |
 | `anchored_root` | The record's root is not the root. |
 | `leaves` | The record's leaf count is not `count`, as with `[a, b, c, c]` claimed for `[a, b, c]`. |
@@ -106,7 +106,7 @@ An anchor reaches Cardano within about an hour of certification on the live path
 ### Trust assumptions
 
 - **The chain source.** The verifier believes what its source says about which block holds the tx, how deep that block is, what the tx spends and what metadata it carries. `createKoiosCheckpointSource` trusts the Koios operator; give it the `baseUrl` of a Koios you run to remove that trust, or pass any `MateriosCheckpointSource`.
-- **The pinned wallets.** Anyone can write a label 8746 record naming any root, so a record proves something only because a wallet you pinned funded it. A pinned wallet's anchor says that its key holder, FPS's anchor worker, anchored the root.
+- **The pinned wallets.** Anyone can write a label 8746 record naming any root, so a record proves something only because a wallet you pinned funded it. A wallet pin is trusted only for its explicit record encoding and inclusive slot window. An expired pin is a refusal even if the key is still used by an operator service.
 - **The leaf list is off chain.** Materios stores no batch membership, so the leaf list or Merkle path comes from FPS's gateway. The anchored root makes a forged list fail, but a withheld one leaves inclusion unprovable.
 - **Materios Anchors is a cross-check only.** The runtime accepts an anchor from any signed origin and never checks its id against its root and manifest, so a claimed `anchorId` is compared and nothing more.
 - **Materios is not read.** The receipt's fields or cert hash are taken as the caller gives them; `verifyReceipt` in `@fluxpointstudios/orynq-sdk-anchors-materios` checks the Materios side.

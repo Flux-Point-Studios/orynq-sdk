@@ -10,7 +10,11 @@
 //                           fee plus two spends
 //   zero-fee                fee prices at the ledger's floor and no fee overhead: the fee computes as 0
 //   zero-fee-with-overhead  the same with the wallet's 1 SPECK of overhead
+import { readFileSync } from "node:fs";
+import { buildRegistryDeploy, entryCommitment, unprovenRegistryCall, anchorCallsIn } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { firstValueFrom } from "rxjs";
+import { Either } from "effect";
+import { Transacting } from "@midnight-ntwrk/wallet-sdk-dust-wallet/v1";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { NETWORK, NIGHT, closeSimulators, dustOnSimulator, run, simulatorOf } from "./simulator.js";
 
@@ -24,15 +28,32 @@ const QUIET_BLOCKS = 1_000;
 
 const opened = async () => {
   if (scenario === "small-and-large") return dustOnSimulator([NIGHT, SMALL]);
+  if (scenario === "mainnet-anchor") return dustOnSimulator([NIGHT, NIGHT]);
+  if (scenario === "multi-round") return dustOnSimulator([14_500_000n, 14_500_000n]);
   if (scenario === "under-covered") return dustOnSimulator([SMALL, SMALL]);
   if (scenario !== "zero-fee" && scenario !== "zero-fee-with-overhead") throw new Error(`unknown scenario ${scenario}`);
   const quiet = await dustOnSimulator([NIGHT], { simulator: await simulatorOf(0), additionalFeeOverhead: scenario === "zero-fee" ? 0n : 1n });
   await quiet.blocks(QUIET_BLOCKS);
   return quiet;
 };
-const { simulator, wallet, now, balanced, coins } = await opened();
+const { simulator, wallet, secretKey, now, balanced, coins, anotherBlock } = await opened();
 
 const ttl = new Date((await now()).getTime() + 15 * 60_000);
+let baseTransaction = L.Transaction.fromParts(NETWORK, undefined, undefined, L.Intent.new(ttl));
+let anchorEvidence = {};
+if (scenario === "mainnet-anchor") {
+  const deployed = buildRegistryDeploy({ networkId: NETWORK, ttl });
+  await run(simulator.submitTransaction(await balanced(wallet, ttl, deployed.tx)));
+  await anotherBlock();
+  const state = await run(simulator.getLatestState());
+  const observed = JSON.parse(readFileSync(new URL("./fixtures/mainnet-ledger-prices.json", import.meta.url), "utf8"));
+  state.ledger.parameters = L.LedgerParameters.deserialize(Buffer.from(observed.parametersHex, "hex"));
+  const secret = new Uint8Array(32); secret[0] = 1;
+  const commitment = entryCommitment({ rootHash: "12".repeat(32), manifestHash: "34".repeat(32) });
+  baseTransaction = unprovenRegistryCall({ networkId: NETWORK, address: deployed.address, state: state.ledger.index(deployed.address)!, ttl,
+    call: { circuit: "anchor", args: [commitment, 1n] }, witnesses: { authorSecret: secret } }).tx;
+  anchorEvidence = { observedMainnetBlock: observed.blockHeight, observedMainnetHash: observed.blockHash, parametersSha256: observed.parametersSha256, registry: deployed.address };
+}
 // What each coin the wallet can spend holds at the date the fee's DUST spend carries, smallest first.
 const coinValues = async () => {
   const state = await firstValueFrom(wallet.state);
@@ -42,11 +63,26 @@ const coinValues = async () => {
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 };
 const valuesBefore = await coinValues();
-const feeAsItIs = await wallet.calculateFee([L.Transaction.fromParts(NETWORK, undefined, undefined, L.Intent.new(ttl))]);
+const feeAsItIs = await wallet.calculateFee([baseTransaction]);
 const coinsBefore = JSON.stringify((await coins()).map(String));
 
+let multiRoundEvidence = {};
+if (scenario === "multi-round") {
+  const state = await firstValueFrom(wallet.state);
+  const params = (await run(simulator.getLatestState())).ledger.parameters;
+  const original = new Transacting.TransactingCapabilityImplementation<L.FinalizedTransaction>(NETWORK, { additionalFeeOverhead: 1n, feeBlocksMargin: 5 },
+    () => available => available.slice().sort((a, b) => a.value > b.value ? -1 : a.value < b.value ? 1 : 0)[0],
+    () => state.capabilities.coinsAndBalances, () => state.capabilities.keys);
+  const available = state.capabilities.coinsAndBalances.getAvailableCoinsWithGeneratedDust(state.state, state.state.state.syncTime).slice()
+    .sort((a, b) => a.value > b.value ? -1 : a.value < b.value ? 1 : 0);
+  const tx = L.Transaction.fromParts(NETWORK, undefined, undefined, L.Intent.new(ttl));
+  const one = original.dryRunFee(available.slice(0, 1), [tx], secretKey, state.state, ttl, state.state.state.syncTime, params);
+  const all = original.dryRunFee(available, [tx], secretKey, state.state, ttl, state.state.state.syncTime, params);
+  const old = original.computeBalancingRecipe(secretKey, state.state, [tx], ttl, state.state.state.syncTime, params);
+  multiRoundEvidence = { feeWithOne: one, feeWithAll: all, legacyError: Either.isLeft(old) ? old.left.message : null };
+}
 process.stdout.write("balancing\n");
-const balancing = await balanced(wallet, ttl).then(
+const balancing = await balanced(wallet, ttl, baseTransaction).then(
   (paid) => ({ paid }),
   (error: Error) => ({ error: error.message }),
 );
@@ -54,6 +90,7 @@ const observed =
   "error" in balancing
     ? balancing
     : {
+        ...(scenario === "mainnet-anchor" ? { anchorCalls: anchorCallsIn(balancing.paid, [(anchorEvidence as { registry: string }).registry], "mainnet-price simulator").calls.map(call => ({ kind: call.kind, entryPoint: call.entryPoint, commitment: call.commitment })) } : {}),
         // Each intent's DUST spends, by the fee each pays, or null for an intent without DUST actions.
         intents: [...balancing.paid.intents!.values()].map((intent) => intent.dustActions?.spends.map((spend) => spend.vFee) ?? null),
         coinsUntouched: JSON.stringify((await coins()).map(String)) === coinsBefore,
@@ -63,6 +100,6 @@ const observed =
           (error: Error) => error.message,
         ),
       };
-process.stdout.write(`${JSON.stringify({ coinValues: valuesBefore, feeAsItIs, ...observed }, (_, v) => (typeof v === "bigint" ? v.toString() : v))}\n`);
+process.stdout.write(`${JSON.stringify({ coinValues: valuesBefore, feeAsItIs, ...anchorEvidence, ...multiRoundEvidence, ...observed }, (_, v) => (typeof v === "bigint" ? v.toString() : v))}\n`);
 await closeSimulators();
 process.exit(0);

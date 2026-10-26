@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   createAuthorKeyFile,
   createUserKeyFile,
+  knownAuthors,
   entryCommitment,
   midnightSource,
   readUserKey,
@@ -168,7 +169,8 @@ describe("orynq verify midnight", () => {
     };
     const r = await run(["verify", "midnight", user.anchors.public.txHash, ...at(await serve(hostile))]);
     expect(r.code).toBe(1);
-    expect(r.stdout).toContain("the indexer reports ?]0;owned??[2J");
+    expect(r.stdout).toContain("the indexer reports an unrecognized or absent status");
+    expect(r.stdout).not.toContain("owned");
     expect(r.stdout).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f]/);
   });
 
@@ -364,4 +366,25 @@ describe("the orynq bin", () => {
     expect(r.stderr).toContain("--submit needs a person at a terminal");
     expect(readFileSync(keyPath, "utf8")).toContain("orynq-midnight-user-key/v1");
   });
+});
+
+
+it("never quotes malformed bundle content in verify or anchor errors", async () => {
+  const file = join(dir, "mistaken-secret.bundle");
+  const secret = "SYNTHETIC_SECRET_PREFIX_should_stay_private";
+  writeFileSync(file, secret, { mode: 0o600 });
+  for (const args of [
+    ["verify", "midnight", file, "--tx", user.anchors.public.txHash, "--network", "preprod"],
+    ["anchor", "midnight", "--key", keyPath, "--bundle", file, "--network", "preprod"],
+  ]) {
+    const result = await run(args);
+    expect(result.code).toBe(1); expect(result.stderr).toContain(`${file} is not JSON`);
+    expect(result.stderr).not.toContain("SYNTHETIC_SECRET_PREFIX");
+  }
+});
+
+it("refuses submit without an authenticated author policy before opening a key", async () => {
+  const result = await run(["anchor", "midnight", "--submit", "--key", "/missing/key", "--bundle", "/missing/bundle", "--network", "preprod"], deps({ knownAuthors: knownAuthors({ trustRoots: [] }), submit: async () => { throw new Error("must not submit"); } }), terminal({ tty: true, input: "irrelevant" }));
+  expect(result.code).toBe(1); expect(result.stderr).toContain("requires an authenticated KNOWN_AUTHORS policy");
+  expect(result.stderr).not.toContain("ENOENT");
 });

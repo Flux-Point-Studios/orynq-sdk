@@ -6,7 +6,12 @@
 # Then CONSUMER=DIR ./finish.sh OUT.json verifies every anchor and composes the pack.
 set -euo pipefail
 cd "$(dirname "$0")"
-run() { nice -n 19 node --import tsx "$@"; }
+repo=$(git rev-parse --show-toplevel)
+if [ -n "$(git -C "$repo" status --porcelain -- packages/anchors-midnight-submit packages/anchors-midnight)" ]; then
+  echo "Rehearsal tooling has uncommitted changes; commit or restore it first" >&2
+  exit 1
+fi
+run() { env -u NODE_OPTIONS nice -n 19 node --import tsx "$@"; }
 mkdir -p evidence
 [ -s bundles/index.json ] || run bundles.ts 2>&1 | tee -a evidence/rehearsal.log
 run run.ts chain funding deploy kind1 kind2 sameblock negatives 2>&1 | tee -a evidence/rehearsal.log

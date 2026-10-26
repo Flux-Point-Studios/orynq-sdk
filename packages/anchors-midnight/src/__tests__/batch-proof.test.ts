@@ -71,10 +71,12 @@ describe("portable receipt-to-Midnight proofs", () => {
   it("recomputes every link and checks the batch author, registry, inclusion and GRANDPA finality", async () => {
     const result = await verifyBatchProof(request(), options());
     expect(result.status).toBe("valid");
+    if (result.status !== "valid") throw new Error("Expected a valid proof fixture");
     expect(result.anchor).toMatchObject({ status: "valid", assurance: "consensus-verified", anchor: { kind: 3, author: key } });
     expect(result.anchorId).toBeDefined();
     const set = await verifyBatchSet({ network: "mainnet", materiosGenesis: genesis, ...bundle.set, midnight: bundle.midnight }, options());
     expect(set).toMatchObject({ status: "valid", facts: { authorKey: key, blockHeight: 2023, blockHash: bundle.midnight.blockHash, knownAuthorsSerial: 1 } });
+    if (set.status !== "valid") throw new Error("Expected a valid set fixture");
     expect(set.facts?.checkpointId).toMatch(/^[0-9a-f]{64}$/);
   });
 

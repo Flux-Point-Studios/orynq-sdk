@@ -25,7 +25,11 @@
     "native/Cargo.lock",
     "native/src",
     "native/tests",
-    "native/README.md"
+    "native/README.md",
+    "artifact-pins.json",
+    "native/SECURITY.md",
+    "native/check-verify-only-boundary.sh",
+    "native/public-input-boundary.sha256"
   ],
   "scripts": {
     "build": "tsc",
@@ -38,7 +42,8 @@
     "check:onchain": "node scripts/compile-onchain.mjs --check",
     "build:native": "cargo build --release --locked --manifest-path native/Cargo.toml",
     "test:real": "tsx tests/real-proofs.integration.ts && tsx tests/onchain.integration.ts",
-    "test:onchain-real": "tsx tests/onchain.integration.ts"
+    "test:onchain-real": "tsx tests/onchain.integration.ts",
+    "verify:artifacts": "node scripts/check-artifact-pins.mjs"
   },
   "dependencies": {
     "@fluxpointstudios/orynq-sdk-core": "workspace:*",

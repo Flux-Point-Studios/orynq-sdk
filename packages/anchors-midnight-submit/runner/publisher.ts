@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { fetch } from "undici";
 import { SNAPSHOT_BUDGET } from "@fluxpointstudios/orynq-sdk-core/checkpoint";
+import { readPrivateFile } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import type { openCensusState } from "./census-state.js";
 
 export interface PublicationOptions {
@@ -9,6 +10,14 @@ export interface PublicationOptions {
   targets: readonly { url: string; apiKey: string }[];
 }
 interface PublicationObject { kind: string; key: string; sha256: string; body: string }
+
+// A single bounded ASCII token, so a mnemonic or malformed header cannot be sent as a key.
+const API_KEY = /^[\x21-\x7e]{8,4096}$/;
+export function readProofStoreKey(file: string): string {
+  const value = readPrivateFile(file).trim();
+  if (!API_KEY.test(value)) throw new Error(`${file} does not hold a retained proof store API key`);
+  return value;
+}
 
 export async function publishCensusPlan(state: ReturnType<typeof openCensusState>, options: PublicationOptions): Promise<{ objects: number; readbacks: number }> {
   const plan = state.currentPlan();
@@ -28,7 +37,7 @@ export async function publishRetainedObjects(objects: readonly PublicationObject
     url.hostname = url.hostname.toLowerCase().replace(/\.+$/, "");
     const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
     const mainnetHost = !isIP(url.hostname.replace(/^\[|\]$/g, "")) && url.hostname !== "localhost" && !url.hostname.endsWith(".localhost");
-    if ((options.network === "mainnet" && (url.protocol !== "https:" || !mainnetHost)) || (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) || url.username || url.password || url.search || url.hash || !target.apiKey || /[\r\n]/.test(target.apiKey)) throw new Error("Invalid retained proof store publication configuration");
+    if ((options.network === "mainnet" && (url.protocol !== "https:" || !mainnetHost)) || (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) || url.username || url.password || url.search || url.hash || typeof target.apiKey !== "string" || !API_KEY.test(target.apiKey)) throw new Error("Invalid retained proof store publication configuration");
     return { url, apiKey: target.apiKey, loopback };
   });
   if (targets[0]!.url.origin === targets[1]!.url.origin || (!targets.every(target => target.loopback) && targets[0]!.url.hostname === targets[1]!.url.hostname)) throw new Error("Publication copies require distinct proof store hosts");
@@ -47,7 +56,7 @@ export async function publishRetainedObjects(objects: readonly PublicationObject
             return await fetch(url, { method, redirect: "error", signal: AbortSignal.any([deadline, failed.signal, AbortSignal.timeout(15_000)]),
               headers: { "user-agent": "orynq-midnight-publisher/1.0", "cache-control": "no-cache", ...(method === "PUT" ? { "content-type": "application/json", "x-api-key": target.apiKey } : {}) },
               ...(method === "PUT" ? { body: object.body } : {}) });
-          } catch (error) { throw new Error("Retained proof store publication request failed", { cause: error }); }
+          } catch { throw new Error("Retained proof store publication request failed"); }
         };
         let response = await request("GET");
         if (response.status === 404) {

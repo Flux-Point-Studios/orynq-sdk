@@ -6,6 +6,16 @@
 
 - `orynq trace` receipts are now certified by the Materios committee. Each receipt's blob is uploaded under its content hash, where the gateway's locator looks it up, instead of under the receipt ID. The receipt's on-chain root is now the Merkle root of the uploaded chunk hashes, which the committee checks; before, it was the trace's own root hash. Earlier receipts could never be certified. The blob-status link now points at the content hash.
 
+## 0.4.0
+
+### Minor Changes
+
+- Add read-only hosted Midnight receipt verification with caller-bound receipt, content and certificate identities, explicit proof endpoints and bounded resumable discovery. Unresolved hints never establish absence or coverage.
+
+### Patch Changes
+
+- The optional Midnight peer is available on npm with mainnet registry generation 1; missing-peer messages explain how to install it. `orynq verify midnight --author` reports the actual author and rejects a mismatch.
+
 ## 0.3.0
 
 ### Minor Changes

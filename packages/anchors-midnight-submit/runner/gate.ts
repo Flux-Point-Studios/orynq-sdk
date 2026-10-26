@@ -57,7 +57,13 @@ export function confirmedDust(root: string, after: number, except?: string, exce
     const validUntil = instant(e.valid_until ?? e.at);
     const fee = parseDust(String(e.fee_dust));
     if (!Number.isFinite(confirmedAt) || !Number.isFinite(validUntil) || fee === null) throw new Error("the confirmation audit holds an invalid time or fee");
-    if (Math.max(confirmedAt, validUntil) > after) fees.set(String(e.tx_hash), fee);
+    // The reviewed tools use 15-minute transactions. A provider-injected historical deadline
+    // cannot reserve the daily budget forever; keep a conservative one-hour maximum lifetime.
+    if (Math.max(confirmedAt, Math.min(validUntil, confirmedAt + HOUR)) > after) {
+      const key = String(e.tx_hash);
+      const previous = fees.get(key) ?? 0n;
+      fees.set(key, fee > previous ? fee : previous);
+    }
   }
   return [...fees.values()].reduce((sum, fee) => sum + fee, 0n);
 }

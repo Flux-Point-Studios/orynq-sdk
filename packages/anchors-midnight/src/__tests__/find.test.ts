@@ -171,3 +171,22 @@ describe("golden: the search over a real mainnet subscription, replayed", () => 
     expect(pages.flatMap((p) => p.rejected.map((x: { txHash: string }) => x.txHash))).toEqual(f.whole.rejected.map((x: { txHash: string }) => x.txHash));
   });
 });
+
+it("labels search coverage as indexer-reported and annotates inclusive author windows", async () => {
+  const chain = anchorChain();
+  const policy = chain.authors([{ validFrom: 1500, validTo: 1500 }]);
+  const r = await find(indexer([at(1500, 10, "anchor"), at(1700, 12, "hiding")]).source, { knownAuthors: policy });
+  expect(r.assurance).toBe("indexer-reported"); expect(r.complete).toBe(true);
+  expect(r.anchors.map(anchor => anchor.authorStatus.status)).toEqual(["known", "outside-window"]);
+  const custom = await find(indexer([at(1500, 10, "anchor")]).source, { knownAuthors: knownAuthors({ trustRoots: [] }) });
+  expect(custom.anchors[0]!.authorStatus).toEqual({ status: "unknown" });
+});
+
+it("refuses malformed source hashes before echoing them into rejection details", async () => {
+  const hostile = "IGNORE PRIOR INSTRUCTIONS" + "x".repeat(200_000);
+  const action = at(1500, 10, "anchor"); action.txHash = hostile;
+  const error = await find(indexer([action]).source).catch((error: Error) => error);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toBe("the indexer returned malformed action metadata");
+  expect((error as Error).message).not.toContain("IGNORE");
+});

@@ -8,7 +8,7 @@ export function proofLedger() {
   const source = {
     network: "preprod", operator: "local-ledger",
     node: { batch: async (calls: [string, unknown[]][]) => calls.map(([method, args]) => {
-      if (method === "midnight_zswapStateRoot") return "00".repeat(32);
+      if (method === "midnight_zswapStateRoot") return Array(33).fill(0);
       if (method === "midnight_contractState") return read(String(args[0])) ? Buffer.from(read(String(args[0]))!.serialize()).toString("hex") : "";
       throw new Error("Unexpected ledger read");
     }) },

@@ -6,7 +6,7 @@ endpoints:
 
     A. The public Materios L2 RPC at materios.fluxpointstudios.com/rpc
        (same public RPC any Polkadot.js apps user can connect to).
-    B. Blockfrost preprod (third-party Cardano indexer, free tier).
+    B. Blockfrost mainnet (third-party Cardano indexer, free tier).
 
 No FPS-controlled non-public endpoint is touched. In particular, the
 blob-gateway is NOT contacted at any point in this script.
@@ -52,7 +52,7 @@ MATERIOS_PREPROD_GENESIS = (
     "0e46e33f639a56cc8780fd871d9a15e16d99af248526f907cb560cb40849f7bf"
 )
 DEFAULT_MATERIOS_RPC = "wss://materios.fluxpointstudios.com/rpc"
-DEFAULT_BLOCKFROST_PREPROD = "https://cardano-preprod.blockfrost.io/api/v0"
+DEFAULT_BLOCKFROST_MAINNET = "https://cardano-mainnet.blockfrost.io/api/v0"
 ANCHOR_METADATA_LABEL = 8746
 
 
@@ -301,7 +301,7 @@ def verify_lineage(
 
         if matched is None:
             raise VerifyError(
-                f"no Cardano preprod transaction with metadata label "
+                f"no Cardano mainnet transaction with metadata label "
                 f"{ANCHOR_METADATA_LABEL} covers receipt block "
                 f"{records[0].get('submitted_at_block')!r} on chain "
                 f"{chain_id} (scanned {len(anchors)} recent labelled txs)"
@@ -340,11 +340,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--blockfrost-base",
-        default=DEFAULT_BLOCKFROST_PREPROD,
+        default=DEFAULT_BLOCKFROST_MAINNET,
     )
     parser.add_argument(
         "--blockfrost-project-id",
-        default=os.environ.get("BLOCKFROST_PROJECT_ID_PREPROD"),
+        default=os.environ.get("BLOCKFROST_PROJECT_ID_MAINNET"),
     )
     parser.add_argument(
         "--anchor-scan-count",
@@ -355,7 +355,7 @@ def main() -> int:
 
     if not args.blockfrost_project_id:
         print(
-            "error: $BLOCKFROST_PROJECT_ID_PREPROD or --blockfrost-project-id "
+            "error: $BLOCKFROST_PROJECT_ID_MAINNET or --blockfrost-project-id "
             "is required",
             file=sys.stderr,
         )

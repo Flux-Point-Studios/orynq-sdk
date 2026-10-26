@@ -12,6 +12,7 @@ import { readAnchorPlan, type AnchorPlan } from "../src/anchor-plan.js";
 import { parseDust } from "../src/preflight.js";
 import { LIMITS } from "./limits.js";
 import { proofReleaseStatements, type ProofReleaseIntent } from "./proof-release-intent.js";
+import { PromptSegments, summaryBlock } from "./output.js";
 
 export interface DeployIntent {
   action: string;
@@ -188,7 +189,6 @@ export function checkProofReleaseSummary(intent: ProofReleaseIntent, address: st
   return { ...payment, ...(item ? { item } : {}), problems: [...problems, ...payment.problems] };
 }
 
-const PROMPT = /Type exactly "(DEPLOY|ANCHOR) ([0-9a-f]{16})"/g;
 const quoted = (arg: string) => `'${arg.replaceAll("'", `'\\''`)}'`;
 
 export interface Answer {
@@ -210,6 +210,7 @@ export function driveTool({
   cwd,
   env,
   verb,
+  action,
   decide,
   onNo = () => undefined,
   onText = () => undefined,
@@ -218,29 +219,32 @@ export function driveTool({
   cwd: string;
   env: NodeJS.ProcessEnv;
   verb: "DEPLOY" | "ANCHOR";
+  action?: "deploy" | "anchors" | "proofs";
   decide: (summary: string, token: string) => Decision;
   onNo?: (decision: Decision) => void;
   onText?: (text: string) => void;
 }) {
   const child = spawn("script", ["-qfc", `${command.map(quoted).join(" ")} 3>&-; printf %d $? >&3`, "/dev/null"], { cwd, env, stdio: ["pipe", "pipe", "pipe", "pipe"] });
   const answers: Answer[] = [];
-  let seen = "";
-  let from = 0;
+  const segments = new PromptSegments();
   let reported = "";
-  child.stdio[3]!.on("data", (chunk: Buffer) => void (reported += chunk.toString("utf8")));
+  child.stdio[3]!.on("data", (chunk: Buffer) => void (reported = (reported + chunk.toString("utf8")).slice(0, 16)));
   child.stdout.on("data", (chunk: Buffer) => {
     const text = chunk.toString("utf8").replaceAll("\r", "");
-    seen += text;
     onText(text);
-    for (const prompt of [...seen.matchAll(PROMPT)].slice(answers.length)) {
-      const [asked, kind, hex] = prompt;
-      const summary = seen.slice(from, prompt.index);
-      from = prompt.index + asked.length;
-      const decision = kind === verb ? decide(summary, hex!) : { problems: [`the tool asks for "${kind} ${hex}", not ${verb === "ANCHOR" ? "an" : "a"} ${verb} token`] };
+    for (const segment of segments.push(text)) {
+      const { verb: kind, token: hex } = segment;
+      const block = summaryBlock(segment, action);
+      const decision = answers.length >= 128
+        ? { problems: ["too many confirmation prompts in one attempt"] }
+        : kind !== verb
+          ? { problems: [`the tool asks for "${kind} ${hex}", not ${verb === "ANCHOR" ? "an" : "a"} ${verb} token`] }
+          : block.problem ? { problems: [block.problem] } : decide(block.summary, hex);
       const confirmed = decision.problems.length === 0;
       if (!confirmed) onNo(decision);
-      answers.push({ token: `${kind} ${hex}`, confirmed, problems: decision.problems });
+      if (answers.length < 128) answers.push({ token: `${kind} ${hex}`, confirmed, problems: decision.problems });
       child.stdin.write(confirmed ? `${kind} ${hex}\n` : "NO\n");
+      if (answers.length >= 128) { child.kill("SIGTERM"); break; }
     }
   });
   child.stderr.on("data", (chunk: Buffer) => onText(chunk.toString("utf8")));

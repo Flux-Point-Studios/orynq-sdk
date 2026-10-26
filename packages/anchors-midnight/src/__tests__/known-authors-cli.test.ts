@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,7 +32,12 @@ describe("the known-authors CLI an offline trust-root holder runs", () => {
     const documentFile = join(dir, "document.json");
     const document = { format: "orynq-known-authors/v1", serial: 1, issued: "2026-10-04T00:00:00Z", networks: { preprod: { authors: [], checkpoints: [] } } };
     writeFileSync(documentFile, `${JSON.stringify(document, null, 2)}\n`);
-    const signed = await run("sign", documentFile, seedFile);
+    const inspected = await run("inspect", documentFile);
+    expect(inspected.status).toBe(0);
+    const review = JSON.parse(inspected.stdout);
+    expect(review.networks.preprod).toEqual({ authors: [], checkpoints: [] });
+    const signed = await run("sign", documentFile, seedFile, "--reviewed-sha256", review.documentSha256);
+    expect(signed.stderr).toContain("Known-authors signing review");
     expect(signed.status).toBe(0);
     for (const out of [created.stdout, created.stderr, signed.stdout, signed.stderr]) expect(out).not.toContain(seed);
 
@@ -47,9 +53,28 @@ describe("the known-authors CLI an offline trust-root holder runs", () => {
     expect((await run("new-root-key", seedFile)).status).not.toBe(0);
     expect(readFileSync(seedFile, "utf8")).toBe("keep\n");
     const open = join(dir, "open.seed");
-    writeFileSync(open, `${"ab".repeat(32)}\n`, { mode: 0o644 });
-    const r = await run("sign", join(dir, "document.json"), open);
+    writeFileSync(open, `${"ab".repeat(32)}\n`, { mode: 0o600 });
+    // Creation modes are filtered by umask; make this throwaway fixture readable explicitly.
+    chmodSync(open, 0o644);
+    expect(statSync(open).mode & 0o777).toBe(0o644);
+    const documentFile = join(dir, "document.json");
+    const digest = createHash("sha256").update(readFileSync(documentFile)).digest("hex");
+    const r = await run("sign", documentFile, open, "--reviewed-sha256", digest);
     expect(r.status).not.toBe(0);
     expect(r.stderr).toMatch(/open\.seed can be read or written by group or others/);
   });
+});
+
+
+it("refuses an unreviewed or changed document before opening a seed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orynq-policy-review-"));
+  try {
+    const document = join(root, "policy.json");
+    writeFileSync(document, JSON.stringify({ format: "orynq-known-authors/v1", serial: 1, issued: "2026-10-04T00:00:00Z", networks: {} }));
+    const refused = await run("sign", document, join(root, "missing-seed"), "--reviewed-sha256", "00".repeat(32));
+    expect(refused.status).not.toBe(0);
+    expect(refused.stderr).toContain("differs from the reviewed SHA-256");
+    expect(refused.stderr).not.toContain("ENOENT");
+    expect(refused.stdout).toBe("");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

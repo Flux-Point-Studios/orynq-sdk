@@ -168,7 +168,7 @@ export type {
   MateriosAnchorV2Metadata,
 } from "./materios-anchor-v2.js";
 
-export { verifyMateriosCheckpointAnchor } from "./materios-checkpoint-verifier.js";
+export { verifyMateriosCheckpointAnchor, MATERIOS_CHECKPOINT_WALLET_PINS } from "./materios-checkpoint-verifier.js";
 export type {
   CheckpointTransaction,
   MateriosCheckpointCheck,
@@ -176,6 +176,7 @@ export type {
   MateriosCheckpointOptions,
   MateriosCheckpointSource,
   MateriosCheckpointVerification,
+  MateriosAnchorWalletPin,
 } from "./materios-checkpoint-verifier.js";
 
 // =============================================================================
@@ -184,6 +185,7 @@ export type {
 
 export {
   createChainedSubmitQueue,
+  classifyCardanoSubmitError,
   isSpentInputError,
   SubmitQueueFullError,
   SubmitRefusedError,

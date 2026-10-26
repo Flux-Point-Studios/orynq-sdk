@@ -37,11 +37,13 @@ import {
   readJsonFile,
   registryOperator,
   registryStateOnNode,
+  verifyConfirmedAnchor,
+  withResultsLock,
   type AnchorReceipt,
   type PreparedAnchor,
   type RegistryOperator,
 } from "../src/index.js";
-import { ANCHORS_JOURNAL, DEPLOY_JOURNAL, SECRETS, STATE, mainnetScript } from "./mainnet-session.js";
+import { ANCHORS_JOURNAL, DEPLOY_JOURNAL, SECRETS, STATE, mainnetScript, deadlineBeforeAnnouncement } from "./mainnet-session.js";
 
 const { option, run, requireDustFloor, confirm } = mainnetScript({
   name: "anchor-mainnet",
@@ -81,10 +83,9 @@ const FINALITY_MINUTES = 10;
 // instead of the node's word.
 async function finalOnNode(source: MidnightSource, operator: RegistryOperator, label: string, prepared: PreparedAnchor, landed: AnchorReceipt): Promise<AnchorReceipt> {
   const chain = chainView(source, "mainnet");
-  const awaiting = ({ blockHeight, blockHash }: AnchorReceipt) => {
+  const awaiting = ({ blockHeight, blockHash }: AnchorReceipt) => deadlineBeforeAnnouncement(FINALITY_MINUTES * 60_000, () => {
     process.stdout.write(`\n${label} landed in block ${blockHeight} (${blockHash}); waiting until the node finalizes it...\n`);
-    return Date.now() + FINALITY_MINUTES * 60_000;
-  };
+  });
   let receipt = landed;
   let until = awaiting(receipt);
   let told: string | null = null;
@@ -133,7 +134,7 @@ await run(async (connect) => {
   recorded();
   // Adds `row` to the results file as it stands, replacing the file only once the new list is
   // wholly written and flushed, owner-only.
-  const record = (row: Recorded) => {
+  const record = (row: Recorded) => withResultsLock(resultsPath, () => {
     const rows = recorded();
     const existing = rows.find((saved) => saved.label === row.label);
     if (existing) {
@@ -143,7 +144,7 @@ await run(async (connect) => {
     const next = `${resultsPath}.${process.pid}.next`;
     writePrivateFile(next, JSON.stringify([...rows, row], null, 1));
     renameSync(next, resultsPath);
-  };
+  });
 
   const { source, chain, syncWallet } = await connect();
   if (!(await registryStateOnNode(source, plan.registry))) throw new Error(`the mainnet node holds no contract at ${plan.registry}`);
@@ -162,8 +163,9 @@ await run(async (connect) => {
     registry: plan.registry,
   });
   try {
+    await operator.reconcile();
     for (const planned of plan.entries) {
-      const resumed = await operator.journalled(planned);
+      const resumed = await operator.held(planned);
       const done = recorded().find((row) => row.label === planned.label);
       if (done) {
         if (resumed?.journal?.state !== "landed" || resumed.txHash !== done.txHash) {
@@ -177,7 +179,8 @@ await run(async (connect) => {
       const prepared = resumed ?? (await operator.prepare(planned));
       await confirm(prepared, anchorSummary({ ...(planned.kind === 3 ? { batch: planned } : { entry: planned.entry }), chain, wallet: wallet.addresses, dust, label: planned.label, prepared }), () => operator.discard(prepared));
       const receipt = await finalOnNode(source, operator, planned.label, prepared, await operator.submit(prepared));
-      record({
+      await verifyConfirmedAnchor(source, prepared, receipt);
+      await record({
         label: planned.label,
         kind: receipt.kind,
         txHash: receipt.txHash,

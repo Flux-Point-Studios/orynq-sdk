@@ -2,13 +2,14 @@ import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { checkpointId, decodeAnchorTransaction, type KnownAuthors, type MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { checkpointAdvanceId, checkpointId, decodeAnchorTransaction, type CheckpointAdvance, type FinalityCheckpoint, type KnownAuthors, type MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { TTL_MARGIN_MILLIS, type ChainView } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { declaredFee, finalTransaction } from "../src/submission.js";
 import { followerPolicyDigest, type FollowerBlock } from "./follower-block.js";
 import { assertStandingFeeBudget, type ConfirmedFee, type StandingFeeFacts } from "./standing-budget.js";
 import { assertStandingClock, type StandingClockPoint } from "./standing-clock.js";
 import { assertStandingTransaction } from "./standing-transaction.js";
+import { authenticateCheckpointHistory } from "./checkpoint-history.js";
 
 interface Scope { network: MidnightNetwork; genesis: string; registry: string; author: string; policyDigest: string; runtimeSpecVersion: number }
 interface BlockRow { height: number; hash: string; parent_hash: string; timestamp: number; digest: string }
@@ -38,6 +39,9 @@ create index follower_commitments on follower_batch_calls(commitment);
 create table follower_admissions(tx_hash text primary key references follower_attempts(tx_hash),policy_serial integer not null,head_height integer not null,head_hash text not null);
 create table follower_policies(id integer primary key check(id=1),serial integer not null,digest text not null,conflicted integer not null check(conflicted in (0,1)));
 `;
+const CHECKPOINT_SCHEMA = `
+create table follower_checkpoints(root_id text not null,sequence integer not null check(sequence>0),digest text not null unique,artifact text not null,primary key(root_id,sequence)) without rowid;
+`;
 
 // The caller records only complete results returned by verifyFollowerBlock.
 export function openFollowerState(path: string, input: Scope) {
@@ -59,10 +63,11 @@ export function openFollowerState(path: string, input: Scope) {
     if (version === 0) {
       if (db.prepare("select 1 from sqlite_master where type='table' and name not like 'sqlite_%'").get()) throw new Error("Existing follower database has no schema version");
       db.exec(SCHEMA); db.prepare("insert into follower_scope(id,scope) values(1,?)").run(JSON.stringify(scope));
-    } else if (version !== 1 && version !== 2) throw new Error("Unsupported follower schema version");
+    } else if (version !== 1 && version !== 2 && version !== 3) throw new Error("Unsupported follower schema version");
     if (version === 0 || version === 1) { db.exec(ADMISSION_SCHEMA); db.exec("pragma user_version=2"); }
+    if (version === 0 || version === 1 || version === 2) { db.exec(CHECKPOINT_SCHEMA); db.exec("pragma user_version=3"); }
     const tables = db.prepare("select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name").all().map(row => row.name).join(",");
-    if (tables !== "follower_admissions,follower_attempts,follower_batch_calls,follower_blocks,follower_observations,follower_policies,follower_scope") throw new Error("Follower schema tables differ");
+    if (tables !== "follower_admissions,follower_attempts,follower_batch_calls,follower_blocks,follower_checkpoints,follower_observations,follower_policies,follower_scope") throw new Error("Follower schema tables differ");
     if (db.prepare("select scope from follower_scope where id=1").get()?.scope !== JSON.stringify(scope)) throw new Error("Follower scope differs");
     db.exec("commit"); initializing = false; db.exec("pragma journal_mode=wal");
     const directory = openSync(dirname(path), constants.O_RDONLY | constants.O_DIRECTORY);
@@ -139,6 +144,26 @@ export function openFollowerState(path: string, input: Scope) {
       if (!current || current.policySerial < row.policySerial || current.head.height < row.head.height || (current.head.height === row.head.height && current.head.hash !== row.head.hash)) throw new StandingHistoryLost();
     }
   }
+  function checkpointHistory(): CheckpointAdvance[] {
+    const bounds = db.prepare("select count(*) as count,coalesce(sum(length(artifact)),0) as bytes,max(length(artifact)) as largest from follower_checkpoints").get()!;
+    if (Number(bounds.count) > 4096 || Number(bounds.bytes) > 512 * 1024 * 1024 || Number(bounds.largest ?? 0) > 64 * 1024 * 1024) throw new Error("Retained checkpoint history exceeds its bounds");
+    return db.prepare("select root_id,sequence,digest,artifact from follower_checkpoints order by root_id,sequence").all().map(row => {
+      const artifact = JSON.parse(String(row.artifact)) as CheckpointAdvance;
+      if (artifact.rootId !== row.root_id || artifact.sequence !== row.sequence || checkpointAdvanceId(artifact) !== row.digest) throw new Error("Retained checkpoint identity differs");
+      return artifact;
+    });
+  }
+  function assertRetainedHistory() {
+    if (db.prepare("pragma foreign_key_check").get()) throw new Error("Checkpoint advancement found inconsistent retained references");
+    const snapshot = headRow(), floor = db.prepare("select height,hash from follower_blocks order by height limit 1").get();
+    if (snapshot && floor) complete({ height: Number(floor.height), hash: String(floor.hash) }, snapshot);
+    for (const row of db.prepare("select boundary_height,boundary_hash from follower_attempts").all()) {
+      if (!snapshot || db.prepare("select hash from follower_blocks where height=?").get(Number(row.boundary_height))?.hash !== row.boundary_hash) throw new Error("Checkpoint advancement found missing attempt history");
+    }
+    for (const row of db.prepare("select head_height,head_hash from follower_admissions").all()) {
+      if (!snapshot || db.prepare("select hash from follower_blocks where height=?").get(Number(row.head_height))?.hash !== row.head_hash) throw new Error("Checkpoint advancement found missing admission history");
+    }
+  }
   return {
     scope: () => ({ ...scope }),
     coverage: () => transaction(() => {
@@ -152,6 +177,22 @@ export function openFollowerState(path: string, input: Scope) {
         replay: first ? { after: { height: first.height - 1, hash: first.parent_hash }, end: { height: Number(end!.height), hash: String(end!.hash) } } : null };
     }),
     head,
+    checkpointHistory,
+    async retainCheckpointHistory(originals: readonly FinalityCheckpoint[], input: readonly CheckpointAdvance[]) {
+      if (followerPolicyDigest(originals) !== scope.policyDigest) throw new Error("Checkpoint advancement original policy differs");
+      // Verification happens outside SQLite's lock; the transaction rechecks every retained
+      // identity afterwards, then commits the complete extension or none of it on interruption.
+      const verified = await authenticateCheckpointHistory(scope.network, originals, input);
+      const candidate = new Map(verified.artifacts.map(artifact => [`${artifact.rootId}:${artifact.sequence}`, checkpointAdvanceId(artifact)]));
+      transaction(() => {
+        assertRetainedHistory();
+        for (const artifact of checkpointHistory()) if (candidate.get(`${artifact.rootId}:${artifact.sequence}`) !== checkpointAdvanceId(artifact)) throw new Error("Checkpoint history rollback, conflict or missing retained prefix");
+        const insert = db.prepare("insert into follower_checkpoints(root_id,sequence,digest,artifact) values(?,?,?,?) on conflict(root_id,sequence) do nothing");
+        for (const artifact of verified.artifacts) insert.run(artifact.rootId, artifact.sequence, checkpointAdvanceId(artifact), JSON.stringify(artifact));
+        checkpointHistory();
+      });
+      return verified;
+    },
     observations,
     feeFacts: () => transaction(feeFacts),
     admissions,

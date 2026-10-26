@@ -50,9 +50,6 @@ export function assertProofWitness(witness: ProofWitness): void {
   if ("eventDigest" in witness && !/^[0-9a-f]{64}$/.test(witness.eventDigest)) throw new Error("A canonical event digest is required");
 }
 
-export const PROOF_MAX_ATTEMPTS = 3;
-export const isProofGasError = (error: unknown): boolean => error instanceof Error && /\bran out of gas budget\b/.test(error.message);
-
 export function assertProofDeploy(bytes: Uint8Array, stage: "unproven" | "final"): string {
   const tx = stage === "unproven" ? L.Transaction.deserialize("signature", "pre-proof", "pre-binding", bytes) : L.Transaction.deserialize("signature", "proof", "binding", bytes);
   if (!Buffer.from(tx.serialize()).equals(Buffer.from(bytes))) throw new Error("Noncanonical deploy transaction");

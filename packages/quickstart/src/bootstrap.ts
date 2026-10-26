@@ -105,6 +105,11 @@ export interface BootstrapAndTraceResult {
   bundle: TraceBundleLite;
   receiptId: string;
   blockHash: string;
+  /** SHA-256 of the exact uploaded content, for --content-hash. */
+  contentHash: string;
+  /** Base root submitted on chain: Merkle root of the uploaded chunks. */
+  rootHash: string;
+  /** Full certificate hash, for --certificate-hash; absent while certification is pending. */
   certHash?: string;
   urls: ExplorerUrls;
   /** Wall-clock duration from start of bootstrap to URLs available. */
@@ -221,10 +226,11 @@ export async function bootstrapAndTrace(
     //     (the SDK's default derivation matches what we computed above).
     // The committee certifies only when the on-chain root equals the Merkle root of the uploaded
     // chunk hashes; the trace's own rootHash travels inside the content.
+    const rootHash = merkleRoot(manifest.chunks.map((chunk) => chunk.sha256));
     const submitResult = await submitReceipt(provider, {
       receiptId: receiptIdHex,
       contentHash,
-      rootHash: merkleRoot(manifest.chunks.map((chunk) => chunk.sha256)),
+      rootHash,
       manifestHash: uploadResult.storageLocatorHash ?? bundle.manifestHash,
     });
     onProgress({
@@ -269,6 +275,8 @@ export async function bootstrapAndTrace(
       bundle,
       receiptId: submitResult.receiptId,
       blockHash: submitResult.blockHash,
+      contentHash: `0x${contentHashHex}`,
+      rootHash,
       urls,
       elapsedMs: Date.now() - start,
     };

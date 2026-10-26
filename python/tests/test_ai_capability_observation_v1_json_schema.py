@@ -12,15 +12,13 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+import jsonschema
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from orynq_sdk.schemas.ai_capability_observation_v1 import (  # noqa: E402
     validate_ai_capability_observation_v1,
 )
-
-
-jsonschema = pytest.importorskip("jsonschema")
 
 
 SCHEMA_PATH = (

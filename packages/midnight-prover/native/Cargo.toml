@@ -9,6 +9,7 @@ license = "MIT"
 base64 = "0.22.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+sha2 = "0.10.9"
 ledger = { package = "midnight-ledger", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "b5d3e965a18e4cac17fac4f38446fc55c524439a", default-features = false, features = ["proof-verifying"] }
 serialize = { package = "midnight-serialize", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "b5d3e965a18e4cac17fac4f38446fc55c524439a" }
 storage = { package = "midnight-storage", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "b5d3e965a18e4cac17fac4f38446fc55c524439a" }

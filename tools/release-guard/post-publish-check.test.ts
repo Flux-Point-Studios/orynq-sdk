@@ -6,7 +6,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkLayouts, packedSpecs, singletonCopies } from "./post-publish-check.mjs";
+import { checkLayouts, npmInstallFailure, packedSpecs, singletonCopies } from "./post-publish-check.mjs";
 
 const scratchDirs: string[] = [];
 const scratch = () => {
@@ -29,6 +29,48 @@ function tarball(files: Record<string, string>): Buffer {
 
 const manifest = (name: string, version: string, extra: Record<string, unknown> = {}) =>
   JSON.stringify({ name, version, type: "module", ...extra });
+
+describe("npm install failure diagnostics", () => {
+  it.each(["error", "ERR!"])("keeps resolver diagnostics before the generic npm %s log footer", (prefix) => {
+    const stderr = [
+      `npm ${prefix} code ERESOLVE`,
+      `npm ${prefix} ERESOLVE unable to resolve dependency tree`,
+      `npm ${prefix} While resolving: private-project@1.0.0`,
+      `npm ${prefix} Found: secret-package@1.0.0`,
+      `npm ${prefix} A complete log of this run can be found in: /private/npm/_logs/debug.log`,
+    ].join("\n");
+    expect(npmInstallFailure({ code: 1, stderr })).toBe(
+      "npm install failed (exit=1, npm=ERESOLVE): dependency resolution conflict",
+    );
+  });
+
+  it("retains bounded network fields while removing credential URLs, paths and arbitrary registry text", () => {
+    const stderr = [
+      "npm error code ENOTFOUND",
+      "npm error syscall getaddrinfo",
+      "npm error errno ENOTFOUND",
+      "npm error network request to https://user:SECRET@registry.example/private failed: hostile text",
+      `npm error ${"x".repeat(100_000)}`,
+      "npm error A complete log of this run can be found in: /private/npm/_logs/debug.log",
+    ].join("\n");
+    expect(npmInstallFailure({ code: 1, stderr })).toBe(
+      "npm install failed (exit=1, npm=ENOTFOUND, errno=ENOTFOUND, syscall=getaddrinfo): registry hostname lookup failed",
+    );
+  });
+
+  it("retains an HTTP failure status without copying the request URL", () => {
+    expect(npmInstallFailure({ code: 1, stderr: "npm error code E503\nnpm error 503 Service Unavailable - GET https://SECRET@example.invalid/private\n" })).toBe(
+      "npm install failed (exit=1, npm=E503, http=503)",
+    );
+  });
+
+  it("does not treat unrecognized or malformed text as a structured diagnostic", () => {
+    expect(npmInstallFailure({ code: "SECRET", stderr: "npm error code E404 SECRET\nnpm error syscall getaddrinfo SECRET\nnpm error errno ENOTFOUND SECRET" })).toBe(
+      "npm install failed (exit=unavailable, npm=unavailable)",
+    );
+    expect(npmInstallFailure({})).toBe("npm install failed (exit=unavailable, npm=unavailable)");
+  });
+});
 
 describe("packedSpecs", () => {
   it("reads name@version from every tarball the pack step left, ignoring other files", () => {
@@ -184,7 +226,7 @@ describe("checkLayouts against a registry", () => {
     refuseInstall = true;
     try {
       expect((await checkLayouts(["@f/good@1.0.0"], options())).problems).toEqual([
-        "@f/good@1.0.0: npm install failed (exit=1, npm=E404)",
+        "@f/good@1.0.0: npm install failed (exit=1, npm=E404, http=404): registry resource unavailable",
       ]);
     } finally { refuseInstall = false; }
   });

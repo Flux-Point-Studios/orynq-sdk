@@ -30,7 +30,15 @@ export interface CircuitProof {
   circuitId: keyof typeof CIRCUITS;
   transactionBase64: string;
   referenceStateBase64: string;
-  verificationTimeUnixSeconds: number;
+}
+
+/** The verifier could not complete a trustworthy check; this is an operational failure, not an invalid proof. */
+export class NativeVerifierConfigurationError extends Error {
+  readonly code = "MIDNIGHT_NATIVE_VERIFIER_CONFIGURATION";
+  constructor(readonly reason: "spawn" | "configuration" | "process" | "protocol") {
+    super(`Native Midnight verifier unavailable or misconfigured (${reason})`);
+    this.name = "NativeVerifierConfigurationError";
+  }
 }
 
 export interface CapabilityProof extends CircuitProof {
@@ -172,6 +180,7 @@ export class RealMidnightProver {
       }
       return previous === inputs.rootHash;
     } catch (error) {
+      if (error instanceof NativeVerifierConfigurationError) throw error;
       if (error instanceof Error) return false;
       throw error;
     }
@@ -224,8 +233,8 @@ export class RealMidnightProver {
       data.privateTranscriptOutputs, data.input, data.output, ledger.communicationCommitmentRandomness(), entryPoint);
     const transaction = ledger.Transaction.fromParts("undeployed").addCalls({ tag: "first" }, [call], ledger.LedgerParameters.initialParameters(), ttl);
     const proven = (await transaction.prove(provider, ledger.CostModel.initialCostModel())).bind();
-    const proof: CircuitProof = { version: 2, circuitId, transactionBase64: Buffer.from(proven.serialize()).toString("base64"), referenceStateBase64: Buffer.from(state.serialize()).toString("base64"), verificationTimeUnixSeconds: Number(seconds) };
-    if (!await this.nativeVerify({ circuitId, transactionBase64: proof.transactionBase64, referenceStateBase64: proof.referenceStateBase64, verificationTimeUnixSeconds: nowSeconds() })) {
+    const proof: CircuitProof = { version: 2, circuitId, transactionBase64: Buffer.from(proven.serialize()).toString("base64"), referenceStateBase64: Buffer.from(state.serialize()).toString("base64") };
+    if (!await this.nativeVerify({ circuitId, transactionBase64: proof.transactionBase64, referenceStateBase64: proof.referenceStateBase64 })) {
       throw new Error("Generated proof failed native verification");
     }
     return proof;
@@ -235,9 +244,12 @@ export class RealMidnightProver {
     if (!record(proof) || proof.version !== 2 || proof.circuitId !== circuitId || proof["simulation"] !== undefined) return undefined;
     const txBytes = strictBase64(proof.transactionBase64);
     const stateBytes = strictBase64(proof.referenceStateBase64);
-    const verified = await this.nativeVerify({ circuitId, transactionBase64: proof.transactionBase64, referenceStateBase64: proof.referenceStateBase64, verificationTimeUnixSeconds: nowSeconds() });
+    const verified = await this.nativeVerify({ circuitId, transactionBase64: proof.transactionBase64, referenceStateBase64: proof.referenceStateBase64 });
     if (!verified) return undefined;
-    const module = await this.contract();
+    let module: Awaited<ReturnType<RealMidnightProver["contract"]>>;
+    try { module = await this.contract(); }
+    catch { throw new NativeVerifierConfigurationError("configuration"); }
+    if (typeof module.ledger !== "function") throw new NativeVerifierConfigurationError("configuration");
     const state = ledger.LedgerState.deserialize(stateBytes);
     const transaction = ledger.Transaction.deserialize("signature", "proof", "binding", txBytes);
     const strictness = new ledger.WellFormedStrictness();
@@ -256,27 +268,37 @@ export class RealMidnightProver {
   }
 
   private nativeVerify(input: Omit<CircuitProof, "version">): Promise<boolean> {
-    return new Promise(resolve => {
-      const child = spawn(this.options.nativeVerifierPath, ["--registry", join(this.options.artifactsDir, "registry.json")], { shell: false, stdio: ["pipe", "pipe", "pipe"], timeout: 30_000 });
+    return new Promise((resolve, reject) => {
+      const child = spawn(this.options.nativeVerifierPath, ["--registry", join(this.options.artifactsDir, "registry.json")], { shell: false, stdio: ["pipe", "pipe", "pipe"], timeout: 30_000, killSignal: "SIGKILL" });
       let stdout = "";
       let overflow = false;
+      let received = 0;
+      let inputFailed = false;
       child.stdout.on("data", (data: Buffer) => {
-        if (stdout.length + data.length > 4096) overflow = true;
+        received += data.length;
+        if (received > 4096) { overflow = true; child.kill("SIGKILL"); }
         if (!overflow) stdout += data.toString("utf8");
       });
       child.stderr.resume();
-      child.on("error", () => resolve(false));
+      child.on("error", () => reject(new NativeVerifierConfigurationError("spawn")));
       child.on("close", code => {
-        if (code !== 0 || overflow) { resolve(false); return; }
+        if (code === 2) { reject(new NativeVerifierConfigurationError("configuration")); return; }
+        if (code !== 0) { reject(new NativeVerifierConfigurationError("process")); return; }
+        if (overflow || inputFailed) { reject(new NativeVerifierConfigurationError("protocol")); return; }
         try {
           const result: unknown = JSON.parse(stdout);
-          resolve(record(result) && Object.keys(result).length === 2 && result["valid"] === true && result["code"] === "verified");
-        } catch (error) {
-          if (error instanceof SyntaxError) resolve(false);
-          else throw error;
+          if (record(result) && Object.keys(result).length === 2) {
+            if (result["code"] === "configuration-error") { reject(new NativeVerifierConfigurationError("configuration")); return; }
+            if (result["valid"] === true && result["code"] === "verified") { resolve(true); return; }
+            if (result["valid"] === false && ["invalid-proof", "invalid-transaction", "invalid-time", "malformed-input", "unknown-circuit", "untrusted-state", "unexpected-transaction"].includes(String(result["code"]))) { resolve(false); return; }
+          }
+          reject(new NativeVerifierConfigurationError("protocol"));
+        } catch {
+          reject(new NativeVerifierConfigurationError("protocol"));
         }
       });
-      child.stdin.on("error", () => resolve(false));
+      // EPIPE may race exit 2; let close classify the actual verifier failure.
+      child.stdin.on("error", () => { inputFailed = true; });
       child.stdin.end(JSON.stringify(input));
     });
   }

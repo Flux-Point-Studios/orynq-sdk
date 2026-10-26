@@ -6,6 +6,7 @@ import { confirmOnTerminal, formatDust, parseDust } from "../src/preflight.js";
 import { readJsonFile } from "../src/json-file.js";
 import { proofReleaseOperator, proofReleaseJournal, PROOF_RELEASE_LABELS } from "../src/proof-release.js";
 import { proofReleaseIntent, type ProofReleaseIntent } from "../runner/proof-release-intent.js";
+import { assertKnownRuntime } from "../src/submission.js";
 import { mainnetScript, STATE } from "./mainnet-session.js";
 
 const { option, run } = mainnetScript({
@@ -34,10 +35,11 @@ await run(async connect => {
         throw new Error("Proof release fee or expiry exceeds the approved intent");
       }
       const summary = [
-        `network ${intent.network}`, `label ${label}`, `contract ${prepared.address}`,
+        `network ${intent.network}`, `runtime ${await assertKnownRuntime(source, "mainnet")}`, `label ${label}`, `contract ${prepared.address}`,
         `code hash ${intent.codeHash}`, `initial state ${intent.initialStateSha256}`, `authority ${intent.authority}`,
         ...(prepared.statement ? [`statement ${JSON.stringify(prepared.statement)}`] : []),
         `paid from ${prepared.payer}`, `fee (declared) ${formatDust(prepared.declaredFee)} DUST`,
+        `DUST balance ${formatDust((await wallet.balances()).dust)} DUST`, `final bytes ${prepared.bytes.length}`,
         `valid until ${prepared.ttl.toISOString()}`, `proof tx hash ${prepared.txHash}`,
       ].join("\n");
       process.stdout.write(`${summary}\n`);

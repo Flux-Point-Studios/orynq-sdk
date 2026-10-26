@@ -5,9 +5,9 @@
 //   new-author KEY_FILE                            writes a fresh 32-byte author secret (0600), prints its author key
 //   new-salt KEY_FILE                              writes a fresh 32-byte kind-2 salt key (0600), prints its public id
 //   addresses MNEMONIC_FILE NETWORK [--equals F]   prints the addresses, or whether they equal F's "addresses"
-import { readFileSync } from "node:fs";
 import { createAuthorKeyFile, createSaltKeyFile, type MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { createWalletMnemonicFile, ensurePrivateDir, walletAddresses } from "../src/keys.js";
+import { readJsonFile } from "../src/json-file.js";
 
 const network = (name: string | undefined): MidnightNetwork => {
   if (name !== "mainnet" && name !== "preprod") throw new Error(`the network must be mainnet or preprod, not ${name}`);
@@ -31,7 +31,7 @@ try {
     const addresses = walletAddresses(args[0]!, network(args[1]));
     if (args.length === 2) print(addresses);
     else {
-      const recorded = (JSON.parse(readFileSync(args[3]!, "utf8")) as { addresses: Partial<Record<keyof typeof addresses, string>> }).addresses;
+      const recorded = (readJsonFile(args[3]!) as { addresses: Partial<Record<keyof typeof addresses, string>> }).addresses;
       const same = (["unshielded", "shielded", "dust"] as const).every((role) => recorded[role] === addresses[role]);
       print(String(same));
       if (!same) process.exitCode = 1;

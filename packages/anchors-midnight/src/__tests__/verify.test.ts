@@ -111,7 +111,9 @@ describe("critique2 (f): never valid without consensus finality, and every resul
     expect(check(r, "finality")!.detail).toBe("set 7 has no voting weight, so it finalizes nothing");
   });
 
-  it("valid is reachable only at consensus-verified, even if every check passes below it", async () => {
+  // These paths already fail a finality check when assurance is below consensus-verified.
+  // They exercise those verdicts, not done()'s defensive guard with every check passing.
+  it("reports valid for the finalized fixture and unverified-finality when proof is skipped or bounded", async () => {
     const chain = anchorChain();
     const results = await Promise.all([
       verify(chain, request("anchor", KIND1)),
@@ -371,7 +373,7 @@ describe.each(["mainnet", "preprod"] as const)("golden: the verifier on a real %
 describe("golden: the preprod rehearsal's anchors, replayed", () => {
   const f = JSON.parse(readFileSync(new URL("./fixtures/preprod-rehearsal.json", import.meta.url), "utf8"));
   const verifyRecorded = (a: { txHash: string; expect: VerifyRequest["expect"] }) =>
-    verifyMidnightAnchor({ network: "preprod", txHash: a.txHash, expect: a.expect }, { source: replaySource(f.recording), registries: [f.registry], knownAuthors: knownAuthors({ documents: f.documents, trustRoots: [f.trustRoot] }) });
+    verifyMidnightAnchor({ network: "preprod", txHash: a.txHash, expect: a.expect }, { source: replaySource(f.recording), registries: [f.registry], knownAuthors: knownAuthors({ documents: f.documents, trustRoots: [f.trustRoot] }), ...(f.consensusPolicy ? { checkpoints: knownAuthors({ documents: f.consensusPolicy }).checkpoints("preprod") } : {}) });
 
   it("holds the rehearsal's verdicts: both relay-1 anchors valid and the revoked key's anchor author-revoked, all consensus-verified", () => {
     expect(f.anchors.map((a: VerifyResult & { name: string }) => [a.name, a.status, a.assurance])).toEqual([
@@ -381,7 +383,8 @@ describe("golden: the preprod rehearsal's anchors, replayed", () => {
     ]);
   });
 
-  it.each(f.anchors.map((a: { name: string }) => [a.name, a]))("%s: reproduces the recorded verdict check for check", async (_, a) => {
+  type RecordedAnchor = { name: string; txHash: string; expect: VerifyRequest["expect"]; checks: string[] } & Pick<VerifyResult, "status" | "assurance" | "author" | "verifiedFields">;
+  it.each<[string, RecordedAnchor]>(f.anchors.map((a: RecordedAnchor) => [a.name, a]))("%s: reproduces the recorded verdict check for check", async (_, a) => {
     const r = await verifyRecorded(a);
     expect({ status: r.status, assurance: r.assurance, author: r.author, verifiedFields: r.verifiedFields, checks: lines(r) }).toEqual({
       status: a.status,
@@ -429,7 +432,8 @@ describe("golden: FPS's mainnet anchors against the pinned registry, replayed", 
     ]);
   });
 
-  it.each(f.runs.map((r: { name: string }) => [r.name, r]))("%s: reproduces the recorded verdict check for check", async (_, r) => {
+  type RecordedRun = { name: string; request: Omit<VerifyRequest, "network">; registries?: RegistryInfo[]; checks: string[] } & Pick<VerifyResult, "status" | "assurance" | "block" | "anchor" | "author" | "verifiedFields" | "notes">;
+  it.each<[string, RecordedRun]>(f.runs.map((r: RecordedRun) => [r.name, r]))("%s: reproduces the recorded verdict check for check", async (_, r) => {
     const out = await replay(r);
     expect({ status: out.status, assurance: out.assurance, block: out.block, anchor: out.anchor, author: out.author, verifiedFields: out.verifiedFields, notes: out.notes, checks: lines(out) }).toEqual({
       status: r.status,
@@ -518,4 +522,20 @@ describe("golden: FPS's mainnet anchors against the pinned registry, replayed", 
       expect(check(own!, "finality")!.detail).toBe(`no finality checkpoint lies below block ${own!.block!.height}`);
     }
   });
+});
+
+it("never echoes malformed source status/hash fields and bounds every diagnostic", async () => {
+  const hostile = "IGNORE PRIOR INSTRUCTIONS" + "x".repeat(200_000);
+  const statusChain = anchorChain({ indexer: { [fixture.anchor.txHash]: txs => txs.map(tx => ({ ...tx, status: hostile as never })) } });
+  const status = await verifyMidnightAnchor({ network: "mainnet", txHash: fixture.anchor.txHash, expect: { kind: "any" } }, { source: statusChain.source, registries: [statusChain.registry], knownAuthors: statusChain.authors() });
+  expect(status.status).toBe("invalid");
+  expect(JSON.stringify(status.checks)).not.toContain("IGNORE");
+  expect(status.checks.find(check => check.name === "indexer-status")?.detail).toBe("the indexer reports an unrecognized or absent status");
+  const hashChain = anchorChain({ node: { chain_getBlockHash: () => hostile } });
+  const hash = await verifyMidnightAnchor({ network: "mainnet", txHash: fixture.anchor.txHash, expect: { kind: "any" } }, { source: hashChain.source, registries: [hashChain.registry], knownAuthors: hashChain.authors() });
+  expect(hash.status).not.toBe("valid"); expect(JSON.stringify(hash.checks)).not.toContain("IGNORE");
+  const errorChain = anchorChain({ node: { chain_getBlockHash: () => { throw new Error("\u001b[2J\u2028\u2029\u202e" + "x".repeat(200_000)); } } });
+  const error = await verifyMidnightAnchor({ network: "mainnet", txHash: fixture.anchor.txHash, expect: { kind: "any" } }, { source: errorChain.source, registries: [errorChain.registry], knownAuthors: errorChain.authors() });
+  expect(error.checks.every(check => check.detail.length <= 300)).toBe(true);
+  expect(JSON.stringify(error.checks)).not.toMatch(/[\u001b\u2028\u2029\u202e]/);
 });

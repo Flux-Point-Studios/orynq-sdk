@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { followerChain } from "../../../anchors-midnight/src/__tests__/follower-chain.js";
 import { followerPolicyDigest } from "../follower-block.js";
 import { openFollowerState } from "../follower-state.js";
-import { openFollowerCatchup } from "../follower-catchup.js";
+import { followerStartupBudget, openFollowerCatchup, type FollowerStartupDiagnostic } from "../follower-catchup.js";
 import { batchAuthors, batchScope } from "./batch-fixture.js";
 
 const now = 1_800_000_000_000, day = 86_400_000, timestamp = (height: number) => now + (height - 1365) * day / 4;
@@ -15,10 +15,12 @@ let server: Server, root: string, url: string, state: ReturnType<typeof openFoll
 let tip = 1365, corruptHeight = 0, requests = 0, httpRequests = 0, validFrom = 1350, serial = 1, shiftWindow = false;
 let responseFault: "truncated" | "duplicate-id" | "wrong-id" | "rpc-error" | null = null;
 let stallEffects: "headers" | "body" | null = null, effectRequests = 0, effectsStarted: (() => void) | undefined, effectsClosed: (() => void) | undefined;
+let holdEffects = false, releaseEffects: (() => void) | undefined;
 const authors = () => batchAuthors({ validFrom }, serial, [{ ...chain.checkpoint, setId: chain.checkpoint.setId.toString(), authorities: chain.checkpoint.authorities.map(row => ({ key: row.key, weight: row.weight.toString() })) }]);
 beforeEach(async () => {
   tip = 1365; corruptHeight = 0; requests = 0; httpRequests = 0; validFrom = 1350; serial = 1; shiftWindow = false;
   responseFault = null; stallEffects = null; effectRequests = 0; effectsStarted = undefined; effectsClosed = undefined;
+  holdEffects = false; releaseEffects = undefined;
   chain = followerChain((method, params, value) => {
     if (shiftWindow && method === "state_getReadProof" && params[1] === `0x${chain.ref(1301).hash}`) { validFrom = 1299; serial = 2; shiftWindow = false; }
     if (corruptHeight && method === "state_getReadProof" && params[1] === `0x${chain.ref(corruptHeight).hash}`) return { ...value, proof: [] };
@@ -37,6 +39,7 @@ beforeEach(async () => {
       if (Array.isArray(input) && input.length > 32) throw new Error("fixture request exceeds call limit");
       const effects = Array.isArray(input) && input.some(call => call.method === "state_getReadProof");
       if (effects) effectRequests++;
+      if (effects && holdEffects) await new Promise<void>(resolve => { releaseEffects = resolve; effectsStarted?.(); });
       if (effects && stallEffects) {
         res.once("close", () => effectsClosed?.());
         if (stallEffects === "body") { res.writeHead(200, { "content-type": "application/json" }); res.write("["); }
@@ -72,6 +75,65 @@ it("authenticates startup without storing it before the complete-history floor",
   expect(state.coverage().floor!.timestamp).toBeLessThanOrEqual(now - day);
   expect(state.coverage().floor!.height).toBeLessThanOrEqual(1350);
   await expect(follower.start()).rejects.toThrow(/start|already/i);
+});
+
+it("sizes startup from checkpoint distance while retaining absolute work and time bounds", () => {
+  expect(followerStartupBudget(1).timeoutMs).toBeGreaterThan(90_000);
+  expect(followerStartupBudget(300 * 2000).timeoutMs).toBeGreaterThan(followerStartupBudget(1).timeoutMs);
+  expect(followerStartupBudget(Number.MAX_SAFE_INTEGER)).toEqual(followerStartupBudget(300 * 2016));
+  expect(followerStartupBudget(Number.MAX_SAFE_INTEGER).requests).toBeLessThanOrEqual(768);
+  expect(followerStartupBudget(Number.MAX_SAFE_INTEGER).timeoutMs).toBeLessThanOrEqual(45 * 60_000);
+  expect(() => followerStartupBudget(-1)).toThrow();
+});
+
+it.each([91_000, 180_000])("uses its separate startup deadline after simulated %i ms, without changing request timeouts", async elapsed => {
+  const realSet = setTimeout, realClear = clearTimeout;
+  const deadlines = new Map<ReturnType<typeof setTimeout>, { milliseconds: number; fire(): void }>();
+  const set = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: (...args: unknown[]) => void, milliseconds?: number, ...args: unknown[]) => {
+    const timer = realSet(callback, milliseconds, ...args);
+    if (milliseconds !== undefined && milliseconds >= 90_000) deadlines.set(timer, { milliseconds, fire: () => callback(...args) });
+    return timer;
+  }) as typeof setTimeout);
+  const clear = vi.spyOn(globalThis, "clearTimeout").mockImplementation(timer => { deadlines.delete(timer as ReturnType<typeof setTimeout>); realClear(timer); });
+  holdEffects = true; const started = new Promise<void>(resolve => { effectsStarted = resolve; });
+  const follower = open(), pending = follower.start();
+  const finished = elapsed > 150_000 ? expect(pending).rejects.toThrow() : expect(pending).resolves.toMatchObject({ block: chain.ref(1365) });
+  try {
+    await started;
+    expect(deadlines.size).toBe(1); expect([...deadlines.values()][0]!.milliseconds).toBeGreaterThan(91_000);
+    for (const deadline of deadlines.values()) if (deadline.milliseconds <= elapsed) deadline.fire();
+    holdEffects = false; releaseEffects?.(); await finished;
+    expect(state.head()).toBeNull();
+  } finally { holdEffects = false; releaseEffects?.(); set.mockRestore(); clear.mockRestore(); }
+});
+
+it("reports bounded startup phases and work counters without upstream or configuration text", async () => {
+  const events: FollowerStartupDiagnostic[] = [];
+  const follower = openFollowerCatchup({ state, node: url, authors, clock: () => ({ wallTime: now, monotonicMillis: 0 }), startupDiagnostic: event => events.push(event) });
+  await follower.start();
+  expect(events.map(event => [event.phase, event.outcome])).toEqual([["policy", "start"], ["head", "start"], ["finality", "start"], ["policy", "start"], ["clock", "start"], ["clock", "success"]]);
+  for (const event of events) {
+    expect(event.elapsedMs).toBeGreaterThanOrEqual(0); expect(event.elapsedMs).toBeLessThanOrEqual(86_400_000);
+    expect(event.requests).toBeGreaterThanOrEqual(0); expect(event.requests).toBeLessThanOrEqual(256);
+    expect(event.responseBytes).toBeGreaterThanOrEqual(0); expect(event.responseBytes).toBeLessThanOrEqual(64 * 1024 * 1024);
+    expect(Object.keys(event).sort()).toEqual(["category", "elapsedMs", "outcome", "phase", "requests", "responseBytes"]);
+  }
+  expect(events.at(-1)!.requests).toBeGreaterThan(0); expect(events.at(-1)!.responseBytes).toBeGreaterThan(0);
+  expect(JSON.stringify(events)).not.toContain(url);
+  expect(state.head()).toBeNull();
+});
+
+it.each(["clock", "source-or-integrity", "policy"] as const)("retains only the bounded %s startup failure category", async category => {
+  const events: FollowerStartupDiagnostic[] = [];
+  if (category === "clock") tip = 1364;
+  if (category === "source-or-integrity") responseFault = "rpc-error";
+  const follower = openFollowerCatchup({ state, node: url, authors, clock: () => ({ wallTime: now, monotonicMillis: 0 }), startupDiagnostic: event => events.push(event) });
+  if (category === "policy") serial = 0;
+  await expect(follower.start()).rejects.toThrow();
+  expect(events.at(-1)).toMatchObject({ outcome: "failure", category });
+  expect(JSON.stringify(events)).not.toContain("fixture proof unavailable");
+  expect(JSON.stringify(events)).not.toContain(url);
+  expect(state.head()).toBeNull();
 });
 
 it("appends bounded complete ranges from the actual durable cursor across turns", async () => {

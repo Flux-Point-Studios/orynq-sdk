@@ -11,7 +11,8 @@ export const PROOF_RELEASE_LABELS = ["deploy", "proveCapability", "proveRolling1
 export type ProofReleaseLabel = typeof PROOF_RELEASE_LABELS[number];
 export const proofReleaseJournal = (root: string) => join(root, "proof-release.sqlite");
 const deployKey = (network: MidnightNetwork): AnchorKey => ({ network, registry: "proof-deploy", author: "", kind: 0, commitment: PROOF_PINS.initialStateSha256, attribute: "" });
-const callKey = (network: MidnightNetwork, address: string, circuit: ProofStatement["circuit"]): AnchorKey => ({ network, registry: address, author: "", kind: circuit === "proveCapability" ? 2 : 1, commitment: PROOF_PINS.codeHash, attribute: "" });
+// Kind zero requires exact transaction inclusion; anchor-equivalence cannot settle a proof call.
+const callKey = (network: MidnightNetwork, address: string, circuit: ProofStatement["circuit"]): AnchorKey => ({ network, registry: address, author: "", kind: 0, commitment: PROOF_PINS.codeHash, attribute: circuit });
 
 export function landedProofDeploy(network: MidnightNetwork, path: string) {
   if (!existsSync(path)) return null;

@@ -549,22 +549,20 @@ def probe_pallet_tee_attestation(
 
 
 # ---------------------------------------------------------------------------
-# Cardano metadata probe — reads label-8746 leaves from a Cardano explorer
-# (cexplorer.io / Blockfrost / kupo) and asserts our receipt's
-# `attestation_evidence_hash` round-trips. The test calls into whatever
-# explorer is configured by env var; if no explorer is configured the
-# round-trip test skips.
+# Cardano mainnet metadata probe. Label 8746 carries root/manifest/range/count;
+# individual receipt members and evidence hashes are not stored in this metadata.
+# Membership requires the off-chain batch and an independent commitment verifier.
 # ---------------------------------------------------------------------------
 
 
 def cardano_explorer_url(tx_hex: str) -> str:
-    """Return the cexplorer.io URL for a Cardano preprod tx.
+    """Return the cexplorer.io URL for a Cardano mainnet checkpoint tx.
 
     Per the standing rule (`feedback_cardano_explorer.md`): use cexplorer.io
     for ALL human-facing Cardano links. cardanoscan.io is NOT used.
     """
     cleaned = tx_hex[2:] if tx_hex.startswith("0x") else tx_hex
-    return f"https://preprod.cexplorer.io/tx/{cleaned}"
+    return f"https://cexplorer.io/tx/{cleaned}"
 
 
 def fetch_cardano_metadata_8746(

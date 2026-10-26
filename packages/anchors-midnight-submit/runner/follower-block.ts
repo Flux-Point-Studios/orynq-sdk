@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { DEFAULT_MAX_SET_CHANGES, checkpointId, decodeAnchorTransaction, finalityRpc, headerFromRpc, headerHash, midnightTransactionIn, orderedTrieRoot, verifyBlockEffects, verifyFinality, type BlockRef, type ExecutionOutcome, type FinalityCheckpoint, type MidnightNetwork, type MidnightSource, type RpcHeader } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { DEFAULT_MAX_SET_CHANGES, checkpointFromJson, checkpointId, decodeAnchorTransaction, finalityRpc, headerFromRpc, headerHash, midnightTransactionIn, orderedTrieRoot, verifyBlockEffects, verifyFinality, type BlockRef, type CheckpointAdvance, type ExecutionOutcome, type FinalityCheckpoint, type MidnightNetwork, type MidnightSource, type RpcHeader } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { authenticateCheckpointHistory } from "./checkpoint-history.js";
 
 export interface FollowerBlock {
   network: MidnightNetwork;
@@ -62,15 +63,25 @@ async function readEffects(node: MidnightSource["node"], body: Awaited<ReturnTyp
   return { network, policyDigest, block: { ...block }, parentHash: hex(header.parentHash), timestamp: effects.timestamp, runtimeSpecVersion: effects.runtimeSpecVersion, sends };
 }
 
-export function openFollowerReader(options: { source: MidnightSource; checkpoints: readonly FinalityCheckpoint[]; maxSetChanges?: number }) {
+export function openFollowerReader(options: { source: MidnightSource; checkpoints: readonly FinalityCheckpoint[]; maxSetChanges?: number; advances?: readonly CheckpointAdvance[] }) {
   const source = options.source, network = source.network, checkpoints = structuredClone(options.checkpoints), maximum = options.maxSetChanges ?? DEFAULT_MAX_SET_CHANGES;
   if (network !== "mainnet" && network !== "preprod") throw new Error("Follower source must name its network");
   const policyDigest = followerPolicyDigest(checkpoints, maximum);
   if (!checkpoints.length || checkpoints.length > 64) throw new Error("Follower reader requires 1..64 original checkpoints");
   const roots = checkpoints.map(checkpoint => ({ checkpoint, rootId: checkpointId(checkpoint), used: 0 }));
   const cached = new Map<string, typeof roots[number]>();
+  const advances = structuredClone(options.advances ?? []);
+  let ready: Promise<void> | undefined;
+  const prepare = () => ready ??= (async () => {
+    if (!advances.length) return;
+    const verified = await authenticateCheckpointHistory(network, checkpoints, advances);
+    // Retain each verified step, not only the tip: historical replay must remain possible
+    // after many maintenance advances. Every step independently renews the bounded allowance.
+    for (const artifact of verified.artifacts) roots.push({ checkpoint: checkpointFromJson(artifact.successor), rootId: artifact.rootId, used: 0 });
+  })();
   return {
     async *range(input: { after: BlockRef; end: BlockRef }): AsyncGenerator<FollowerBlock> {
+      await prepare();
       const after = { ...input.after }, end = { ...input.end };
       if (![after, end].every(block => /^[a-f0-9]{64}$/.test(block.hash) && Number.isSafeInteger(block.height) && block.height >= 0) || end.height <= after.height || end.height - after.height > 32) throw new Error("Follower range must contain 1..32 exact blocks");
       const root = roots.filter(row => row.checkpoint.startsAfter.height < end.height).sort((a, b) => b.checkpoint.startsAfter.height - a.checkpoint.startsAfter.height)[0];
