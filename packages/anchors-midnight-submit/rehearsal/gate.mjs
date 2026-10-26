@@ -167,6 +167,7 @@ export function judge({ raw, verified, crash, crashStatus, head = raw.toolingCom
   for (const phase of ["chain", "funding", "deploy", "kind1", "kind2", "sameblock", "negatives", "rotation", "documents"]) if (raw.phaseCommits?.[phase] !== head) failures.push(`rehearsal phase ${phase} was not recorded at the composing commit`);
   if (!Array.isArray(verified.execution?.execArgv) || verified.execution.execArgv.length !== 0 || (verified.execution.nodeOptions !== null && verified.execution.nodeOptions !== "")) failures.push("the verifier did not record an execution without preloaded code or runtime arguments");
   if (!/^[0-9a-f]{64}$/.test(verified.verifierKeys?.anchor ?? "") || !/^[0-9a-f]{64}$/.test(verified.verifierKeys?.anchor_hiding ?? "")) failures.push("the verifier did not record its packed registry verifier keys");
+  if (!Array.isArray(verified.consensusPolicy) || !verified.consensusPolicy.length || !Number.isSafeInteger(verified.consensusSerial) || verified.consensusSerial < 1 || !Number.isSafeInteger(verified.consensusCheckpointCount) || verified.consensusCheckpointCount < 1) failures.push("the verifier did not record reviewed signed preprod consensus onboarding");
 
   // The pack describes the deploy by its prepared record, so that record must be the deploy that
   // landed, never a prepare whose bytes a later run abandoned.

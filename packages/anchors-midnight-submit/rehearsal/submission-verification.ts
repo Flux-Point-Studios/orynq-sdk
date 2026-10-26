@@ -19,11 +19,8 @@ export function submissionVerification(secrets: string, source: MidnightSource, 
   if (!Array.isArray(documents) || documents.length === 0) throw new Error("Preprod submission policy must contain signed documents");
   const policy = knownAuthors({ documents }); // Deliberately use shipped trust roots, never an input root.
   if (policy.checkpoints("preprod").length === 0) throw new Error("Preprod submission policy has no reviewed consensus checkpoint; onboarding is required");
-  for (const document of documents) {
-    let networks: unknown;
-    try { networks = Object.keys(JSON.parse(document.document).networks); } catch { throw new Error("Malformed preprod submission policy"); }
-    if (JSON.stringify(networks) !== '["preprod"]') throw new Error("Rehearsal submission policy must name preprod alone");
-  }
+  // Global signed policies must retain the shipped mainnet checkpoint history as a prefix.
+  // Only their preprod section is consumed here; the request guard below excludes mainnet.
   for (const file of authorFiles) if (policy.author("preprod", hex(authorKey(readAuthorSecret(file))), deploy.blockHeight).status !== "known") throw new Error("Both fresh rehearsal author keys need signed preprod onboarding before submission");
   const registry: RegistryInfo = {
     generation: 1, address: deploy.address, deployTxHash: deploy.txHash, deployHeight: deploy.blockHeight,

@@ -14,6 +14,8 @@ cp gate.mjs verify-all.mjs evidence-integrity.mjs "$C/"
 cp evidence/raw.json evidence/crash.log evidence/crash.log.status "$C/evidence/"
 cp bundles/index.json "$C/evidence/bundles.json"
 cp -r evidence/known-authors "$C/evidence/"
+cp "$HOME/.secrets/orynq-midnight-preprod/submission-known-authors.json" "$C/evidence/submission-known-authors.json"
+cp "$C/evidence/submission-known-authors.json" evidence/submission-known-authors.json
 set +e
 (cd "$C" && env -u NODE_OPTIONS nice -n 19 node verify-all.mjs evidence "$HOME/.secrets/blockfrost-midnight-preprod.project_id" > evidence/verified.json)
 verified=$?

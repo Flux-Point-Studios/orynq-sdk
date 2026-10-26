@@ -13,7 +13,7 @@ import * as L from "@midnight-ntwrk/ledger-v8";
 import { mnemonicToEntropy } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { DatabaseSync } from "node:sqlite";
-import { hiddenDigest, hidingCommitment, readAuthorSecret, readPrivateFile, openKnownAuthors } from "../../anchors-midnight/src/index.js";
+import { hiddenDigest, hidingCommitment, readAuthorSecret, readPrivateFile, knownAuthors, openKnownAuthors } from "../../anchors-midnight/src/index.js";
 import { windowHits } from "../../anchors-midnight/src/__tests__/privacy-scan.js";
 import { abortedDrills, INVALID_TRANSACTION, judge, parseCrashLog, parseCrashStatus, ROTATION_EXPECTED, ROTATION_LABELS, unrecordedAnchors } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
@@ -80,6 +80,9 @@ try {
   if (manifest.name !== verified.package.name || manifest.version !== verified.package.version) throw new Error("tarball manifest differs");
 } catch { failures.push("the verifier package tarball is absent or differs from the verified identity"); }
 try {
+  const consensusPolicy = json("evidence/submission-known-authors.json");
+  const consensus = knownAuthors({ documents: consensusPolicy, trustRoots: verified.shippedTrustRoots });
+  if (JSON.stringify(consensusPolicy) !== JSON.stringify(verified.consensusPolicy) || consensus.serial !== verified.consensusSerial || consensus.checkpoints("preprod").length !== verified.consensusCheckpointCount || verified.consensusCheckpointCount < 1) throw new Error("consensus onboarding policy differs");
   const documents = [1, 2, 3].map(n => json(`evidence/known-authors/signed-${n}.json`)[0]);
   documents.forEach((signed, i) => {
     const opened = openKnownAuthors(signed, [verified.trustRoot]);
@@ -231,7 +234,7 @@ const pack = {
   },
   journalCrashDrill: { windows: crashDrill, steps: crashStatus, log: crash, ...(aborted.attempts.length ? { abortedAttempts: aborted.attempts } : {}) },
   verifierNegatives: verified.negatives,
-  verifier: { process: verified.verifier, source: verified.source, package: verified.package },
+  verifier: { process: verified.verifier, source: verified.source, package: verified.package, consensusPolicy: verified.consensusPolicy, consensusSerial: verified.consensusSerial, consensusCheckpointCount: verified.consensusCheckpointCount },
   measurements: {
     declaredFeeSpeck: { perTransaction: [...new Set(fees.map(String))], total: String(fees.reduce((s, f) => s + f, 0n)), deploy: raw.deploy.prepared.declaredFee },
     proveMs: { kind1: stats(timed(1, "proveMs")), kind2: stats(timed(2, "proveMs")) },

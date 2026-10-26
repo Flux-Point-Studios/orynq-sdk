@@ -43,6 +43,10 @@ const [dir, projectIdFile] = process.argv.slice(2);
 const read = (name) => JSON.parse(readFileSync(`${dir}/${name}`, "utf8"));
 const raw = read("raw.json");
 const bundles = read("bundles.json");
+const consensusPolicy = read("submission-known-authors.json");
+const consensus = knownAuthors({ documents: consensusPolicy }); // Shipped roots only.
+const checkpoints = consensus.checkpoints("preprod");
+if (checkpoints.length === 0) refuse("reviewed signed preprod consensus onboarding is required");
 const root = readFileSync(`${dir}/known-authors/root.pub`, "utf8").trim();
 const signed = [1, 2, 3].map((n) => read(`known-authors/signed-${n}.json`)[0]);
 const authorsFrom = (...serials) => knownAuthors({ documents: serials.map((n) => signed[n - 1]), trustRoots: [root] });
@@ -73,7 +77,7 @@ const summary = (r) => ({
   notes: r.notes,
 });
 const verify = async (txHash, expect, options = {}, extra = {}) =>
-  summary(await verifyMidnightAnchor({ network: "preprod", txHash, expect, ...extra }, { source, registries: [registry], knownAuthors: authorsFrom(1, 2, 3), ...options }));
+  summary(await verifyMidnightAnchor({ network: "preprod", txHash, expect, ...extra }, { source, registries: [registry], checkpoints, knownAuthors: authorsFrom(1, 2, 3), ...options }));
 
 const out = {
   verifier: "@fluxpointstudios/orynq-sdk-anchors-midnight (packed tarball), separate process, no wallet",
@@ -81,6 +85,9 @@ const out = {
   toolingCommit: raw.toolingCommit,
   execution: { nodeOptions: process.env.NODE_OPTIONS ?? null, execArgv: [...process.execArgv] },
   verifierKeys: REGISTRY_VERIFIER_KEY_SHA256,
+  consensusPolicy,
+  consensusSerial: consensus.serial,
+  consensusCheckpointCount: checkpoints.length,
   package: { name: PACKAGE, version: lock.version, resolved: lock.resolved, integrity: lock.integrity, sha256: createHash("sha256").update(tarball).digest("hex"), installedTree },
   trustRoot: root,
   shippedTrustRoots: [...KNOWN_AUTHORS_TRUST_ROOTS],
@@ -138,7 +145,7 @@ const negatives = {
   "finality skipped": () => verify(k1.txHash, expectOf(k1), { finality: "skip" }),
   "a registry pinned at another deploy height": () => verify(k1.txHash, expectOf(k1), { registries: [{ ...registry, deployHeight: registry.deployHeight - 1 }] }),
   "a registry at another address": () => verify(k1.txHash, expectOf(k1), { registries: [{ ...registry, address: random() }] }),
-  "no KNOWN_AUTHORS document and no checkpoint": () => verify(k1.txHash, expectOf(k1), { knownAuthors: knownAuthors({ documents: [], trustRoots: [root] }) }),
+  "no KNOWN_AUTHORS document and no checkpoint": () => verify(k1.txHash, expectOf(k1), { knownAuthors: knownAuthors({ documents: [], trustRoots: [root] }), checkpoints: [] }),
   "a checkpoint too far below for a zero set-change budget": () => verify(k1.txHash, expectOf(k1), { maxSetChanges: 0 }),
 };
 for (const [name, run] of Object.entries(negatives)) {

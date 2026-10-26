@@ -49,6 +49,8 @@ export interface Rehearsal {
   documents: Array<{ document: string; signatures: Array<{ key: string; signature: string }> }>;
   root: string;
   rootSeed: string;
+  consensusRoot: string;
+  consensusPolicy: Array<{ document: string; signatures: Array<{ key: string; signature: string }> }>;
   tarball: Buffer;
   openings: Record<string, { txHash: string; rootHash: string; manifestHash: string; merkleRoot: string; salt: string }>;
 }
@@ -144,6 +146,8 @@ export function honestRehearsal(): Rehearsal {
   }
   const rootSeed = randomBytes(32);
   const root = hex(ed25519PublicKey(rootSeed));
+  const consensusSeed = randomBytes(32), consensusRoot = hex(ed25519PublicKey(consensusSeed));
+  const consensusPolicy = [signKnownAuthors(JSON.stringify({ format: "orynq-known-authors/v1", serial: 1, issued: "2026-10-05T00:00:00.000Z", networks: { preprod: { authors: [], checkpoints: [{ setId: "1", startsAfter: { height: 0, hash: h() }, authorities: [{ key: h(), weight: "1" }] }] } } }), consensusSeed)];
   const relay = (key: string, id: string, validFrom: number, validTo: number | null) => ({ key, id, role: "relay", validFrom, validTo });
   const rotatedAt = anchors["rotation-old-before"]!.blockHeight;
   const revokedAt = anchors["rotation-new-after"]!.blockHeight;
@@ -170,6 +174,9 @@ export function honestRehearsal(): Rehearsal {
     toolingCommit: raw.toolingCommit,
     execution: { nodeOptions: null, execArgv: [] },
     verifierKeys: REGISTRY_VERIFIER_KEY_SHA256,
+    consensusPolicy,
+    consensusSerial: 1,
+    consensusCheckpointCount: 1,
     package: {
       name: "@fluxpointstudios/orynq-sdk-anchors-midnight",
       version: "0.1.0",
@@ -179,7 +186,7 @@ export function honestRehearsal(): Rehearsal {
       installedTree: packedTreeIdentity(tarball),
     },
     trustRoot: root,
-    shippedTrustRoots: [],
+    shippedTrustRoots: [consensusRoot],
     knownAuthorsDocuments: [1, 2, 3].map((serial) => ({ serial, networks: ["preprod"] })),
     anchors: Object.fromEntries(Object.entries(anchors).filter(([n]) => !rotation.includes(n)).map(([n, a]) => [n, valid(a)])),
     rotation: Object.fromEntries(Object.entries(matrix).map(([set, want]) => [set, Object.fromEntries(Object.entries(want).map(([label, status]) => [label, { block: { height: anchors[label]!.blockHeight, hash: anchors[label]!.blockHash }, author: null, status, assurance: "consensus-verified" }]))])),
@@ -240,7 +247,7 @@ export function honestRehearsal(): Rehearsal {
     "journal-deploy.sqlite": [{ tx_hash: raw.deploy.txHash, state: "landed" }],
   };
   bundles.push({ toolingCommit: commit, label: "unused-extra", kind: 1, exit: 0, rootHash: h(), manifestHash: h(), merkleRoot: h(), modelManifestHash: h() });
-  return { raw, verified, crash, crashStatus, bundles, journals, documents, root, rootSeed: hex(rootSeed), openings, tarball };
+  return { raw, verified, crash, crashStatus, bundles, journals, documents, root, rootSeed: hex(rootSeed), consensusRoot, consensusPolicy, openings, tarball };
 }
 
 // Writes the rehearsal where the scripts read it: DIR/evidence/{raw.json, verified.json,
@@ -263,6 +270,7 @@ export function writeRehearsal(dir: string, home: string, r: Rehearsal) {
   const json = (p: string, v: unknown) => writeFileSync(p, JSON.stringify(v, null, 1));
   json(`${dir}/evidence/raw.json`, r.raw);
   json(`${dir}/evidence/verified.json`, r.verified);
+  json(`${dir}/evidence/submission-known-authors.json`, r.consensusPolicy);
   writeFileSync(`${dir}/evidence/verify-package.tgz`, r.tarball);
   writeFileSync(`${dir}/evidence/crash.log`, r.crash.map((e) => `${JSON.stringify(e)}\n`).join(""));
   writeFileSync(`${dir}/evidence/crash.log.status`, r.crashStatus.map((l) => `${l}\n`).join(""));
@@ -272,6 +280,7 @@ export function writeRehearsal(dir: string, home: string, r: Rehearsal) {
   const secret = (name: string, text: string) => writeFileSync(`${secrets}/${name}`, `${text}\n`, { mode: 0o600 });
   for (const name of ["author-relay.key", "author-relay-2.key", "salt.key"]) secret(name, h());
   secret("known-authors-root.seed", r.rootSeed);
+  secret("submission-known-authors.json", JSON.stringify(r.consensusPolicy));
   for (const name of ["wallet-a.mnemonic", "wallet-b.mnemonic"]) secret(name, entropyToMnemonic(randomBytes(32), wordlist));
   writeFileSync(`${home}/.secrets/blockfrost-midnight-preprod.project_id`, `preprod${randomBytes(16).toString("hex")}\n`, { mode: 0o600 });
   secret("receipts.json", JSON.stringify(r.openings));
@@ -352,7 +361,7 @@ export function fakeChain(r: Rehearsal, verdicts: Record<string, { status: strin
     const b = bundle(a.bundle);
     transactions[a.txHash] = { height: a.blockHeight, blockHash: a.blockHash, anchor: { kind: a.kind, rootHash: b.rootHash, commitment: a.commitment, attribute: a.attribute, author: a.author }, ...(verdicts[name] ? { verdict: verdicts[name] } : {}) };
   }
-  return { registry: { address: r.raw.deploy.address, deployHeight: r.raw.deploy.blockHeight }, transactions };
+  return { consensusRoot: r.consensusRoot, registry: { address: r.raw.deploy.address, deployHeight: r.raw.deploy.blockHeight }, transactions };
 }
 
 // A consumer directory whose only package is the stand-in verify package, installed as a copy
