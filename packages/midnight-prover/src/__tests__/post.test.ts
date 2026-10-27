@@ -46,6 +46,58 @@ describe("local proving before wallet handoff", () => {
     expect(capability).toEqual(new Uint8Array(32).fill(13));
   });
 
+  it("keeps the original network, address, wallet and statement while reading contract state", async () => {
+    let release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const readingSource = { ...source, node: { batch: async () => {
+      await barrier;
+      return [Array(33).fill(0), Buffer.from(proofInitialState().serialize()).toString("hex")];
+    } } } as unknown as MidnightSource;
+    const originalWallet: ProofWallet = { network: "preprod", payFee: vi.fn(async tx => tx.bind()), submit: vi.fn(async () => {}), discard };
+    const replacementWallet: ProofWallet = { network: "mainnet", payFee: vi.fn(async tx => tx.bind()), submit: vi.fn(async () => {}), discard };
+    const options: Parameters<typeof post>[0] = { source: readingSource, network: "preprod", address: "bb".repeat(32), statement: statement(), witness: { capability }, paramsDir: "unused", wallet: originalWallet };
+    const expected = { ...options.statement };
+    const pending = post(options);
+    options.network = "mainnet";
+    options.address = "cc".repeat(32);
+    options.wallet = replacementWallet;
+    options.statement.contextDigest = "dd".repeat(32);
+    release();
+    const result = await pending;
+    expect(result.address).toBe("bb".repeat(32));
+    expect(result.statement).toEqual(expected);
+    expect(originalWallet.payFee).toHaveBeenCalledOnce();
+    expect(originalWallet.submit).toHaveBeenCalledOnce();
+    expect(replacementWallet.payFee).not.toHaveBeenCalled();
+    expect(replacementWallet.submit).not.toHaveBeenCalled();
+  });
+
+  it("reads a changing address getter once before asynchronous work", async () => {
+    let reads = 0;
+    const wallet: ProofWallet = { network: "preprod", payFee: vi.fn(async tx => tx.bind()), submit: vi.fn(async () => {}), discard };
+    const options: Parameters<typeof post>[0] = { source, network: "preprod", address: "bb".repeat(32), statement: statement(), witness: { capability }, paramsDir: "unused", wallet };
+    Object.defineProperty(options, "address", { get: () => ++reads === 1 ? "bb".repeat(32) : "cc".repeat(32) });
+    const result = await post(options);
+    expect(result.address).toBe("bb".repeat(32));
+    expect(reads).toBe(1);
+    expect(wallet.submit).toHaveBeenCalledOnce();
+  });
+
+  it("validates the captured event digest instead of re-reading a witness getter", async () => {
+    const eventDigest = createHash("sha256").update("synthetic digest snapshot").digest("hex");
+    const genesisHash = "ab".repeat(32);
+    let reads = 0;
+    const witness = { get eventDigest() { return ++reads === 1 ? eventDigest : `${eventDigest}\n`; } };
+    const wallet: ProofWallet = { network: "preprod", payFee: vi.fn(async tx => tx.bind()), submit: vi.fn(async () => {}), discard };
+    await post({ source, network: "preprod", address: "bb".repeat(32), statement: {
+      circuit: "proveRolling1", contextDigest, genesisHash,
+      rootHash: createHash("sha256").update(`poi-trace:roll:v1|${genesisHash}|${eventDigest}`).digest("hex"),
+      anchorHash: "cd".repeat(32), notAfter: Math.floor(Date.now() / 1000) + 1800,
+    }, witness, paramsDir: "unused", wallet });
+    expect(reads).toBe(1);
+    expect(wallet.submit).toHaveBeenCalledOnce();
+  });
+
   it("refuses a wallet on another network before proving or submitting", async () => {
     const payFee = vi.fn(), submit = vi.fn();
     await expect(post({ source, network: "preprod", address: "bb".repeat(32), statement: statement(), witness: { capability }, paramsDir: "unused", wallet: { network: "mainnet", payFee, submit, discard } })).rejects.toThrow(/network/);
