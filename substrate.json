@@ -15,7 +15,7 @@
     {
       "id": "anchors-materios",
       "name": "Materios anchor client",
-      "desc": "Blob upload through the gateway (body-bound, single-use upload signatures), receipt submission, certification polling, Merkle proofs and end-to-end receipt verification against Materios.",
+      "desc": "Blob upload through the gateway (body-bound, single-use upload signatures), receipt and anchor submission with bounded WebSocket waits, isolated storage reconciliation and typed retry-safety errors, certification polling, Merkle proofs and end-to-end receipt verification against Materios.",
       "kind": "toolkit",
       "paths": [
         "packages/anchors-materios"

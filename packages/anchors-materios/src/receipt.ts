@@ -17,11 +17,16 @@ import type {
   BlobUploadResult,
   CertifiedReceiptOptions,
   CertifiedReceiptResult,
+  TimeoutOptions,
 } from "./types.js";
 import { waitForCertification, waitForAnchor } from "./polling.js";
+import { timeoutBudget, withinDeadline } from "./deadline.js";
+import { watchSubmission } from "./subscription.js";
+import { MateriosSubmissionError } from "./errors.js";
 import { merkleRoot } from "./merkle.js";
 import { stripPrefix, ensureHex, isZeroHash, assertHex32 } from "./hex.js";
 import { u8aToHex, stringToU8a } from "@polkadot/util";
+import type { SubmittableExtrinsic } from "@polkadot/api/types";
 
 /**
  * Submit a receipt to the Materios chain.
@@ -42,9 +47,13 @@ import { u8aToHex, stringToU8a } from "@polkadot/util";
 export async function submitReceipt(
   provider: MateriosProvider,
   input: ReceiptInput,
+  opts: TimeoutOptions = {},
 ): Promise<ReceiptSubmitResult> {
   const api = provider.getApi();
   const keypair = provider.getKeypair();
+  const timeoutMs = timeoutBudget(opts.timeoutMs ?? provider.inclusionTimeoutMs ?? 120_000);
+  const deadline = Date.now() + timeoutMs;
+  const watchDeadline = deadline - Math.min(30_000, timeoutMs / 2);
 
   // Validate at the SDK boundary. `toBytes32` will silently pad short
   // input and silently truncate long input — both produce a different
@@ -119,20 +128,40 @@ export async function submitReceipt(
   );
 
   // Sign the extrinsic first so dry-run can simulate the fully signed payload
-  const signed = await tx.signAsync(keypair, { nonce: -1 });
+  const finalReceiptId = ensureHex(receiptId);
+  const notBroadcast = () => new MateriosSubmissionError("not-landed", finalReceiptId,
+    "Receipt preparation timed out before broadcast; resubmission is safe");
+  const unknown = () => new MateriosSubmissionError("inclusion-unknown", finalReceiptId,
+    "Receipt inclusion could not be established within the deadline; do not blindly resubmit");
+  const matchesReceipt = (value: Record<string, unknown>) => {
+    const matches = (snake: string, camel: string, expected: string) =>
+      String(value[snake] ?? value[camel]).toLowerCase() === ensureHex(expected).toLowerCase();
+    return matches("content_hash", "contentHash", contentHex)
+      && matches("base_root_sha256", "baseRootSha256", rootHex)
+      && matches("base_manifest_hash", "baseManifestHash", manifestHex)
+      && matches("schema_hash", "schemaHash", schemaHex);
+  };
+  let signed: SubmittableExtrinsic<"promise">;
+  try {
+    signed = await withinDeadline<SubmittableExtrinsic<"promise">>(() => tx.signAsync(keypair, { nonce: -1 }), watchDeadline, notBroadcast);
+  } catch (cause) {
+    if (cause instanceof MateriosSubmissionError) throw cause;
+    throw new MateriosSubmissionError("not-landed", finalReceiptId,
+      "Receipt signing failed before broadcast; resubmission is safe", { cause });
+  }
 
   // ── Dry-run: catch dispatch errors BEFORE consuming a nonce ──────────
   // system.dryRun may not be available on every chain, so wrap in try/catch
   // for graceful degradation.
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const dryRunResult: any = await (api.rpc as any).system.dryRun(signed.toHex());
+    const dryRunResult: any = await withinDeadline(() => (api.rpc as any).system.dryRun(signed.toHex()), watchDeadline, notBroadcast);
 
     // ApplyExtrinsicResult = Result<DispatchOutcome, TransactionValidityError>
     // DispatchOutcome      = Result<(), DispatchError>
     if (dryRunResult.isErr) {
       // Outer error: TransactionValidityError (invalid nonce, can't pay fees, etc.)
-      throw new Error(
+      throw new MateriosSubmissionError("dispatch", finalReceiptId,
         `Receipt submission would fail (transaction invalid): ${dryRunResult.asErr.toString()}. ` +
         `This was caught by dry-run BEFORE broadcasting — no nonce was consumed.`,
       );
@@ -150,14 +179,14 @@ export async function submitReceipt(
       } else {
         errorMsg = innerErr.toString();
       }
-      throw new Error(
+      throw new MateriosSubmissionError("dispatch", finalReceiptId,
         `Receipt submission would fail at dispatch: ${errorMsg}. ` +
         `This was caught by dry-run BEFORE broadcasting — no nonce was consumed.`,
       );
     }
   } catch (err) {
     // If the error was thrown by our own dry-run checks above, re-throw it
-    if (err instanceof Error && err.message.includes("dry-run")) {
+    if (err instanceof MateriosSubmissionError) {
       throw err;
     }
     // Otherwise, system.dryRun is likely unavailable on this chain —
@@ -169,98 +198,45 @@ export async function submitReceipt(
     );
   }
 
-  // ── Broadcast the signed extrinsic ───────────────────────────────────
-  return new Promise<ReceiptSubmitResult>((resolve, reject) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    signed.send(({ status, dispatchError, txHash: extrinsicHash }: any) => {
-      if (dispatchError) {
-        if (dispatchError.isModule) {
-          const decoded = api.registry.findMetaError(dispatchError.asModule);
-          reject(
-            new Error(
-              `Receipt dispatch failed: ${decoded.section}.${decoded.name}: ${decoded.docs.join(" ")}`,
-            ),
-          );
-        } else {
-          reject(new Error(`Receipt dispatch failed: ${dispatchError.toString()}`));
-        }
-        return;
+  if (Date.now() >= watchDeadline) throw notBroadcast();
+  const result = await watchSubmission(api, callback => signed.send(callback), watchDeadline, finalReceiptId, false);
+  const txHash = result?.txHash?.toHex() ?? signed.hash.toHex();
+  if (result) {
+    const blockHash = result.status.asInBlock.toHex();
+    try {
+      const header = await withinDeadline(() => api.rpc.chain.getHeader(blockHash), watchDeadline, unknown);
+      const onChain = await withinDeadline(() => api.query.orinqReceipts!.receipts!(finalReceiptId), watchDeadline, unknown);
+      if (!onChain.isEmpty && matchesReceipt(onChain.toJSON() as Record<string, unknown>)) {
+        return { receiptId: finalReceiptId, blockHash, blockNumber: header.number.toNumber(), txHash, confirmed: true, status: "submitted" };
       }
-      if (status.isInBlock) {
-        const blockHash = status.asInBlock.toHex();
-        const txHash = extrinsicHash ? extrinsicHash.toHex() : signed.hash.toHex();
+    } catch (error) {
+      if (Date.now() >= deadline) throw unknown();
+      // The fresh connection below decides when the original connection cannot confirm storage.
+    }
+  }
 
-        // ── Post-submit storage confirmation ─────────────────────────
-        // Verify the receipt actually landed in on-chain storage.
-        // This catches silent dispatch failures that don't surface
-        // through the dispatchError callback (e.g. nonce consumed
-        // but extrinsic failed at execution).
-        const finalReceiptId = ensureHex(receiptId);
-
-        const confirmAndResolve = async () => {
-          let blockNumber = 0;
-          try {
-            const header = await api.rpc.chain.getHeader(blockHash);
-            blockNumber = header.number.toNumber();
-          } catch {
-            // Non-critical: block number is nice-to-have
-          }
-
-          let confirmed: boolean;
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const onChain = await (api.query as any).orinqReceipts.receipts(finalReceiptId);
-            confirmed = !onChain.isEmpty;
-          } catch (storageErr) {
-            // If we can't query storage, we can't confirm — warn but don't fail
-            console.warn(
-              `[materios-sdk] Could not verify receipt in storage: ${
-                storageErr instanceof Error ? storageErr.message : String(storageErr)
-              }`,
-            );
-            // Resolve without confirmation info so we don't break existing callers
-            resolve({
-              receiptId: finalReceiptId,
-              blockHash,
-              blockNumber,
-              txHash,
-            });
-            return;
-          }
-
-          if (!confirmed) {
-            reject(
-              new Error(
-                `Receipt ${finalReceiptId} was included in block ${blockHash} (tx: ${txHash}) ` +
-                `but was NOT found in on-chain storage. The extrinsic likely failed at dispatch. ` +
-                `Check the block events for details. No receipt was stored — you may retry with a new submission.`,
-              ),
-            );
-            return;
-          }
-
-          resolve({
-            receiptId: finalReceiptId,
-            blockHash,
-            blockNumber,
-            txHash,
-            confirmed: true,
-            status: "submitted",
-          });
-        };
-
-        confirmAndResolve().catch((err) => {
-          reject(
-            new Error(
-              `Receipt post-submit confirmation failed: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            ),
-          );
-        });
+  try {
+    return await provider.withRecoveryApi(async recovery => {
+      const header = await withinDeadline(() => recovery.rpc.chain.getHeader(), deadline, unknown);
+      const blockHash = header.hash.toHex();
+      const at = await withinDeadline(() => recovery.at(blockHash), deadline, unknown);
+      const record = await withinDeadline(() => at.query.orinqReceipts!.receipts!(finalReceiptId), deadline, unknown);
+      if (record.isEmpty) throw unknown();
+      const value = record.toJSON() as Record<string, unknown>;
+      if (!matchesReceipt(value)) {
+        throw new MateriosSubmissionError("inclusion-unknown", finalReceiptId,
+          "Stored receipt does not match the submitted payload; do not blindly resubmit");
       }
-    }).catch(reject);
-  });
+      return {
+        receiptId: finalReceiptId, blockHash, blockNumber: header.number.toNumber(),
+        txHash, confirmed: true, status: "submitted" as const, reconciled: true,
+      };
+    }, deadline - Date.now());
+  } catch (cause) {
+    if (cause instanceof MateriosSubmissionError) throw cause;
+    throw new MateriosSubmissionError("inclusion-unknown", finalReceiptId,
+      "Receipt recovery could not read matching storage before the deadline; do not blindly resubmit", { cause });
+  }
 }
 
 /**
@@ -567,7 +543,7 @@ export async function submitCertifiedReceipt(
     // exactOptionalPropertyTypes forbids assigning `undefined`, so spread.
     ...(input.schemaHash !== undefined ? { schemaHash: input.schemaHash } : {}),
   };
-  const submitResult = await submitReceipt(provider, receiptInput);
+  const submitResult = await submitReceipt(provider, receiptInput, opts.submissionOpts);
 
   // 4. Wait for certification
   const certResult = await waitForCertification(
@@ -580,6 +556,7 @@ export async function submitCertifiedReceipt(
     receiptId: submitResult.receiptId,
     blockHash: submitResult.blockHash,
     blockNumber: submitResult.blockNumber,
+    ...(submitResult.reconciled !== undefined ? { reconciled: submitResult.reconciled } : {}),
     ...(submitResult.txHash !== undefined ? { txHash: submitResult.txHash } : {}),
     ...(submitResult.confirmed !== undefined ? { confirmed: submitResult.confirmed } : {}),
     certHash: certResult.certHash,

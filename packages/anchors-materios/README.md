@@ -68,6 +68,49 @@ console.log("Status:", verification.status); // "FULLY_VERIFIED"
 await provider.disconnect();
 ```
 
+## Connection and submission deadlines
+
+`MateriosProvider` accepts optional `connectTimeoutMs` (default `30000`) and
+`inclusionTimeoutMs` (default `120000`). Override one call with
+`connect({ timeoutMs })`, `submitReceipt(provider, input, { timeoutMs })`, or
+`submitAnchor(provider, entry, { timeoutMs })`. `submitCertifiedReceipt` forwards
+`submissionOpts: { timeoutMs }` to its receipt submission. Existing polling
+options retain their independent budgets. Legacy `timeout` and `retries` config
+fields remain unused. Budgets must be positive, finite, and at most 2147483647 ms.
+
+The submission budget includes receipt signing, dry-run, watching, confirmation,
+and recovery. The last `min(30000, timeoutMs / 2)` milliseconds are reserved for
+recovery, so a silent watch ends before the total budget. A disconnect ends the
+watch immediately. Recovery opens an isolated connection to the same RPC URL,
+checks its genesis hash, and reads the content-addressed record at a pinned block.
+It never broadcasts a replacement transaction. Anchor recovery requires finalized
+storage; receipt recovery, like normal receipt inclusion, does not promise finality.
+
+| Error | Code | Retry contract |
+| --- | --- | --- |
+| `MateriosConnectionError` | `connect-timeout` / `connect-failed` | No submission was attempted by `connect`; retry connection. Includes `timeoutMs`. |
+| `MateriosSubmissionError` | `not-landed` | `safeToResubmit === true`: preparation failed or timed out before broadcasting. |
+| `MateriosSubmissionError` | `inclusion-unknown` | `safeToResubmit === false`: inspect storage and transaction state before resubmitting. |
+| `MateriosSubmissionError` | `dispatch` | `safeToResubmit === false`: fix the reported dispatch or validity failure before deciding to retry. |
+
+Submission errors include `id` (receipt or anchor ID). An empty storage read after
+a dropped watch is **inclusion-unknown**: the transaction can still be pending in
+a node's pool and land later. Unreadable storage, mismatched content, and a stalled
+recovery connection also produce this error. A timed-out `signAndSend` may still
+complete signing later; its outcome is unknown, never safe to blindly retry.
+
+Normal successful results are unchanged. Recovery returns `reconciled: true` only
+when storage matches the submitted payload. In that result, `blockHash` (and the
+receipt's `blockNumber`) identifies the block where storage was observed, **not
+necessarily the transaction's inclusion block**. A receipt's `txHash` identifies
+the attempted transaction; the matching receipt may have been submitted earlier.
+The certified-receipt orchestrator preserves `reconciled`.
+
+SDK deadline timers and disconnect listeners are removed on every settled path.
+Watch handles are unsubscribed, including handles delivered after settlement;
+temporary recovery connections are closed. The caller still owns the original
+provider and should call `disconnect()` when finished.
+
 ## One-Function Orchestrator
 
 `submitCertifiedReceipt()` handles the entire flow in a single call: blob upload, receipt submission, certification wait, and optional anchor wait.
@@ -169,8 +212,10 @@ replayed, and v2 means it cannot be resent with a different body.
 |-------------|----------|----------|--------------------------------------------------|
 | `rpcUrl`    | `string` | Yes      | WebSocket RPC URL (e.g. `ws://node:9945`)        |
 | `signerUri` | `string` | Yes      | Signer URI (`//Alice` for dev, or seed phrase)   |
-| `timeout`   | `number` | No       | Request timeout in milliseconds                   |
-| `retries`   | `number` | No       | Number of retry attempts                          |
+| `connectTimeoutMs` | `number` | No | Connection budget, default 30000 ms |
+| `inclusionTimeoutMs` | `number` | No | Total submission budget, default 120000 ms |
+| `timeout` | `number` | No | Legacy, unused |
+| `retries` | `number` | No | Legacy, unused |
 
 ### BlobGatewayConfig
 

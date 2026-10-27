@@ -36,6 +36,8 @@
 
 // Provider
 export { MateriosProvider } from "./provider.js";
+export { MateriosConnectionError, MateriosSubmissionError } from "./errors.js";
+export type { MateriosSubmissionErrorCode } from "./errors.js";
 
 // Anchor submission (infrastructure)
 export { submitAnchor } from "./submitter.js";
@@ -87,6 +89,7 @@ export type {
   // Anchor types
   AnchorEntry,
   MateriosAnchorConfig,
+  TimeoutOptions,
   MateriosAnchorResult,
   AnchorRecord,
   // Receipt types
