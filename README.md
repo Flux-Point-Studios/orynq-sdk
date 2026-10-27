@@ -321,7 +321,7 @@ A receipt on the Materios partner chain reaches Cardano inside a checkpoint batc
 | `@fluxpointstudios/orynq-sdk-anchors-cardano` | Cardano anchor builder, serializer, and verifier; end-to-end verifier of Materios checkpoint anchors (label 8746), with [the record's two encodings and what a caller supplies](packages/anchors-cardano/README.md) |
 | `@fluxpointstudios/orynq-sdk-anchors-materios` | Materios chain receipts, certification, blob uploads, and verification |
 | `@fluxpointstudios/orynq-sdk-anchors-midnight` | Midnight anchor verifier against the immutable orynq-anchor-registry, pinned to mainnet generation 1; [what a caller supplies](packages/anchors-midnight/README.md#verifying-an-anchor-on-mainnet) |
-| `@fluxpointstudios/orynq-sdk-midnight-prover` | Local Compact capability and rolling-digest proofs with native verification; [build requirements and limits](packages/midnight-prover/README.md) |
+| `@fluxpointstudios/orynq-sdk-midnight-prover` | Local Compact proofs, mainnet proof presentations with `post` and `verifyPosted`, and frozen `PROOF_DEPLOYMENTS`; [deployment records and build requirements](packages/midnight-prover/README.md) |
 
 ### Payment Protocol (for Anchor-as-a-Service)
 

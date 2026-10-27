@@ -1,5 +1,7 @@
 # Proof presentation rehearsal — 2026-10-26
 
+This page records the historical preprod rehearsal. The subsequent 2026-10-27 mainnet deployment and verification results are recorded in [MAINNET.md](MAINNET.md).
+
 ## Round 2: third and fourth presentations
 
 The fixed SDK posted both circuits to the existing deployment, starting with two presentations and ending with four. No new deployment, funding or NIGHT registration was needed. Both posts used the same retained funded preprod wallet. Contract source, code hash, verifier keys and initial-state bytes are unchanged from the reviewed baseline. Machine-readable evidence: [round2-rehearsal.json](round2-rehearsal.json).

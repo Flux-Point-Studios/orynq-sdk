@@ -1,0 +1,173 @@
+{
+  "sourceCommit": "b158969c6afd8e5cabdfeae1a39aeccfd8af0882",
+  "date": "2026-10-27",
+  "network": "mainnet",
+  "genesis": "1941ca8e2bb88146c14dea084d3be7eb6e96ca7135429c543848b628124f2854",
+  "runtimeSpecVersion": 1000300,
+  "ledgerVersion": "8.1.1",
+  "pins": {
+    "codeHash": "bd518847ed1c6800d129bdac57a1d595a0912afd74406a07d7838ae1ab060361",
+    "initialStateSha256": "55041c6c05f64fb1cf3aa974aba8e27a83206506bc40a6d21c540d8d294f01b2",
+    "verifierKeys": {
+      "proveCapability": "33197b9416d101c79df3d9b18ec092c7594d592498679feb920041e9856e5554",
+      "proveRolling1": "877ec547709026e5fd60f6386521c7634d6a95ba71ad8e35fc092c332217975d"
+    }
+  },
+  "authority": {
+    "committee": [],
+    "threshold": 1,
+    "counter": 0
+  },
+  "payer": "mn_addr1hdg7gg557cwmd9v67jv37z38zvprt7d46xqhk7c4a7hfask6jwrs7qesvq",
+  "runner": {
+    "commit": "b158969c6afd8e5cabdfeae1a39aeccfd8af0882",
+    "intent": "9ae07920",
+    "attempt": 1,
+    "refusals": 0,
+    "confirmations": 3,
+    "state": "done"
+  },
+  "transactions": {
+    "deploy": {
+      "address": "f44d99b014af2c21c3bb4db4ba727470c006181a3ede24074db1541a2c319cc5",
+      "txHash": "d6aa6a541a297128ad4560743f712c397a6027c677985500076839cef9aecdfb",
+      "blockHeight": 3201845,
+      "blockHash": "8d88d873f85482cf2249d68809bb996fa3942e6cf42216c9630994ecec236779",
+      "declaredFeeSpeck": "2",
+      "burnedFeeSpeck": "2"
+    },
+    "proveCapability": {
+      "address": "f44d99b014af2c21c3bb4db4ba727470c006181a3ede24074db1541a2c319cc5",
+      "txHash": "2fed636b6a1970e54c5d655c2f881a41655c2e45996a00c390dea2389040507e",
+      "blockHeight": 3201858,
+      "blockHash": "b288f597c92d1f91c89450b8d7807c1e16a7a621eca6dd9e42378373d42f810f",
+      "declaredFeeSpeck": "2",
+      "burnedFeeSpeck": "2",
+      "statement": {
+        "circuit": "proveCapability",
+        "contextDigest": "4770ef105d104ebe892876677489a67c4ccb046d46655b0ff36a80c89fff47dc",
+        "commitment": "d51d825634d331539b98e22b64a856ccf1210fdb7a422ef7815ba86f6810bd3a",
+        "notAfter": 1793135584
+      }
+    },
+    "proveRolling1": {
+      "address": "f44d99b014af2c21c3bb4db4ba727470c006181a3ede24074db1541a2c319cc5",
+      "txHash": "361d4bd540dd2775c224df95eb0e43ce151545f764a2b32f7de9861de40f1a17",
+      "blockHeight": 3201886,
+      "blockHash": "6ac68218534567f737ef70c81a7a4756d71005bb97f9bf40749bd2f5c743f4f8",
+      "declaredFeeSpeck": "2",
+      "burnedFeeSpeck": "2",
+      "statement": {
+        "circuit": "proveRolling1",
+        "contextDigest": "4770ef105d104ebe892876677489a67c4ccb046d46655b0ff36a80c89fff47dc",
+        "genesisHash": "ff7becf8f8d6ed64167ded450b1887baa59edb6515148201bf533f91abb568ba",
+        "rootHash": "dc18beb5501a78e97517cbc4ea8be924816517af751beb0cc73efbd208af28ba",
+        "anchorHash": "b77016351de3f95a03f40de79f7bc925876faf9eb976512cb4449d60827aefc1",
+        "notAfter": 1793135662
+      }
+    }
+  },
+  "fees": [
+    {
+      "label": "deploy",
+      "txHash": "d6aa6a541a297128ad4560743f712c397a6027c677985500076839cef9aecdfb",
+      "declaredFeeSpeck": "2",
+      "burnedFeeSpeck": "2",
+      "burnedFeeDust": "0.000000000000002"
+    },
+    {
+      "label": "proveCapability",
+      "txHash": "2fed636b6a1970e54c5d655c2f881a41655c2e45996a00c390dea2389040507e",
+      "declaredFeeSpeck": "2",
+      "burnedFeeSpeck": "2",
+      "burnedFeeDust": "0.000000000000002"
+    },
+    {
+      "label": "proveRolling1",
+      "txHash": "361d4bd540dd2775c224df95eb0e43ce151545f764a2b32f7de9861de40f1a17",
+      "declaredFeeSpeck": "2",
+      "burnedFeeSpeck": "2",
+      "burnedFeeDust": "0.000000000000002"
+    }
+  ],
+  "evidenceFilesSha256": {
+    "fresh-consumer-verify.mjs": "cb55572750b8dc44e9bc3f92c608f34a8f20b082ab04995172c47ac886979c51",
+    "fresh-consumer-verifyPosted.out": "8ea8b4a746a10ecf83b0936ec0c516fdb2baad80c4e744e6f4f679a2f4a2e2cb",
+    "fresh-consumer-package-lock.json": "34686992801a3d0dedb48628f5baa5ea7dd17c30ee84ea5a04142ed800a542c3",
+    "tarballs.sha256": "dea8684bb7728e0edab9c173ba49f4ece6cec71c917f506bbd56fe73b1784194",
+    "journal-attempts.txt": "00019ba59d848c40ac2d00da3a233e44fa4b54a95708bea799d9aee34f38df02",
+    "audit-9ae07920.jsonl": "c9a990ccfc01c83f8d140eee178d631de94b0e52bbd0c06c3be0c852c2faf9a5",
+    "runner-log-summary.txt": "b2096bb3dd510ab42a0b9e6b26a8e2e459289d391f364b1b6a5f1a3b4e486d33",
+    "runner-commit.txt": "aa17e15b9879b6f17608e6f588dfa2d43aec28b4f321ae3db0eb527f63fbc6cb"
+  },
+  "verification": {
+    "sourceCommit": "b158969c6afd8e5cabdfeae1a39aeccfd8af0882",
+    "installCommand": "npm install --ignore-scripts",
+    "importsResolvedInsideConsumer": true,
+    "transport": {
+      "url": "https://midnight-proofs-a.fluxpointstudios.com/midnight/mainnet/rpc",
+      "trust": "untrusted; transaction and block hints only"
+    },
+    "trustRoot": {
+      "genesis": "1941ca8e2bb88146c14dea084d3be7eb6e96ca7135429c543848b628124f2854",
+      "checkpointSource": "knownAuthors().checkpoints(\"mainnet\")",
+      "checkpointCount": 1
+    },
+    "results": [
+      {
+        "circuit": "proveCapability",
+        "valid": true,
+        "assurance": "consensus-verified",
+        "txHash": "2fed636b6a1970e54c5d655c2f881a41655c2e45996a00c390dea2389040507e",
+        "address": "f44d99b014af2c21c3bb4db4ba727470c006181a3ede24074db1541a2c319cc5",
+        "block": {
+          "height": 3201858,
+          "hash": "b288f597c92d1f91c89450b8d7807c1e16a7a621eca6dd9e42378373d42f810f"
+        },
+        "timestamp": 1793132106000,
+        "presentationId": "f581dfe0d666e7d60ddbf60c3fe042637717da867bbee84956ae5654619de07b",
+        "statement": {
+          "circuit": "proveCapability",
+          "contextDigest": "4770ef105d104ebe892876677489a67c4ccb046d46655b0ff36a80c89fff47dc",
+          "commitment": "d51d825634d331539b98e22b64a856ccf1210fdb7a422ef7815ba86f6810bd3a",
+          "notAfter": 1793135584
+        }
+      },
+      {
+        "circuit": "proveRolling1",
+        "valid": true,
+        "assurance": "consensus-verified",
+        "txHash": "361d4bd540dd2775c224df95eb0e43ce151545f764a2b32f7de9861de40f1a17",
+        "address": "f44d99b014af2c21c3bb4db4ba727470c006181a3ede24074db1541a2c319cc5",
+        "block": {
+          "height": 3201886,
+          "hash": "6ac68218534567f737ef70c81a7a4756d71005bb97f9bf40749bd2f5c743f4f8"
+        },
+        "timestamp": 1793132274001,
+        "presentationId": "6959d93ecead4db315435d19104e93862c48c55c4b0961850d969f466f9241c5",
+        "statement": {
+          "circuit": "proveRolling1",
+          "contextDigest": "4770ef105d104ebe892876677489a67c4ccb046d46655b0ff36a80c89fff47dc",
+          "genesisHash": "ff7becf8f8d6ed64167ded450b1887baa59edb6515148201bf533f91abb568ba",
+          "rootHash": "dc18beb5501a78e97517cbc4ea8be924816517af751beb0cc73efbd208af28ba",
+          "anchorHash": "b77016351de3f95a03f40de79f7bc925876faf9eb976512cb4449d60827aefc1",
+          "notAfter": 1793135662
+        }
+      }
+    ],
+    "packages": [
+      {
+        "name": "@fluxpointstudios/orynq-sdk-anchors-midnight",
+        "version": "0.3.2",
+        "tarball": "fluxpointstudios-orynq-sdk-anchors-midnight-0.3.2.tgz",
+        "sha256": "f7d9db919dd84d386a32f053afbba34b304cc56fc5960d71f9d9eacac519ff1d"
+      },
+      {
+        "name": "@fluxpointstudios/orynq-sdk-midnight-prover",
+        "version": "0.2.0",
+        "tarball": "fluxpointstudios-orynq-sdk-midnight-prover-0.2.0.tgz",
+        "sha256": "938c374740399bf2634995b252727bc156bdd54d8cd6ff8b94b81fbb98230476"
+      }
+    ]
+  }
+}
