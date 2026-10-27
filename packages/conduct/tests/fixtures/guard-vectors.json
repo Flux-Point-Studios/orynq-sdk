@@ -300,6 +300,116 @@
           "expect": "MANDATE_EXPIRED"
         }
       ]
+    },
+    {
+      "name": "precedence: asset before counterparty and cap",
+      "sequence": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "tdust",
+            "amount": "10000001",
+            "counterparty": "mallory",
+            "timestamp": "1500000"
+          },
+          "expect": "ASSET_MISMATCH"
+        }
+      ]
+    },
+    {
+      "name": "precedence: counterparty before cap",
+      "sequence": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "10000001",
+            "counterparty": "mallory",
+            "timestamp": "1500000"
+          },
+          "expect": "COUNTERPARTY_NOT_ALLOWED"
+        }
+      ]
+    },
+    {
+      "name": "precedence: validity before asset, counterparty and cap",
+      "sequence": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "tdust",
+            "amount": "10000001",
+            "counterparty": "mallory",
+            "timestamp": "999999"
+          },
+          "expect": "MANDATE_NOT_YET_VALID"
+        }
+      ]
+    },
+    {
+      "name": "egress outside validity: early",
+      "sequence": [
+        {
+          "action": {
+            "kind": "egress",
+            "destination": "api.example.com",
+            "timestamp": "999999"
+          },
+          "expect": "MANDATE_NOT_YET_VALID"
+        }
+      ]
+    },
+    {
+      "name": "egress outside validity: expiry",
+      "sequence": [
+        {
+          "action": {
+            "kind": "egress",
+            "destination": "api.example.com",
+            "timestamp": "2000000"
+          },
+          "expect": "MANDATE_EXPIRED"
+        }
+      ]
+    },
+    {
+      "name": "egress cannot use counterparty membership",
+      "sequence": [
+        {
+          "action": {
+            "kind": "egress",
+            "destination": "addr_test1_alpha_supplier",
+            "timestamp": "1500000"
+          },
+          "expect": "EGRESS_NOT_ALLOWED"
+        }
+      ]
+    },
+    {
+      "name": "widened sum: uint64 max plus one never wraps",
+      "capAmount": "18446744073709551615",
+      "sequence": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "18446744073709551615",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1500000"
+          },
+          "expect": "ALLOW"
+        },
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "1",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1500000"
+          },
+          "expect": "SPEND_CAP_EXCEEDED"
+        }
+      ]
     }
   ],
   "denyAllEgressCases": [

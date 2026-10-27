@@ -56,6 +56,11 @@ function checkRoot(root: Uint8Array, what: string): void {
   }
 }
 
+function copyBytes(value: Uint8Array): Uint8Array {
+  if (!(value instanceof Uint8Array)) throw new MandateError("SCHEMA_BAD_TYPE", "mandate byte fields must be Uint8Array");
+  return Uint8Array.from(value);
+}
+
 export function validateMandate(m: MandateV1): void {
   if (m.schemaVersion !== MANDATE_SCHEMA_VERSION) {
     throw new MandateError(
@@ -121,12 +126,12 @@ export function validateMandate(m: MandateV1): void {
   if (
     typeof d.committeeId !== "string" ||
     d.committeeId.length < 1 ||
-    d.committeeId.length > 128 ||
+    Buffer.byteLength(d.committeeId, "utf8") > 128 ||
     !d.committeeId.isWellFormed()
   ) {
     throw new MandateError(
       "SCHEMA_BAD_DISCLOSURE",
-      "disclosurePolicy.committeeId must be 1-128 well-formed characters",
+      "disclosurePolicy.committeeId must be 1-128 well-formed UTF-8 bytes",
     );
   }
   checkUint(d.threshold, "SCHEMA_BAD_DISCLOSURE", "disclosurePolicy.threshold");
@@ -140,6 +145,18 @@ export function validateMandate(m: MandateV1): void {
 }
 
 export function mandateToCborMap(m: MandateV1): CborMap {
+  const { spendCap: inputSpendCap, egressPolicy, validityWindow, disclosurePolicy, ...fields } = m;
+  const { allowlistRoot, ...egressFields } = egressPolicy;
+  m = {
+    ...fields,
+    mandateId: copyBytes(fields.mandateId),
+    counterpartyAllowlistRoot: copyBytes(fields.counterpartyAllowlistRoot),
+    approvedMeasurementSetRoot: copyBytes(fields.approvedMeasurementSetRoot),
+    spendCap: { ...inputSpendCap },
+    egressPolicy: { ...egressFields, allowlistRoot: copyBytes(allowlistRoot) },
+    validityWindow: { ...validityWindow },
+    disclosurePolicy: { ...disclosurePolicy },
+  };
   validateMandate(m);
   const spendCap: CborMap = new Map<CborValue, CborValue>([
     [0n, m.spendCap.asset],
@@ -275,5 +292,5 @@ export function cborMapToMandate(top: CborValue): MandateV1 {
 }
 
 export function decodeMandate(bytes: Uint8Array): MandateV1 {
-  return cborMapToMandate(cborDecode(bytes));
+  return cborMapToMandate(cborDecode(Uint8Array.from(bytes)));
 }

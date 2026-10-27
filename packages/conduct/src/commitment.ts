@@ -8,8 +8,8 @@ export const MANDATE_COMMITMENT_DOMAIN = "orynq:conduct:mandate:v1|";
 export function mandateCommitment(mandate: MandateV1 | Uint8Array): Uint8Array {
   let body: Uint8Array;
   if (mandate instanceof Uint8Array) {
-    decodeMandate(mandate);
-    body = mandate;
+    body = Uint8Array.from(mandate);
+    decodeMandate(body);
   } else {
     body = encodeMandate(mandate);
   }

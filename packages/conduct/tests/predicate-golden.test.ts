@@ -30,7 +30,8 @@ describe("predicate ABI golden sequences", () => {
       };
       const lists = { counterpartyAllowlist: guardVectors.counterpartyAllowlist, ...(mode === 1n ? { egressAllowlist: guardVectors.egressAllowlist } : {}) };
       const compiled = compileMandatePredicate(mandate, lists);
-      const guard = new MandateGuard({ mandate, ...lists });
+      let now = 0n;
+      const guard = new MandateGuard({ mandate, ...lists, now: () => now });
       for (const step of vector.steps) {
         const a = step.action;
         const action: GuardAction = a.kind === "payment"
@@ -41,6 +42,7 @@ describe("predicate ABI golden sequences", () => {
         const args = compiled.buildArgs(action, prior);
         expect(args).toHaveLength(PREDICATE_LAYOUT.length);
         expect(args.map((arg) => typeof arg === "bigint" ? arg.toString() : arg)).toEqual(step.args);
+        now = action.timestamp;
         const decision = guard.enforce(action);
         expect(decision.allowed ? "ALLOW" : decision.reason).toBe(step.verdict);
       }

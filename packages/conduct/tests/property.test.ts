@@ -26,7 +26,7 @@ const asset = fc.string({
 });
 const committeeId = fc
   .string({ minLength: 1, maxLength: 128 })
-  .filter((s) => s.isWellFormed() && s.length >= 1 && s.length <= 128);
+  .filter((s) => s.isWellFormed() && s.length >= 1 && Buffer.byteLength(s, "utf8") <= 128);
 
 const arbMandate: fc.Arbitrary<MandateV1> = fc
   .record({

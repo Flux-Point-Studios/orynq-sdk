@@ -34,7 +34,7 @@ const payment = { kind: "payment", asset: "lovelace", amount: 6n, counterparty: 
 describe("process-trace integration", () => {
   it("hashes an allowed action and a denial through the existing rolling trace", async () => {
     const events: CustomEvent[] = [];
-    const guard = new MandateGuard({
+    const guard = new MandateGuard({ now: () => 100n,
       mandate: mandate(),
       counterpartyAllowlist: ["supplier"],
       onEvent: (event) => events.push(toProcessTraceEvent(event, {
@@ -64,8 +64,8 @@ describe("process-trace integration", () => {
 
   it("preserves uint64 action timestamps without converting them to a JavaScript Date", () => {
     const events: GuardEvent[] = [];
-    const guard = new MandateGuard({ mandate: mandate(), counterpartyAllowlist: ["supplier"], onEvent: (e) => events.push(e) });
-    guard.enforce({ ...payment, timestamp: (1n << 64n) - 2n });
+    const explicit = new MandateGuard({ mandate: mandate(), counterpartyAllowlist: ["supplier"], now: () => (1n << 64n) - 2n, onEvent: e => events.push(e) });
+    explicit.enforce({ ...payment, timestamp: (1n << 64n) - 2n });
     const event = toProcessTraceEvent(events[0]!, { id: "test", seq: 0, timestamp: "2026-10-27T00:00:00.000Z", visibility: "private" });
     expect(event.data.timestamp).toBe("18446744073709551614");
     expect(event.data.action).toMatchObject({ amount: "6", timestamp: "18446744073709551614" });
@@ -75,7 +75,7 @@ describe("process-trace integration", () => {
 describe("guard state integrity", () => {
   it("keeps the committed mandate stable when caller-owned fields are changed", () => {
     const original = mandate();
-    const guard = new MandateGuard({ mandate: original, counterpartyAllowlist: ["supplier"] });
+    const guard = new MandateGuard({ now: () => 100n, mandate: original, counterpartyAllowlist: ["supplier"] });
     Object.assign(original.spendCap, { amount: 100n });
     expect(guard.enforce(payment)).toEqual({ allowed: true });
     expect(guard.enforce(payment)).toMatchObject({ allowed: false, reason: "SPEND_CAP_EXCEEDED" });
@@ -83,7 +83,7 @@ describe("guard state integrity", () => {
 
   it("rejects malformed actions before spending or emitting", () => {
     const events: GuardEvent[] = [];
-    const guard = new MandateGuard({ mandate: mandate(), counterpartyAllowlist: ["supplier"], onEvent: (e) => events.push(e) });
+    const guard = new MandateGuard({ now: () => 100n, mandate: mandate(), counterpartyAllowlist: ["supplier"], onEvent: (e) => events.push(e) });
     for (const amount of [-1n, 1n << 64n]) {
       expect(() => guard.enforce({ ...payment, amount })).toThrow();
       expect(() => guard.evaluate({ ...payment, amount })).toThrow();
@@ -96,10 +96,10 @@ describe("guard state integrity", () => {
 
   it("keeps emitted action data stable after caller mutation", () => {
     const events: GuardEvent[] = [];
-    const guard = new MandateGuard({ mandate: mandate(), counterpartyAllowlist: ["supplier"], onEvent: (e) => events.push(e) });
+    const guard = new MandateGuard({ now: () => 100n, mandate: mandate(), counterpartyAllowlist: ["supplier"], onEvent: (e) => events.push(e) });
     const action = { ...payment };
     guard.enforce(action);
-    Object.assign(action, { amount: 999n });
+    expect(() => Object.assign(action, { amount: 999n })).not.toThrow();
     expect(events[0]?.action).toMatchObject({ amount: 6n });
   });
 });

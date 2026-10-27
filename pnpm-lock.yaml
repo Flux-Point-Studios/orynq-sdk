@@ -358,6 +358,9 @@ importers:
 
   packages/conduct:
     dependencies:
+      '@fluxpointstudios/orynq-sdk-core':
+        specifier: workspace:*
+        version: link:../core
       '@fluxpointstudios/orynq-sdk-process-trace':
         specifier: workspace:*
         version: link:../process-trace

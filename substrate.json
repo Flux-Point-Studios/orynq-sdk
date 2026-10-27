@@ -4,7 +4,7 @@
     {
       "id": "conduct-mandate",
       "name": "Conduct mandate",
-      "desc": "Strict deterministic CBOR v1 mandates, domain-separated SHA-256 commitments, allowlist roots and validated payment/egress action digests. Canonical decoding preserves all UTF-8 text including a leading BOM. Schema validity does not establish principal authority.",
+      "desc": "Strict deterministic CBOR v1 mandates, domain-separated SHA-256 commitments, allowlist roots and validated payment/egress action digests. Canonical decoding preserves all UTF-8 text including a leading BOM. Schema validity does not establish principal authority. Inputs are copied before validation; identifier limits are UTF-8 byte bounds and payment actions reject zero amounts and unknown fields.",
       "kind": "toolkit",
       "paths": [
         "packages/conduct/src/types.ts",
@@ -32,7 +32,7 @@
     {
       "id": "conduct-guard",
       "name": "Conduct runtime guard",
-      "desc": "Deterministic payment/egress authorization with epoch-aligned window spend, immutable policy snapshots and denial events. Converts records to process-trace CustomEvent with lossless decimal bigint fields. State is in memory; bypass, execution and timestamp authenticity remain application responsibilities.",
+      "desc": "Payment/egress authorization with a trusted guard clock, monotonic action times and epoch-aligned spend caps. Trace-safe immutable events are validated before reservation. Synchronous enforcement rejects promise sinks; awaited enforcement authorizes only after sink acceptance and fails closed on errors. Complete ordered guard-event replay restores spend, sequence and clock state across restarts. Hosts own durable storage, log authentication/completeness, serialized access and all identity, attestation and disclosure checks.",
       "kind": "toolkit",
       "paths": [
         "packages/conduct/src/guard.ts",
@@ -42,7 +42,7 @@
         "packages/conduct/tests",
         "packages/conduct/README.md"
       ],
-      "consumes": ["conduct-mandate", "conduct-predicate-compiler", "process-trace"],
+      "consumes": ["conduct-mandate", "conduct-predicate-compiler", "process-trace", "dual-protocol-payment-layer"],
       "status": "experimental"
     },
     {

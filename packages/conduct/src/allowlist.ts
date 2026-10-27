@@ -13,16 +13,17 @@ const sha256 = (data: Uint8Array): Uint8Array =>
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 
 export function allowlistLeaf(member: string): Uint8Array {
-  if (member.length === 0 || !member.isWellFormed()) {
+  if (typeof member !== "string" || member.length === 0 || member.length > 256 || !member.isWellFormed() || Buffer.byteLength(member, "utf8") > 256) {
     throw new MandateError(
       "SCHEMA_BAD_TYPE",
-      "allowlist member must be a non-empty well-formed string",
+      "allowlist member must be a well-formed UTF-8 string of 1-256 bytes",
     );
   }
   return sha256(concatBytes(utf8(ALLOWLIST_LEAF_DOMAIN), cborEncode(member)));
 }
 
 export function buildAllowlistRoot(members: readonly string[]): Uint8Array {
+  members = Array.from(members);
   if (members.length === 0) return new Uint8Array(ZERO_ROOT_32);
   let level = members
     .map(allowlistLeaf)

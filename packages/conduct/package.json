@@ -29,6 +29,7 @@
     "dev": "tsup --watch",
     "test": "vitest run tests",
     "test:watch": "vitest",
+    "test:mutations": "node tests/mutations/run.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
@@ -54,6 +55,7 @@
   "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
   "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*",
     "@fluxpointstudios/orynq-sdk-process-trace": "workspace:*"
   },
   "devDependencies": {

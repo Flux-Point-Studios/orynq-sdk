@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { buildAllowlistRoot } from "./allowlist.js";
 import { equalBytes } from "./bytes.js";
-import { validateMandate } from "./codec.js";
+import { decodeMandate, encodeMandate } from "./codec.js";
 import { MandateError } from "./errors.js";
 import { EGRESS_ALLOWLIST, type MandateV1 } from "./types.js";
 import { validateAction, type GuardAction } from "./actions.js";
@@ -86,15 +86,17 @@ export function compileMandatePredicate(
   mandate: MandateV1,
   allowlists: PredicateAllowlists,
 ): CompiledPredicate {
-  validateMandate(mandate);
-  const counterpartyRoot = buildAllowlistRoot(allowlists.counterpartyAllowlist);
+  mandate = decodeMandate(encodeMandate(mandate));
+  const counterpartyAllowlist = Array.from(allowlists.counterpartyAllowlist);
+  const suppliedEgress = allowlists.egressAllowlist;
+  const egressAllowlist = suppliedEgress === undefined ? undefined : Array.from(suppliedEgress);
+  const counterpartyRoot = buildAllowlistRoot(counterpartyAllowlist);
   if (!equalBytes(counterpartyRoot, mandate.counterpartyAllowlistRoot)) {
     throw new MandateError(
       "SCHEMA_BAD_TYPE",
       "counterparty allowlist does not hash to mandate.counterpartyAllowlistRoot",
     );
   }
-  const egressAllowlist = allowlists.egressAllowlist;
   if (mandate.egressPolicy.mode === EGRESS_ALLOWLIST) {
     if (egressAllowlist === undefined) {
       throw new MandateError(
@@ -115,7 +117,7 @@ export function compileMandatePredicate(
     );
   }
 
-  const counterparties = new Set(allowlists.counterpartyAllowlist);
+  const counterparties = new Set(counterpartyAllowlist);
   const egressDestinations = new Set(egressAllowlist ?? []);
   const mandateArgs = {
     not_before: mandate.validityWindow.notBefore,
@@ -127,6 +129,7 @@ export function compileMandatePredicate(
 
   return {
     buildArgs(action, priorSpent) {
+      action = { ...action };
       validateAction(action);
       if (typeof priorSpent !== "bigint" || priorSpent < 0n || priorSpent >= 1n << 64n) {
         throw new MandateError("SCHEMA_BAD_TYPE", "priorSpent must be a uint64");

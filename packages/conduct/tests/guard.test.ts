@@ -20,6 +20,7 @@ interface JsonAction {
 
 interface JsonCase {
   name: string;
+  capAmount?: string;
   sequence: { action: JsonAction; expect: string }[];
 }
 
@@ -90,13 +91,19 @@ function toAction(j: JsonAction): GuardAction {
 }
 
 function runCase(c: JsonCase, egressMode: 0n | 1n, events?: GuardEvent[]): void {
+  let now = 0n;
+  const mandate = fixtureMandate(egressMode);
   const guard = new MandateGuard({
-    mandate: fixtureMandate(egressMode),
+    now: () => now,
+    mandate: { ...mandate, spendCap: { ...mandate.spendCap, amount: BigInt(c.capAmount ?? vectors.mandateParams.capAmount) } },
     counterpartyAllowlist: vectors.counterpartyAllowlist,
     ...(egressMode === 1n ? { egressAllowlist: vectors.egressAllowlist } : {}),
     ...(events ? { onEvent: (e: GuardEvent) => events.push(e) } : {}),
   });
   for (const [i, step] of c.sequence.entries()) {
+    now = BigInt(step.action.timestamp);
+    const evaluated = guard.evaluate(toAction(step.action));
+    expect(evaluated.allowed ? "ALLOW" : evaluated.reason).toBe(step.expect);
     const decision = guard.enforce(toAction(step.action));
     const got = decision.allowed ? "ALLOW" : decision.reason;
     expect(got, `step ${i}: ${step.action.kind} @ ${step.action.timestamp}`).toBe(
@@ -140,6 +147,7 @@ describe("guard trace events", () => {
   it("distinct actions carry distinct digests; identical actions carry identical digests", () => {
     const events: GuardEvent[] = [];
     const guard = new MandateGuard({
+    now: () => 1_500_000n,
       mandate: fixtureMandate(1n),
       counterpartyAllowlist: vectors.counterpartyAllowlist,
       egressAllowlist: vectors.egressAllowlist,
@@ -165,6 +173,7 @@ describe("guard construction binds allowlists to the mandate roots", () => {
     expect(
       () =>
         new MandateGuard({
+    now: () => 1_500_000n,
           mandate: fixtureMandate(1n),
           counterpartyAllowlist: [...vectors.counterpartyAllowlist, "addr_test1_extra"],
           egressAllowlist: vectors.egressAllowlist,
@@ -176,6 +185,7 @@ describe("guard construction binds allowlists to the mandate roots", () => {
     expect(
       () =>
         new MandateGuard({
+    now: () => 1_500_000n,
           mandate: fixtureMandate(1n),
           counterpartyAllowlist: vectors.counterpartyAllowlist,
           egressAllowlist: ["exfil.example.org"],
@@ -187,6 +197,7 @@ describe("guard construction binds allowlists to the mandate roots", () => {
     expect(
       () =>
         new MandateGuard({
+    now: () => 1_500_000n,
           mandate: fixtureMandate(1n),
           counterpartyAllowlist: vectors.counterpartyAllowlist,
         }),
@@ -194,6 +205,7 @@ describe("guard construction binds allowlists to the mandate roots", () => {
     expect(
       () =>
         new MandateGuard({
+    now: () => 1_500_000n,
           mandate: fixtureMandate(0n),
           counterpartyAllowlist: vectors.counterpartyAllowlist,
           egressAllowlist: vectors.egressAllowlist,
@@ -203,6 +215,7 @@ describe("guard construction binds allowlists to the mandate roots", () => {
 
   it("evaluate() is pure: it never accrues spend", () => {
     const guard = new MandateGuard({
+    now: () => 1_500_000n,
       mandate: fixtureMandate(1n),
       counterpartyAllowlist: vectors.counterpartyAllowlist,
       egressAllowlist: vectors.egressAllowlist,
