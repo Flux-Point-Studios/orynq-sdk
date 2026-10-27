@@ -1,5 +1,13 @@
 # @fluxpointstudios/orynq-sdk-quickstart
 
+## 0.4.2
+
+### Patch Changes
+
+- 95e1f75: Reject duplicate policy JSON members, bind signing to an explicit parsed review, and require authenticated predecessor evidence for appended checkpoints. Label discovery as indexer-reported with author-window status, bound verifier diagnostics, suppress malformed source fields/RPC error bodies, and reject credential-bearing source URLs. CLI bundle errors no longer quote file contents; MCP author trust comes exclusively from the server policy.
+- 8373932: Return and print the exact uploaded content hash, submitted chunk Merkle root and full certificate hash needed for receipt verification. Distinguish trace roots in CLI output, derive the CLI version from package metadata, and fix MCP dry-run and submission identities for single- and multi-chunk blobs.
+  - @fluxpointstudios/orynq-sdk-process-trace@0.3.1
+
 ## 0.4.1
 
 ### Patch Changes

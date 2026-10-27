@@ -115,4 +115,4 @@ export {
  * Package version.
  * Updated automatically during build.
  */
-export const VERSION = "0.1.0";
+export const VERSION = "0.3.0";

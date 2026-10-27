@@ -1,5 +1,13 @@
 # @fluxpointstudios/orynq-sdk-payer-materios-x402
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [ffa932e]
+  - @fluxpointstudios/orynq-sdk-core@0.3.2
+  - @fluxpointstudios/orynq-sdk-transport-x402@0.0.1
+
 ## 0.1.1 (2026-05-12)
 
 PR #45 security-review polish (task #228). Five LOW-severity fixes to
@@ -77,6 +85,7 @@ separator (e.g. `v2`); old signatures naturally become invalid.
 ### Pipeline
 
 Closes the client side of Phase 2.A:
+
 - `pallet-billing` (Materios runtime, PRs #19/#20/#21) — on-chain state
 - gateway 402 middleware (orynq-sdk PRs #43, #44) — emits the headers
 - **this package** — generates the signed retry payload

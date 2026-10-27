@@ -1,5 +1,24 @@
 # @fluxpointstudios/orynq-mcp
 
+## 0.7.0
+
+### Minor Changes
+
+- 8678293: Add read-only hosted Midnight receipt verification with caller-bound identities, explicit proof endpoints and bounded resumable discovery. Unresolved hints never establish absence or coverage.
+- 95e1f75: Reject duplicate policy JSON members, bind signing to an explicit parsed review, and require authenticated predecessor evidence for appended checkpoints. Label discovery as indexer-reported with author-window status, bound verifier diagnostics, suppress malformed source fields/RPC error bodies, and reject credential-bearing source URLs. CLI bundle errors no longer quote file contents; MCP author trust comes exclusively from the server policy.
+- d9dd9dd: Upgrade to patched Zod 4 and preserve arbitrary string-keyed trace, span and event metadata through the MCP tool schemas.
+
+### Patch Changes
+
+- ad36425: The optional peer `@fluxpointstudios/orynq-sdk-anchors-midnight` is published on npm, pinned to Midnight mainnet registry generation 1. When it is missing, `verify_midnight_anchor` and the Midnight commands say to install it beside the package instead of pointing to a source checkout.
+- 8373932: Return and print the exact uploaded content hash, submitted chunk Merkle root and full certificate hash needed for receipt verification. Distinguish trace roots in CLI output, derive the CLI version from package metadata, and fix MCP dry-run and submission identities for single- and multi-chunk blobs.
+- Updated dependencies [b7caae1]
+- Updated dependencies [ffa932e]
+- Updated dependencies [d4880f0]
+  - @fluxpointstudios/orynq-sdk-anchors-cardano@0.5.0
+  - @fluxpointstudios/orynq-sdk-core@0.3.2
+  - @fluxpointstudios/orynq-sdk-process-trace@0.3.1
+
 ## 0.4.0
 
 ### Minor Changes
