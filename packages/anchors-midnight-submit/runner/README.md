@@ -209,7 +209,7 @@ The audit log records:
 ## Install
 
 The CTO session installs it on Gemtek after review, from a checkout of its own at the reviewed
-commit, never deci's:
+commit, never deci's. Install the pinned [Compact toolchain](../../../tools/compactc/install.sh) first if it is absent, and set `COMPACTC` and `MIDNIGHT_PP` to that installation. A fresh checkout must run `build:circuits` before the workspace or dependency build; otherwise the prover import fails with `Cannot find module '../managed/contract/index.js'`:
 
 ```sh
 REVIEWED=<the reviewed commit>
@@ -217,6 +217,9 @@ git -C ~/work/orynq-sdk fetch origin
 git -C ~/work/orynq-sdk worktree add --detach ~/work/orynq-midnight-runner-live "$REVIEWED"
 cd ~/work/orynq-midnight-runner-live
 pnpm install --frozen-lockfile --filter "@fluxpointstudios/orynq-sdk-anchors-midnight-submit..."
+export COMPACTC="$HOME/.cache/orynq-midnight/compactc/compactc"
+export MIDNIGHT_PP="$HOME/.cache/orynq-midnight/zk"
+nice -n 10 pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:circuits
 nice -n 10 pnpm --filter "@fluxpointstudios/orynq-sdk-anchors-midnight-submit^..." build
 packages/anchors-midnight-submit/runner/systemd/verify.sh
 

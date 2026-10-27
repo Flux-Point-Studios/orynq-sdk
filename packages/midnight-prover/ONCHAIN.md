@@ -1,6 +1,6 @@
 # On-chain proof presentations
 
-Status: **preprod-rehearsed**. Both locally proven SDK post calls passed fresh-tarball verifyPosted with authenticated GRANDPA-final execution on PREPROD. No mainnet proof-contract deployment is recorded. See [rehearsal evidence](onchain/REHEARSAL.md).
+Status: **mainnet-deployed**. The immutable contract and both synthetic presentations were recorded on Midnight MAINNET on 2026-10-27; both calls passed independent fresh-consumer `verifyPosted` with authenticated GRANDPA-final execution. Use `PROOF_DEPLOYMENTS.mainnet` or the recorded `PROOF_DEPLOYMENTS.preprod`. See [mainnet results](onchain/MAINNET.md) and [preprod rehearsal evidence](onchain/REHEARSAL.md).
 
 This extends the existing local prover and consumes the anchor package's GRANDPA verifier, authenticated runtime/events proofs, transaction decoder and RPC transport. The original local envelope format and circuits remain available.
 
@@ -19,12 +19,13 @@ Capability presentations deliberately have **no on-chain nullifier**. They are p
 ## Post with a supplied wallet
 
 ```ts
-import { post } from '@fluxpointstudios/orynq-sdk-midnight-prover';
+import { post, PROOF_DEPLOYMENTS } from '@fluxpointstudios/orynq-sdk-midnight-prover';
 
+const deployment = PROOF_DEPLOYMENTS.mainnet;
 const submitted = await post({
-  network: 'preprod',
-  source, // A preprod MidnightSource with node contract-state access.
-  address: deployedAddress,
+  network: deployment.network,
+  source, // A mainnet MidnightSource with node contract-state access.
+  address: deployment.address,
   statement: {
     circuit: 'proveCapability',
     commitment, contextDigest,
@@ -45,23 +46,27 @@ Use `circuit: 'proveRolling1'` with `genesisHash`, `rootHash`, `anchorHash`, `co
 ## Verify from a fresh install
 
 ```ts
-import { verifyPosted } from '@fluxpointstudios/orynq-sdk-midnight-prover';
-import { rpcOnlySource } from '@fluxpointstudios/orynq-sdk-anchors-midnight';
+import { PROOF_DEPLOYMENTS, verifyPosted } from '@fluxpointstudios/orynq-sdk-midnight-prover';
+import { knownAuthors, rpcOnlySource } from '@fluxpointstudios/orynq-sdk-anchors-midnight';
 
+const deployment = PROOF_DEPLOYMENTS.mainnet;
 const source = rpcOnlySource({
-  network: 'preprod', node: readRpcUrl, registries: [],
-  hints: [deploymentBlockHint, proofBlockHint],
+  network: deployment.network,
+  node: 'https://midnight-proofs-a.fluxpointstudios.com/midnight/mainnet/rpc',
+  registries: [],
+  hints: [deployment.deployBlockHint, proofBlockHint],
 });
 const result = await verifyPosted({
-  network: 'preprod', address: deployedAddress,
-  deployTxHash: deploymentBlockHint.txHash,
+  ...deployment,
   txHash: proofBlockHint.txHash,
   statement: expectedStatement,
 }, { source, trustRoot: {
-  genesis: 'df831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b',
-  checkpoints: trustedCheckpoints,
+  genesis: '1941ca8e2bb88146c14dea084d3be7eb6e96ca7135429c543848b628124f2854',
+  checkpoints: knownAuthors().checkpoints(deployment.network),
 } });
 ```
+
+`proofBlockHint` is the presentation's `{txHash, blockHeight, blockHash}`; `expectedStatement` is the exact public statement you intend to verify. The [mainnet release record](onchain/mainnet-release.json) supplies historical examples of both. The deeply frozen catalog binds the recorded deployment address, transaction, block hint, code hash and initial-state digest; its locations do not replace the independent trust root.
 
 Block hints locate bytes and confer no trust. Only the exact network labels `preprod` and `mainnet` are accepted. The trusted genesis/checkpoint bundle must carry the exact genesis for that network, and both authenticated transactions must encode the same network id. Relabelling preprod checkpoints as mainnet cannot make preprod transaction bytes verify as mainnet. Checkpoints must come from the caller's independently authenticated network configuration, never from an untrusted proof or indexer. The verifier checks canonical transaction bytes and hashes, complete block-body roots, exact bare Midnight extrinsic inclusion, checkpoint-rooted GRANDPA finality, authenticated successful execution and timestamp, the exact pinned immutable deployment, deployment ordering, target contract/circuit, and the expected presentation. It refuses partial success. The finality helper uses the same pinned runtime metadata and storage proofs as anchors-midnight. The mainnet read-RPC supports these reads without a new contract-state allowlist entry because this verifier uses deployment and call bytes, not `midnight_contractState`.
 

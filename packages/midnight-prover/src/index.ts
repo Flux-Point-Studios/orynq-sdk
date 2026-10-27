@@ -202,6 +202,7 @@ export { post } from "./post.js";
 export type { ProofWallet } from "./post.js";
 export { verifyPosted, assertPostedProof } from "./posted.js";
 export type { PostedProofRequest, ProofTrustRoot } from "./posted.js";
+export { PROOF_DEPLOYMENTS } from "./deployments.js";
 export { buildProofDeploy, buildProofCall, proofInitialState, proofStateOnNode, assertProofDeploy, presentationId, PROOF_PINS } from "./onchain.js";
 export type { ProofStatement, ProofWitness, ProofNetwork } from "./onchain.js";
 export { proofProvider } from "./proof-material.js";
