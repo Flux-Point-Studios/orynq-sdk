@@ -24,10 +24,34 @@ function setup(expiresAt = Date.now() + 3600_000, execute = false) {
   const journalPath = fresh("proof-release.sqlite");
   const w = wallet(net, () => journalPath);
   const options = { network: "preprod" as const, source: net.source, wallet: w, paramsDir: "unused", journalPath, expiresAt };
-  return { operator: proofReleaseOperator(options), reopen: () => proofReleaseOperator(options), w, journalPath, ledger, net };
+  return { operator: proofReleaseOperator(options), reopen: () => proofReleaseOperator(options), options, w, journalPath, ledger, net };
 }
 
 describe("proof release journal", () => {
+  it("retains the construction-time approval expiry while a runtime read is pending", async () => {
+    const approvedExpiry = Date.now() + 90_000;
+    const { operator, options, net } = setup(approvedExpiry);
+    const call = net.source.node.call;
+    let entered!: () => void, release!: () => void;
+    const pending = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    net.source.node.call = async <T>(method: string, params: unknown[] = []): Promise<T> => {
+      if (method === "state_getRuntimeVersion") { entered(); await gate; }
+      return call<T>(method, params);
+    };
+    try {
+      const preparation = operator.prepare("deploy");
+      await pending;
+      options.expiresAt = approvedExpiry + 3600_000;
+      release();
+      const prepared = await preparation;
+      const originalCap = Math.floor(approvedExpiry / 1000) * 1000;
+      expect(prepared.ttl.getTime()).toBe(originalCap);
+      const transaction = L.Transaction.deserialize("signature", "proof", "binding", prepared.bytes);
+      expect([...(transaction.intents?.values() ?? [])].map(intent => intent.ttl.getTime())).toEqual([originalCap]);
+    } finally { release(); operator.close(); }
+  });
+
   it("owns an immutable copy of confirmed bytes before settlement awaits", async () => {
     const { operator, w } = setup();
     try {

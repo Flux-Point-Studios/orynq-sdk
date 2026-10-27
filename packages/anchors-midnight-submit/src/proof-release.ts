@@ -52,7 +52,7 @@ export interface PreparedProofRelease extends PreparedBytes {
 export function proofReleaseOperator(options: {
   network: MidnightNetwork; source: MidnightSource; wallet: FeeWallet; paramsDir: string; journalPath: string; expiresAt: number;
 }) {
-  const { network, source, wallet } = options;
+  const { network, source, wallet, expiresAt } = options;
   const journal = openJournal(options.journalPath);
   const chain = chainView(source, network);
   const provider = proofProvider(options.paramsDir);
@@ -84,7 +84,7 @@ export function proofReleaseOperator(options: {
     async prepare(label: ProofReleaseLabel): Promise<PreparedProofRelease> {
       key(label);
       await assertKnownRuntime(source, network);
-      const notAfter = Math.floor(Math.min(Date.now() + 3540_000, options.expiresAt) / 1000);
+      const notAfter = Math.floor(Math.min(Date.now() + 3540_000, expiresAt) / 1000);
       if (notAfter * 1000 <= Date.now()) throw new Error("Proof release approval has expired");
       const ttl = new Date(notAfter * 1000);
       const statement = proofReleaseStatements(notAfter).find(value => value.circuit === label);
