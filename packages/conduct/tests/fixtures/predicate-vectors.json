@@ -1,0 +1,676 @@
+{
+  "description": "Independent SHA-256/uint64 predicate ABI known answers; order is PREDICATE_LAYOUT. Regenerate only with reviewed format changes.",
+  "cases": [
+    {
+      "name": "payment within cap to allowed counterparty",
+      "egressMode": "1",
+      "steps": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "5000000",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1500000"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "1500000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "5000000",
+            true,
+            "0",
+            false
+          ],
+          "verdict": "ALLOW"
+        }
+      ]
+    },
+    {
+      "name": "cap-exact single payment is allowed",
+      "egressMode": "1",
+      "steps": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "10000000",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1500000"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "1500000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            true,
+            "0",
+            false
+          ],
+          "verdict": "ALLOW"
+        }
+      ]
+    },
+    {
+      "name": "cumulative spend to cap-exact, then one more base unit",
+      "egressMode": "1",
+      "steps": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "6000000",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1500000"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "1500000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "6000000",
+            true,
+            "0",
+            false
+          ],
+          "verdict": "ALLOW"
+        },
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "4000000",
+            "counterparty": "addr_test1_beta_exchange",
+            "timestamp": "1500600"
+          },
+          "priorSpent": "6000000",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "1500600",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "4000000",
+            true,
+            "6000000",
+            false
+          ],
+          "verdict": "ALLOW"
+        },
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "1",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1501100"
+          },
+          "priorSpent": "10000000",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "1501100",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "1",
+            true,
+            "10000000",
+            false
+          ],
+          "verdict": "SPEND_CAP_EXCEEDED"
+        }
+      ]
+    },
+    {
+      "name": "single payment exceeding cap by one base unit",
+      "egressMode": "1",
+      "steps": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "10000001",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1500000"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "1500000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000001",
+            true,
+            "0",
+            false
+          ],
+          "verdict": "SPEND_CAP_EXCEEDED"
+        }
+      ]
+    },
+    {
+      "name": "denied attempt consumes no budget",
+      "egressMode": "1",
+      "steps": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "9000000",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1500000"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "1500000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "9000000",
+            true,
+            "0",
+            false
+          ],
+          "verdict": "ALLOW"
+        },
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "2000000",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1500300"
+          },
+          "priorSpent": "9000000",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "1500300",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "2000000",
+            true,
+            "9000000",
+            false
+          ],
+          "verdict": "SPEND_CAP_EXCEEDED"
+        },
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "1000000",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1500600"
+          },
+          "priorSpent": "9000000",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "1500600",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "1000000",
+            true,
+            "9000000",
+            false
+          ],
+          "verdict": "ALLOW"
+        }
+      ]
+    },
+    {
+      "name": "window edge: last second of a spent window denies, boundary second opens a fresh window",
+      "egressMode": "1",
+      "steps": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "10000000",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1497600"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "1497600",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            true,
+            "0",
+            false
+          ],
+          "verdict": "ALLOW"
+        },
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "1",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1501199"
+          },
+          "priorSpent": "10000000",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "1501199",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "1",
+            true,
+            "10000000",
+            false
+          ],
+          "verdict": "SPEND_CAP_EXCEEDED"
+        },
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "10000000",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1501200"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "1501200",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            true,
+            "0",
+            false
+          ],
+          "verdict": "ALLOW"
+        }
+      ]
+    },
+    {
+      "name": "action before notBefore",
+      "egressMode": "1",
+      "steps": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "1",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "999999"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "999999",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "1",
+            true,
+            "0",
+            false
+          ],
+          "verdict": "MANDATE_NOT_YET_VALID"
+        }
+      ]
+    },
+    {
+      "name": "notBefore is inclusive",
+      "egressMode": "1",
+      "steps": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "1",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1000000"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "1000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "1",
+            true,
+            "0",
+            false
+          ],
+          "verdict": "ALLOW"
+        }
+      ]
+    },
+    {
+      "name": "notAfter is exclusive",
+      "egressMode": "1",
+      "steps": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "1",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "2000000"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "1",
+            true,
+            "0",
+            false
+          ],
+          "verdict": "MANDATE_EXPIRED"
+        }
+      ]
+    },
+    {
+      "name": "last valid second is allowed",
+      "egressMode": "1",
+      "steps": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "1",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1999999"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "1999999",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "1",
+            true,
+            "0",
+            false
+          ],
+          "verdict": "ALLOW"
+        }
+      ]
+    },
+    {
+      "name": "counterparty allowlist miss",
+      "egressMode": "1",
+      "steps": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "1",
+            "counterparty": "addr_test1_mallory",
+            "timestamp": "1500000"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "1500000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "1",
+            false,
+            "0",
+            false
+          ],
+          "verdict": "COUNTERPARTY_NOT_ALLOWED"
+        }
+      ]
+    },
+    {
+      "name": "asset mismatch",
+      "egressMode": "1",
+      "steps": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "tdust",
+            "amount": "1",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1500000"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "1500000",
+            "202863674598662753682326318808264410961266480858260157994752364891928894438",
+            "1",
+            true,
+            "0",
+            false
+          ],
+          "verdict": "ASSET_MISMATCH"
+        }
+      ]
+    },
+    {
+      "name": "egress to allowlisted destination",
+      "egressMode": "1",
+      "steps": [
+        {
+          "action": {
+            "kind": "egress",
+            "destination": "api.example.com",
+            "timestamp": "1500000"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "1",
+            "1500000",
+            "0",
+            "0",
+            false,
+            "0",
+            true
+          ],
+          "verdict": "ALLOW"
+        }
+      ]
+    },
+    {
+      "name": "egress allowlist miss",
+      "egressMode": "1",
+      "steps": [
+        {
+          "action": {
+            "kind": "egress",
+            "destination": "exfil.example.org",
+            "timestamp": "1500000"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "1",
+            "1500000",
+            "0",
+            "0",
+            false,
+            "0",
+            false
+          ],
+          "verdict": "EGRESS_NOT_ALLOWED"
+        }
+      ]
+    },
+    {
+      "name": "denial precedence: validity window checked before allowlist",
+      "egressMode": "1",
+      "steps": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "1",
+            "counterparty": "addr_test1_mallory",
+            "timestamp": "2000001"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "1",
+            "0",
+            "2000001",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "1",
+            false,
+            "0",
+            false
+          ],
+          "verdict": "MANDATE_EXPIRED"
+        }
+      ]
+    },
+    {
+      "name": "deny-all egress denies allowlisted-looking destination",
+      "egressMode": "0",
+      "steps": [
+        {
+          "action": {
+            "kind": "egress",
+            "destination": "api.example.com",
+            "timestamp": "1500000"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "0",
+            "1",
+            "1500000",
+            "0",
+            "0",
+            false,
+            "0",
+            false
+          ],
+          "verdict": "EGRESS_DENIED"
+        }
+      ]
+    },
+    {
+      "name": "deny-all egress still allows payments",
+      "egressMode": "0",
+      "steps": [
+        {
+          "action": {
+            "kind": "payment",
+            "asset": "lovelace",
+            "amount": "1000000",
+            "counterparty": "addr_test1_alpha_supplier",
+            "timestamp": "1500000"
+          },
+          "priorSpent": "0",
+          "args": [
+            "1000000",
+            "2000000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "10000000",
+            "0",
+            "0",
+            "1500000",
+            "53880465183317760854450277456204086909393325034666154267005503871210116895",
+            "1000000",
+            true,
+            "0",
+            false
+          ],
+          "verdict": "ALLOW"
+        }
+      ]
+    }
+  ]
+}
