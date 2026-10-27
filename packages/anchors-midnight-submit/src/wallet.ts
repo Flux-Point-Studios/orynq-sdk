@@ -91,7 +91,7 @@ export interface OperatorWallet {
   // or a refusal of bytes some delivery may already have left with a node, keeps it held.
   submit(tx: L.FinalizedTransaction): Promise<void>;
   // Frees the DUST of final bytes this wallet balanced and never handed to a node, which are then
-  // never sent; refuses any other bytes.
+  // never sent; already freed bytes are a no-op, and other bytes are refused.
   discard(tx: L.FinalizedTransaction): Promise<void>;
   // Stops syncing; a synced wallet with a state file saves first, and returns what that save did.
   close(): Promise<StateSave | null>;
@@ -442,6 +442,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     submit,
     async discard(tx) {
       const txHash = tx.transactionHash();
+      if (freed.has(txHash)) return;
       if (!unsent.delete(txHash)) throw new Error(`transaction ${txHash} was handed to a node, or not balanced by this wallet since it opened, so its DUST stays held until the chain settles it`);
       await free(tx);
     },

@@ -52,7 +52,7 @@ const calls = [
 for (const { statement, built } of calls) {
   const tx = (await built.tx.prove(provider, L.CostModel.initialCostModel())).bind();
   const bytes = tx.serialize();
-  const verification = spawnSync(native, ["--registry", resolve(import.meta.dirname, "../onchain/registry.json")], { input: JSON.stringify({ circuitId: statement.circuit, transactionBase64: Buffer.from(bytes).toString("base64"), referenceStateBase64, verificationTimeUnixSeconds: Math.floor(Date.now() / 1000) }), encoding: "utf8", timeout: 60_000 });
+  const verification = spawnSync(native, ["--registry", resolve(import.meta.dirname, "../onchain/registry.json")], { input: JSON.stringify({ circuitId: statement.circuit, transactionBase64: Buffer.from(bytes).toString("base64"), referenceStateBase64 }), encoding: "utf8", timeout: 60_000 });
   assert.equal(verification.status, 0, "native proof verification failed");
   assert.deepEqual(JSON.parse(verification.stdout), { valid: true, code: "verified" });
   assertPostedProof(bytes, deploy.address, statement, timestamp * 1000);

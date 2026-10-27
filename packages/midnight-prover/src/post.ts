@@ -1,5 +1,5 @@
 import * as L from "@midnight-ntwrk/ledger-v8";
-import type { MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { nodeRefusal, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { assertProofWitness, buildProofCall, proofStateOnNode, type ProofNetwork, type ProofStatement, type ProofWitness } from "./onchain.js";
 import { assertPostedProof } from "./posted.js";
 import { proofProvider } from "./proof-material.js";
@@ -36,9 +36,12 @@ export async function post(options: {
         await options.wallet.submit(final);
         return { txHash: final.transactionHash(), address: options.address, statement };
       } catch (error) {
-        // Only an explicit gas rejection permits new bytes; an ambiguous send may have landed.
-        if (!(error instanceof Error) || !/\bran out of gas budget\b/.test(error.message)) throw error;
-        if (final) await options.wallet.discard(final);
+        // Ledger-8 transcript failures (including gas) use Custom 104; other refusals do not retry.
+        if (final) {
+          const refusal = nodeRefusal(error);
+          if (refusal?.code !== 1010 || refusal.data !== "Custom error: 104") throw error;
+          await options.wallet.discard(final);
+        } else if (!(error instanceof Error) || !/\bran out of gas budget\b/.test(error.message)) throw error;
         if (attempt >= 3) throw error;
       }
     }
