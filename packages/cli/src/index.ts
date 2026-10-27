@@ -33,7 +33,7 @@ import {
 /**
  * Package version - should match package.json.
  */
-const VERSION = "0.0.1";
+const VERSION = "0.2.0";
 
 /**
  * Create and configure the CLI program.

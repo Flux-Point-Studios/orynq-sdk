@@ -1,6 +1,6 @@
 # @fluxpointstudios/orynq-sdk-transport-x402
 
-## 0.0.1
+## 0.2.0
 
 ### Patch Changes
 

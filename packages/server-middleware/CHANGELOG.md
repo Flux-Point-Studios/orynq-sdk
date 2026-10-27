@@ -1,6 +1,6 @@
 # @fluxpointstudios/orynq-sdk-server-middleware
 
-## 0.1.1
+## 0.3.0
 
 ### Patch Changes
 
