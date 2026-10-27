@@ -292,7 +292,7 @@ describe("NitroVerifier", () => {
     expect(verifier.teeType).toBe("nitro");
   });
 
-  it("should verify bundle with correct type", async () => {
+  it("should report unavailable Nitro verification", async () => {
     const builder = new AttestationBundleBuilder();
     const bundle = builder
       .setTee("nitro", "1.0")
@@ -304,7 +304,8 @@ describe("NitroVerifier", () => {
     const result = await verifyBundle(bundle);
 
     expect(result.teeType).toBe("nitro");
-    // Note: Verification may fail due to mock data, but should not error
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe("VERIFICATION_UNAVAILABLE");
   });
 
   it("should fail verification for wrong TEE type", async () => {
@@ -346,7 +347,7 @@ describe("SevSnpVerifier", () => {
     expect(verifier.teeType).toBe("sev-snp");
   });
 
-  it("should verify bundle with correct type", async () => {
+  it("should report unavailable SEV-SNP verification", async () => {
     const builder = new AttestationBundleBuilder();
     const bundle = builder
       .setTee("sev-snp", "1.0")
@@ -359,5 +360,7 @@ describe("SevSnpVerifier", () => {
     const result = await verifier.verify(bundle);
 
     expect(result.teeType).toBe("sev-snp");
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe("VERIFICATION_UNAVAILABLE");
   });
 });

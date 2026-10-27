@@ -64,6 +64,7 @@ import {
 } from "./merkle.js";
 import { HASH_DOMAIN_PREFIXES } from "./types.js";
 import { sha256StringHex } from "@fluxpointstudios/orynq-sdk-core/utils";
+import { verifyEventHashes } from "./rolling-hash.js";
 
 // =============================================================================
 // DISCLOSURE REQUEST
@@ -413,8 +414,11 @@ export async function verifyDisclosure(
       );
     }
 
-    // For full mode with data, verify span hash recomputation
-    if (disclosure.mode === "full" && disclosed.span && disclosed.events) {
+    if (disclosure.mode === "full" || disclosed.span !== undefined || disclosed.events !== undefined) {
+      if (!disclosed.span || !Array.isArray(disclosed.events)) {
+        errors.push(`Disclosure for span "${disclosed.spanId}" requires span and events`);
+        continue;
+      }
       const spanVerification = await verifySpanDisclosure(
         {
           spanId: disclosed.spanId,
@@ -479,6 +483,17 @@ export async function verifySpanDisclosure(
   expectedMerkleRoot: string
 ): Promise<{ valid: boolean; errors: string[] }> {
   const errors: string[] = [];
+
+  if (!disclosed.span || !Array.isArray(disclosed.events)) {
+    return { valid: false, errors: [`Disclosure for span "${disclosed.spanId}" requires span and events`] };
+  }
+  if (disclosed.span.id !== disclosed.spanId) {
+    errors.push(`Span ID mismatch for "${disclosed.spanId}": body has "${disclosed.span.id}"`);
+  }
+  errors.push(...await verifyEventHashes(disclosed.events));
+  if (errors.length > 0) {
+    return { valid: false, errors };
+  }
 
   // Sort events by seq for deterministic hash computation
   const sortedEvents = [...disclosed.events].sort((a, b) => a.seq - b.seq);

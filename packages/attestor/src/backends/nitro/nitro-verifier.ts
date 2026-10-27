@@ -1,6 +1,6 @@
 /**
  * AWS Nitro Enclaves Verifier.
- * Verifies attestation bundles from Nitro Enclaves.
+ * Fails closed until Nitro signature and root-chain verification is available.
  */
 
 import type { AttestationVerifier } from "../../verification/verifier-interface.js";
@@ -11,7 +11,7 @@ import type {
   Measurements,
   NitroAttestation,
 } from "../../types.js";
-import { evaluatePolicy } from "../../verification/policy-engine.js";
+import { verificationUnavailable } from "../../verification/verifier-interface.js";
 
 /**
  * Verifier for AWS Nitro Enclave attestations.
@@ -24,88 +24,13 @@ export class NitroVerifier implements AttestationVerifier {
    */
   async verify(
     bundle: AttestationBundle,
-    policy?: VerifierPolicy
+    _policy?: VerifierPolicy
   ): Promise<VerificationResult> {
-    const warnings: string[] = [];
-    const errors: string[] = [];
-
-    // Check TEE type
-    if (bundle.teeType !== "nitro") {
-      return {
-        valid: false,
-        teeType: bundle.teeType,
-        checks: {
-          signatureValid: false,
-          measurementsMatch: false,
-          certChainValid: false,
-          notRevoked: false,
-          hashBindingValid: false,
-        },
-        warnings: [],
-        errors: [`Expected Nitro attestation, got ${bundle.teeType}`],
-        measurements: undefined,
-      };
-    }
-
-    // Extract measurements
-    const measurements = await this.extractMeasurements(bundle);
-
-    // Verify signature on attestation document
-    const signatureValid = await this.verifySignature(bundle);
-    if (!signatureValid) {
-      errors.push("Attestation document signature is invalid");
-    }
-
-    // Verify certificate chain to AWS root
-    const certChainValid = await this.verifyCertChain(bundle);
-    if (!certChainValid) {
-      warnings.push("Certificate chain verification not fully implemented");
-    }
-
-    // Verify hash binding
-    const hashBindingValid = await this.verifyBinding(
-      bundle,
-      bundle.binding.hash
-    );
-    if (!hashBindingValid) {
-      errors.push("Hash binding verification failed");
-    }
-
-    // Evaluate policy
-    const effectivePolicy = policy ?? bundle.verifierPolicy;
-    const policyResult = evaluatePolicy(
-      measurements,
-      effectivePolicy,
-      "nitro"
-    );
-
-    warnings.push(...policyResult.warnings);
-    errors.push(...policyResult.errors);
-
-    const valid =
-      signatureValid &&
-      certChainValid &&
-      hashBindingValid &&
-      policyResult.passed;
-
-    return {
-      valid,
-      teeType: "nitro",
-      checks: {
-        signatureValid,
-        measurementsMatch: policyResult.measurementsMatch,
-        certChainValid,
-        notRevoked: policyResult.notRevoked,
-        hashBindingValid,
-      },
-      warnings,
-      errors,
-      measurements,
-    };
+    return verificationUnavailable(bundle.teeType);
   }
 
   /**
-   * Extract measurements from a Nitro attestation bundle.
+   * Extract untrusted measurements; this does not authenticate the evidence.
    */
   async extractMeasurements(bundle: AttestationBundle): Promise<Measurements> {
     const nitroBundle = bundle as NitroAttestation;
@@ -139,73 +64,12 @@ export class NitroVerifier implements AttestationVerifier {
     };
   }
 
-  /**
-   * Verify the hash binding in the attestation.
-   */
   async verifyBinding(
-    bundle: AttestationBundle,
-    expectedHash: string
+    _bundle: AttestationBundle,
+    _expectedHash: string
   ): Promise<boolean> {
-    const nitroBundle = bundle as NitroAttestation;
-
-    // Check if the userData field contains the expected hash
-    if (nitroBundle.nitro?.userData) {
-      return nitroBundle.nitro.userData === expectedHash;
-    }
-
-    // Fallback: check the binding field
-    return bundle.binding.hash === expectedHash;
-  }
-
-  // === Private Methods ===
-
-  /**
-   * Verify the COSE signature on the attestation document.
-   *
-   * In a real implementation, this would:
-   * 1. Parse the CBOR/COSE attestation document
-   * 2. Extract the signature and public key
-   * 3. Verify the signature over the document
-   */
-  private async verifySignature(bundle: AttestationBundle): Promise<boolean> {
-    // Mock implementation - always returns true in development
-    // Real implementation would use COSE verification
-
-    if (!bundle.evidence.data) {
-      return false;
-    }
-
-    // In production, we would:
-    // 1. Decode the COSE_Sign1 structure
-    // 2. Extract the protected headers and payload
-    // 3. Verify the ECDSA signature
-    // 4. Check that the signing certificate chains to AWS root
-
-    return true;
-  }
-
-  /**
-   * Verify the certificate chain to AWS Nitro root.
-   */
-  private async verifyCertChain(bundle: AttestationBundle): Promise<boolean> {
-    // Mock implementation
-    // Real implementation would verify the certificate chain
-
-    const nitroBundle = bundle as NitroAttestation;
-
-    if (!nitroBundle.nitro?.certificate) {
-      // No certificate to verify
-      return true;
-    }
-
-    // In production, we would:
-    // 1. Parse the certificate chain from the attestation document
-    // 2. Verify each certificate's signature
-    // 3. Check that the root certificate matches AWS Nitro root
-    // 4. Check certificate validity dates
-    // 5. Check for revocations
-
-    return true;
+    // Caller-supplied fields cannot authenticate a binding without signed evidence.
+    return false;
   }
 
   /**

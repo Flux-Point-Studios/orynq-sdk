@@ -373,3 +373,31 @@ export async function getGenesisHash(): Promise<string> {
   const state = await initRollingHash();
   return state.currentHash;
 }
+
+export async function verifyEventHashes(events: TraceEvent[]): Promise<string[]> {
+  const errors: string[] = [];
+
+  for (const event of events) {
+    if (!event.hash) {
+      errors.push(`Event ${event.id} (seq ${event.seq}) is missing hash`);
+      continue;
+    }
+
+    try {
+      const computedHash = await computeEventHash(event);
+      if (computedHash !== event.hash) {
+        errors.push(
+          `Event hash mismatch for ${event.id} (seq ${event.seq}): ` +
+            `expected ${event.hash}, computed ${computedHash}`
+        );
+      }
+    } catch (error) {
+      errors.push(
+        `Failed to compute hash for event ${event.id}: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  return errors;
+}

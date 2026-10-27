@@ -21,7 +21,9 @@
 import {
   sha256StringHex,
   canonicalize,
+  bytesToHex,
 } from "@fluxpointstudios/orynq-sdk-core/utils";
+import { sha256 } from "@noble/hashes/sha256";
 
 import type {
   TraceMerkleTree,
@@ -30,6 +32,7 @@ import type {
   TraceEvent,
 } from "./types.js";
 import { HASH_DOMAIN_PREFIXES } from "./types.js";
+import { verifyEventHashes } from "./rolling-hash.js";
 
 // =============================================================================
 // SPAN HASH COMPUTATION
@@ -249,7 +252,7 @@ export function generateMerkleProof(
   spanIndex: number
 ): MerkleProof {
   // Validate index bounds
-  if (spanIndex < 0 || spanIndex >= tree.leafCount) {
+  if (!Number.isSafeInteger(spanIndex) || spanIndex < 0 || spanIndex >= tree.leafCount) {
     throw new Error(
       `Span index ${spanIndex} is out of bounds (0-${tree.leafCount - 1})`
     );
@@ -304,14 +307,13 @@ export function generateMerkleProof(
       position: isLeftChild ? "right" : "left",
     });
 
-    // Build next level (synchronously since we already have hashes)
-    // We need to compute the next level to continue traversal
     const nextLevel: string[] = [];
     for (let i = 0; i < currentLevel.length; i += 2) {
       const left = currentLevel[i] ?? "";
       const right = i + 1 < currentLevel.length ? (currentLevel[i + 1] ?? left) : left;
-      // We don't actually need to compute the hash here, just track structure
-      nextLevel.push(`${left}|${right}`); // Placeholder for structure tracking
+      nextLevel.push(bytesToHex(sha256(
+        new TextEncoder().encode(HASH_DOMAIN_PREFIXES.node + left + "|" + right)
+      )));
     }
 
     // Move up the tree
@@ -352,11 +354,19 @@ export function generateMerkleProof(
  * }
  */
 export async function verifyMerkleProof(proof: MerkleProof): Promise<boolean> {
+  if (!Number.isSafeInteger(proof.leafIndex) || proof.leafIndex < 0) {
+    return false;
+  }
+  let index = proof.leafIndex;
   // Start with the leaf hash
   let currentHash = proof.leafHash;
 
   // Traverse up the tree using the sibling hashes
   for (const sibling of proof.siblings) {
+    if (sibling.position !== (index % 2 === 0 ? "right" : "left")) {
+      return false;
+    }
+    index = Math.floor(index / 2);
     // Combine hashes based on sibling position
     let left: string;
     let right: string;
@@ -378,7 +388,7 @@ export async function verifyMerkleProof(proof: MerkleProof): Promise<boolean> {
   }
 
   // Verify computed root matches expected root
-  return currentHash === proof.rootHash;
+  return index === 0 && currentHash === proof.rootHash;
 }
 
 /**
@@ -404,6 +414,9 @@ export async function verifySpanInclusion(
   span: TraceSpan,
   events: TraceEvent[]
 ): Promise<boolean> {
+  if ((await verifyEventHashes(events)).length > 0) {
+    return false;
+  }
   // Sort events by seq to get deterministic order
   const sortedEvents = [...events].sort((a, b) => a.seq - b.seq);
 

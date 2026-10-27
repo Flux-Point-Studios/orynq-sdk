@@ -88,6 +88,24 @@ export class VerifierRegistry {
  */
 export const verifierRegistry = new VerifierRegistry();
 
+export function verificationUnavailable(teeType: TeeType): VerificationResult {
+  return {
+    valid: false,
+    teeType,
+    errorCode: "VERIFICATION_UNAVAILABLE",
+    checks: {
+      signatureValid: false,
+      measurementsMatch: false,
+      certChainValid: false,
+      notRevoked: false,
+      hashBindingValid: false,
+    },
+    warnings: [],
+    errors: [`Verification unavailable for backend: ${teeType}`],
+    measurements: undefined,
+  };
+}
+
 /**
  * Convenience function to verify a bundle using the appropriate verifier.
  */
@@ -98,20 +116,7 @@ export async function verifyBundle(
   const verifier = verifierRegistry.getForBundle(bundle);
 
   if (!verifier) {
-    return {
-      valid: false,
-      teeType: bundle.teeType,
-      checks: {
-        signatureValid: false,
-        measurementsMatch: false,
-        certChainValid: false,
-        notRevoked: false,
-        hashBindingValid: false,
-      },
-      warnings: [],
-      errors: [`No verifier available for TEE type: ${bundle.teeType}`],
-      measurements: undefined,
-    };
+    return verificationUnavailable(bundle.teeType);
   }
 
   return verifier.verify(bundle, policy);

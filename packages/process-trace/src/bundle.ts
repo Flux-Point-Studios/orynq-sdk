@@ -64,7 +64,7 @@ import type {
 } from "./types.js";
 
 import {
-  computeEventHash,
+  verifyEventHashes,
   computeRollingHash,
   computeRootHash,
 } from "./rolling-hash.js";
@@ -440,6 +440,38 @@ export async function verifyBundle(
   }
 
   // ---------------------------------------------------------------------------
+  // Verify disclosed public bodies against the committed private run
+  // ---------------------------------------------------------------------------
+
+  const committedSpans = new Map(run.spans.map((span) => [span.id, span]));
+  const committedEvents = new Map(run.events.map((event) => [event.id, event]));
+  for (const span of bundle.publicView.publicSpans) {
+    const publicEventErrors = await verifyEventHashes(span.events);
+    if (publicEventErrors.length > 0) {
+      checks.eventHashesValid = false;
+      errors.push(...publicEventErrors);
+    }
+    const committedSpan = committedSpans.get(span.id);
+    const committedEventIds = new Set(committedSpan?.eventIds);
+    for (const event of span.events) {
+      if (!committedEventIds.has(event.id) || committedEvents.get(event.id)?.hash !== event.hash) {
+        checks.eventHashesValid = false;
+        errors.push(`PublicView event ${event.id} does not match committed span "${span.id}"`);
+      }
+    }
+    if (!committedSpan) {
+      checks.spanHashesValid = false;
+      errors.push(`PublicView span "${span.id}" is not in the committed run`);
+      continue;
+    }
+    const { events: _events, ...publicHeader } = span;
+    if (canonicalize(publicHeader) !== canonicalize(committedSpan)) {
+      checks.spanHashesValid = false;
+      errors.push(`PublicView span header mismatch for "${span.id}"`);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Verify Rolling Hash
   // ---------------------------------------------------------------------------
 
@@ -718,40 +750,6 @@ function verifySequences(run: TraceRun): string[] {
     if (span !== undefined && span.spanSeq !== i) {
       errors.push(
         `Span sequence gap: expected spanSeq ${i}, found ${span.spanSeq} for span ${span.id}`
-      );
-    }
-  }
-
-  return errors;
-}
-
-/**
- * Verify all event hashes are correct.
- *
- * @param events - Array of events to verify
- * @returns Promise resolving to array of error messages (empty if valid)
- */
-async function verifyEventHashes(events: TraceEvent[]): Promise<string[]> {
-  const errors: string[] = [];
-
-  for (const event of events) {
-    if (!event.hash) {
-      errors.push(`Event ${event.id} (seq ${event.seq}) is missing hash`);
-      continue;
-    }
-
-    try {
-      const computedHash = await computeEventHash(event);
-      if (computedHash !== event.hash) {
-        errors.push(
-          `Event hash mismatch for ${event.id} (seq ${event.seq}): ` +
-            `expected ${event.hash}, computed ${computedHash}`
-        );
-      }
-    } catch (error) {
-      errors.push(
-        `Failed to compute hash for event ${event.id}: ` +
-          `${error instanceof Error ? error.message : String(error)}`
       );
     }
   }

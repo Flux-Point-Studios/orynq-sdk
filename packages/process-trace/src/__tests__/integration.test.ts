@@ -239,11 +239,8 @@ describe('integration: complete trace lifecycle', () => {
       expect(proof.leafHash).toBe(merkleTree.leafHashes[i]);
       expect(proof.leafIndex).toBe(i);
       expect(proof.rootHash).toBe(merkleTree.rootHash);
+      expect(await verifyMerkleProof(proof)).toBe(true);
     }
-
-    // Note: Multi-level Merkle proof verification has a known limitation in
-    // generateMerkleProof. For full bundle verification, use verifyBundle
-    // which recomputes the entire tree.
 
     // -------------------------------------------------------------------------
     // Phase 7: Bundle signing and verification
@@ -278,9 +275,8 @@ describe('integration: complete trace lifecycle', () => {
     expect(membershipDisclosure.disclosedSpans[0]?.proof.leafHash).toHaveLength(64);
     expect(membershipDisclosure.disclosedSpans[0]?.proof.rootHash).toBe(bundle.merkleRoot);
 
-    // Note: Full disclosure verification with verifyDisclosure/verifyMerkleProof
-    // has a known limitation for multi-level trees. Bundle verification via
-    // verifyBundle provides comprehensive integrity checking.
+    expect((await verifyDisclosure(fullDisclosure, bundle.rootHash, bundle.merkleRoot)).valid).toBe(true);
+    expect((await verifyDisclosure(membershipDisclosure, bundle.rootHash, bundle.merkleRoot)).valid).toBe(true);
   });
 
   it('handles tampered trace detection', async () => {
@@ -432,9 +428,7 @@ describe('integration: complete trace lifecycle', () => {
       expect(disclosed.proof.rootHash).toBe(bundle.merkleRoot);
     }
 
-    // Note: Full disclosure verification including Merkle proofs for 3+ leaf trees
-    // has a known limitation. The verifyBundle function provides comprehensive
-    // verification by recomputing the entire tree.
+    expect((await verifyDisclosure(disclosure, bundle.rootHash, bundle.merkleRoot)).valid).toBe(true);
   });
 
   it('disclosure helper functions work correctly', async () => {

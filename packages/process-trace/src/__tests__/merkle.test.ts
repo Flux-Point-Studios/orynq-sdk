@@ -522,10 +522,6 @@ describe('verifyMerkleProof', () => {
     }
   });
 
-  // Note: Multi-level tree proofs (3+ leaves) have a known limitation in the current
-  // generateMerkleProof implementation where sibling hashes at higher tree levels
-  // are not correctly computed. The verifyBundle function uses a different approach
-  // that recomputes the entire Merkle tree for verification.
 });
 
 // -----------------------------------------------------------------------------

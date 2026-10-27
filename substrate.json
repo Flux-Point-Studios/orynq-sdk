@@ -4,7 +4,7 @@
     {
       "id": "process-trace",
       "name": "Process trace",
-      "desc": "Cryptographic process-trace library: schemas, hashing, Merkle trees, bundles and selective disclosure \u2014 the Proof-of-Intent core.",
+      "desc": "Cryptographic process-trace library: schemas, hashing, v1 Merkle trees, bundles and selective disclosure with event-body hash verification and synchronous inclusion proofs.",
       "kind": "toolkit",
       "paths": [
         "packages/process-trace"
@@ -304,7 +304,7 @@
     {
       "id": "poi-attestor-backends",
       "name": "PoI attestor backends",
-      "desc": "TEE attestation backends providing hardware-rooted trust for Proof-of-Intent.",
+      "desc": "TEE attestation types, policy helpers and backend scaffolding. Nitro and SEV-SNP verification fail closed as unavailable; no bundled backend authenticates hardware evidence.",
       "kind": "toolkit",
       "paths": [
         "packages/attestor"
