@@ -8,7 +8,7 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: ["src/index.ts", "src/bin.ts"],
   format: ["esm", "cjs"],
   dts: true,
   clean: true,
@@ -18,9 +18,6 @@ export default defineConfig({
   minify: false,
   target: "es2022",
   outDir: "dist",
-  banner: {
-    js: "#!/usr/bin/env node",
-  },
   external: [
     "@fluxpointstudios/orynq-sdk-core",
     "@fluxpointstudios/orynq-sdk-client",
