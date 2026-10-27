@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-payer-cardano-cip30",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "CIP-30 browser wallet adapter for Cardano payments in orynq-sdk using MeshJS",
   "type": "module",
   "main": "./dist/index.cjs",

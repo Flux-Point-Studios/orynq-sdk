@@ -1,5 +1,24 @@
 # @fluxpointstudios/orynq-sdk-anchors-cardano
 
+## 0.5.0
+
+### Minor Changes
+
+- ffa932e: Require Cardano checkpoint wallet pins to name an encoding and inclusive absolute-slot window. Export bounded reviewed historical pins; bare addresses and records outside their windows are refused. Detect repeated Koios pagination, distinguish the checkpoint commitment genesis in diagnostics, and rebuild historical dcbor certificates using their explicit supported certificate domain.
+
+  Correct checkpoint smoke documentation: label 8746 stores root, manifest, range and an integer leaf count, while receipt membership proofs are off chain. Cardano checkpoint probes default to mainnet. Keep source-trust and confirmation-depth assumptions explicit.
+
+- d4880f0: Verify a Materios receipt's checkpoint anchor on Cardano end to end with `verifyMateriosCheckpointAnchor`: it recomputes the receipt's leaf (from its cert hash or the receipt fields that rebuild the Cert), the root through the count-bound `rootFromPath`, the daemon's manifest hash and the anchor id, then requires a label 8746 record carrying them in a tx in a block, funded only by pinned anchor wallets and at least 15 confirmations deep (configurable; 2160 for a stronger finality margin under Cardano consensus assumptions). It finds the tx by hash or by scanning the pinned wallets from a Cardano height, and names the check that refused. It does not compare the record's `chain` field, a label that genuine anchors of two windows set to another chain than the genesis their leaves and manifest commit to; the README lists both. `decodeMateriosAnchorRecord` reads the record in both encodings on mainnet, the detailed-schema map the live anchor worker writes and the flat record a Lucid-based worker wrote until 2026-06-29, and refuses mixed encodings and any other `p`/`v`. `createKoiosCheckpointSource` reads the chain through Koios, and `KoiosConfig.baseUrl` points it, and `createKoiosProvider`, at any Koios-compatible API.
+
+  The existing `createKoiosProvider` tip reader now requires Koios v1 `block_height` rather than `block_no`. This repairs numeric confirmations and makes fresh label-2222 anchors correctly produce low-confirmation warnings (including MCP output); a nonconforming endpoint that supplies only `block_no` now fails explicitly.
+
+### Patch Changes
+
+- b7caae1: Classify structured Ogmios submission refusals by numeric code before legacy prose. Malformed transactions fail immediately; spent/unknown inputs never count as duplicate acceptance, which still requires exact-hash chain confirmation.
+- Updated dependencies [ffa932e]
+  - @fluxpointstudios/orynq-sdk-core@0.3.2
+  - @fluxpointstudios/orynq-sdk-process-trace@0.3.1
+
 ## 0.4.0
 
 ### Minor Changes

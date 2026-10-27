@@ -1,5 +1,12 @@
 # @fluxpointstudios/orynq-sdk-process-trace
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [ffa932e]
+  - @fluxpointstudios/orynq-sdk-core@0.3.2
+
 ## 0.3.0
 
 ### Minor Changes

@@ -1,5 +1,12 @@
 # @fluxpointstudios/poi-sdk-storage-adapters
 
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies [ffa932e]
+  - @fluxpointstudios/orynq-sdk-core@0.3.2
+
 ## 0.2.0
 
 ### Minor Changes
