@@ -33,6 +33,21 @@ describe("finalized transaction primitive", () => {
     await expect(verifyFinalizedTransaction(fixture.hints[0]!.txHash, { ...source(), checkpoints: [] })).rejects.toThrow(/finality/);
   });
 
+  it("fixes the trusted checkpoint configuration before asynchronous source reads", async () => {
+    const options = source();
+    const mutableCheckpoint = structuredClone(checkpoint);
+    const locate = options.source.indexer.transactions.bind(options.source.indexer);
+    options.source.indexer.transactions = async hash => {
+      mutableCheckpoint.setId += 1n;
+      mutableCheckpoint.startsAfter.hash = "ee".repeat(32);
+      mutableCheckpoint.authorities[0]!.key = "ff".repeat(32);
+      return locate(hash);
+    };
+    const result = await verifyFinalizedTransaction(fixture.hints[0]!.txHash, { ...options, checkpoints: [mutableCheckpoint] });
+    expect(result.finality.finalized).toBe(true);
+    expect(result.block.hash).toBe(fixture.hints[0]!.blockHash);
+  });
+
   it("rejects an altered block body", async () => {
     const options = source((method, value) => method === "chain_getBlock" ? { ...value, block: { ...value.block, extrinsics: [...value.block.extrinsics, "0x00"] } } : value);
     await expect(verifyFinalizedTransaction(fixture.hints[0]!.txHash, { ...options, checkpoints: [checkpoint] })).rejects.toThrow(/body/);
