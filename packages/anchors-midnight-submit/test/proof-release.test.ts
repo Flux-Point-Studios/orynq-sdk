@@ -28,6 +28,59 @@ function setup(expiresAt = Date.now() + 3600_000, execute = false) {
 }
 
 describe("proof release journal", () => {
+  it("owns an immutable copy of confirmed bytes before settlement awaits", async () => {
+    const { operator, w } = setup();
+    try {
+      const prepared = await operator.prepare("deploy");
+      const replacement = await operator.prepare("deploy");
+      const confirmedHash = prepared.txHash;
+      const confirmedBytes = new Uint8Array(prepared.bytes);
+      expect(replacement.txHash).not.toBe(confirmedHash);
+      expect(replacement.bytes.length).toBe(prepared.bytes.length);
+      const submitted = operator.submit(prepared);
+      prepared.bytes.set(replacement.bytes);
+      const outcome = await submitted.then(row => ({ row }), error => ({ error }));
+      expect(w.submitted.map(tx => tx.transactionHash())).toEqual([confirmedHash]);
+      expect(w.submitted[0]!.serialize()).toEqual(confirmedBytes);
+      expect(outcome).toMatchObject({ row: { txHash: confirmedHash, state: "landed" } });
+    } finally { operator.close(); }
+  });
+
+  it("reads a changing bytes getter once and sends only the confirmed transaction", async () => {
+    const { operator, w } = setup();
+    try {
+      const prepared = await operator.prepare("deploy");
+      const replacement = await operator.prepare("deploy");
+      let reads = 0;
+      const supplied = { ...prepared, get bytes() { return ++reads === 1 ? prepared.bytes : replacement.bytes; } };
+      await expect(operator.submit(supplied)).resolves.toMatchObject({ txHash: prepared.txHash, state: "landed" });
+      expect(reads).toBe(1);
+      expect(w.submitted.map(tx => tx.transactionHash())).toEqual([prepared.txHash]);
+    } finally { operator.close(); }
+  });
+
+  it("copies the confirmed TTL and journal metadata before settlement awaits", async () => {
+    const { operator, w } = setup();
+    try {
+      const prepared = await operator.prepare("deploy");
+      prepared.journal = { state: "pending", broadcasts: 0, expired: false };
+      const confirmedHash = prepared.txHash;
+      const submitted = operator.submit(prepared);
+      prepared.ttl.setTime(0);
+      prepared.journal.expired = true;
+      prepared.journal.broadcasts = 99;
+      prepared.label = "proveRolling1";
+      prepared.address = "ab".repeat(32);
+      prepared.txHash = "cd".repeat(32);
+      prepared.network = "mainnet";
+      prepared.declaredFee += 1n;
+      prepared.payer = "another wallet";
+      prepared.statement = proofReleaseStatements(0)[0]!;
+      await expect(submitted).resolves.toMatchObject({ txHash: confirmedHash, state: "landed" });
+      expect(w.submitted.map(tx => tx.transactionHash())).toEqual([confirmedHash]);
+    } finally { operator.close(); }
+  });
+
   it("keeps gas-rejected bytes until journal retirement, then re-proves against current state", async () => {
     const { operator, w, net, ledger } = setup(Date.now() + 24 * 3600_000, true);
     try {

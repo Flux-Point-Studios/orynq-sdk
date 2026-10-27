@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { type MidnightNetwork, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { chainView, openJournal, type AnchorKey } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
@@ -92,9 +93,22 @@ export function proofReleaseOperator(options: {
       return describe(label, bytes, ttl, wallet.addresses.unshielded);
     },
     async submit(prepared: PreparedProofRelease) {
-      assertConfirmedHash(prepared);
-      const checked = describe(prepared.label, prepared.bytes, prepared.ttl, prepared.payer, prepared.journal);
-      return sender(prepared.label).submit(checked);
+      // Own both bytes and summary before the first settlement await. A caller may retain and
+      // mutate its buffer/Date/metadata, or expose different bytes through a changing getter.
+      const bytes = new Uint8Array(prepared.bytes);
+      const { network: preparedNetwork, label, address, txHash, ttl, declaredFee, payer, statement, journal: held } = prepared;
+      const snapshot: PreparedProofRelease = {
+        network: preparedNetwork, label, address, txHash, bytes, ttl: new Date(ttl.getTime()), declaredFee,
+        ...(payer === undefined ? {} : { payer }),
+        ...(statement === undefined ? {} : { statement: { ...statement } }),
+        ...(held === undefined ? {} : { journal: { ...held } }),
+      };
+      assertConfirmedHash(snapshot);
+      const checked = describe(snapshot.label, snapshot.bytes, snapshot.ttl, snapshot.payer, snapshot.journal);
+      if (snapshot.network !== network || snapshot.address !== checked.address || snapshot.declaredFee !== checked.declaredFee || !isDeepStrictEqual(snapshot.statement, checked.statement)) {
+        throw new Error("the prepared proof release summary differs from its final bytes; nothing was sent");
+      }
+      return sender(snapshot.label).submit(checked);
     },
     discard: (prepared: PreparedProofRelease) => wallet.discard(finalTransaction(prepared.bytes)),
     close: () => journal.close(),
