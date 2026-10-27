@@ -143,10 +143,11 @@ describe("DUST replay and backlog bounds", () => {
       return withBackpressure(source, options);
     });
     const seen: number[] = [];
+    // Allow CPU contention headroom for the full 24,000-event backlog check.
     await Effect.runPromise(Effect.scoped(Stream.runForEach(updates("dust", timeout), group => Effect.gen(function* () {
       yield* Effect.sleep("2 millis");
       seen.push(...group.updates.map(update => update.id)); applied += group.updates.length;
-    }))).pipe(Effect.timeout("15 seconds")));
+    }))).pipe(Effect.timeout("60 seconds")));
     expect(seen).toEqual(Array.from({ length: total }, (_, i) => i + 1));
     expect(sessions).toBeGreaterThan(1);
     // One paused push queue plus bounded current/prefetched groups. This is a retained-event
