@@ -101,6 +101,13 @@ interface Balanced {
   feeAsItIs: string;
   feeWithOne?: string;
   feeWithAll?: string;
+  bindingCase?: string;
+  quoteEmptyBytes?: number;
+  actualEmptyBytes?: number;
+  actualMinimumFee?: string;
+  actualFeeWithMargin?: string;
+  pricingParametersUnchanged?: boolean;
+  pricingTimeUnchanged?: boolean;
   legacyError?: string;
   observedMainnetBlock?: number;
   observedMainnetHash?: string;
@@ -116,8 +123,8 @@ interface Balanced {
 // Runs a scenario of balance-on-simulator.ts in a process of its own and kills it when its
 // balancing has not returned within BALANCING_MS: nothing inside that process can interrupt the
 // synchronous loop of an unterminated balancing.
-function balancing(scenario: string): Promise<Balanced> {
-  const child = spawn(process.execPath, ["--import", "tsx", fileURLToPath(new URL("./balance-on-simulator.ts", import.meta.url)), scenario], { stdio: ["ignore", "pipe", "pipe"] });
+function balancing(scenario: string, bindingCase?: string): Promise<Balanced> {
+  const child = spawn(process.execPath, ["--import", "tsx", fileURLToPath(new URL("./balance-on-simulator.ts", import.meta.url)), scenario, ...(bindingCase ? [bindingCase] : [])], { stdio: ["ignore", "pipe", "pipe"] });
   let out = "";
   let err = "";
   let timer: NodeJS.Timeout | undefined;
@@ -163,15 +170,26 @@ describe("balancing a fee", () => {
     expect(r.landed).toBe(true);
   });
 
-  it("prices each largest prefix exactly when the old marginal estimate falsely exhausts an affordable two-coin set", async () => {
-    const r = await balancing("multi-round");
+  it.each(["short/short", "full/full", "short/full", "full/short"])("prices each largest prefix exactly when the old marginal estimate falsely exhausts an affordable two-coin set (%s binding)", async bindingCase => {
+    const r = await balancing("multi-round", bindingCase);
     const [small, large] = r.coinValues.map(BigInt) as [bigint, bigint];
     expect(large).toBeLessThan(BigInt(r.feeWithOne!));
     expect(small + large).toBeGreaterThanOrEqual(BigInt(r.feeWithAll!));
     expect(r.legacyError).toMatch(/^Insufficient Funds/);
     expect(r.error).toBeUndefined();
     expect(r.intents![1]).toHaveLength(2);
-    expect(r.intents![1]!.reduce((sum, value) => sum + BigInt(value), 0n)).toBe(BigInt(r.feeWithAll!));
+    const paid = r.intents![1]!.reduce((sum, value) => sum + BigInt(value), 0n);
+    expect(paid).toBe(BigInt(r.feeWithAll!));
+    expect(r.bindingCase).toBe(bindingCase);
+    expect(r.pricingParametersUnchanged).toBe(true);
+    expect(r.pricingTimeUnchanged).toBe(true);
+    const [quote, actual] = bindingCase.split("/");
+    expect(r.actualEmptyBytes! - r.quoteEmptyBytes!).toBe(actual === quote ? 0 : actual === "full" ? 1 : -1);
+    // Different random scalar widths change the margin quote, not affordability at the actual
+    // ledger prices: the configured five-block margin covers both one-byte directions.
+    if (quote === actual) expect(paid).toBe(BigInt(r.actualFeeWithMargin!));
+    else expect(paid).not.toBe(BigInt(r.actualFeeWithMargin!));
+    expect(paid).toBeGreaterThanOrEqual(BigInt(r.actualMinimumFee!));
     expect(r.landed).toBe(true);
   });
 

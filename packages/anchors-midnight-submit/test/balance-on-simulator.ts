@@ -3,6 +3,8 @@
 // that never returns can only be stopped by killing the process that runs it. Prints "balancing"
 // just before it balances and then one JSON line of what it observed.
 //   node --import tsx balance-on-simulator.ts small-and-large|under-covered|zero-fee|zero-fee-with-overhead
+//   multi-round [quote/actual] affordable two-coin regression; short/full binding classes,
+//                              default full/full, e.g. multi-round short/full
 //   small-and-large         two coins, the smaller covering the fee of the transaction as it is but
 //                           not that fee plus a DUST spend, the larger covering both
 //   under-covered           two small coins, the larger covering the fee of the transaction as it
@@ -66,31 +68,81 @@ const valuesBefore = await coinValues();
 const feeAsItIs = await wallet.calculateFee([baseTransaction]);
 const coinsBefore = JSON.stringify((await coins()).map(String));
 
+// Intent.new samples binding randomness. Its merged scalar has variable-width encoding,
+// so independently sampled fee intents can differ by a priced byte even at a fixed clock.
+// Keep valid intent entropy repeatable only in this isolated regression process: the oracle
+// and real wallet still execute their own ledger dry runs, spend selection and proof paths.
+// Select both scalar encoding classes so the former intermittent mismatch stays exercised.
+const bindingCase = process.argv[3] ?? "full/full";
+const repeatableFeeIntents = () => {
+  const [quoteClass, actualClass] = bindingCase.split("/");
+  if (![quoteClass, actualClass].every(value => value === "short" || value === "full")) throw new Error("unknown binding case");
+  const makeIntent = L.Intent.new;
+  const prototype = Transacting.TransactingCapabilityImplementation.prototype;
+  const dryRunFee = prototype.dryRunFee;
+  const templates = new Map<number, Uint8Array>();
+  let longest = 0;
+  // The prefix and marker lengths are constant; the varying merged scalar is the only
+  // differing field. Bounded sampling finds a full-width encoding and one byte shorter.
+  for (let attempt = 0; attempt < 1024 && (attempt < 64 || !templates.has(longest - 1)); attempt++) {
+    const intent = makeIntent(ttl);
+    const merged = baseTransaction.merge(L.Transaction.fromParts(NETWORK).addIntent({ tag: "specific", value: 2 }, intent));
+    const length = merged.eraseProofs().serialize().length;
+    templates.set(length, intent.serialize()); longest = Math.max(longest, length);
+  }
+  const quoteLength = longest - (quoteClass === "short" ? 1 : 0), actualLength = longest - (actualClass === "short" ? 1 : 0);
+  const quote = templates.get(quoteLength), actual = templates.get(actualLength);
+  if (!quote || !actual) throw new Error("could not find both merged binding encoding classes");
+  let pricing = false;
+  prototype.dryRunFee = function (...args) {
+    const previous = pricing; pricing = true;
+    try { return dryRunFee.apply(this, args); } finally { pricing = previous; }
+  };
+  L.Intent.new = expiry => {
+    if (expiry.getTime() !== ttl.getTime()) throw new Error("unexpected fee-intent TTL");
+    return L.Intent.deserialize("signature", "pre-proof", "pre-binding", pricing ? quote : actual);
+  };
+  return {
+    quoteLength, actualLength,
+    restore() { L.Intent.new = makeIntent; prototype.dryRunFee = dryRunFee; },
+  };
+};
+const fixedFeeIntents = scenario === "multi-round" ? repeatableFeeIntents() : undefined;
 let multiRoundEvidence = {};
-if (scenario === "multi-round") {
-  const state = await firstValueFrom(wallet.state);
-  const params = (await run(simulator.getLatestState())).ledger.parameters;
-  const original = new Transacting.TransactingCapabilityImplementation<L.FinalizedTransaction>(NETWORK, { additionalFeeOverhead: 1n, feeBlocksMargin: 5 },
-    () => available => available.slice().sort((a, b) => a.value > b.value ? -1 : a.value < b.value ? 1 : 0)[0],
-    () => state.capabilities.coinsAndBalances, () => state.capabilities.keys);
-  const available = state.capabilities.coinsAndBalances.getAvailableCoinsWithGeneratedDust(state.state, state.state.state.syncTime).slice()
-    .sort((a, b) => a.value > b.value ? -1 : a.value < b.value ? 1 : 0);
-  const tx = L.Transaction.fromParts(NETWORK, undefined, undefined, L.Intent.new(ttl));
-  const one = original.dryRunFee(available.slice(0, 1), [tx], secretKey, state.state, ttl, state.state.state.syncTime, params);
-  const all = original.dryRunFee(available, [tx], secretKey, state.state, ttl, state.state.state.syncTime, params);
-  const old = original.computeBalancingRecipe(secretKey, state.state, [tx], ttl, state.state.state.syncTime, params);
-  multiRoundEvidence = { feeWithOne: one, feeWithAll: all, legacyError: Either.isLeft(old) ? old.left.message : null };
-}
-process.stdout.write("balancing\n");
-const balancing = await balanced(wallet, ttl, baseTransaction).then(
-  (paid) => ({ paid }),
-  (error: Error) => ({ error: error.message }),
-);
+let pricingParameters: string | undefined, pricingTime: number | undefined;
+const executeBalance = async () => {
+  if (scenario === "multi-round") {
+    const state = await firstValueFrom(wallet.state);
+    const snapshot = await run(simulator.getLatestState());
+    const params = snapshot.ledger.parameters;
+    pricingParameters = Buffer.from(params.serialize()).toString("hex"); pricingTime = snapshot.currentTime.getTime();
+    const original = new Transacting.TransactingCapabilityImplementation<L.FinalizedTransaction>(NETWORK, { additionalFeeOverhead: 1n, feeBlocksMargin: 5 },
+      () => available => available.slice().sort((a, b) => a.value > b.value ? -1 : a.value < b.value ? 1 : 0)[0],
+      () => state.capabilities.coinsAndBalances, () => state.capabilities.keys);
+    const available = state.capabilities.coinsAndBalances.getAvailableCoinsWithGeneratedDust(state.state, state.state.state.syncTime).slice()
+      .sort((a, b) => a.value > b.value ? -1 : a.value < b.value ? 1 : 0);
+    const one = original.dryRunFee(available.slice(0, 1), [baseTransaction], secretKey, state.state, ttl, state.state.state.syncTime, params);
+    const all = original.dryRunFee(available, [baseTransaction], secretKey, state.state, ttl, state.state.state.syncTime, params);
+    const old = original.computeBalancingRecipe(secretKey, state.state, [baseTransaction], ttl, state.state.state.syncTime, params);
+    multiRoundEvidence = { feeWithOne: one, feeWithAll: all, legacyError: Either.isLeft(old) ? old.left.message : null, bindingCase,
+      quoteEmptyBytes: fixedFeeIntents!.quoteLength, actualEmptyBytes: fixedFeeIntents!.actualLength };
+  }
+  process.stdout.write("balancing\n");
+  return balanced(wallet, ttl, baseTransaction).then(
+    (paid) => ({ paid }),
+    (error: Error) => ({ error: error.message }),
+  );
+};
+const balancing = await executeBalance().finally(() => fixedFeeIntents?.restore());
+const finalSnapshot = await run(simulator.getLatestState());
+const finalParameters = finalSnapshot.ledger.parameters;
 const observed =
   "error" in balancing
     ? balancing
     : {
         ...(scenario === "mainnet-anchor" ? { anchorCalls: anchorCallsIn(balancing.paid, [(anchorEvidence as { registry: string }).registry], "mainnet-price simulator").calls.map(call => ({ kind: call.kind, entryPoint: call.entryPoint, commitment: call.commitment })) } : {}),
+        ...(scenario === "multi-round" ? { actualMinimumFee: balancing.paid.fees(finalParameters), actualFeeWithMargin: balancing.paid.feesWithMargin(finalParameters, 5) + 1n,
+          pricingParametersUnchanged: pricingParameters === Buffer.from(finalParameters.serialize()).toString("hex"), pricingTimeUnchanged: pricingTime === finalSnapshot.currentTime.getTime() } : {}),
         // Each intent's DUST spends, by the fee each pays, or null for an intent without DUST actions.
         intents: [...balancing.paid.intents!.values()].map((intent) => intent.dustActions?.spends.map((spend) => spend.vFee) ?? null),
         coinsUntouched: JSON.stringify((await coins()).map(String)) === coinsBefore,
