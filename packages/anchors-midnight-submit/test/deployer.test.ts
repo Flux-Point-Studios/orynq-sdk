@@ -189,8 +189,7 @@ describe("registryDeployer", () => {
       if (method === "state_getRuntimeVersion") {
         if (mode === "replacement") prepared.bytes = mutable;
         if (mode === "Buffer mutation") {
-          expect(mutable.byteLength).toBe(prepared.bytes.byteLength);
-          prepared.bytes.set(mutable);
+          prepared.bytes.fill(0);
         }
       }
       return result;

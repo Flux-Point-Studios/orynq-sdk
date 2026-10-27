@@ -38,8 +38,10 @@ const DEPLOY = ["contract address", "deploy tx hash", "anchor", "anchor_hiding",
 const ANCHOR = ["label", "kind", "registry", "commitment", "author key", "anchor tx hash"];
 const ALLOWED = new Set([...COMMON, ...DEPLOY, ...ANCHOR, "journal", "root hash", "manifest hash", "merkle root", "attribute", "members", "materios genesis"]);
 const FIELDS = [...ALLOWED].sort((a, b) => b.length - a.length);
+const PROOF = ["label", "contract", "code hash", "initial state", "authority", "proof tx hash"];
+const PROOF_FIELDS = [...COMMON, ...PROOF, "statement"].sort((a, b) => b.length - a.length);
 
-export function summaryBlock(segment: PromptSegment): { summary: string; problem?: string } {
+export function summaryBlock(segment: PromptSegment, action?: "deploy" | "anchors" | "proofs"): { summary: string; problem?: string } {
   const refuse = (problem: string) => ({ summary: "", problem });
   if (segment.discardedSummary) return refuse("the confirmation summary exceeded its bounded buffer");
   const lines = segment.summary.split("\n");
@@ -50,11 +52,11 @@ export function summaryBlock(segment: PromptSegment): { summary: string; problem
   const block = lines.slice(start).filter((line) => line.trim().length > 0);
   const found = new Set<string>();
   for (const line of block) {
-    const field = FIELDS.find((name) => line.startsWith(`${name} `) && line.slice(name.length).trim().length > 0);
+    const field = (action === "proofs" ? PROOF_FIELDS : FIELDS).find((name) => line.startsWith(`${name} `) && line.slice(name.length).trim().length > 0);
     if (!field || found.has(field) || /[\x00-\x1f\x7f]/.test(line)) return refuse("a prompt must follow exactly one unambiguous summary block");
     found.add(field);
   }
-  for (const field of [...COMMON, ...(segment.verb === "DEPLOY" ? DEPLOY : ANCHOR)]) {
+  for (const field of [...COMMON, ...(action === "proofs" ? PROOF : segment.verb === "DEPLOY" ? DEPLOY : ANCHOR)]) {
     if (!found.has(field)) return refuse(`the confirmation summary lacks ${field}`);
   }
   return { summary: block.join("\n") };

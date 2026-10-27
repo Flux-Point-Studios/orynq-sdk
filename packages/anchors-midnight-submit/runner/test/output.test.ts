@@ -18,6 +18,20 @@ const summary = [
 const prompt = '\nType exactly "DEPLOY bbbbbbbbbbbbbbbb" to confirm these bytes: ';
 
 describe("bounded tool output framing", () => {
+  it("frames proof releases only under their explicit action without weakening anchor framing", () => {
+    const proof = [
+      "network mainnet", "runtime 1000300", "label proveCapability", `contract ${"ab".repeat(32)}`,
+      `code hash ${"cd".repeat(32)}`, `initial state ${"ef".repeat(32)}`, "authority empty committee, threshold 1, counter 0",
+      "statement {}", "fee (declared) 0.01 DUST", "DUST balance 20 DUST", "paid from mn_addr1fixture",
+      "valid until 2026-10-26T19:00:00.000Z", "final bytes 8000", `proof tx hash ${"bb".repeat(32)}`,
+    ].join("\n");
+    const segment = (body: string) => new PromptSegments().push(`${body}\nType exactly "ANCHOR bbbbbbbbbbbbbbbb"`)[0]!;
+    expect(summaryBlock(segment(proof), "proofs")).toEqual({ summary: proof });
+    expect(summaryBlock(segment(proof)).problem).toBeDefined();
+    expect(summaryBlock(segment(`${proof}\ncode hash duplicate`), "proofs").problem).toBeDefined();
+    expect(summaryBlock(segment(proof.replace("runtime 1000300\n", "")), "proofs").problem).toMatch(/runtime/);
+    expect(summaryBlock(segment(proof.replace("statement {}", "untrusted text\nstatement {}")), "proofs").problem).toBeDefined();
+  });
   it("forgets a long progress stream, preserves split prompts, and consumes each summary once", () => {
     const stream = new PromptSegments();
     for (let i = 0; i < 10_000; i++) {

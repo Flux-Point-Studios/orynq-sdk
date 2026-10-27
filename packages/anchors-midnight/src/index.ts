@@ -1,4 +1,5 @@
 export { anchorCallsIn, decodeAnchorTransaction } from "./anchor-transaction.js";
+export { verifyFinalizedTransaction } from "./finalized-transaction.js";
 export type { AnchorCall, AnchorTransaction } from "./anchor-transaction.js";
 export { DEFAULT_MAX_ACTIONS, MAX_FIND_WINDOW, findMidnightAnchors } from "./find.js";
 export type { FindCursor, FindRequest, FindResult, FoundAnchor } from "./find.js";
@@ -32,8 +33,8 @@ export {
   verifyFinality,
 } from "./grandpa.js";
 export type { AuthoritySet, BlockRef, FinalityCheckpoint, FinalityProof, FinalityResult, FinalityRpc, GrandpaJustification } from "./grandpa.js";
-export { blockfrostEndpoints, contractStateOnNode, finalityRpc, midnightSource, sourceEndpoints } from "./source.js";
-export type { IndexedAction, IndexedTransaction, MidnightSource, SourceEndpoints } from "./source.js";
+export { blockfrostEndpoints, contractStateOnNode, finalityRpc, midnightSource, nodeRefusal, sourceEndpoints } from "./source.js";
+export type { IndexedAction, IndexedTransaction, MidnightSource, NodeRefusal, SourceEndpoints } from "./source.js";
 export {
   headerFromRpc,
   headerHash,

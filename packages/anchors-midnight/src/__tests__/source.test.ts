@@ -48,6 +48,22 @@ const source = () => midnightSource({ operator: "test", indexer: `${base}/indexe
 const failure = async (p: Promise<unknown>) => (await p.then(() => "resolved", (e: Error) => e.message)) as string;
 
 describe("midnightSource", () => {
+  it.each([false, true])("retains only the numeric transaction refusal through a redacted source (batch=%s)", async batch => {
+    const answer = (b: any) => ({ jsonrpc: "2.0", id: b.id, error: { code: 1010, message: TOKEN, data: "Custom error: 104" } });
+    handler = b => ({ json: batch ? b.map(answer) : answer(b) });
+    const node = source().node;
+    const error = await (batch ? node.batch([["author_submitExtrinsic", ["0x00"]]]) : node.call("author_submitExtrinsic", ["0x00"])).catch((e: unknown) => e);
+    expect(error).toMatchObject({ method: "author_submitExtrinsic", code: 1010, transactionError: 104 });
+    expect(JSON.stringify(error)).not.toContain(TOKEN);
+    expect((error as Error).message).not.toContain("Custom error");
+  });
+  it.each(["Custom error: 104\n", "Custom error: 104 secret", "Custom error: 0104", "Custom error: 256", TOKEN])("does not retain noncanonical transaction error data (%s)", async data => {
+    handler = b => ({ json: { jsonrpc: "2.0", id: b.id, error: { code: 1010, message: TOKEN, data } } });
+    const error = await source().node.call("author_submitExtrinsic", ["0x00"]).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 1010 });
+    expect((error as { transactionError?: number }).transactionError).toBeUndefined();
+    expect(JSON.stringify(error)).not.toContain(data);
+  });
   it("calls node JSON-RPC with the credential in a header, never in the URL", async () => {
     handler = (b) => ({ json: { jsonrpc: "2.0", id: b.id, result: "Midnight Mainnet" } });
     expect(await source().node.call("system_chain")).toBe("Midnight Mainnet");

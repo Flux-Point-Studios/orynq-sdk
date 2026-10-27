@@ -66,9 +66,33 @@ export class NodeError extends Error {
     readonly code: number | undefined,
     readonly completedResults: readonly unknown[] = [],
     readonly reason?: "contract-not-present",
+    readonly transactionError?: number,
   ) {
     super(message);
   }
+}
+
+export interface NodeRefusal {
+  code: number;
+  message: string;
+  data?: unknown;
+}
+
+// Only a submission's JSON-RPC answer proves refusal; a transport error may follow acceptance.
+export function nodeRefusal(error: unknown): NodeRefusal | null {
+  if (error instanceof NodeError) {
+    if (error.method !== "author_submitExtrinsic" || error.code === undefined) return null;
+    return { code: error.code, message: error.code === 1010 ? "Invalid Transaction" : error.code === 1013 ? "Transaction Already Imported" : "Transaction refused", ...(error.transactionError === undefined ? {} : { data: `Custom error: ${error.transactionError}` }) };
+  }
+  const json = error instanceof Error ? /^\S+ node: author_submitExtrinsic failed: (\{.*\})$/s.exec(error.message)?.[1] : undefined;
+  if (json === undefined) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(json); }
+  catch (error) { if (error instanceof SyntaxError) return null; throw error; }
+  if (!parsed || typeof parsed !== "object") return null;
+  const { code, message, data } = parsed as Record<string, unknown>;
+  if (!Number.isSafeInteger(code) || typeof message !== "string") return null;
+  return { code: code as number, message, ...(data === undefined ? {} : { data }) };
 }
 
 // A Blockfrost project id: a lowercase prefix, then 32 letters and digits. Nothing else is sent
@@ -199,7 +223,10 @@ export function midnightSource(endpoints: SourceEndpoints): MidnightSource {
       const code = (a.error as { code?: unknown } | null)?.code;
       const numeric = typeof code === "number" && Number.isSafeInteger(code) ? code : undefined;
       const reason = method === "midnight_contractState" && code === -32602 && (a.error as { message?: unknown } | null)?.message === "Unable to get requested contract state" ? "contract-not-present" : undefined;
-      throw new NodeError(redact(`${endpoints.operator} node: ${method} failed${numeric === undefined ? "" : ` (code ${numeric})`}`), method, numeric, [], reason);
+      const data = (a.error as { data?: unknown } | null)?.data;
+      const custom = method === "author_submitExtrinsic" && code === 1010 && typeof data === "string" ? /^Custom error: (0|[1-9]\d{0,2})$/.exec(data) : null;
+      const transactionError = custom && custom[0] === data && Number(custom[1]) <= 255 ? Number(custom[1]) : undefined;
+      throw new NodeError(redact(`${endpoints.operator} node: ${method} failed${numeric === undefined ? "" : ` (code ${numeric})`}`), method, numeric, [], reason, transactionError);
     }
     return a.result;
   };
@@ -256,7 +283,7 @@ export function midnightSource(endpoints: SourceEndpoints): MidnightSource {
         for (const [id, [method]] of calls.entries()) {
           try { completed.push(answer(method, byId.get(id)) as T); }
           catch (error) {
-            if (error instanceof NodeError) throw new NodeError(error.message, error.method, error.code, completed, error.reason);
+            if (error instanceof NodeError) throw new NodeError(error.message, error.method, error.code, completed, error.reason, error.transactionError);
             throw error;
           }
         }

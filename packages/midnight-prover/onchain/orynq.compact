@@ -1,0 +1,60 @@
+pragma language_version 0.23;
+import CompactStandardLibrary;
+
+export struct Presentation {
+  kind: Uint<8>;
+  genesisHash: Bytes<64>;
+  rootHash: Bytes<32>;
+  anchorHash: Bytes<32>;
+  contextDigest: Bytes<32>;
+  commitment: Bytes<32>;
+  notAfter: Uint<64>;
+}
+
+export sealed ledger schema: Bytes<32>;
+export ledger presentations: Map<Bytes<32>, Presentation>;
+
+witness eventDigestHex(): Bytes<64>;
+witness capability(): Bytes<32>;
+
+constructor() {
+  schema = pad(32, "orynq:proof-presentations:v1");
+}
+
+struct RollingPreimage {
+  domain: Bytes<18>;
+  previous: Bytes<64>;
+  separator: Bytes<1>;
+  event: Bytes<64>;
+}
+
+circuit assertHex(value: Bytes<64>): [] {
+  for (const byte of value as Vector<64, Uint<8>>) {
+    assert((byte >= 48 && byte <= 57) || (byte >= 97 && byte <= 102), "noncanonical hex digest");
+  }
+}
+
+export pure circuit presentationId(p: Presentation): Bytes<32> {
+  return persistentHash<Presentation>(p);
+}
+
+// Blind inserts have no old-value assertion. The transaction transcript is the receipt.
+circuit record(p: Presentation): [] {
+  const disclosed = disclose(p);
+  assert(blockTimeLt(disclosed.notAfter), "proof deadline passed");
+  presentations.insert(presentationId(disclosed), disclosed);
+}
+
+export circuit proveRolling1(genesis: Bytes<64>, root: Bytes<32>, anchor: Bytes<32>, context: Bytes<32>, deadline: Uint<64>): [] {
+  assertHex(genesis);
+  const event = eventDigestHex();
+  assertHex(event);
+  const input = RollingPreimage { domain: pad(18, "poi-trace:roll:v1|"), previous: genesis, separator: pad(1, "|"), event: event };
+  assert(persistentHash<RollingPreimage>(input) == root, "rolling root mismatch");
+  record(Presentation { kind: 1, genesisHash: genesis, rootHash: root, anchorHash: anchor, contextDigest: context, commitment: default<Bytes<32>>, notAfter: deadline });
+}
+
+export circuit proveCapability(expectedCommitment: Bytes<32>, context: Bytes<32>, deadline: Uint<64>): [] {
+  assert(persistentHash<Vector<2, Bytes<32>>>([capability(), context]) == expectedCommitment, "capability mismatch");
+  record(Presentation { kind: 2, genesisHash: default<Bytes<64>>, rootHash: default<Bytes<32>>, anchorHash: default<Bytes<32>>, contextDigest: context, commitment: expectedCommitment, notAfter: deadline });
+}

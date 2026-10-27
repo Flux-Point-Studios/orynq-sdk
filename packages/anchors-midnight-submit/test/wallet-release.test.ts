@@ -5,10 +5,19 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { WalletFacade } from "@midnight-ntwrk/wallet-sdk-facade";
 import { of } from "rxjs";
-import type { MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { midnightSource, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { createHash } from "node:crypto";
+import { post } from "../../midnight-prover/src/post.js";
+import { proofInitialState } from "../../midnight-prover/src/onchain.js";
+import { withFixtureProof } from "../../midnight-prover/tests/fixture-prover.js";
 import { createWalletMnemonicFile } from "../src/keys.js";
 import { openWallet, type OperatorWallet } from "../src/wallet.js";
 import { facadeSyncedTo } from "./fakes.js";
+
+vi.mock("../../midnight-prover/src/proof-material.js", async importOriginal => {
+  const original = await importOriginal<typeof import("../../midnight-prover/src/proof-material.js")>();
+  return { proofProvider: (dir: string) => withFixtureProof(original.proofProvider(dir)) };
+});
 
 const dir = mkdtempSync(join(tmpdir(), "orynq-wallet-release-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -36,6 +45,7 @@ async function walletWithNode(...answers: Array<Error | string>) {
         if (method !== "author_submitExtrinsic") throw new Error(`unexpected ${method}`);
         submitted.push(String(params[0]));
         const answer = answers.shift();
+        if (answer === "typed-refusal") return midnightSource(OFFLINE).node.call(method, params);
         if (answer instanceof Error) throw answer;
         return answer ?? "0xextrinsic";
       },
@@ -103,10 +113,21 @@ describe("the wallet's DUST", () => {
 });
 
 describe("discarding final bytes", () => {
+  it("is a no-op after the first delivery was refused and DUST was freed", async () => {
+    const { wallet, paid, submitted, revertedHashes } = await walletWithNode(new Error(REFUSED));
+    const tx = await paid();
+    await expect(wallet.submit(tx)).rejects.toThrow(REFUSED);
+    await expect(wallet.discard(tx)).resolves.toBeUndefined();
+    await expect(wallet.discard(tx)).resolves.toBeUndefined();
+    expect(revertedHashes()).toEqual([tx.transactionHash()]);
+    await expect(wallet.submit(tx)).rejects.toThrow(/its bytes are never sent again/);
+    expect(submitted).toHaveLength(1);
+  });
   it("frees the DUST of bytes never handed to a node, which are then never sent", async () => {
     const { wallet, paid, submitted, revertedHashes } = await walletWithNode();
     const tx = await paid();
     await wallet.discard(tx);
+    await expect(wallet.discard(tx)).resolves.toBeUndefined();
     expect(revertedHashes()).toEqual([tx.transactionHash()]);
     await expect(wallet.submit(tx)).rejects.toThrow(/its bytes are never sent again/);
     expect(submitted).toEqual([]);
@@ -118,6 +139,24 @@ describe("discarding final bytes", () => {
     await expect(wallet.submit(tx)).rejects.toThrow("fetch failed");
     await expect(wallet.discard(tx)).rejects.toThrow(`transaction ${tx.transactionHash()} was handed to a node, or not balanced by this wallet since it opened, so its DUST stays held until the chain settles it`);
     expect(revertedHashes()).toEqual([]);
+  });
+});
+
+describe("post through OperatorWallet", () => {
+  it.each(["legacy", "typed"])("retries a transcript refusal through the real wallet (%s source)", async kind => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: 1010, message: "Invalid Transaction", data: "Custom error: 104" } })));
+    const refusal = kind === "typed" ? "typed-refusal" : new Error(REFUSED.replace("136", "104"));
+    const { wallet, submitted, revertedHashes } = await walletWithNode(refusal, "0xaccepted");
+    const batch = vi.fn(async () => [Array(33).fill(0), Buffer.from(proofInitialState().serialize()).toString("hex")]);
+    const source = { network: "preprod", operator: "test", node: { batch } } as unknown as MidnightSource;
+    const capability = new Uint8Array(32).fill(13), contextDigest = "ac".repeat(32);
+    const statement = { circuit: "proveCapability" as const, contextDigest, commitment: createHash("sha256").update(capability).update(Buffer.from(contextDigest, "hex")).digest("hex"), notAfter: Math.floor(Date.now() / 1000) + 1800 };
+    const result = await post({ source, wallet, network: "preprod", address: "bb".repeat(32), statement, witness: { capability }, paramsDir: "unused" });
+    expect(batch).toHaveBeenCalledTimes(2);
+    expect(submitted).toHaveLength(2);
+    expect(new Set(submitted).size).toBe(2);
+    expect(revertedHashes()).toHaveLength(1);
+    expect(revertedHashes()).not.toContain(result.txHash);
   });
 });
 

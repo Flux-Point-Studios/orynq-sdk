@@ -715,7 +715,7 @@ describe("Legacy network production boundary", () => {
   });
   it("does not claim unsupported network connection", async () => {
     const publisher = new ProofPublisher();
-    await expect(publisher.connect(config)).rejects.toThrow("Network publication requires a real network provider; simulation must be explicit");
+    await expect(publisher.connect(config)).rejects.toThrow("ProofPublisher is simulation-only; use post() for real Midnight publication; simulation must be explicit");
     expect(publisher.isConnected()).toBe(false);
   });
   it("labels simulation without inventing block or fee evidence", async () => {

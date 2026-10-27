@@ -209,6 +209,9 @@ importers:
       '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:^
         version: link:../core
+      '@fluxpointstudios/orynq-sdk-midnight-prover':
+        specifier: workspace:*
+        version: link:../midnight-prover
       '@midnight-ntwrk/ledger-v8':
         specifier: 8.1.3
         version: 8.1.3
@@ -446,6 +449,9 @@ importers:
       '@fluxpointstudios/orynq-sdk-anchors-cardano':
         specifier: workspace:*
         version: link:../anchors-cardano
+      '@fluxpointstudios/orynq-sdk-anchors-midnight':
+        specifier: workspace:^
+        version: link:../anchors-midnight
       '@fluxpointstudios/orynq-sdk-attestor':
         specifier: workspace:*
         version: link:../attestor

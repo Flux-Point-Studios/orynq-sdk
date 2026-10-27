@@ -1,0 +1,18 @@
+{
+  "timestamp": 1793033506,
+  "deadline": 1793037006,
+  "address": "84ee1eb21cb7012790de18a23d4d3a3a548ccb565297a4a41d1aa26d7ba3f997",
+  "deployTxHash": "2845b663e357167ce086b8dbc63298ed13395488890f7acff8c0efe051a03659",
+  "calls": [
+    {
+      "circuit": "proveCapability",
+      "txHash": "d2bbca3011040a669b32ae16be1423471a35d62c2d0cc89834c50b7d61dd6b6a",
+      "bytes": 5173
+    },
+    {
+      "circuit": "proveRolling1",
+      "txHash": "6ae8886910240867c28a522254089240ae4a2ed4e7c1569176aff8e9cba97f10",
+      "bytes": 5268
+    }
+  ]
+}

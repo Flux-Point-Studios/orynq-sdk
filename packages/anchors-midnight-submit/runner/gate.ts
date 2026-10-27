@@ -8,6 +8,7 @@ import { readJsonFile } from "../src/json-file.js";
 import { formatDust, parseDust } from "../src/preflight.js";
 import { afterDeployRegistry, instant, intentEntries, intentSha256, type AnchorsIntent, type DeployIntent } from "./confirm.js";
 import { LIMITS } from "./limits.js";
+import { PROOF_RELEASE_ACTION, proofReleaseIntent, type ProofReleaseIntent } from "./proof-release-intent.js";
 import { approvalUsed, readAudit, runnerFiles, type RunnerPaths } from "./state.js";
 
 // What the CTO session writes once deci approved intent `intent_id` in chat.
@@ -23,8 +24,8 @@ export interface Approval {
 export type Admitted = {
   ok: true;
   id: string;
-  action: "deploy" | "anchors";
-  intent: DeployIntent | AnchorsIntent;
+  action: "deploy" | "anchors" | "proofs";
+  intent: DeployIntent | AnchorsIntent | ProofReleaseIntent;
   approval: Approval;
   intentSha256: string;
   approvalSha256: string;
@@ -125,7 +126,7 @@ export function admit(paths: RunnerPaths, id: string, now: number): Admitted | R
   try {
     if (!/^[0-9a-f]{8}$/.test(id)) refuse(`${JSON.stringify(id)} is not an intent id: 8 lowercase hex characters`);
     if (!existsSync(files.intent(id))) refuse(`no intent ${files.intent(id)}`);
-    const intent = readJsonFile(files.intent(id)) as DeployIntent | AnchorsIntent;
+    const intent = readJsonFile(files.intent(id)) as DeployIntent | AnchorsIntent | ProofReleaseIntent;
     const sha = (read.intentSha256 = intentSha256(intent));
     if (!sha.startsWith(id)) refuse(`${files.intent(id)} hashes to ${sha}, which is not intent ${id}`);
     const approved = approvalOf(paths, id, sha, now);
@@ -144,6 +145,11 @@ export function admit(paths: RunnerPaths, id: string, now: number): Admitted | R
       allowlisted(intent as unknown as Record<string, unknown>, "anchors", ANCHORS_FIELDS, { action: LIMITS.anchors.action, network: LIMITS.network, authorKeys: LIMITS.anchors.authorKeys, payer: LIMITS.payer });
       plannedAnchors(paths, anchors);
       admitted = { action: "anchors", transactions: anchors.entries.length, maxFeeDust: anchors.maxFeeDustPerAnchor };
+    } else if (intent.action === PROOF_RELEASE_ACTION) {
+      const expected = proofReleaseIntent();
+      const { maxFeeDust: _cap, ...pinned } = expected;
+      allowlisted(intent as unknown as Record<string, unknown>, "deploy", Object.keys(expected), pinned);
+      admitted = { action: "proofs", transactions: 3, maxFeeDust: (intent as ProofReleaseIntent).maxFeeDust };
     } else return refuse(`action ${JSON.stringify(intent.action)} is not allowlisted`);
 
     const maxFee = (typeof admitted.maxFeeDust === "string" ? parseDust(admitted.maxFeeDust) : null) ?? refuse(`the fee cap ${JSON.stringify(admitted.maxFeeDust)} is not a DUST amount`);

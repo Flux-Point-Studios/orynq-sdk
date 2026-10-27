@@ -1,0 +1,25 @@
+{
+  "compiler": "0.31.1",
+  "compactRuntime": "0.16.0",
+  "ledger": "8.1.3",
+  "onchainRuntime": "3.1.2",
+  "zkir": "2.1.1",
+  "sourceSha256": "c926f381f47c37002016f51536087c842d48548990bf72281ea8a04708db3302",
+  "verifierKeys": {
+    "proveCapability": "33197b9416d101c79df3d9b18ec092c7594d592498679feb920041e9856e5554",
+    "proveRolling1": "877ec547709026e5fd60f6386521c7634d6a95ba71ad8e35fc092c332217975d"
+  },
+  "codeHash": "bd518847ed1c6800d129bdac57a1d595a0912afd74406a07d7838ae1ab060361",
+  "initialStateSha256": "55041c6c05f64fb1cf3aa974aba8e27a83206506bc40a6d21c540d8d294f01b2",
+  "files": {
+    "contract/index.d.ts": "a825cee1f2629aec2f3655a220d1e9e6c31c318e0af83544233cd6a1ae80a4e4",
+    "contract/index.js": "49fde4240d8396ad720937da815f5807eb06ad6a2aef832ba2a3a400a205a419",
+    "keys/proveCapability.prover": "a8396c6db63b31b81569b91a2bcdf356cd2e4d4054602283ab140c7a03058340",
+    "keys/proveCapability.verifier": "33197b9416d101c79df3d9b18ec092c7594d592498679feb920041e9856e5554",
+    "keys/proveRolling1.prover": "5b2b99961b7fdc5375a5d65d5d6e62fd4839eacf55b168350a0d783fca5e95c2",
+    "keys/proveRolling1.verifier": "877ec547709026e5fd60f6386521c7634d6a95ba71ad8e35fc092c332217975d",
+    "zkir/proveCapability.bzkir": "b06dabf130dafb3b6c19d25fe60ea579dce68b4a23ec1c5f876ac14cf1dc371e",
+    "zkir/proveRolling1.bzkir": "043a465baf01bb3482dfeda044aa0276688f03eb280e23c2d143be2806578077",
+    "initial-state.bin": "55041c6c05f64fb1cf3aa974aba8e27a83206506bc40a6d21c540d8d294f01b2"
+  }
+}

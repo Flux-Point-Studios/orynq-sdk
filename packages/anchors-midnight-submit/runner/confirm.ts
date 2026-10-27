@@ -11,6 +11,7 @@ import { entryCommitment, hash32 } from "@fluxpointstudios/orynq-sdk-anchors-mid
 import { readAnchorPlan, type AnchorPlan } from "../src/anchor-plan.js";
 import { parseDust } from "../src/preflight.js";
 import { LIMITS } from "./limits.js";
+import { proofReleaseStatements, type ProofReleaseIntent } from "./proof-release-intent.js";
 import { PromptSegments, summaryBlock } from "./output.js";
 
 export interface DeployIntent {
@@ -47,7 +48,7 @@ const sha256 = (data: string | Uint8Array) => createHash("sha256").update(data).
 
 // An intent's identity: the sha256 of its compact JSON, keys in the order written. Its first 8
 // hex characters are the id deci approves it by.
-export const intentSha256 = (intent: DeployIntent | AnchorsIntent) => sha256(JSON.stringify(intent));
+export const intentSha256 = (intent: DeployIntent | AnchorsIntent | ProofReleaseIntent) => sha256(JSON.stringify(intent));
 
 export function deployIntent(payer: string, maxFeeDust: string): DeployIntent {
   const { action, authority, verifierKeys } = LIMITS.deploy;
@@ -169,6 +170,25 @@ export function checkAnchorSummary(intent: AnchorsIntent, registry: string, summ
   return { ...payment, item: entry.label, problems: [...problems, ...payment.problems] };
 }
 
+export function checkProofReleaseSummary(intent: ProofReleaseIntent, address: string, summary: string, token: string): Decision {
+  const row = rows(summary);
+  const problems = networkProblems(row, intent.network);
+  const item = row("label");
+  if (!["deploy", "proveCapability", "proveRolling1"].includes(item ?? "")) problems.push("unapproved proof release item");
+  if (row("code hash") !== intent.codeHash || row("initial state") !== intent.initialStateSha256) problems.push("proof contract pins differ");
+  if (!/^[0-9a-f]{64}$/.test(row("contract") ?? "")) problems.push("invalid proof contract address");
+  if (item !== "deploy" && (!address || row("contract") !== address)) problems.push("proof contract differs from the journalled deployment");
+  if (item === "deploy" && row("authority") !== intent.authority) problems.push("proof authority differs");
+  const payment = paymentProblems(row, intent.payer, intent.maxFeeDust, "proof tx hash", token);
+  const deadline = instant(payment.validUntil) / 1000;
+  if (!Number.isSafeInteger(deadline) || deadline <= Date.now() / 1000 || deadline > Date.now() / 1000 + 3600) problems.push("proof deadline is outside the next hour");
+  if (item !== "deploy") {
+    const expected = proofReleaseStatements(deadline).find(statement => statement.circuit === item);
+    if (!expected || row("statement") !== JSON.stringify(expected)) problems.push("proof statement differs from the approved synthetic demonstration");
+  }
+  return { ...payment, ...(item ? { item } : {}), problems: [...problems, ...payment.problems] };
+}
+
 const quoted = (arg: string) => `'${arg.replaceAll("'", `'\\''`)}'`;
 
 export interface Answer {
@@ -190,6 +210,7 @@ export function driveTool({
   cwd,
   env,
   verb,
+  action,
   decide,
   onNo = () => undefined,
   onText = () => undefined,
@@ -198,6 +219,7 @@ export function driveTool({
   cwd: string;
   env: NodeJS.ProcessEnv;
   verb: "DEPLOY" | "ANCHOR";
+  action?: "deploy" | "anchors" | "proofs";
   decide: (summary: string, token: string) => Decision;
   onNo?: (decision: Decision) => void;
   onText?: (text: string) => void;
@@ -212,7 +234,7 @@ export function driveTool({
     onText(text);
     for (const segment of segments.push(text)) {
       const { verb: kind, token: hex } = segment;
-      const block = summaryBlock(segment);
+      const block = summaryBlock(segment, action);
       const decision = answers.length >= 128
         ? { problems: ["too many confirmation prompts in one attempt"] }
         : kind !== verb

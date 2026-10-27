@@ -44,7 +44,7 @@ const copyOf = (file: string, name: string) => {
 const operator = (overrides: Partial<OperatorOptions>) => {
   const net = chain();
   const journalPath = fresh("journal.sqlite");
-  return registryOperator({ network: "preprod", wallet: wallet(net, () => journalPath), source: net.source, prover, journalPath, authorKeyFile: "", registry: deployed.address, pollMillis: 1, ...overrides });
+  return registryOperator({ network: "preprod", wallet: wallet(net, () => journalPath), source: net.source, prover, journalPath, bindingRoot: fresh("custody-bindings"), authorKeyFile: "", registry: deployed.address, pollMillis: 1, ...overrides });
 };
 
 // Runs `fn` with `env` added to the process's environment, then restores it as it was.

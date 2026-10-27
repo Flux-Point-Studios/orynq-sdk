@@ -8,6 +8,8 @@ pseudo-terminal, the way the terminal wrappers in `~/orynq-midnight-mainnet-proo
 the approved intent fact by fact and every hard limit below still holds. Otherwise it answers
 `NO`, and the tool sends nothing.
 
+The additional `proofs` action runs `scripts/proofs-mainnet.ts` for exactly one immutable proof-presentation deployment and one synthetic presentation per circuit. Its exact pins, public statements and preparation-only intent are in [PROOF-RELEASE.md](PROOF-RELEASE.md). It uses `proof-release.sqlite` beneath the runner root, preserves prepared bytes across retries, and requires all three pinned transactions to be landed before reporting completion. This does not authorize the standing anchor service to publish proofs.
+
 ## Threat model
 
 Every agent on Gemtek (Claude Code, Codex) runs as uid `deci`, and `deci` has passwordless sudo.
@@ -96,6 +98,7 @@ anchors, which their public summaries do not reveal.
 | `maxConfirmationsPerTransaction` | 3 | How many sets of bytes the runner confirms for one transaction under one approval. A second set comes only after the journal retired the first: chain time passed its TTL plus five minutes and it never landed. After three sets, the runner stops and reports. |
 | `deploy` | `action`, `authority` (`committee [] (0 members), threshold 1, counter 0`), `verifierKeys` (`anchor`, `anchor_hiding`) | Allowlist (a): exactly the registry deploy of intent bf35fa0c |
 | `anchors` | `action`, `authorKeys` (the FPS relay author key), `maxEntriesPerApproval` 8 | Allowlist (b): anchors into the registry deploy-mainnet's journal holds landed, through `anchor` (kind 1) and `anchor_hiding` (kind 2), with the commitments the plan's entries derive. One deploy and eight anchors at the cap fit in the daily cap. |
+| `proofs` | `proofReleaseIntent()` in `proof-release-intent.ts` | Allowlist (c): the pinned immutable proof contract plus exactly its two fixed synthetic presentations. Three transactions at 0.01 DUST each reserve at most 0.03 DUST initially, within the same 0.1 DUST rolling daily cap. |
 
 For anchors, the intent's plan file must still hash to its `planSha256`, and the plan's entries
 must be exactly the intent's. The registry is either 64 hex characters, which must be the registry
