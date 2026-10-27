@@ -73,7 +73,7 @@ The npm artifact includes the contract, keys, initial state and pins. **Posted-p
 
 Pins match the existing registry deployment: compactc 0.31.1, compact-runtime 0.16.0, ledger-v8 8.1.3, onchain-runtime-v3 3.1.2, zkir-v2 2.1.1 and wallet-sdk 1.2.0's facade 4.1.0. No midnight-js dependency is introduced. [Compiler releases](https://github.com/midnightntwrk/compact/releases) distinguish the ledger-8 0.31 line from newer ledger-9 compilers.
 
-`build:circuits` compiles the existing local circuits and independently reproduces the committed on-chain pins. `build:onchain` intentionally regenerates the deployable artifacts; changing its pins requires a new review. `test:onchain-real` generates both proofs, verifies them with the native verifier, applies both against one local ledger and checks that both records survive. Native tests replay the committed real transactions with proof verification enabled and reject both after their proved deadline even if their transaction TTL is extended.
+`build:circuits` compiles the existing local circuits, checks the committed on-chain artifacts against their pins, and independently reproduces those pins. `verify:artifacts` repeats the committed-file check before release packing. `build:onchain` intentionally regenerates the deployable artifacts; changing its pins requires a new review. `test:onchain-real` generates both proofs, verifies them with the native verifier, applies both against one local ledger and checks that both records survive. Native tests replay the committed real transactions with proof verification enabled and reject both after their proved deadline even if their transaction TTL is extended.
 
 ## FPS fee sponsorship feasibility
 

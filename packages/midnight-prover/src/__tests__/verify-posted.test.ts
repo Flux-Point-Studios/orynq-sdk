@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FinalityCheckpoint, MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { verifyPosted } from "../posted.js";
+import { verifyPosted, type PostedProofRequest } from "../posted.js";
 
 const finalized = vi.hoisted(() => vi.fn());
 vi.mock("@fluxpointstudios/orynq-sdk-anchors-midnight", async importOriginal => ({
@@ -49,6 +49,41 @@ describe("posted proof composition with authenticated transaction results", () =
     finalized.mockResolvedValueOnce(result("deploy", 100)).mockResolvedValueOnce(result("proveCapability", 101));
     await expect(verifyPosted(request, options)).resolves.toMatchObject({ valid: true, assurance: "consensus-verified", txHash: request.txHash, timestamp: fixture.timestamp * 1000, block: { height: 101 } });
     expect(finalized.mock.calls.map(call => call[0])).toEqual([request.deployTxHash, request.txHash]);
+  });
+  it("does not relabel a verified transaction when the caller changes its hash during the read", async () => {
+    const mutableRequest = structuredClone(request);
+    finalized.mockResolvedValueOnce(result("deploy", 100)).mockImplementationOnce(async () => {
+      mutableRequest.txHash = "cc".repeat(32);
+      return result("proveCapability", 101);
+    });
+    const verified = await verifyPosted(mutableRequest, options);
+    expect(finalized.mock.calls[1]![0]).toBe(request.txHash);
+    expect(verified.txHash).toBe(request.txHash);
+  });
+  it("keeps the expected request and trust root fixed across asynchronous reads", async () => {
+    const mutableStatement = structuredClone(statement);
+    const mutableRequest: PostedProofRequest = { ...request, statement: mutableStatement };
+    const checkpoint: FinalityCheckpoint = { setId: 1n, startsAfter: { height: 99, hash: "11".repeat(32) }, authorities: [{ key: "22".repeat(32), weight: 1n }] };
+    const mutableOptions = { ...options, trustRoot: { ...options.trustRoot, checkpoints: [checkpoint] } };
+    const expectedCheckpoint = structuredClone(checkpoint);
+    finalized.mockImplementationOnce(async () => {
+      mutableRequest.txHash = "cc".repeat(32);
+      mutableRequest.deployTxHash = "dd".repeat(32);
+      mutableRequest.address = "ee".repeat(32);
+      mutableRequest.network = "mainnet";
+      mutableStatement.commitment = "ff".repeat(32);
+      checkpoint.setId = 999n;
+      checkpoint.startsAfter.hash = "99".repeat(32);
+      checkpoint.authorities[0]!.key = "88".repeat(32);
+      return result("deploy", 100);
+    }).mockResolvedValueOnce(result("proveCapability", 101));
+
+    const verified = await verifyPosted(mutableRequest, mutableOptions);
+    expect(verified).toMatchObject({ txHash: request.txHash, address: request.address, statement: request.statement });
+    expect(finalized.mock.calls.map(call => call[0])).toEqual([request.deployTxHash, request.txHash]);
+    for (const call of finalized.mock.calls) expect(call[1].checkpoints).toEqual([expectedCheckpoint]);
+    mutableStatement.contextDigest = "77".repeat(32);
+    expect(verified.statement).toEqual(request.statement);
   });
   it("refuses a deployment receipt for another address", async () => {
     finalized.mockResolvedValueOnce(result("deploy", 100));

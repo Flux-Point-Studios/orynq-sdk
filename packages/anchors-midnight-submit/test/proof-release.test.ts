@@ -24,10 +24,87 @@ function setup(expiresAt = Date.now() + 3600_000, execute = false) {
   const journalPath = fresh("proof-release.sqlite");
   const w = wallet(net, () => journalPath);
   const options = { network: "preprod" as const, source: net.source, wallet: w, paramsDir: "unused", journalPath, expiresAt };
-  return { operator: proofReleaseOperator(options), reopen: () => proofReleaseOperator(options), w, journalPath, ledger, net };
+  return { operator: proofReleaseOperator(options), reopen: () => proofReleaseOperator(options), options, w, journalPath, ledger, net };
 }
 
 describe("proof release journal", () => {
+  it("retains the construction-time approval expiry while a runtime read is pending", async () => {
+    const approvedExpiry = Date.now() + 90_000;
+    const { operator, options, net } = setup(approvedExpiry);
+    const call = net.source.node.call;
+    let entered!: () => void, release!: () => void;
+    const pending = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    net.source.node.call = async <T>(method: string, params: unknown[] = []): Promise<T> => {
+      if (method === "state_getRuntimeVersion") { entered(); await gate; }
+      return call<T>(method, params);
+    };
+    try {
+      const preparation = operator.prepare("deploy");
+      await pending;
+      options.expiresAt = approvedExpiry + 3600_000;
+      release();
+      const prepared = await preparation;
+      const originalCap = Math.floor(approvedExpiry / 1000) * 1000;
+      expect(prepared.ttl.getTime()).toBe(originalCap);
+      const transaction = L.Transaction.deserialize("signature", "proof", "binding", prepared.bytes);
+      expect([...(transaction.intents?.values() ?? [])].map(intent => intent.ttl.getTime())).toEqual([originalCap]);
+    } finally { release(); operator.close(); }
+  });
+
+  it("owns an immutable copy of confirmed bytes before settlement awaits", async () => {
+    const { operator, w } = setup();
+    try {
+      const prepared = await operator.prepare("deploy");
+      const replacement = await operator.prepare("deploy");
+      const confirmedHash = prepared.txHash;
+      const confirmedBytes = new Uint8Array(prepared.bytes);
+      expect(replacement.txHash).not.toBe(confirmedHash);
+      expect(replacement.bytes.length).toBe(prepared.bytes.length);
+      const submitted = operator.submit(prepared);
+      prepared.bytes.set(replacement.bytes);
+      const outcome = await submitted.then(row => ({ row }), error => ({ error }));
+      expect(w.submitted.map(tx => tx.transactionHash())).toEqual([confirmedHash]);
+      expect(w.submitted[0]!.serialize()).toEqual(confirmedBytes);
+      expect(outcome).toMatchObject({ row: { txHash: confirmedHash, state: "landed" } });
+    } finally { operator.close(); }
+  });
+
+  it("reads a changing bytes getter once and sends only the confirmed transaction", async () => {
+    const { operator, w } = setup();
+    try {
+      const prepared = await operator.prepare("deploy");
+      const replacement = await operator.prepare("deploy");
+      let reads = 0;
+      const supplied = { ...prepared, get bytes() { return ++reads === 1 ? prepared.bytes : replacement.bytes; } };
+      await expect(operator.submit(supplied)).resolves.toMatchObject({ txHash: prepared.txHash, state: "landed" });
+      expect(reads).toBe(1);
+      expect(w.submitted.map(tx => tx.transactionHash())).toEqual([prepared.txHash]);
+    } finally { operator.close(); }
+  });
+
+  it("copies the confirmed TTL and journal metadata before settlement awaits", async () => {
+    const { operator, w } = setup();
+    try {
+      const prepared = await operator.prepare("deploy");
+      prepared.journal = { state: "pending", broadcasts: 0, expired: false };
+      const confirmedHash = prepared.txHash;
+      const submitted = operator.submit(prepared);
+      prepared.ttl.setTime(0);
+      prepared.journal.expired = true;
+      prepared.journal.broadcasts = 99;
+      prepared.label = "proveRolling1";
+      prepared.address = "ab".repeat(32);
+      prepared.txHash = "cd".repeat(32);
+      prepared.network = "mainnet";
+      prepared.declaredFee += 1n;
+      prepared.payer = "another wallet";
+      prepared.statement = proofReleaseStatements(0)[0]!;
+      await expect(submitted).resolves.toMatchObject({ txHash: confirmedHash, state: "landed" });
+      expect(w.submitted.map(tx => tx.transactionHash())).toEqual([confirmedHash]);
+    } finally { operator.close(); }
+  });
+
   it("keeps gas-rejected bytes until journal retirement, then re-proves against current state", async () => {
     const { operator, w, net, ledger } = setup(Date.now() + 24 * 3600_000, true);
     try {

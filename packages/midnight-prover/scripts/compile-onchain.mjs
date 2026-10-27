@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as runtime from "@midnight-ntwrk/compact-runtime";
 import * as ledger from "@midnight-ntwrk/ledger-v8";
+import { assertOnchainArtifactPins } from "./onchain-artifact-pins.mjs";
 
 const directory = resolve(dirname(fileURLToPath(import.meta.url)), "../onchain");
 const check = process.argv.includes("--check");
@@ -13,6 +14,7 @@ const compiler = process.env.COMPACTC ?? "compactc";
 if (execFileSync(compiler, ["--version"], { encoding: "utf8" }).trim() !== "0.31.1") throw new Error("Compact compiler 0.31.1 is required");
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 try {
+  if (check) await assertOnchainArtifactPins();
   await mkdir(output, { recursive: true });
   execFileSync(compiler, [join(directory, "orynq.compact"), output], { stdio: "inherit" });
   const { Contract } = await import(pathToFileURL(join(output, "contract/index.js")).href);

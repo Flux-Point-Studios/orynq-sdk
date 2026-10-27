@@ -45,17 +45,20 @@ const GENESIS: Record<ProofNetwork, string> = {
 };
 
 export async function verifyPosted(request: PostedProofRequest, options: { source: MidnightSource; trustRoot: ProofTrustRoot }) {
-  if (!Object.hasOwn(GENESIS, request.network) || !options.trustRoot || options.trustRoot.genesis !== GENESIS[request.network]) throw new Error("Proof trust-root genesis mismatch");
-  if (options.trustRoot.checkpoints.length === 0) throw new Error("An independently trusted finality checkpoint is required");
-  if (options.source.network !== request.network) throw new Error("Proof source network mismatch");
-  const verification = { source: options.source, checkpoints: options.trustRoot.checkpoints };
-  const deploy = await verifyFinalizedTransaction(request.deployTxHash, verification);
-  if (assertProofDeploy(deploy.bytes, "final") !== request.address) throw new Error("Proof deployment address mismatch");
-  const call = await verifyFinalizedTransaction(request.txHash, verification);
+  // Bind one expectation and trust configuration before source reads can yield to callers.
+  const expected = structuredClone(request), trustRoot = structuredClone(options.trustRoot);
+  const source = options.source;
+  if (!Object.hasOwn(GENESIS, expected.network) || !trustRoot || trustRoot.genesis !== GENESIS[expected.network]) throw new Error("Proof trust-root genesis mismatch");
+  if (trustRoot.checkpoints.length === 0) throw new Error("An independently trusted finality checkpoint is required");
+  if (source.network !== expected.network) throw new Error("Proof source network mismatch");
+  const verification = { source, checkpoints: trustRoot.checkpoints };
+  const deploy = await verifyFinalizedTransaction(expected.deployTxHash, verification);
+  if (assertProofDeploy(deploy.bytes, "final") !== expected.address) throw new Error("Proof deployment address mismatch");
+  const call = await verifyFinalizedTransaction(expected.txHash, verification);
   // Ledger 8 has no network getter; merging an empty transaction checks its encoded network id.
-  const network = L.Transaction.fromParts(request.network).eraseProofs();
+  const network = L.Transaction.fromParts(expected.network).eraseProofs();
   for (const { bytes } of [deploy, call]) L.Transaction.deserialize("signature", "proof", "binding", bytes).eraseProofs().merge(network);
   if (deploy.block.height > call.block.height || (deploy.block.height === call.block.height && (deploy.block.hash !== call.block.hash || deploy.extrinsicIndex >= call.extrinsicIndex))) throw new Error("Proof call precedes its deployment");
-  assertPostedProof(call.bytes, request.address, request.statement, call.timestamp);
-  return { valid: true as const, assurance: "consensus-verified" as const, txHash: request.txHash, address: request.address, block: call.block, timestamp: call.timestamp, presentationId: Buffer.from(presentationId(request.statement)).toString("hex"), statement: request.statement };
+  assertPostedProof(call.bytes, expected.address, expected.statement, call.timestamp);
+  return { valid: true as const, assurance: "consensus-verified" as const, txHash: expected.txHash, address: expected.address, block: call.block, timestamp: call.timestamp, presentationId: Buffer.from(presentationId(expected.statement)).toString("hex"), statement: expected.statement };
 }

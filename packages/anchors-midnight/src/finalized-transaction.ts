@@ -10,6 +10,7 @@ export async function verifyFinalizedTransaction(txHash: string, { source, check
   source: MidnightSource; checkpoints: readonly FinalityCheckpoint[];
 }) {
   if (!/^[0-9a-f]{64}$/.test(txHash)) throw new Error("Invalid transaction hash");
+  const trustedCheckpoints = structuredClone(checkpoints);
   const found = await source.indexer.transactions(txHash);
   if (found.length !== 1) throw new Error("Expected exactly one located transaction");
   const located = found[0]!;
@@ -25,7 +26,7 @@ export async function verifyFinalizedTransaction(txHash: string, { source, check
   if (toHex(orderedTrieRoot(extrinsics)) !== toHex(header.extrinsicsRoot)) throw new Error("Block body differs from its authenticated root");
   const extrinsicIndex = includedTransactionIndex(extrinsics, bytes);
   if (extrinsicIndex === null) throw new Error("Transaction is absent from the block body");
-  const finality = await verifyFinality({ rpc: finalityRpc(source), block, checkpoints });
+  const finality = await verifyFinality({ rpc: finalityRpc(source), block, checkpoints: trustedCheckpoints });
   if (!finality.finalized) throw new Error(`Unverified finality: ${finality.reason}`);
   const execution = await verifyExecution(source.node, { blockHash: block.hash, header, extrinsicIndex, txHash });
   return { bytes, block, finality, timestamp: execution.timestamp, extrinsicIndex };
