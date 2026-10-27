@@ -4,7 +4,7 @@
   "description": "CLI dev tool for testing x402 and Flux 402 payment flows",
   "type": "module",
   "bin": {
-    "poi": "./dist/index.js"
+    "poi": "./dist/bin.js"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -28,6 +28,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
@@ -66,7 +67,8 @@
   },
   "devDependencies": {
     "tsup": "^8.0.1",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "4.1.12"
   },
   "engines": {
     "node": ">=18.0.0"
