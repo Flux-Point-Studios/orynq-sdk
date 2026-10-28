@@ -1,5 +1,5 @@
 ---
-"@fluxpointstudios/orynq-sdk-flight-recorder": patch
+"@fluxpointstudios/orynq-sdk-flight-recorder": minor
 ---
 
 `verifyMerkleProof(proof, leafCount)` requires the tree's leaf count from an
