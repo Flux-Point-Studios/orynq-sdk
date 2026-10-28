@@ -53,13 +53,14 @@ import type {
 import { POI_METADATA_LABEL, isAnchorMetadata } from "./types.js";
 import {
   computeRootHash,
-  computeRollingHash,
   computeEventHash,
   computeSpanHash,
   committedEvent,
   committedSpan,
   buildSpanMerkleTree,
   computeModelManifestHash,
+  initRollingHash,
+  updateRollingHash,
 } from "@fluxpointstudios/orynq-sdk-process-trace";
 import type {
   TraceRun,
@@ -1030,27 +1031,33 @@ async function recomputeBundleRootHash(
     ) {
       return null;
     }
-    const rollingHash = await computeRollingHash(events);
-
     // Recompute EACH event + span hash from actual content (the same derivation
     // the bundle builder uses) — never trust the fetched span.hash/event.hash.
     // Tampering with any span-header field, event, or ordering changes the root.
     // Carry each event and span only as its hash commits to it, so keys the
     // hashes skip (null values, non-header span keys) cannot read as verified.
+    // The document is attacker-chosen up to the size cap, so each event is
+    // hashed once and found by ID in constant time.
+    const eventById = new Map(events.map((event) => [event.id, event]));
     const eventHashById = new Map<string, string>();
     for (const event of events) {
       eventHashById.set(event.id, await computeEventHash(event));
     }
+    let rolling = await initRollingHash();
+    for (const event of [...events].sort((a, b) => a.seq - b.seq)) {
+      rolling = await updateRollingHash(rolling, eventHashById.get(event.id)!);
+    }
+    const rollingHash = rolling.currentHash;
     const rehashedEvents: TraceEvent[] = events.map((e) =>
-      committedEvent(e, eventHashById.get(e.id) ?? "")
+      committedEvent(e, eventHashById.get(e.id)!)
     );
     const rehashedSpans: TraceSpan[] = [];
     for (const span of spans) {
       const spanEventHashes = span.eventIds
-        .map((id) => ({ id, event: events.find((e) => e.id === id) }))
-        .filter((x): x is { id: string; event: TraceEvent } => x.event !== undefined)
-        .sort((a, b) => a.event.seq - b.event.seq)
-        .map((x) => eventHashById.get(x.id) ?? "");
+        .map((id) => eventById.get(id))
+        .filter((event): event is TraceEvent => event !== undefined)
+        .sort((a, b) => a.seq - b.seq)
+        .map((event) => eventHashById.get(event.id)!);
       const spanHash = await computeSpanHash(span, spanEventHashes);
       rehashedSpans.push(committedSpan(span, spanHash));
     }

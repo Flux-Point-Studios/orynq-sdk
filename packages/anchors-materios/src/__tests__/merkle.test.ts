@@ -94,7 +94,7 @@ describe("merkleInclusionProof + verifyMerkleProof", () => {
     const proof = merkleInclusionProof(leaves, 0);
     expect(proof.siblings).toHaveLength(0);
     const root = merkleRoot(leaves);
-    expect(verifyMerkleProof(leaves[0]!, proof, root)).toBe(true);
+    expect(verifyMerkleProof(leaves[0]!, proof, root, 1)).toBe(true);
   });
 
   // Round-trip test for various leaf counts
@@ -104,7 +104,7 @@ describe("merkleInclusionProof + verifyMerkleProof", () => {
       const root = merkleRoot(leaves);
       for (let i = 0; i < count; i++) {
         const proof = merkleInclusionProof(leaves, i);
-        expect(verifyMerkleProof(leaves[i]!, proof, root)).toBe(true);
+        expect(verifyMerkleProof(leaves[i]!, proof, root, count)).toBe(true);
       }
     });
   }
@@ -114,14 +114,14 @@ describe("merkleInclusionProof + verifyMerkleProof", () => {
     const root = merkleRoot(leaves);
     const proof = merkleInclusionProof(leaves, 0);
     // Use a different leaf
-    expect(verifyMerkleProof(leaves[1]!, proof, root)).toBe(false);
+    expect(verifyMerkleProof(leaves[1]!, proof, root, 4)).toBe(false);
   });
 
   it("rejects wrong root", () => {
     const leaves = makeLeaves(4);
     const proof = merkleInclusionProof(leaves, 0);
     const fakeRoot = "0x" + "ff".repeat(32);
-    expect(verifyMerkleProof(leaves[0]!, proof, fakeRoot)).toBe(false);
+    expect(verifyMerkleProof(leaves[0]!, proof, fakeRoot, 4)).toBe(false);
   });
 
   it("rejects tampered proof sibling", () => {
@@ -130,11 +130,21 @@ describe("merkleInclusionProof + verifyMerkleProof", () => {
     const proof = merkleInclusionProof(leaves, 0);
     // Tamper with the first sibling hash
     const tampered = {
+      ...proof,
       siblings: proof.siblings.map((s, i) =>
         i === 0 ? { ...s, hash: "0x" + "ab".repeat(32) } : s,
       ),
     };
-    expect(verifyMerkleProof(leaves[0]!, tampered, root)).toBe(false);
+    expect(verifyMerkleProof(leaves[0]!, tampered, root, 4)).toBe(false);
+  });
+
+  it("refuses the root, or an internal node, as a leaf of a larger tree", () => {
+    const leaves = makeLeaves(4);
+    const root = merkleRoot(leaves);
+    const proof = merkleInclusionProof(leaves, 0);
+    const internal = sha256hex(leaves[0]!.slice(2) + leaves[1]!.slice(2));
+    expect(verifyMerkleProof(root, { index: 0, siblings: [] }, root, 4)).toBe(false);
+    expect(verifyMerkleProof(internal, { index: 0, siblings: proof.siblings.slice(1) }, root, 4)).toBe(false);
   });
 
   it("proof for last leaf in odd-count tree works", () => {
@@ -142,7 +152,7 @@ describe("merkleInclusionProof + verifyMerkleProof", () => {
     const root = merkleRoot(leaves);
     // Last leaf (index 6) — in an odd tree, this gets duplicated at layer 0
     const proof = merkleInclusionProof(leaves, 6);
-    expect(verifyMerkleProof(leaves[6]!, proof, root)).toBe(true);
+    expect(verifyMerkleProof(leaves[6]!, proof, root, 7)).toBe(true);
   });
 
   it("proof depth matches expected tree height", () => {

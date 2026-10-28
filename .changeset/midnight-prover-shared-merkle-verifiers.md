@@ -8,12 +8,10 @@ a Merkle proof must use the leaf index its path encodes.
 `generateMerkleInclusionProof` builds its proof with process-trace.
 
 The simulation `SelectiveDisclosureProver` gains
-`verifyDisclosure(proof, { leafHashes, leafCount })`, which verifies the Merkle
-path in the proof bytes and reports what the proof binds; `verifyProof` takes
-the same options and returns its `valid`. A full disclosure must hash to the
-public span hash, and the result holds its span and events as committed. A
-proof made with `includeEventData: false` or `includeSpanData: false` discloses
-data nothing binds, so it verifies only as membership of the span whose leaf
-hash and leaf count the caller authenticated, and is reported `unbound`
-without them instead of passing on unchecked data. `DefaultMidnightProver.verify`
-returns the reason in `errors`.
+`verifyDisclosure(proof, options)`, which verifies the Merkle path in the proof
+bytes and reports what the proof binds; `verifyProof` takes the same options
+and returns its `valid`. A full disclosure must hash to the public span hash,
+and the result holds its span and events as committed. A proof made with
+`includeEventData: false` or `includeSpanData: false` discloses data nothing
+binds, so it is reported `unbound` instead of passing on unchecked data.
+`DefaultMidnightProver.verify` returns the reason in `errors`.

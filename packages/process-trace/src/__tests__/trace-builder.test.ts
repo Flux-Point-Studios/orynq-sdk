@@ -2,13 +2,15 @@
  * @summary Tests for trace building functionality in the process-trace package.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   createTrace,
   addSpan,
   addEvent,
   closeSpan,
+  computeRollingHash,
   finalizeTrace,
+  verifyBundle,
   getSpan,
   getSpanEvents,
   isFinalized,
@@ -901,6 +903,86 @@ describe('event ordering', () => {
     expect(run.events[0]?.seq).toBe(0);
     expect(run.events[1]?.seq).toBe(1);
     expect(run.events[2]?.seq).toBe(2);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Concurrent addEvent Tests
+// -----------------------------------------------------------------------------
+
+describe('concurrent addEvent on one run', () => {
+  const note = (i: number) => ({ kind: 'custom' as const, eventType: 'note', data: { i }, visibility: 'private' as const });
+
+  /** Finalizes `run` with its warning about an unpinned manifest silenced, and verifies the bundle. */
+  async function verified(run: TraceRun) {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      return (await verifyBundle(await finalizeTrace(run))).valid;
+    } finally {
+      warning.mockRestore();
+    }
+  }
+
+  it('appends events one at a time in call order, so the rolling hash chains every event', async () => {
+    const run = await createTrace({ agentId: 'concurrent' });
+    const span = addSpan(run, { name: 'guarded' });
+    const events = await Promise.all([1, 2, 3].map((i) => addEvent(run, span.id, note(i))));
+    expect(events.map((event) => event.seq)).toEqual([0, 1, 2]);
+    expect(run.events).toEqual(events);
+    expect(span.eventIds).toEqual(events.map((event) => event.id));
+    expect(run.rollingHash).toBe(await computeRollingHash(run.events));
+    expect(await verified(run)).toBe(true);
+  });
+
+  it('orders appends to several spans of one run by call order', async () => {
+    const run = await createTrace({ agentId: 'concurrent' });
+    const spans = [addSpan(run, { name: 'a' }), addSpan(run, { name: 'b' })];
+    const events = await Promise.all([0, 1, 2, 3].map((i) => addEvent(run, spans[i % 2]!.id, note(i))));
+    expect(events.map((event) => (event as { data: { i: number } }).data.i)).toEqual([0, 1, 2, 3]);
+    expect(events.map((event) => event.seq)).toEqual([0, 1, 2, 3]);
+    expect(run.rollingHash).toBe(await computeRollingHash(run.events));
+    expect(await verified(run)).toBe(true);
+  });
+
+  it('refuses an append whose span closed while it waited, and the run stays verifiable', async () => {
+    const run = await createTrace({ agentId: 'concurrent' });
+    const span = addSpan(run, { name: 'closing' });
+    const outcomes = await Promise.allSettled([
+      addEvent(run, span.id, note(1)),
+      addEvent(run, span.id, note(2)),
+      closeSpan(run, span.id),
+    ]);
+    expect(outcomes.map((outcome) => outcome.status)).toEqual(['rejected', 'rejected', 'fulfilled']);
+    expect(String((outcomes[0] as PromiseRejectedResult).reason)).toMatch(/closed span/);
+    expect([run.events, span.eventIds, run.nextSeq]).toEqual([[], [], 0]);
+    expect(await verified(run)).toBe(true);
+  });
+
+  it('refuses an append whose span closes while its event is hashed', async () => {
+    const run = await createTrace({ agentId: 'concurrent' });
+    const span = addSpan(run, { name: 'closing' });
+    let closing: Promise<void> | undefined;
+    // Canonicalizing the event reads this getter, which closes the span between the append's
+    // first check and the moment it would join the span.
+    const data = { get observed() { closing ??= closeSpan(run, span.id); return 'late'; } };
+    await expect(addEvent(run, span.id, { kind: 'custom', eventType: 'note', data, visibility: 'private' }))
+      .rejects.toThrow(/closed span/);
+    await closing;
+    expect([run.events, span.eventIds, run.nextSeq]).toEqual([[], [], 0]);
+    expect(await verified(run)).toBe(true);
+  });
+
+  it('leaves no sequence gap after an event it cannot hash', async () => {
+    const run = await createTrace({ agentId: 'concurrent' });
+    const span = addSpan(run, { name: 'unhashable' });
+    const outcomes = await Promise.allSettled([
+      addEvent(run, span.id, note(1)),
+      addEvent(run, span.id, { kind: 'custom', eventType: 'note', data: { amount: 10n }, visibility: 'private' }),
+      addEvent(run, span.id, note(3)),
+    ]);
+    expect(outcomes.map((outcome) => outcome.status)).toEqual(['fulfilled', 'rejected', 'fulfilled']);
+    expect(run.events.map((event) => event.seq)).toEqual([0, 1]);
+    expect(await verified(run)).toBe(true);
   });
 });
 

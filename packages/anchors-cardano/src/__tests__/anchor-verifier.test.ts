@@ -1178,6 +1178,67 @@ describe("verifyAnchor fetchBundle rejects unbound projected data (#77 round-5)"
   });
 });
 
+describe("verifyAnchor fetchBundle event order", () => {
+  it("verifies a fetched bundle that lists its events out of seq order", async () => {
+    const run = await createTrace({ agentId: "agent-order" });
+    const span = addSpan(run, { name: "work", visibility: "public" });
+    for (const command of ["first", "second", "third"]) {
+      await addEvent(run, span.id, { kind: "command", command, visibility: "public" });
+    }
+    await closeSpan(run, span.id);
+    const bundle = await finalizeTrace(run);
+    const reordered = JSON.parse(JSON.stringify(bundle)) as TraceBundle;
+    reordered.privateRun.events.reverse();
+    const entry = createValidEntry({
+      rootHash: bundle.rootHash,
+      storageRefs: [{ type: "https", uri: "https://storage.example.com/b.json", hash: "" }],
+    });
+    const provider = createMockProvider({ getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])) });
+
+    const result = await verifyAnchor(provider, "tx123", bundle.rootHash, {
+      fetchBundle: true,
+      fetchFn: vi.fn().mockResolvedValue(jsonResponse(reordered)) as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+    });
+
+    expect(result.valid).toBe(true);
+    expect((result.bundle as { privateRun: { rollingHash: string } }).privateRun.rollingHash).toBe(bundle.privateRun.rollingHash);
+  });
+});
+
+describe("verifyAnchor fetchBundle cost", () => {
+  // A fetched document is attacker-chosen up to the size cap. One span listing
+  // every event in reverse made each of its event IDs a scan of the whole event
+  // list, and every event was hashed twice.
+  it("recomputes a fetched bundle of 80,000 events within a linear time budget", async () => {
+    const count = 80_000;
+    const events = Array.from({ length: count }, (_, seq) => ({ id: `e${seq}`, seq })) as never[];
+    const span = { id: "s", spanSeq: 0, eventIds: Array.from({ length: count }, (_, i) => `e${count - 1 - i}`) };
+    const eventHashes = await Promise.all(events.map((event) => computeEventHash(event)));
+    const spanHash = await computeSpanHash(span as never, eventHashes);
+    const anchorRoot = await computeRootHash(await computeRollingHash(events), [{ ...span, hash: spanHash } as never]);
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [{ type: "https", uri: "https://storage.example.com/b.json", hash: "" }],
+    });
+    const provider = createMockProvider({ getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])) });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ privateRun: { events, spans: [span] } }));
+
+    const started = performance.now();
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+    });
+    const elapsedMs = performance.now() - started;
+
+    expect(result.valid).toBe(true);
+    expect((result.bundle as { privateRun: { events: unknown[] } }).privateRun.events).toHaveLength(count);
+    // About 2.6 s on the development host, where scanning the events for each ID took 23 s.
+    expect(elapsedMs).toBeLessThan(10_000);
+  });
+});
+
 describe("verifyAnchor fetchBundle SSRF hardening (#61)", () => {
   it("rejects an http:// (non-https) storage URI", async () => {
     const bundle = await buildRealBundle();

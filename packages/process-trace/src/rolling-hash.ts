@@ -41,7 +41,6 @@
  */
 
 import {
-  sha256StringHex,
   canonicalize,
   normalizeJson,
 } from "@fluxpointstudios/orynq-sdk-core/utils";
@@ -49,6 +48,7 @@ import {
 import type { RollingHashState, TraceEvent, TraceSpan } from "./types.js";
 import { HASH_DOMAIN_PREFIXES } from "./types.js";
 import { isRecord } from "./guards.js";
+import { sha256Hex } from "./digest.js";
 
 // -----------------------------------------------------------------------------
 // Constants
@@ -100,7 +100,7 @@ export async function computeEventHash(event: TraceEvent): Promise<string> {
   // Apply domain separation and hash
   const prefixedData = HASH_DOMAIN_PREFIXES.event + canonical;
 
-  return sha256StringHex(prefixedData);
+  return sha256Hex(prefixedData);
 }
 
 /**
@@ -149,7 +149,7 @@ function removeHashField<T extends { hash?: string }>(event: T): Omit<T, "hash">
  */
 export async function initRollingHash(): Promise<RollingHashState> {
   const genesisInput = HASH_DOMAIN_PREFIXES.roll + GENESIS_SEED;
-  const genesisHash = await sha256StringHex(genesisInput);
+  const genesisHash = sha256Hex(genesisInput);
 
   return {
     currentHash: genesisHash,
@@ -188,7 +188,7 @@ export async function updateRollingHash(
 ): Promise<RollingHashState> {
   // Construct the input: prefix + prevHash + "|" + eventHash
   const input = HASH_DOMAIN_PREFIXES.roll + state.currentHash + "|" + eventHash;
-  const newHash = await sha256StringHex(input);
+  const newHash = sha256Hex(input);
 
   return {
     currentHash: newHash,
@@ -245,12 +245,14 @@ export async function computeRollingHash(events: TraceEvent[]): Promise<string> 
 // -----------------------------------------------------------------------------
 
 /**
- * Verify that a rolling hash matches the expected value for given events.
+ * Verify that `events` are all of a run's events and that they chain to the
+ * expected rolling hash.
  *
- * This function recomputes the rolling hash from the events and compares
- * it to the expected value. Used to verify trace integrity.
+ * The chain covers whichever events it is given, so the events' `seq` values
+ * must be exactly 0 to n - 1: a list that leaves out an event, matching a
+ * chain stored over too few of them, or repeats a seq never verifies.
  *
- * @param events - Array of trace events to verify
+ * @param events - Array of trace events to verify, in any order
  * @param expectedHash - The expected rolling hash value
  * @returns Promise resolving to true if the hash matches, false otherwise
  *
@@ -266,6 +268,11 @@ export async function verifyRollingHash(
   events: TraceEvent[],
   expectedHash: string
 ): Promise<boolean> {
+  // n events whose seqs include every value from 0 to n - 1 repeat none.
+  const seqs = new Set(events.map((event) => (isRecord(event) ? event.seq : undefined)));
+  if (!events.every((_, seq) => seqs.has(seq))) {
+    return false;
+  }
   const computedHash = await computeRollingHash(events);
   return constantTimeCompare(computedHash, expectedHash.toLowerCase());
 }
@@ -354,7 +361,7 @@ export async function computeRootHash(
     input += "|manifest:" + modelManifestHash;
   }
 
-  return sha256StringHex(input);
+  return sha256Hex(input);
 }
 
 // -----------------------------------------------------------------------------

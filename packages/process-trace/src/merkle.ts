@@ -19,12 +19,9 @@
  */
 
 import {
-  sha256StringHex,
   canonicalize,
-  bytesToHex,
   normalizeJson,
 } from "@fluxpointstudios/orynq-sdk-core/utils";
-import { sha256 } from "@noble/hashes/sha256";
 
 import type {
   TraceMerkleTree,
@@ -35,6 +32,7 @@ import type {
 import { HASH_DOMAIN_PREFIXES } from "./types.js";
 import { committedEvent, verifyEventHashes } from "./rolling-hash.js";
 import { isRecord, readOnce, repeated } from "./guards.js";
+import { sha256Hex } from "./digest.js";
 
 // =============================================================================
 // SPAN HASH COMPUTATION
@@ -104,7 +102,7 @@ export async function computeSpanHash(
     hashInput += "|" + eventHashes.join("|");
   }
 
-  return sha256StringHex(hashInput);
+  return sha256Hex(hashInput);
 }
 
 // =============================================================================
@@ -166,8 +164,7 @@ export async function buildSpanMerkleTree(
     const spanHash = await computeSpanHash(span, eventHashes);
 
     // Compute leaf hash: H("poi-trace:leaf:v1|" + spanHash)
-    const leafHash = await sha256StringHex(HASH_DOMAIN_PREFIXES.leaf + spanHash);
-    leafHashes.push(leafHash);
+    leafHashes.push(sha256Hex(HASH_DOMAIN_PREFIXES.leaf + spanHash));
   }
 
   // Build tree bottom-up
@@ -217,10 +214,7 @@ async function buildTreeFromLeaves(
       const right = i + 1 < currentLevel.length ? (currentLevel[i + 1] ?? left) : left;
 
       // Compute parent: H("poi-trace:node:v1|" + left + "|" + right)
-      const parentHash = await sha256StringHex(
-        HASH_DOMAIN_PREFIXES.node + left + "|" + right
-      );
-      nextLevel.push(parentHash);
+      nextLevel.push(sha256Hex(HASH_DOMAIN_PREFIXES.node + left + "|" + right));
     }
 
     currentLevel = nextLevel;
@@ -240,8 +234,6 @@ async function buildTreeFromLeaves(
 // =============================================================================
 // MERKLE PROOF GENERATION
 // =============================================================================
-
-const utf8 = new TextEncoder();
 
 /**
  * Every level of each tree, leaves first, computed once so that later proofs
@@ -265,7 +257,7 @@ function levelsOf(tree: TraceMerkleTree): string[][] {
     for (let i = 0; i < level.length; i += 2) {
       const left = level[i]!;
       const right = level[i + 1] ?? left;
-      next.push(bytesToHex(sha256(utf8.encode(HASH_DOMAIN_PREFIXES.node + left + "|" + right))));
+      next.push(sha256Hex(HASH_DOMAIN_PREFIXES.node + left + "|" + right));
     }
     levels.push(next);
   }
@@ -410,9 +402,7 @@ export async function verifyMerkleProof(proof: MerkleProof, leafCount?: number):
     }
 
     // Compute parent hash: H("poi-trace:node:v1|" + left + "|" + right)
-    currentHash = await sha256StringHex(
-      HASH_DOMAIN_PREFIXES.node + left + "|" + right
-    );
+    currentHash = sha256Hex(HASH_DOMAIN_PREFIXES.node + left + "|" + right);
   }
 
   // Verify computed root matches expected root
@@ -460,7 +450,7 @@ export async function checkSpanData(
   if (span.hash !== undefined && span.hash !== spanHash) {
     errors.push(`Span hash mismatch for "${spanId}": span has ${String(span.hash)}, computed ${spanHash}`);
   }
-  const leafHash = await sha256StringHex(HASH_DOMAIN_PREFIXES.leaf + spanHash);
+  const leafHash = sha256Hex(HASH_DOMAIN_PREFIXES.leaf + spanHash);
   if (!isMerkleProof(proof)) {
     errors.push(`Merkle proof for span "${spanId}" is malformed`);
   } else if (leafHash !== proof.leafHash) {

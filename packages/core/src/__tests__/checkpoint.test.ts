@@ -3,8 +3,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   anchorId, censusBatch, certFormatOf, certHash, checkpointLeaf,
-  decodeReceiptRecord, encodeCert, memberSnapshot, merklePath, merkleRoot,
-  parseMemberSnapshot, rootFromPath, SNAPSHOT_BUDGET, manifestHash,
+  decodeReceiptRecord, encodeCert, memberSnapshot, merkleInclusionProof, merklePath, merkleRoot,
+  parseMemberSnapshot, rootFromPath, SNAPSHOT_BUDGET, manifestHash, verifyMerkleProof,
+  type MerkleInclusionProof,
 } from "../checkpoint.js";
 
 const fixture = JSON.parse(readFileSync(new URL("./fixtures/checkpoint-receipts.json", import.meta.url), "utf8"));
@@ -49,6 +50,102 @@ describe("checkpoint parity with the daemon tree", () => {
     expect(() => rootFromPath(hex(1), 0, 2, [])).toThrow(/path/i);
     expect(() => rootFromPath(hex(3), 2, 3, [hex(4), hex(5)])).toThrow(/odd|duplicate|sibling/i);
     expect(() => rootFromPath(hex(1), 1.5, 3, [hex(2), hex(3)])).toThrow(/index/i);
+  });
+});
+
+describe("verifyMerkleProof", () => {
+  const leavesOf = (count: number) => Array.from({ length: count }, (_, i) => `0x${hash(Buffer.from(`leaf-${i}`))}`);
+  const node = (left: string, right: string) => `0x${hash(Buffer.from(bare(left) + bare(right), "hex"))}`;
+  /** Every level of the daemon tree over `leaves`, leaves first, the last odd node of a level paired with itself. */
+  function levelsOf(leaves: string[]): string[][] {
+    const levels = [leaves];
+    for (let level = leaves; level.length > 1; level = levels[levels.length - 1]!) {
+      levels.push(Array.from({ length: Math.ceil(level.length / 2) }, (_, i) => node(level[2 * i]!, level[2 * i + 1] ?? level[2 * i]!)));
+    }
+    return levels;
+  }
+
+  it("verifies each leaf of every tree of 1 to 64 leaves only at its own index and leaf count", () => {
+    for (let count = 1; count <= 64; count++) {
+      const leaves = leavesOf(count);
+      const root = merkleRoot(leaves);
+      const indices = 2 ** (levelsOf(leaves).length - 1);
+      for (let index = 0; index < count; index++) {
+        const proof = merkleInclusionProof(leaves, index);
+        expect([count, index, proof.index, verifyMerkleProof(leaves[index]!, proof, root, count)]).toEqual([count, index, index, true]);
+        expect([count, index, verifyMerkleProof(leaves[index]!, proof, root, count + 0.5)]).toEqual([count, index, false]);
+        for (let other = 0; other < indices; other++) {
+          if (other !== index) {
+            expect([count, index, other, verifyMerkleProof(leaves[index]!, { ...proof, index: other }, root, count)]).toEqual([count, index, other, false]);
+          }
+        }
+        proof.siblings.forEach((_, flipped) => {
+          const siblings = proof.siblings.map((s, depth) => (depth === flipped ? { ...s, position: s.position === "L" ? "R" as const : "L" as const } : s));
+          expect([count, index, flipped, verifyMerkleProof(leaves[index]!, { ...proof, siblings }, root, count)]).toEqual([count, index, flipped, false]);
+        });
+      }
+    }
+  });
+
+  it("refuses the copy of the last leaf that pads every odd tree of 1 to 64 leaves", () => {
+    for (let count = 3; count <= 64; count += 2) {
+      const leaves = leavesOf(count);
+      const last = merkleInclusionProof(leaves, count - 1);
+      // The padding sits at index `count`, left of nothing: its sibling is the last leaf, and above it the paths join.
+      const padded = { index: count, siblings: [{ hash: leaves[count - 1]!, position: "L" as const }, ...last.siblings.slice(1)] };
+      expect(rootFromPath(leaves[count - 1]!, count - 1, count, last.siblings.map((s) => s.hash))).toBe(merkleRoot(leaves));
+      expect([count, verifyMerkleProof(leaves[count - 1]!, padded, merkleRoot(leaves), count)]).toEqual([count, false]);
+    }
+  });
+
+  it("refuses every internal node of every tree of 1 to 64 leaves as a leaf, and the root unless the tree has one leaf", () => {
+    for (let count = 1; count <= 64; count++) {
+      const leaves = leavesOf(count);
+      const levels = levelsOf(leaves);
+      const root = levels[levels.length - 1]![0]!;
+      expect(root).toBe(merkleRoot(leaves));
+      for (let level = 1; level < levels.length; level++) {
+        levels[level]!.forEach((internal, position) => {
+          const firstLeaf = position * 2 ** level;
+          const rest = merkleInclusionProof(leaves, firstLeaf).siblings.slice(level);
+          for (const index of [position, firstLeaf]) {
+            expect([count, level, index, verifyMerkleProof(internal, { index, siblings: rest }, root, count)]).toEqual([count, level, index, false]);
+          }
+        });
+      }
+      expect([count, verifyMerkleProof(root, { index: 0, siblings: [] }, root, count)]).toEqual([count, count === 1]);
+    }
+  });
+
+  it("requires lowercase SHA-256 hex for every hash, with or without 0x", () => {
+    const leaves = leavesOf(5);
+    const root = merkleRoot(leaves);
+    const proof = merkleInclusionProof(leaves, 3);
+    const upper = (value: string) => `0x${bare(value).toUpperCase()}`;
+    expect(verifyMerkleProof(bare(leaves[3]!), { ...proof, siblings: proof.siblings.map((s) => ({ ...s, hash: bare(s.hash) })) }, bare(root), 5)).toBe(true);
+    expect(verifyMerkleProof(upper(leaves[3]!), proof, root, 5)).toBe(false);
+    expect(verifyMerkleProof(leaves[3]!, proof, upper(root), 5)).toBe(false);
+    expect(verifyMerkleProof(leaves[3]!, { ...proof, siblings: proof.siblings.map((s, i) => (i === 0 ? { ...s, hash: upper(s.hash) } : s)) }, root, 5)).toBe(false);
+  });
+
+  it("returns false for malformed proofs, hashes and leaf counts without throwing", () => {
+    const leaves = leavesOf(4);
+    const root = merkleRoot(leaves);
+    const proof = merkleInclusionProof(leaves, 2);
+    const proofs: unknown[] = [
+      null, undefined, 7, {}, { index: 2 }, { siblings: proof.siblings }, { index: "2", siblings: proof.siblings },
+      { index: 2, siblings: [null, proof.siblings[1]] }, { index: 2, siblings: [{ ...proof.siblings[0], position: "X" }, proof.siblings[1]] },
+      { index: 2, siblings: [{ ...proof.siblings[0], hash: "zz" }, proof.siblings[1]] }, { index: 2, siblings: "siblings" },
+    ];
+    for (const malformed of proofs) {
+      expect([malformed, verifyMerkleProof(leaves[2]!, malformed as MerkleInclusionProof, root, 4)]).toEqual([malformed, false]);
+    }
+    for (const leafCount of [undefined, 0, -4, 2, 4.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect([leafCount, verifyMerkleProof(leaves[2]!, proof, root, leafCount as number)]).toEqual([leafCount, false]);
+    }
+    for (const [leaf, rootHash] of [["zz", root], [leaves[2], 42], [undefined, root], [leaves[2], `${root}00`]]) {
+      expect(verifyMerkleProof(leaf as string, proof, rootHash as string, 4)).toBe(false);
+    }
   });
 });
 

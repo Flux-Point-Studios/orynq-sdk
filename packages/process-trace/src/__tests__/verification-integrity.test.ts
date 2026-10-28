@@ -349,6 +349,66 @@ describe("membership disclosures", () => {
   });
 });
 
+/** Runs `body` while Object.prototype carries `inherited`, as a polluted prototype would. */
+async function withInherited<T>(inherited: Record<string, unknown>, body: () => Promise<T>): Promise<T> {
+  for (const [key, value] of Object.entries(inherited)) {
+    Object.defineProperty(Object.prototype, key, { value, configurable: true, writable: true });
+  }
+  try {
+    return await body();
+  } finally {
+    for (const key of Object.keys(inherited)) delete (Object.prototype as Record<string, unknown>)[key];
+  }
+}
+
+describe("verify options a polluted Object.prototype supplies", () => {
+  async function relabelledMembership() {
+    const bundle = await trace(3);
+    const second = orderedSpans(bundle)[1]!;
+    const options = await authenticatedLeaves(bundle);
+    const relabelled = clone(await selectiveDisclose(bundle, [second.id], "membership"));
+    relabelled.disclosedSpans[0]!.spanId = "kyc-check-passed";
+    return { bundle, options, relabelled, leafHash: options.leafHashes[second.id]! };
+  }
+
+  it("bind no membership entry through inherited leafHashes and leafCount", async () => {
+    const { bundle, options, relabelled, leafHash } = await relabelledMembership();
+    const inherited = { leafHashes: { "kyc-check-passed": leafHash }, leafCount: options.leafCount };
+    const results = await withInherited(inherited, () => Promise.all([
+      verifyDisclosure(clone(relabelled), bundle.rootHash, bundle.merkleRoot),
+      verifyDisclosure(clone(relabelled), bundle.rootHash, bundle.merkleRoot, {}),
+    ]));
+    for (const result of results) {
+      expect(result.valid).toBe(false);
+      expect(result.errors.join("\n")).toContain("unbound");
+    }
+  });
+
+  it("bind no membership entry through an inherited leafHashes beside an own leafCount", async () => {
+    const { bundle, options, relabelled, leafHash } = await relabelledMembership();
+    const result = await withInherited({ leafHashes: { "kyc-check-passed": leafHash } }, () =>
+      verifyDisclosure(clone(relabelled), bundle.rootHash, bundle.merkleRoot, { leafCount: options.leafCount }));
+    expect(result.valid).toBe(false);
+    expect(result.errors.join("\n")).toContain("unbound: span id not authenticated");
+  });
+
+  it("authenticate no span ID through a key the caller's leafHashes inherits", async () => {
+    const { bundle, options, relabelled, leafHash } = await relabelledMembership();
+    const result = await withInherited({ "kyc-check-passed": leafHash }, () =>
+      verifyDisclosure(clone(relabelled), bundle.rootHash, bundle.merkleRoot, options));
+    expect(result.valid).toBe(false);
+  });
+
+  it("hold no full entry to an inherited leaf count", async () => {
+    const { bundle, result: disclosed, disclosed: entry } = await disclosure();
+    const [whole, single] = await withInherited({ leafCount: 9 }, () => Promise.all([
+      verifyDisclosure(clone(disclosed), bundle.rootHash, bundle.merkleRoot),
+      verifySpanDisclosure({ ...entry, span: entry.span!, events: entry.events! }, bundle.merkleRoot),
+    ]));
+    expect([whole.valid, whole.errors, single.valid]).toEqual([true, [], true]);
+  });
+});
+
 describe("disclosed span fields", () => {
   const forgeries: Record<string, (span: Record<string, unknown>, other: TraceSpan) => void> = {
     "another span's hash": (span, other) => { span.hash = other.hash; },
@@ -652,6 +712,17 @@ describe("redacted span hashes and the host collation", () => {
     } finally {
       collation.mockRestore();
     }
+  });
+
+  it("orders by UTF-16 code units span IDs that en-US collation orders otherwise", async () => {
+    // Uppercase before lowercase, ASCII before accented and fullwidth letters and digits:
+    // code units order these one way, en-US collation (and da-DK) another.
+    const ids = ["１-span", "f-span", "a-span", "é-span", "Z-span", "B-span"];
+    const codeUnitOrder = ["B-span", "Z-span", "a-span", "f-span", "é-span", "１-span"];
+    expect([...ids].sort(new Intl.Collator("en-US").compare)).not.toEqual(codeUnitOrder);
+    const bundle = await privateSpansTrace(ids);
+    expect(bundle.publicView.redactedSpanHashes.map((entry) => entry.spanId)).toEqual(codeUnitOrder);
+    expect((await verifyBundle(clone(bundle))).valid).toBe(true);
   });
 
   it.each(locales)("verifies a view a producer ordered under %s collation under every host collation", async (producer) => {

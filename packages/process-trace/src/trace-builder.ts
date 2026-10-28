@@ -326,6 +326,12 @@ type EventWithoutRuntimeFields<K extends TraceEventKind> = Omit<
 >;
 
 /**
+ * Each run's latest append, settled or not: an append waits for the one
+ * before it, so each folds its event into the rolling hash the last one left.
+ */
+const lastAppend = new WeakMap<TraceRun, Promise<unknown>>();
+
+/**
  * Add an event to a span within a trace run.
  *
  * Automatically assigns:
@@ -336,6 +342,9 @@ type EventWithoutRuntimeFields<K extends TraceEventKind> = Omit<
  * - Computed event hash
  *
  * Also updates the run's rolling hash to maintain cryptographic chain.
+ * Concurrent calls on one run append one at a time, in call order. An event
+ * the run cannot take changes nothing: one that cannot be hashed, or whose
+ * span closes or run is finalized before it is appended, is refused.
  *
  * @param run - The trace run (mutated in place)
  * @param spanId - ID of the span to add event to
@@ -366,35 +375,40 @@ export async function addEvent<K extends TraceEventKind>(
   spanId: string,
   event: EventWithoutRuntimeFields<K>
 ): Promise<TraceEvent> {
-  // Validate run is not finalized
+  const appended = (lastAppend.get(run) ?? Promise.resolve()).then(() => appendEvent(run, spanId, event));
+  lastAppend.set(run, Promise.allSettled([appended]));
+  return appended;
+}
+
+/** The running span `spanId` of a run that is not finalized. */
+function openSpan(run: TraceRun, spanId: string): TraceSpan {
   if (isFinalized(run)) {
     throw new Error("Cannot add event to a finalized trace run");
   }
-
-  // Find the span
   const span = getSpan(run, spanId);
   if (!span) {
     throw new Error(`Span not found: ${spanId}`);
   }
-
-  // Validate span is still running
   if (span.status !== "running") {
     throw new Error(`Cannot add event to closed span: ${spanId} (status: ${span.status})`);
   }
+  return span;
+}
+
+/** {@link addEvent} once every earlier append to `run` has settled. */
+async function appendEvent<K extends TraceEventKind>(
+  run: TraceRun,
+  spanId: string,
+  event: EventWithoutRuntimeFields<K>
+): Promise<TraceEvent> {
+  openSpan(run, spanId);
 
   // Validate event has a kind
   if (!event.kind || typeof event.kind !== "string") {
     throw new Error("Event kind is required and must be a non-empty string");
   }
 
-  // Generate event ID
-  const eventId = crypto.randomUUID();
-
-  // Assign sequence number and increment counter
-  const seq = run.nextSeq++;
-
-  // Get current timestamp
-  const timestamp = new Date().toISOString();
+  const seq = run.nextSeq;
 
   // Determine visibility: use provided value or default for the event kind
   const visibility: Visibility =
@@ -406,28 +420,24 @@ export async function addEvent<K extends TraceEventKind>(
   // The caller ensures the correct event shape via the generic constraint.
   const completeEvent = {
     ...event,
-    id: eventId,
+    id: crypto.randomUUID(),
     seq,
-    timestamp,
+    timestamp: new Date().toISOString(),
     visibility,
   } as unknown as TraceEvent;
 
-  // Compute event hash
-  const eventHash = await computeEventHash(completeEvent);
-  completeEvent.hash = eventHash;
+  completeEvent.hash = await computeEventHash(completeEvent);
+  const { currentHash } = await updateRollingHash(
+    { currentHash: run.rollingHash, itemCount: run.events.length },
+    completeEvent.hash
+  );
 
-  // Update rolling hash
-  const currentState = {
-    currentHash: run.rollingHash,
-    itemCount: run.events.length,
-  };
-  const newState = await updateRollingHash(currentState, eventHash);
-  run.rollingHash = newState.currentHash;
-
-  // Add event ID to span's eventIds
-  span.eventIds.push(eventId);
-
-  // Add event to run's events array
+  // closeSpan and finalizeTrace do not wait for appends, so the span may have
+  // closed, or the run been finalized, while the hashes were computed.
+  const span = openSpan(run, spanId);
+  run.nextSeq = seq + 1;
+  run.rollingHash = currentHash;
+  span.eventIds.push(completeEvent.id);
   run.events.push(completeEvent);
 
   return completeEvent;

@@ -106,6 +106,10 @@ interface Balanced {
   actualEmptyBytes?: number;
   actualMinimumFee?: string;
   actualFeeWithMargin?: string;
+  quotedBytes?: number;
+  quotedDustBytes?: number;
+  balancedBytes?: number;
+  balancedDustBytes?: number;
   pricingParametersUnchanged?: boolean;
   pricingTimeUnchanged?: boolean;
   legacyError?: string;
@@ -184,11 +188,20 @@ describe("balancing a fee", () => {
     expect(r.pricingParametersUnchanged).toBe(true);
     expect(r.pricingTimeUnchanged).toBe(true);
     const [quote, actual] = bindingCase.split("/");
-    expect(r.actualEmptyBytes! - r.quoteEmptyBytes!).toBe(actual === quote ? 0 : actual === "full" ? 1 : -1);
-    // Different random scalar widths change the margin quote, not affordability at the actual
-    // ledger prices: the configured five-block margin covers both one-byte directions.
-    if (quote === actual) expect(paid).toBe(BigInt(r.actualFeeWithMargin!));
-    else expect(paid).not.toBe(BigInt(r.actualFeeWithMargin!));
+    const bindingGrowth = r.actualEmptyBytes! - r.quoteEmptyBytes!;
+    expect(bindingGrowth).toBe(actual === quote ? 0 : actual === "full" ? 1 : -1);
+    // The quote prices the last coin's spend at that coin's whole value, while the balanced
+    // spend pays only the rest of the fee, so the two spends' change commitments differ. A
+    // commitment is encoded without leading zero bytes, so some balancings have DUST actions
+    // a byte shorter or longer than the quoted ones.
+    const dustGrowth = r.balancedDustBytes! - r.quotedDustBytes!;
+    expect(Math.abs(dustGrowth)).toBeLessThanOrEqual(1);
+    expect(r.balancedBytes! - r.quotedBytes!).toBe(bindingGrowth + dustGrowth);
+    // A quote is exact for the transaction it prices: the balanced transaction costs as much at
+    // the same size, and more or less a byte longer or shorter. Either way the configured
+    // five-block margin keeps it affordable at the actual ledger prices.
+    const feeGrowth = BigInt(r.actualFeeWithMargin!) - paid;
+    expect(feeGrowth === 0n ? 0 : feeGrowth > 0n ? 1 : -1).toBe(Math.sign(bindingGrowth + dustGrowth));
     expect(paid).toBeGreaterThanOrEqual(BigInt(r.actualMinimumFee!));
     expect(r.landed).toBe(true);
   });

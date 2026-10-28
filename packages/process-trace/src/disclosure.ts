@@ -91,7 +91,8 @@ export interface DisclosureRequest {
 
 /**
  * Facts the caller supplies to {@link verifyDisclosure} from a source it
- * already trusts, never from the disclosure itself.
+ * already trusts, never from the disclosure itself. Only the options' own
+ * properties count.
  */
 export interface VerifyDisclosureOptions {
   /**
@@ -121,6 +122,20 @@ export interface DisclosureVerificationResult {
   errors: string[];
   /** Verified entries in disclosure order; empty unless `valid`. */
   spans: VerifiedDisclosedSpan[];
+}
+
+/** The verify options the caller set as own properties, each `undefined` otherwise. */
+interface AuthenticatedLeaves {
+  leafHashes: VerifyDisclosureOptions["leafHashes"] | undefined;
+  leafCount: number | undefined;
+}
+
+/** `options` read as own properties: a key `options` inherits, as from a polluted Object.prototype, authenticates nothing. */
+function authenticatedLeaves(options: VerifyDisclosureOptions): AuthenticatedLeaves {
+  return {
+    leafHashes: Object.hasOwn(options, "leafHashes") ? options.leafHashes : undefined,
+    leafCount: Object.hasOwn(options, "leafCount") ? options.leafCount : undefined,
+  };
 }
 
 // =============================================================================
@@ -417,7 +432,7 @@ export async function verifyDisclosure(
   if ("error" in read) {
     return { valid: false, errors: [`Disclosure is ${read.error}`], spans: [] };
   }
-  const result = await verifyDisclosureData(read.data, expectedRootHash, expectedMerkleRoot, options);
+  const result = await verifyDisclosureData(read.data, expectedRootHash, expectedMerkleRoot, authenticatedLeaves(options));
   const valid = result.errors.length === 0;
   return { valid, errors: result.errors, spans: valid ? result.spans : [] };
 }
@@ -427,7 +442,7 @@ async function verifyDisclosureData(
   disclosure: unknown,
   expectedRootHash: string,
   expectedMerkleRoot: string,
-  options: VerifyDisclosureOptions
+  options: AuthenticatedLeaves
 ): Promise<{ errors: string[]; spans: VerifiedDisclosedSpan[] }> {
   if (!isRecord(disclosure) || !Array.isArray(disclosure.disclosedSpans)) {
     return { errors: ["Disclosure must be an object with a disclosedSpans array"], spans: [] };
@@ -510,7 +525,7 @@ function authenticatedLeaf(leafHashes: VerifyDisclosureOptions["leafHashes"], sp
 async function verifyFullEntry(
   disclosed: Record<string, unknown>,
   expectedMerkleRoot: string,
-  { leafHashes, leafCount }: VerifyDisclosureOptions
+  { leafHashes, leafCount }: AuthenticatedLeaves
 ): Promise<{ errors: string[]; committed?: { span: TraceSpan; events: TraceEvent[] } }> {
   const { spanId, proof, span, events } = disclosed;
   if (!isRecord(span) || !Array.isArray(events)) {
@@ -546,7 +561,7 @@ async function membershipErrors(
   spanId: string,
   proof: unknown,
   expectedMerkleRoot: string,
-  { leafHashes, leafCount }: VerifyDisclosureOptions
+  { leafHashes, leafCount }: AuthenticatedLeaves
 ): Promise<string[]> {
   const leafHash = authenticatedLeaf(leafHashes, spanId);
   if (leafHash === undefined) {
@@ -630,6 +645,6 @@ export async function verifySpanDisclosure(
   if (!isRecord(read.data)) {
     return { valid: false, errors: ["Disclosure entry must be an object"] };
   }
-  const { errors, committed } = await verifyFullEntry(read.data, expectedMerkleRoot, {});
+  const { errors, committed } = await verifyFullEntry(read.data, expectedMerkleRoot, { leafHashes: undefined, leafCount: undefined });
   return committed !== undefined ? { valid: true, errors, ...committed } : { valid: false, errors };
 }

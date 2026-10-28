@@ -230,7 +230,7 @@ Provide either `apiKey` or `signerKeypair` (not both).
 |-------------------------------------------|---------------------------------------------------|
 | `merkleRoot(leaves)`                       | Compute Merkle root from leaf hashes.             |
 | `merkleInclusionProof(leaves, targetIndex)`| Generate inclusion proof for a specific leaf.     |
-| `verifyMerkleProof(leaf, proof, root)`     | Verify a Merkle inclusion proof.                  |
+| `verifyMerkleProof(leaf, proof, root, leafCount)` | Verify that `leaf` is the leaf at `proof.index` of the tree of `leafCount` leaves under `root`; take the leaf count from an authenticated source. |
 
 ### Infrastructure
 
