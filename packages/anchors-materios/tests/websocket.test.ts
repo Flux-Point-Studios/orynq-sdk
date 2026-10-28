@@ -106,7 +106,7 @@ it("aborts an in-flight connect when disconnect() is called and leaves no socket
     await expect(provider.disconnect()).resolves.toBeUndefined();
     expect(performance.now() - start).toBeLessThan(500);
     expect(await connecting).toMatchObject({ name: "MateriosConnectionError", code: "connect-aborted" });
-    // Node 22+ (undici) retries an aborted handshake once on a new socket and closes it at once.
+    // Node's built-in WebSocket (undici) retries an aborted handshake once on a new socket and closes it at once.
     await vi.waitFor(() => expect(closed).toBe(sockets.size), { timeout: 1000 });
     // Past polkadot.js's 2.5 s auto-reconnect delay: nothing reconnected.
     await new Promise(resolve => setTimeout(resolve, 3000));

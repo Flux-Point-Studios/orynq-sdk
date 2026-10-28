@@ -504,7 +504,7 @@ describe("F6/F7: connection lifecycle", () => {
     expect(error.message).toContain("connect ECONNREFUSED 127.0.0.1:9");
   });
 
-  it("names the endpoint when the runtime's WebSocket error event carries no text (Node 22+)", async () => {
+  it("names the endpoint when the runtime's WebSocket error event carries no text (Node's built-in WebSocket)", async () => {
     const f = fixture(makeChain());
     const event = { type: "error", message: "", error: new TypeError("") };
     f.api.isReadyOrError = Promise.reject(event);

@@ -11,7 +11,7 @@ import type { MateriosAnchorConfig, TimeoutOptions } from "./types.js";
 import { MateriosConnectionError } from "./errors.js";
 import { timeoutBudget, withinDeadline } from "./deadline.js";
 
-/** Node 22+ (undici) WebSocket reports a failed handshake as an ErrorEvent without any text. */
+/** Node's built-in WebSocket (undici) reports a failed handshake as an ErrorEvent without any text. */
 function connectFailure(error: unknown, rpcUrl: string): Error {
   if (error instanceof Error && error.message) return error;
   const event = error as { message?: unknown; error?: { message?: unknown } } | null | undefined;
