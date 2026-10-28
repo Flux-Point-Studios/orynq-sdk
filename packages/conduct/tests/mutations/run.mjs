@@ -49,7 +49,7 @@ const baseline = run("baseline");
 assert.equal(baseline.exit, 0, `baseline failed; evidence: ${work}`);
 assert.equal(baseline.report.numFailedTests, 0);
 assert.equal(baseline.report.numPendingTests, 0);
-assert.ok(baseline.report.numPassedTests >= 334, `baseline ran ${baseline.report.numPassedTests} tests`);
+assert.ok(baseline.report.numPassedTests >= 347, `baseline ran ${baseline.report.numPassedTests} tests`);
 console.log(`BASELINE ${baseline.report.numPassedTests} passed in isolated harness layout`);
 const rows = [];
 for (const [name, file, from, to] of selected) {

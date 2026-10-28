@@ -156,3 +156,111 @@ describe("L2: an append compares the whole previous head, not just its count", (
     expect(restored.spentInWindow(7200n)).toBe(10n);
   });
 });
+
+describe("F1: guard.head reports only confirmed appends", () => {
+  const echoed = /^event sink returned log head 0:0{64}, expected 1:[0-9a-f]{64}$/;
+
+  it("a sink that echoes guard.head during the append is refused, because the head has not moved yet", async () => {
+    const guards: MandateGuard[] = [];
+    const echo = (i: number): Sink => () => guards[i]!.head;
+    guards.push(guard(echo(0)), guard(echo(1)));
+    const { executed, refusals } = await spend(guards, 10n);
+    expect(executed).toBeLessThanOrEqual(CAP);
+    expect(executed).toBe(0n);
+    expect(refusals).toEqual([expect.stringMatching(echoed), expect.stringMatching(echoed)]);
+    await expect(guards[0]!.enforceAsync(pay(1n))).rejects.toThrow(/event sink failed; restore a new guard/);
+  });
+
+  it("guard.head moves only after the sink confirms, and stays put when an append is refused", () => {
+    const log = new MemoryGuardLog();
+    const during: GuardLogHead[] = [];
+    let fail = false;
+    const g: MandateGuard = guard((event, previous) => {
+      during.push(g.head);
+      if (fail) throw new Error("log unavailable");
+      return log.append(event, previous);
+    });
+    expect(g.head).toEqual(GUARD_LOG_GENESIS);
+    g.enforce(pay(4n));
+    const confirmed = log.history().head;
+    expect(during).toEqual([GUARD_LOG_GENESIS]);
+    expect(g.head).toEqual(confirmed);
+    fail = true;
+    expect(() => g.enforce(pay(1n))).toThrow("log unavailable");
+    expect(during).toEqual([GUARD_LOG_GENESIS, confirmed]);
+    expect(g.head).toEqual(confirmed);
+    expect(g.spentInWindow(7200n)).toBe(5n);
+  });
+
+  it("enforceAsync advances guard.head only once the sink resolves to the confirmed head", async () => {
+    const log = new MemoryGuardLog();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const g = guard(async (event, previous) => { await gate; return log.append(event, previous); });
+    const pending = g.enforceAsync(pay(4n));
+    expect(g.head).toEqual(GUARD_LOG_GENESIS);
+    release();
+    await expect(pending).resolves.toEqual({ allowed: true });
+    expect(g.head).toEqual(log.history().head);
+    expect(g.head.count).toBe(1n);
+  });
+
+  it("a nested enforce inside a sink never moves guard.head backward", () => {
+    const log = new MemoryGuardLog();
+    let nested = false;
+    const g: MandateGuard = guard((event, previous) => {
+      const head = log.append(event, previous);
+      if (!nested) {
+        nested = true;
+        g.enforce(pay(1n));
+      }
+      return head;
+    });
+    g.enforce(pay(4n));
+    expect(log.history().head.count).toBe(2n);
+    expect(g.head).toEqual(log.history().head);
+  });
+
+  it("BOUNDARY: a sink that computes the next head without appending is accepted, because the guard trusts the host's log", async () => {
+    const fabricate: Sink = (event, previous) => nextGuardLogHead(previous, event);
+    expect((await spend([guard(fabricate), guard(fabricate)], 10n)).executed).toBe(20n);
+    const run = await createTrace({ agentId: "a" });
+    const span = addSpan(run, { name: "pay" });
+    const recordTrace = processTraceSink(run, span.id);
+    let executed = 0n;
+    for (let restart = 0; restart < 3; restart++) {
+      const traced = guard(async (event, previous) => { await recordTrace(event); return nextGuardLogHead(previous, event); });
+      executed += (await spend([traced], 10n)).executed;
+    }
+    expect(executed).toBe(30n);
+  });
+});
+
+describe("F2: head confirmation covers every event kind and decision", () => {
+  const egressMandate = (): MandateV1 => ({ ...mandate(), egressPolicy: { mode: 1n, allowlistRoot: buildAllowlistRoot(["api.example.com"]) } });
+  const noHeadGuard = (onEvent: Sink) => new MandateGuard({
+    mandate: egressMandate(), counterpartyAllowlist: ["supplier"], egressAllowlist: ["api.example.com"], now: () => 7200n, history: "fresh", onEvent,
+  });
+  const actions = {
+    "allowed payment": pay(1n),
+    "denied payment": { ...pay(1n), counterparty: "mallory" },
+    "allowed egress": { kind: "egress", destination: "api.example.com", timestamp: 7200n },
+    "denied egress": { kind: "egress", destination: "evil.example", timestamp: 7200n },
+  } as const;
+
+  for (const [name, action] of Object.entries(actions)) {
+    it(`enforce refuses ${name} when the sink returns no head, and latches`, () => {
+      const g = noHeadGuard((() => undefined) as unknown as Sink);
+      expect(() => g.enforce(action)).toThrow(noHead);
+      expect(() => g.enforce(action)).toThrow(/event sink failed; restore a new guard/);
+      expect(g.head).toEqual(GUARD_LOG_GENESIS);
+    });
+
+    it(`enforceAsync refuses ${name} when the sink resolves to no head, and latches`, async () => {
+      const g = noHeadGuard((async () => undefined) as unknown as Sink);
+      await expect(g.enforceAsync(action)).rejects.toThrow(noHead);
+      await expect(g.enforceAsync(action)).rejects.toThrow(/event sink failed; restore a new guard/);
+      expect(g.head).toEqual(GUARD_LOG_GENESIS);
+    });
+  }
+});
