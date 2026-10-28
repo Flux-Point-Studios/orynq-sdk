@@ -36,9 +36,21 @@
 
 // Provider
 export { MateriosProvider } from "./provider.js";
+export { MateriosConnectionError, MateriosSubmissionError, MateriosCertificationError } from "./errors.js";
+export type {
+  MateriosConnectionErrorCode,
+  MateriosSubmissionErrorCode,
+  MateriosSubmissionErrorOptions,
+  ExpectedRecord,
+  SubmittedExtrinsic,
+  ObservedHead,
+} from "./errors.js";
 
 // Anchor submission (infrastructure)
 export { submitAnchor } from "./submitter.js";
+
+// Settling a submission whose inclusion is unknown
+export { resolveInclusion } from "./inclusion.js";
 
 // Anchor querying
 export { getAnchor, anchorExists } from "./verifier.js";
@@ -87,12 +99,14 @@ export type {
   // Anchor types
   AnchorEntry,
   MateriosAnchorConfig,
+  TimeoutOptions,
   MateriosAnchorResult,
   AnchorRecord,
   // Receipt types
   ReceiptInput,
   ReceiptSubmitResult,
   ReceiptRecord,
+  InclusionResolution,
   BlobManifest,
   // Polling types
   PollOptions,

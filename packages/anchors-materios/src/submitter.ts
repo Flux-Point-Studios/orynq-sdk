@@ -4,7 +4,8 @@
 
 import { createHash } from "crypto";
 import type { MateriosProvider } from "./provider.js";
-import type { AnchorEntry, MateriosAnchorResult } from "./types.js";
+import type { AnchorEntry, MateriosAnchorResult, TimeoutOptions } from "./types.js";
+import { submit } from "./submission.js";
 import { stripPrefix } from "./hex.js";
 
 /**
@@ -29,46 +30,33 @@ function computeAnchorId(rootHash: string, manifestHash: string): string {
 export async function submitAnchor(
   provider: MateriosProvider,
   entry: AnchorEntry,
+  opts: TimeoutOptions = {},
 ): Promise<MateriosAnchorResult> {
-  const api = provider.getApi();
-  const keypair = provider.getKeypair();
-
   const rootHashHex = stripPrefix(entry.rootHash);
   const manifestHashHex = stripPrefix(entry.manifestHash);
   const anchorId = computeAnchorId(entry.rootHash, entry.manifestHash);
 
   // content_hash = SHA256(rootHash bytes)
   const contentHashHex = sha256Hex(rootHashHex);
+  const fields = { anchorId, contentHash: "0x" + contentHashHex, rootHash: entry.rootHash, manifestHash: entry.manifestHash };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tx = (api.tx as any).orinqReceipts.submitAnchor(
-    anchorId,
-    "0x" + contentHashHex,
-    "0x" + rootHashHex,
-    "0x" + manifestHashHex,
-  );
-
-  return new Promise<MateriosAnchorResult>((resolve, reject) => {
+  return submit<MateriosAnchorResult>(provider, {
+    id: anchorId,
+    expected: {
+      kind: "anchor",
+      fields: {
+        contentHash: fields.contentHash,
+        rootHash: ("0x" + rootHashHex).toLowerCase(),
+        manifestHash: ("0x" + manifestHashHex).toLowerCase(),
+      },
+    },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    tx.signAndSend(keypair, ({ status, dispatchError }: any) => {
-      if (dispatchError) {
-        if (dispatchError.isModule) {
-          const decoded = api.registry.findMetaError(dispatchError.asModule);
-          reject(new Error(`${decoded.section}.${decoded.name}: ${decoded.docs.join(" ")}`));
-        } else {
-          reject(new Error(dispatchError.toString()));
-        }
-        return;
-      }
-      if (status.isFinalized) {
-        resolve({
-          blockHash: status.asFinalized.toHex(),
-          anchorId,
-          contentHash: "0x" + contentHashHex,
-          rootHash: entry.rootHash,
-          manifestHash: entry.manifestHash,
-        });
-      }
-    }).catch(reject);
-  });
+    build: api => (api.tx as any).orinqReceipts.submitAnchor(
+      anchorId,
+      "0x" + contentHashHex,
+      "0x" + rootHashHex,
+      "0x" + manifestHashHex,
+    ),
+    result: ({ blockHash, reconciled }) => ({ ...fields, blockHash, ...(reconciled ? { reconciled } : {}) }),
+  }, opts);
 }

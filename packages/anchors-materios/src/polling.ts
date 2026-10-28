@@ -21,6 +21,9 @@ import type {
 import { getReceipt, queryMotraBalance } from "./receipt.js";
 import { stripPrefix, ensureHex, isZeroHash } from "./hex.js";
 import { merkleRoot } from "./merkle.js";
+import { sleep } from "./deadline.js";
+import { MateriosConnectionError } from "./errors.js";
+import { boundedRead } from "./inclusion.js";
 
 const DEFAULT_INTERVAL_MS = 6_000; // ~1 Substrate block
 const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes
@@ -29,7 +32,8 @@ const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes
  * Wait until a receipt has been certified by the attester committee.
  *
  * Polls `orinqReceipts.receipts(receiptId)` until
- * `availability_cert_hash` is non-zero.
+ * `availability_cert_hash` is non-zero. A lost connection is awaited and an unresponsive one
+ * replaced within the budget; the timeout error's `cause` is the last failed read.
  *
  * @returns The cert hash, computed checkpoint leaf, and chain ID.
  *
@@ -49,10 +53,11 @@ export async function waitForCertification(
   const interval = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
   const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const start = Date.now();
+  const deadline = start + timeout;
   let attempt = 0;
+  let lastError: unknown;
 
-  const api = provider.getApi();
-  const chainId = api.genesisHash.toHex();
+  const chainId = provider.getApi().genesisHash.toHex();
 
   for (;;) {
     attempt++;
@@ -62,23 +67,44 @@ export async function waitForCertification(
         `Certification timeout after ${timeout}ms (${attempt} polls). ` +
           `Hint: if blobs are not uploaded, certification will never complete. ` +
           `Use getCertificationStatus() to check.`,
+        lastError === undefined ? undefined : { cause: lastError },
       );
     }
 
     opts.onPoll?.(attempt, elapsed);
 
-    const receipt = await getReceipt(provider, receiptId);
-    if (receipt && !isZeroHash(receipt.availabilityCertHash)) {
-      const certHash = receipt.availabilityCertHash;
-      const leafHash = computeCheckpointLeaf(
-        chainId,
-        receiptId,
-        certHash,
-      );
-      return { receiptId: ensureHex(receiptId), certHash, leafHash, chainId };
+    try {
+      const receipt = await readWithin(provider, deadline, () => getReceipt(provider, receiptId));
+      if (receipt && !isZeroHash(receipt.availabilityCertHash)) {
+        const certHash = receipt.availabilityCertHash;
+        const leafHash = computeCheckpointLeaf(
+          chainId,
+          receiptId,
+          certHash,
+        );
+        return { receiptId: ensureHex(receiptId), certHash, leafHash, chainId };
+      }
+    } catch (error) {
+      if (!(error instanceof MateriosConnectionError)) throw error;
+      lastError = error;
     }
 
-    await sleep(interval);
+    await sleep(Math.min(interval, deadline - Date.now()));
+  }
+}
+
+/**
+ * One read on the main connection. Transport failures come back as MateriosConnectionError: the
+ * read first waits for a reconnect, a stalled read marks the connection for replacement, and a
+ * read cut by a dropped socket is reported as a failed connection.
+ */
+async function readWithin<T>(provider: MateriosProvider, deadline: number, read: () => Promise<T>): Promise<T> {
+  const api = await provider.connection(deadline);
+  try {
+    return await boundedRead(read, deadline, () => provider.markUnresponsive(api));
+  } catch (error) {
+    if (error instanceof MateriosConnectionError || api.isConnected) throw error;
+    throw new MateriosConnectionError("connect-failed", Math.max(0, deadline - Date.now()), { cause: error });
   }
 }
 
@@ -429,8 +455,4 @@ export async function getCertificationStatus(
 
 function toBytes32(hex: string): Buffer {
   return Buffer.from(stripPrefix(hex).padStart(64, "0"), "hex");
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

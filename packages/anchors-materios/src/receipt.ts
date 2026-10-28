@@ -7,6 +7,7 @@
  */
 
 import { createHash } from "crypto";
+import type { ApiPromise } from "@polkadot/api";
 import type { MateriosProvider } from "./provider.js";
 import type {
   ReceiptInput,
@@ -17,10 +18,13 @@ import type {
   BlobUploadResult,
   CertifiedReceiptOptions,
   CertifiedReceiptResult,
+  TimeoutOptions,
 } from "./types.js";
 import { waitForCertification, waitForAnchor } from "./polling.js";
+import { submit } from "./submission.js";
+import { MateriosCertificationError } from "./errors.js";
 import { merkleRoot } from "./merkle.js";
-import { stripPrefix, ensureHex, isZeroHash, assertHex32 } from "./hex.js";
+import { stripPrefix, ensureHex, isZeroHash, assertHex32, zeroHash } from "./hex.js";
 import { u8aToHex, stringToU8a } from "@polkadot/util";
 
 /**
@@ -42,10 +46,8 @@ import { u8aToHex, stringToU8a } from "@polkadot/util";
 export async function submitReceipt(
   provider: MateriosProvider,
   input: ReceiptInput,
+  opts: TimeoutOptions = {},
 ): Promise<ReceiptSubmitResult> {
-  const api = provider.getApi();
-  const keypair = provider.getKeypair();
-
   // Validate at the SDK boundary. `toBytes32` will silently pad short
   // input and silently truncate long input — both produce a different
   // on-chain value than the caller intended. Surfacing format errors
@@ -65,12 +67,21 @@ export async function submitReceipt(
     : "00".repeat(32);
 
   // Derive receipt_id from contentHash if not provided
-  const receiptId =
+  const receiptId = ensureHex(
     input.receiptId ??
-    "0x" +
-      createHash("sha256")
-        .update(Buffer.from(contentHex, "hex"))
-        .digest("hex");
+    createHash("sha256")
+      .update(Buffer.from(contentHex, "hex"))
+      .digest("hex"),
+  );
+  const zero = zeroHash();
+  const expected = {
+    kind: "receipt" as const,
+    fields: {
+      contentHash: "0x" + contentHex, baseRootSha256: "0x" + rootHex, zkRootPoseidon: null, poseidonParamsHash: null,
+      baseManifestHash: "0x" + manifestHex, safetyManifestHash: zero, monitorConfigHash: zero,
+      attestationEvidenceHash: zero, storageLocatorHash: zero, schemaHash: "0x" + schemaHex,
+    },
+  };
 
   // Positional arg order MUST track live runtime metadata exactly. Two
   // drift hazards that have bitten us before (task #115; observed again
@@ -104,8 +115,8 @@ export async function submitReceipt(
   // If you change this, add a regression test that fetches live metadata
   // and asserts the name + type of each positional arg.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tx = (api.tx as any).orinqReceipts.submitReceipt(
-    ensureHex(receiptId),         // 0  receipt_id
+  const build = (api: ApiPromise) => (api.tx as any).orinqReceipts.submitReceipt(
+    receiptId,                    // 0  receipt_id
     ensureHex(contentHex),        // 1  content_hash (H256)
     toBytes32(rootHex),           // 2  base_root_sha256
     null,                         // 3  zk_root_poseidon: Option<None>
@@ -118,149 +129,15 @@ export async function submitReceipt(
     toBytes32(schemaHex),         // 10 schema_hash
   );
 
-  // Sign the extrinsic first so dry-run can simulate the fully signed payload
-  const signed = await tx.signAsync(keypair, { nonce: -1 });
-
-  // ── Dry-run: catch dispatch errors BEFORE consuming a nonce ──────────
-  // system.dryRun may not be available on every chain, so wrap in try/catch
-  // for graceful degradation.
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const dryRunResult: any = await (api.rpc as any).system.dryRun(signed.toHex());
-
-    // ApplyExtrinsicResult = Result<DispatchOutcome, TransactionValidityError>
-    // DispatchOutcome      = Result<(), DispatchError>
-    if (dryRunResult.isErr) {
-      // Outer error: TransactionValidityError (invalid nonce, can't pay fees, etc.)
-      throw new Error(
-        `Receipt submission would fail (transaction invalid): ${dryRunResult.asErr.toString()}. ` +
-        `This was caught by dry-run BEFORE broadcasting — no nonce was consumed.`,
-      );
-    }
-
-    // dryRunResult.asOk is the inner DispatchOutcome (Result<(), DispatchError>)
-    const dispatchOutcome = dryRunResult.asOk;
-    if (dispatchOutcome.isErr) {
-      // Inner error: DispatchError (e.g. ReceiptAlreadyExists, insufficient balance)
-      const innerErr = dispatchOutcome.asErr;
-      let errorMsg: string;
-      if (innerErr.isModule) {
-        const decoded = api.registry.findMetaError(innerErr.asModule);
-        errorMsg = `${decoded.section}.${decoded.name}: ${decoded.docs.join(" ")}`;
-      } else {
-        errorMsg = innerErr.toString();
-      }
-      throw new Error(
-        `Receipt submission would fail at dispatch: ${errorMsg}. ` +
-        `This was caught by dry-run BEFORE broadcasting — no nonce was consumed.`,
-      );
-    }
-  } catch (err) {
-    // If the error was thrown by our own dry-run checks above, re-throw it
-    if (err instanceof Error && err.message.includes("dry-run")) {
-      throw err;
-    }
-    // Otherwise, system.dryRun is likely unavailable on this chain —
-    // log a warning and proceed without the safety net.
-    console.warn(
-      `[materios-sdk] system.dryRun unavailable, skipping pre-flight check: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  }
-
-  // ── Broadcast the signed extrinsic ───────────────────────────────────
-  return new Promise<ReceiptSubmitResult>((resolve, reject) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    signed.send(({ status, dispatchError, txHash: extrinsicHash }: any) => {
-      if (dispatchError) {
-        if (dispatchError.isModule) {
-          const decoded = api.registry.findMetaError(dispatchError.asModule);
-          reject(
-            new Error(
-              `Receipt dispatch failed: ${decoded.section}.${decoded.name}: ${decoded.docs.join(" ")}`,
-            ),
-          );
-        } else {
-          reject(new Error(`Receipt dispatch failed: ${dispatchError.toString()}`));
-        }
-        return;
-      }
-      if (status.isInBlock) {
-        const blockHash = status.asInBlock.toHex();
-        const txHash = extrinsicHash ? extrinsicHash.toHex() : signed.hash.toHex();
-
-        // ── Post-submit storage confirmation ─────────────────────────
-        // Verify the receipt actually landed in on-chain storage.
-        // This catches silent dispatch failures that don't surface
-        // through the dispatchError callback (e.g. nonce consumed
-        // but extrinsic failed at execution).
-        const finalReceiptId = ensureHex(receiptId);
-
-        const confirmAndResolve = async () => {
-          let blockNumber = 0;
-          try {
-            const header = await api.rpc.chain.getHeader(blockHash);
-            blockNumber = header.number.toNumber();
-          } catch {
-            // Non-critical: block number is nice-to-have
-          }
-
-          let confirmed: boolean;
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const onChain = await (api.query as any).orinqReceipts.receipts(finalReceiptId);
-            confirmed = !onChain.isEmpty;
-          } catch (storageErr) {
-            // If we can't query storage, we can't confirm — warn but don't fail
-            console.warn(
-              `[materios-sdk] Could not verify receipt in storage: ${
-                storageErr instanceof Error ? storageErr.message : String(storageErr)
-              }`,
-            );
-            // Resolve without confirmation info so we don't break existing callers
-            resolve({
-              receiptId: finalReceiptId,
-              blockHash,
-              blockNumber,
-              txHash,
-            });
-            return;
-          }
-
-          if (!confirmed) {
-            reject(
-              new Error(
-                `Receipt ${finalReceiptId} was included in block ${blockHash} (tx: ${txHash}) ` +
-                `but was NOT found in on-chain storage. The extrinsic likely failed at dispatch. ` +
-                `Check the block events for details. No receipt was stored — you may retry with a new submission.`,
-              ),
-            );
-            return;
-          }
-
-          resolve({
-            receiptId: finalReceiptId,
-            blockHash,
-            blockNumber,
-            txHash,
-            confirmed: true,
-            status: "submitted",
-          });
-        };
-
-        confirmAndResolve().catch((err) => {
-          reject(
-            new Error(
-              `Receipt post-submit confirmation failed: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            ),
-          );
-        });
-      }
-    }).catch(reject);
-  });
+  return submit<ReceiptSubmitResult>(provider, {
+    id: receiptId,
+    expected,
+    build,
+    result: ({ blockHash, blockNumber, txHash, reconciled }) => ({
+      receiptId, blockHash, blockNumber, ...(txHash ? { txHash } : {}), confirmed: true, status: "submitted",
+      ...(reconciled ? { reconciled } : {}),
+    }),
+  }, opts);
 }
 
 /**
@@ -567,35 +444,28 @@ export async function submitCertifiedReceipt(
     // exactOptionalPropertyTypes forbids assigning `undefined`, so spread.
     ...(input.schemaHash !== undefined ? { schemaHash: input.schemaHash } : {}),
   };
-  const submitResult = await submitReceipt(provider, receiptInput);
-
-  // 4. Wait for certification
-  const certResult = await waitForCertification(
-    provider,
-    submitResult.receiptId,
-    opts.certificationPollOpts,
-  );
-
+  const submitResult = await submitReceipt(provider, receiptInput, opts.submissionOpts);
   const result: CertifiedReceiptResult = {
     receiptId: submitResult.receiptId,
     blockHash: submitResult.blockHash,
     blockNumber: submitResult.blockNumber,
+    ...(submitResult.reconciled !== undefined ? { reconciled: submitResult.reconciled } : {}),
     ...(submitResult.txHash !== undefined ? { txHash: submitResult.txHash } : {}),
     ...(submitResult.confirmed !== undefined ? { confirmed: submitResult.confirmed } : {}),
-    certHash: certResult.certHash,
-    leafHash: certResult.leafHash,
   };
 
-  // 5. Optionally wait for anchor
-  if (opts.waitForAnchor) {
-    const anchorResult = await waitForAnchor(
-      provider,
-      certResult,
-      { ...opts.anchorPollOpts, blobGateway: opts.blobGateway },
-    );
-    result.anchor = anchorResult;
+  // 4. Wait for certification, 5. optionally for the anchor. The receipt is on chain from here,
+  // so a failed wait carries the result instead of inviting a resubmission.
+  try {
+    const certResult = await waitForCertification(provider, submitResult.receiptId, opts.certificationPollOpts);
+    result.certHash = certResult.certHash;
+    result.leafHash = certResult.leafHash;
+    if (opts.waitForAnchor) {
+      result.anchor = await waitForAnchor(provider, certResult, { ...opts.anchorPollOpts, blobGateway: opts.blobGateway });
+    }
+  } catch (cause) {
+    throw new MateriosCertificationError({ ...result }, { cause });
   }
-
   return result;
 }
 
