@@ -191,12 +191,66 @@ export async function generateMerkleProof(
   };
 }
 
-/**
- * Verify a Merkle proof.
- */
-export async function verifyMerkleProof(proof: MerkleProof): Promise<boolean> {
-  let currentHash = proof.leafHash;
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
 
+const isSha256Hex = (value: unknown): value is string =>
+  typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+
+function isProof(value: unknown): value is MerkleProof {
+  return (
+    isRecord(value) &&
+    isSha256Hex(value.leafHash) &&
+    isSha256Hex(value.root) &&
+    Array.isArray(value.siblings) &&
+    value.siblings.every(
+      (sibling) => isRecord(sibling) && isSha256Hex(sibling.hash) && (sibling.position === "left" || sibling.position === "right")
+    )
+  );
+}
+
+/**
+ * The sibling positions on the path from leaf `index` in a tree of
+ * `leafCount` leaves, where the odd last node of a level moves up unpaired.
+ */
+function pathPositions(index: number, leafCount: number): Array<"left" | "right"> {
+  const positions: Array<"left" | "right"> = [];
+  for (let width = leafCount; width > 1; width = Math.ceil(width / 2)) {
+    if (index % 2 === 1) positions.push("left");
+    else if (index + 1 < width) positions.push("right");
+    index = Math.floor(index / 2);
+  }
+  return positions;
+}
+
+/**
+ * Verify a Merkle proof for a tree of `leafCount` leaves, a count the caller
+ * takes from an authenticated source such as the manifest's chunk list. The
+ * proof must follow exactly the path `generateMerkleProof` gives its
+ * `leafIndex` in such a tree, so neither the root nor an internal node passes
+ * as a leaf, except the root of a one-leaf tree, and every hash must be
+ * lowercase SHA-256 hex. The caller must still compare `proof.root` with the
+ * authenticated root.
+ */
+export async function verifyMerkleProof(proof: MerkleProof, leafCount: number): Promise<boolean> {
+  if (
+    !isProof(proof) ||
+    !Number.isSafeInteger(leafCount) ||
+    !Number.isSafeInteger(proof.leafIndex) ||
+    proof.leafIndex < 0 ||
+    proof.leafIndex >= leafCount
+  ) {
+    return false;
+  }
+  const positions = pathPositions(proof.leafIndex, leafCount);
+  if (
+    positions.length !== proof.siblings.length ||
+    proof.siblings.some((sibling, level) => sibling.position !== positions[level])
+  ) {
+    return false;
+  }
+
+  let currentHash = proof.leafHash;
   for (const sibling of proof.siblings) {
     if (sibling.position === "left") {
       currentHash = await merkleNode(sibling.hash, currentHash);

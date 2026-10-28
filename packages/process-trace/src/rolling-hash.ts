@@ -43,10 +43,12 @@
 import {
   sha256StringHex,
   canonicalize,
+  normalizeJson,
 } from "@fluxpointstudios/orynq-sdk-core/utils";
 
 import type { RollingHashState, TraceEvent, TraceSpan } from "./types.js";
 import { HASH_DOMAIN_PREFIXES } from "./types.js";
+import { isRecord } from "./guards.js";
 
 // -----------------------------------------------------------------------------
 // Constants
@@ -99,6 +101,15 @@ export async function computeEventHash(event: TraceEvent): Promise<string> {
   const prefixedData = HASH_DOMAIN_PREFIXES.event + canonical;
 
   return sha256StringHex(prefixedData);
+}
+
+/**
+ * The event as {@link computeEventHash} commits to it, carrying `hash`.
+ * Canonicalization drops null-valued keys, so they are not committed and are
+ * not returned.
+ */
+export function committedEvent(event: TraceEvent, hash: string): TraceEvent {
+  return { ...normalizeJson(removeHashField(event)), hash } as TraceEvent;
 }
 
 /**
@@ -295,6 +306,12 @@ function constantTimeCompare(a: string, b: string): boolean {
  * model/data manifest to the committed root (issue #59): swapping the manifest
  * after commitment changes the recomputed root and fails verification.
  *
+ * The root commits to the events (through `rollingHash`), the span hashes and
+ * the manifest pin only. The run's `id`, `agentId`, `status`, `startedAt`,
+ * `endedAt`, `durationMs`, `metadata`, `schemaVersion`, `nextSeq`,
+ * `nextSpanSeq` and `strict` are not committed: `verifyBundle()` checks that
+ * the public view repeats them, but they need their own authentication.
+ *
  * @param rollingHash - The final rolling hash from all events
  * @param spans - Array of trace spans (must have hash field populated)
  * @param modelManifestHash - Optional pre-execution model-manifest commitment to bind
@@ -372,4 +389,36 @@ export async function computeEventHashes(
 export async function getGenesisHash(): Promise<string> {
   const state = await initRollingHash();
   return state.currentHash;
+}
+
+export async function verifyEventHashes(events: TraceEvent[]): Promise<string[]> {
+  const errors: string[] = [];
+
+  for (const [index, event] of events.entries()) {
+    if (!isRecord(event)) {
+      errors.push(`Event at index ${index} is not an object`);
+      continue;
+    }
+    if (!event.hash) {
+      errors.push(`Event ${event.id} (seq ${event.seq}) is missing hash`);
+      continue;
+    }
+
+    try {
+      const computedHash = await computeEventHash(event);
+      if (computedHash !== event.hash) {
+        errors.push(
+          `Event hash mismatch for ${event.id} (seq ${event.seq}): ` +
+            `expected ${event.hash}, computed ${computedHash}`
+        );
+      }
+    } catch (error) {
+      errors.push(
+        `Failed to compute hash for event ${event.id}: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  return errors;
 }

@@ -157,6 +157,9 @@ importers:
       vitest:
         specifier: 4.1.12
         version: 4.1.12(@types/node@20.19.39)(@vitest/coverage-v8@4.1.12)(vite@8.3.3)
+      ws:
+        specifier: 8.21.0
+        version: 8.21.0
 
   packages/anchors-midnight:
     dependencies:
@@ -714,6 +717,9 @@ importers:
       '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
+      '@noble/hashes':
+        specifier: ^1.8.0
+        version: 1.8.0
     devDependencies:
       '@polkadot/util':
         specifier: ^13.5.0

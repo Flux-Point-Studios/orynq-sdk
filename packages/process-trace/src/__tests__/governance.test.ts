@@ -2,7 +2,7 @@
  * @summary Tests for governance attestations (issue #58).
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   createTrace,
   addSpan,
@@ -378,5 +378,49 @@ describe("eip712 governance verification", () => {
     });
     expect(summaries[0]!.authorized).toBe(true);
     expect(summaries[0]!.verified).toBe(false);
+  });
+
+  it("matches the pinned types without consulting the host collation", async () => {
+    const signedAt = "2026-07-11T00:00:00.000Z";
+    const run = await createTrace({ agentId: "agent-1" });
+    const span = addSpan(run, { name: "approve", visibility: "public" });
+    await addEvent<"governance-attestation">(run, span.id, {
+      kind: "governance-attestation",
+      visibility: "public",
+      role: "compliance",
+      policyRef: "sha256:policy",
+      decisionRef: "decision-1",
+      attestor: { address: EIP712_ATTESTOR, signatureScheme: "eip712" },
+      signature: "0x" + "ab".repeat(65),
+      signedAt,
+      eip712: {
+        domain: EIP712_DOMAIN,
+        // The same fields as the pinned type, listed in another order.
+        types: { Attestation: [...EIP712_TYPES.Attestation].reverse() },
+        primaryType: "Attestation",
+        message: { role: "compliance", policyRef: "sha256:policy", decisionRef: "decision-1", runId: run.id, signedAt },
+      },
+    });
+    await closeSpan(run, span.id);
+    const bundle = await finalizeTrace(run);
+    const verifier = createEip712GovernanceVerifier({
+      verifyTypedData: async () => true,
+      expectedDomain: EIP712_DOMAIN,
+      expectedPrimaryType: "Attestation",
+      expectedTypes: EIP712_TYPES,
+      nowMs: Date.parse(signedAt),
+    });
+    const collation = vi.spyOn(String.prototype, "localeCompare").mockImplementation(() => {
+      throw new Error("Protocol ordering must not use host collation");
+    });
+    try {
+      const summaries = await verifyGovernanceAttestations(bundle, {
+        verifiers: { eip712: verifier },
+        authorizedAttestors: [EIP712_ATTESTOR],
+      });
+      expect(summaries[0]!.verified).toBe(true);
+    } finally {
+      collation.mockRestore();
+    }
   });
 });

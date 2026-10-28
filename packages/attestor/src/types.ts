@@ -1,6 +1,6 @@
 /**
  * Core types for the PoI Attestor package.
- * Provides TEE attestation backends for hardware-rooted trust.
+ * Defines hardware attestation data; bundled verification is unavailable.
  */
 
 // === TEE Types ===
@@ -178,6 +178,7 @@ export interface GpuCcAttestation extends AttestationBundle {
 export interface VerificationResult {
   valid: boolean;
   teeType: TeeType;
+  errorCode?: "VERIFICATION_UNAVAILABLE";
 
   checks: VerificationChecks;
 

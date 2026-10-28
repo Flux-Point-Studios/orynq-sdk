@@ -49,7 +49,7 @@
     {
       "id": "process-trace",
       "name": "Process trace",
-      "desc": "Cryptographic process-trace library: schemas, hashing, Merkle trees, bundles and selective disclosure \u2014 the Proof-of-Intent core.",
+      "desc": "Cryptographic process-trace library: schemas, hashing, v1 Merkle trees and synchronous inclusion proofs, bundles whose span and event IDs are unique and whose public view and top-level model-manifest copies must equal the committed run's (redacted hashes in any order, so every locale's and release's bundles verify), and selective disclosure that reads its input once, recomputes event and span hashes, returns only committed fields, binds full entries to any caller-authenticated leaf hash for their span ID, and verifies membership entries only against caller-authenticated leaf hashes and leaf count.",
       "kind": "toolkit",
       "paths": [
         "packages/process-trace"
@@ -60,7 +60,7 @@
     {
       "id": "anchors-materios",
       "name": "Materios anchor client",
-      "desc": "Blob upload through the gateway (body-bound, single-use upload signatures), receipt submission, certification polling, Merkle proofs and end-to-end receipt verification against Materios.",
+      "desc": "Blob upload through the gateway (body-bound, single-use upload signatures), receipt and anchor submission with bounded WebSocket waits, an exact retry contract (node refusals not-landed, per-block storage reconciliation, finalized-storage resolveInclusion, duplicate-free retries), connection replacement, certification polling, Merkle proofs and end-to-end receipt verification against Materios.",
       "kind": "toolkit",
       "paths": [
         "packages/anchors-materios"
@@ -349,7 +349,7 @@
     {
       "id": "poi-attestor-backends",
       "name": "PoI attestor backends",
-      "desc": "TEE attestation backends providing hardware-rooted trust for Proof-of-Intent.",
+      "desc": "TEE attestation types, policy helpers and backend scaffolding. Nitro and SEV-SNP verification fail closed as unavailable; no bundled backend authenticates hardware evidence.",
       "kind": "toolkit",
       "paths": [
         "packages/attestor"
@@ -360,7 +360,7 @@
     {
       "id": "flight-recorder",
       "name": "Flight recorder",
-      "desc": "Streaming flight recorder with chunking, compression and encryption for long-running traces.",
+      "desc": "Streaming flight recorder with chunking, compression and encryption for long-running traces, and chunk Merkle proofs verified against an authenticated leaf count.",
       "kind": "toolkit",
       "paths": [
         "packages/flight-recorder"
@@ -412,7 +412,7 @@
     {
       "id": "midnight-prover",
       "name": "Midnight prover",
-      "desc": "Local Compact capability and exact rolling proofs plus immutable keyed on-chain presentations, caller-wallet post and checkpoint-rooted verifyPosted using authenticated execution. Compiled ledger-8 keys and initial state are pinned and ship in npm. Mainnet-deployed on 2026-10-27: the immutable deployment and both synthetic presentations have independent fresh-consumer consensus-verified receipts. PROOF_DEPLOYMENTS exports deeply frozen mainnet and preprod addresses, deployment transaction hashes and block hints, code hashes and initial-state digests. Legacy publication is explicitly simulation-only. Each call reads current state, budgets gas with headroom. Malformed event digests produce value-free errors; verification trust roots bind their genesis. Verification refuses unknown network labels and requires both authenticated transactions to encode the requested network. Direct posting retries only definitive node transcript refusals (1010/custom 104) or local pre-submission gas exhaustion, at most three attempts, with ambiguous sends preserved.",
+      "desc": "Local Compact capability and exact rolling proofs plus immutable keyed on-chain presentations, caller-wallet post and checkpoint-rooted verifyPosted using authenticated execution. Compiled ledger-8 keys and initial state are pinned and ship in npm. Mainnet-deployed on 2026-10-27: the immutable deployment and both synthetic presentations have independent fresh-consumer consensus-verified receipts. PROOF_DEPLOYMENTS exports deeply frozen mainnet and preprod addresses, deployment transaction hashes and block hints, code hashes and initial-state digests. Legacy publication is explicitly simulation-only; simulation disclosure proofs that carry a span without its events, or events without their span, verify only as membership of a caller-authenticated leaf and are reported unbound otherwise. Each call reads current state, budgets gas with headroom. Malformed event digests produce value-free errors; verification trust roots bind their genesis. Verification refuses unknown network labels and requires both authenticated transactions to encode the requested network. Direct posting retries only definitive node transcript refusals (1010/custom 104) or local pre-submission gas exhaustion, at most three attempts, with ambiguous sends preserved.",
       "kind": "engine",
       "paths": [
         "packages/midnight-prover"

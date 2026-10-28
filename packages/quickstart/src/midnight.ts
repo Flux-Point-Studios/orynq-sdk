@@ -105,8 +105,9 @@ function bundleEntry(path: string, bundle: TraceBundle): EntryHashes {
   return { rootHash: bundle.rootHash, manifestHash: bundle.manifestHash!, merkleRoot: bundle.merkleRoot };
 }
 
+// The model manifest hash the bundle's root commits to; readBundle has verified it.
 const bundleAttribute = (path: string, bundle: TraceBundle) =>
-  bundle.modelManifestHash ?? fail(`${path} pins no model manifest, so it has no attribute for a hidden anchor`);
+  bundle.privateRun.modelManifestHash ?? fail(`${path} pins no model manifest, so it has no attribute for a hidden anchor`);
 
 function writeReport(io: CliIo, report: VerifyReport, bundleGiven: boolean) {
   const row = (label: string, value: string) => io.stdout.write(`  ${label.padEnd(11)} ${value}\n`);

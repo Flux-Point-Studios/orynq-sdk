@@ -17,7 +17,9 @@ import {
   verifyReport,
   type MidnightSource,
 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import type { TraceBundle } from "@fluxpointstudios/orynq-sdk-process-trace";
+import {
+  addEvent, addSpan, closeSpan, createBundle, createManifest, createTrace, finalizeTrace, type TraceBundle,
+} from "@fluxpointstudios/orynq-sdk-process-trace";
 import { midnightCommand, type MidnightDeps } from "../midnight.js";
 import { fixture } from "../../../anchors-midnight/src/__tests__/anchor-chain.js";
 import { replaySource } from "../../../anchors-midnight/src/__tests__/recorded-source.js";
@@ -148,6 +150,36 @@ describe("orynq verify midnight", () => {
     const kind = await run(["verify", "midnight", bundlePath, "--tx", user.anchors.public.txHash, "--hidden", ...at(served), "--author", author()]);
     expect(kind.stdout).toContain("the anchor is kind 1, not kind 2");
     expect(kind.code).toBe(1);
+  });
+
+  it("takes --hidden's attribute from the committed run, so a bundle without the top-level copy verifies", async () => {
+    const committedOnly = { ...(await createBundle(structuredClone(bundle.privateRun))), manifestHash: bundle.manifestHash! };
+    expect(committedOnly.modelManifestHash).toBeUndefined();
+    const path = join(dir, "committed-only.json");
+    writeFileSync(path, JSON.stringify(committedOnly));
+    const hidden = await run(["verify", "midnight", user.anchors.hidden.txHash, "--bundle", path, "--hidden", ...at(served), "--author", author()]);
+    expect([hidden.code, line(hidden.stdout, "status"), line(hidden.stdout, "matched")]).toEqual([0, "valid", "committedAttribute"]);
+  });
+
+  it("refuses a bundle whose top-level model manifest hash is not its committed run's", async () => {
+    // Another trace pinned to another model, carrying this anchor's attribute at the top level only.
+    const other = await createTrace({ agentId: "other", manifest: { modelHash: `sha256:${"ee".repeat(32)}`, framework: "openai", modelId: "other-model" } });
+    const span = addSpan(other, { name: "work" });
+    await addEvent<"observation">(other, span.id, { kind: "observation", observation: "something else entirely", visibility: "public" });
+    await closeSpan(other, span.id);
+    const finalized = await finalizeTrace(other);
+    const { manifest } = await createManifest(finalized);
+    const forged = { ...structuredClone(finalized), manifestHash: manifest.manifestHash!, modelManifestHash: bundle.modelManifestHash };
+    expect(forged.privateRun.modelManifestHash).not.toBe(bundle.modelManifestHash);
+    const path = join(dir, "top-level.json");
+    writeFileSync(path, JSON.stringify(forged));
+    served.requests.length = 0;
+    const verified = await run(["verify", "midnight", user.anchors.hidden.txHash, "--bundle", path, "--hidden", ...at(served), "--author", author()]);
+    expect(verified.code).toBe(1);
+    expect(verified.stderr).toMatch(/top-level\.json is not an intact trace bundle: .*modelManifestHash/);
+    expect(served.requests).toEqual([]);
+    const planned = await run(["anchor", "midnight", "--network", "preprod", "--key", keyPath, "--bundle", path, "--hidden"]);
+    expect([planned.code, planned.stdout]).toEqual([1, ""]);
   });
 
   it("refuses a tampered bundle before any source is asked", async () => {

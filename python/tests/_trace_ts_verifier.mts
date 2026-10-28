@@ -26,4 +26,5 @@ process.stdout.write(JSON.stringify({
   publicView: rebuilt.publicView,
   contentHash: createHash("sha256").update(canonicalize(rebuilt.publicView)).digest("hex"),
   defaults: DEFAULT_EVENT_VISIBILITY,
+  collation: new Intl.Collator().resolvedOptions().locale,
 }));

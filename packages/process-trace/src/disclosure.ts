@@ -13,8 +13,10 @@
  * - Full Disclosure: Prove existence AND reveal span data with events
  *
  * Disclosure Modes:
- * - "membership": Merkle proof only - proves span exists with specific hash
- *   without exposing the actual span data. Useful for compliance checks.
+ * - "membership": Merkle proof only - proves that a leaf is in the tree
+ *   without exposing the actual span data. The entry carries no span data, so
+ *   it binds a span id only when the verifier already holds that span's leaf
+ *   hash and the tree's leaf count from an authenticated source.
  * - "full": Merkle proof + span data + event data - allows verifier to
  *   recompute hashes and fully verify the span contents.
  *
@@ -40,7 +42,7 @@
  * // Membership proof only (no data exposure)
  * const membershipResult = await selectiveDisclose(bundle, ["span-2"], "membership");
  *
- * // Verify disclosure against anchor
+ * // Verify disclosure against anchor; read span data from the result
  * const verification = await verifyDisclosure(result, anchor.rootHash, anchor.merkleRoot);
  * if (!verification.valid) {
  *   console.error("Verification failed:", verification.errors);
@@ -60,10 +62,9 @@ import {
   generateMerkleProof,
   verifyMerkleProof,
   buildSpanMerkleTree,
-  computeSpanHash,
+  checkSpanData,
 } from "./merkle.js";
-import { HASH_DOMAIN_PREFIXES } from "./types.js";
-import { sha256StringHex } from "@fluxpointstudios/orynq-sdk-core/utils";
+import { isRecord, readOnce } from "./guards.js";
 
 // =============================================================================
 // DISCLOSURE REQUEST
@@ -86,6 +87,40 @@ export interface DisclosureRequest {
   bundleMerkleRoot: string;
   spanIds: string[];
   mode: DisclosureMode;
+}
+
+/**
+ * Facts the caller supplies to {@link verifyDisclosure} from a source it
+ * already trusts, never from the disclosure itself.
+ */
+export interface VerifyDisclosureOptions {
+  /**
+   * Merkle leaf hash for each span id. A membership entry verifies only for a
+   * span id listed here, and a full entry for a listed span id must hash to
+   * that leaf.
+   */
+  leafHashes?: Readonly<Record<string, string>>;
+  /**
+   * Number of leaves in the anchored tree. Required for membership entries;
+   * when given, every proof must use an index below it and a path as deep as
+   * that tree.
+   */
+  leafCount?: number;
+}
+
+/** A verified disclosure entry. Span data is present for full entries, holding only committed fields. */
+export interface VerifiedDisclosedSpan {
+  spanId: string;
+  span?: TraceSpan;
+  events?: TraceEvent[];
+}
+
+/** Result of {@link verifyDisclosure}. */
+export interface DisclosureVerificationResult {
+  valid: boolean;
+  errors: string[];
+  /** Verified entries in disclosure order; empty unless `valid`. */
+  spans: VerifiedDisclosedSpan[];
 }
 
 // =============================================================================
@@ -153,23 +188,16 @@ export function getSpanIndex(bundle: TraceBundle, spanId: string): number {
 }
 
 /**
- * Get events belonging to a specific span from the bundle.
+ * Get events belonging to a specific span.
  *
- * @param bundle - The trace bundle
+ * @param eventMap - The bundle's events by ID
  * @param span - The span to get events for
  * @returns Array of events sorted by seq
  */
-function getSpanEventsFromBundle(
-  bundle: TraceBundle,
+function getSpanEventsFromMap(
+  eventMap: ReadonlyMap<string, TraceEvent>,
   span: TraceSpan
 ): TraceEvent[] {
-  // Create event lookup map
-  const eventMap = new Map<string, TraceEvent>();
-  for (const event of bundle.privateRun.events) {
-    eventMap.set(event.id, event);
-  }
-
-  // Get events for this span and sort by seq
   return span.eventIds
     .map((id) => eventMap.get(id))
     .filter((e): e is TraceEvent => e !== undefined)
@@ -235,12 +263,13 @@ export function createDisclosureRequest(
  * proceeding with disclosure generation.
  *
  * @param bundle - The trace bundle containing all data
- * @param spanIds - IDs of spans to disclose
+ * @param spanIds - IDs of spans to disclose, at least one, each once
  * @param mode - Disclosure mode:
  *   - "membership": Merkle proof only (proves span exists with hash)
  *   - "full": Merkle proof + span data + event data
  * @returns Promise resolving to DisclosureResult with proofs and optionally data
- * @throws Error if any requested spanId does not exist in the bundle
+ * @throws Error if spanIds is empty, repeats an ID, or names a span that does
+ *   not exist in the bundle
  *
  * @example
  * ```typescript
@@ -260,14 +289,25 @@ export async function selectiveDisclose(
   spanIds: string[],
   mode: DisclosureMode
 ): Promise<DisclosureResult> {
-  // Validate all spanIds exist in bundle
-  const missingSpanIds: string[] = [];
-  for (const spanId of spanIds) {
-    if (!canDisclose(bundle, spanId)) {
-      missingSpanIds.push(spanId);
+  if (spanIds.length === 0) {
+    throw new Error("A disclosure requires at least one span ID");
+  }
+  if (new Set(spanIds).size !== spanIds.length) {
+    throw new Error("A disclosure cannot name the same span ID more than once");
+  }
+
+  // Sort spans by spanSeq for consistent indexing; an ID resolves to its first span
+  const sortedSpans = [...bundle.privateRun.spans].sort(
+    (a, b) => a.spanSeq - b.spanSeq
+  );
+  const indexById = new Map<string, number>();
+  for (const [index, span] of sortedSpans.entries()) {
+    if (!indexById.has(span.id)) {
+      indexById.set(span.id, index);
     }
   }
 
+  const missingSpanIds = spanIds.filter((spanId) => !indexById.has(spanId));
   if (missingSpanIds.length > 0) {
     throw new Error(
       `Cannot disclose spans that do not exist in bundle: ${missingSpanIds.join(", ")}`
@@ -279,30 +319,14 @@ export async function selectiveDisclose(
     bundle.privateRun.spans,
     bundle.privateRun.events
   );
-
-  // Sort spans by spanSeq for consistent indexing
-  const sortedSpans = [...bundle.privateRun.spans].sort(
-    (a, b) => a.spanSeq - b.spanSeq
-  );
-
-  // Create a map for quick span lookup
-  const spanMap = new Map<string, TraceSpan>();
-  for (const span of sortedSpans) {
-    spanMap.set(span.id, span);
-  }
+  const eventMap = new Map(bundle.privateRun.events.map((event) => [event.id, event]));
 
   // Generate disclosures for each requested span
   const disclosedSpans: DisclosureResult["disclosedSpans"] = [];
 
   for (const spanId of spanIds) {
-    // Get the span and its index
-    const span = spanMap.get(spanId);
-    if (!span) {
-      // This should not happen since we validated above, but handle defensively
-      throw new Error(`Span "${spanId}" not found after validation`);
-    }
-
-    const spanIndex = getSpanIndex(bundle, spanId);
+    const spanIndex = indexById.get(spanId)!;
+    const span = sortedSpans[spanIndex]!;
 
     // Generate Merkle proof
     const proof = generateMerkleProof(merkleTree, spanIndex);
@@ -310,7 +334,7 @@ export async function selectiveDisclose(
     // Build the disclosed span entry
     if (mode === "full") {
       // Full mode: include span data and events
-      const events = getSpanEventsFromBundle(bundle, span);
+      const events = getSpanEventsFromMap(eventMap, span);
 
       disclosedSpans.push({
         spanId,
@@ -346,13 +370,26 @@ export async function selectiveDisclose(
  * This function performs comprehensive verification of a disclosure result:
  * 1. Checks that rootHash matches the expected value from the anchor
  * 2. Checks that merkleRoot matches the expected value from the anchor
- * 3. For each disclosed span, verifies the Merkle proof
- * 4. For full mode disclosures, verifies span hash recomputation
+ * 3. Requires at least one entry, at most one entry per span ID and no event
+ *    ID disclosed twice
+ * 4. For full entries, recomputes every event hash, the span hash and the
+ *    leaf, verifies the Merkle proof, and, when `options.leafHashes` lists the
+ *    span ID, requires that leaf
+ * 5. For membership entries, which carry no span data, requires the caller's
+ *    authenticated leaf hash for the span ID and the tree's leaf count, then
+ *    verifies the Merkle proof against both
+ *
+ * The disclosure is read once, as JSON data, before any check, so changes to
+ * it after the call cannot reach the result. Read span data from the result's
+ * `spans`, which holds only committed fields, rather than from the disclosure
+ * itself.
  *
  * @param disclosure - The disclosure result to verify
  * @param expectedRootHash - Expected root hash from anchor/on-chain commitment
  * @param expectedMerkleRoot - Expected Merkle root from anchor/on-chain commitment
- * @returns Promise resolving to verification result with validity status and errors
+ * @param options - Authenticated leaf hashes and leaf count; membership entries
+ *   are reported as unbound without them
+ * @returns Promise resolving to the verification result and the verified spans
  *
  * @example
  * ```typescript
@@ -364,7 +401,7 @@ export async function selectiveDisclose(
  * );
  *
  * if (verification.valid) {
- *   console.log("Disclosure verified successfully");
+ *   console.log("Disclosed span:", verification.spans[0]?.span?.name);
  * } else {
  *   console.error("Verification failed:", verification.errors);
  * }
@@ -373,9 +410,34 @@ export async function selectiveDisclose(
 export async function verifyDisclosure(
   disclosure: DisclosureResult,
   expectedRootHash: string,
-  expectedMerkleRoot: string
-): Promise<{ valid: boolean; errors: string[] }> {
+  expectedMerkleRoot: string,
+  options: VerifyDisclosureOptions = {}
+): Promise<DisclosureVerificationResult> {
+  const read = readOnce(disclosure);
+  if ("error" in read) {
+    return { valid: false, errors: [`Disclosure is ${read.error}`], spans: [] };
+  }
+  const result = await verifyDisclosureData(read.data, expectedRootHash, expectedMerkleRoot, options);
+  const valid = result.errors.length === 0;
+  return { valid, errors: result.errors, spans: valid ? result.spans : [] };
+}
+
+/** {@link verifyDisclosure} on plain data that nothing else can change while it runs. */
+async function verifyDisclosureData(
+  disclosure: unknown,
+  expectedRootHash: string,
+  expectedMerkleRoot: string,
+  options: VerifyDisclosureOptions
+): Promise<{ errors: string[]; spans: VerifiedDisclosedSpan[] }> {
+  if (!isRecord(disclosure) || !Array.isArray(disclosure.disclosedSpans)) {
+    return { errors: ["Disclosure must be an object with a disclosedSpans array"], spans: [] };
+  }
   const errors: string[] = [];
+  const spans: VerifiedDisclosedSpan[] = [];
+
+  if (disclosure.mode !== "full" && disclosure.mode !== "membership") {
+    errors.push(`Unknown disclosure mode "${String(disclosure.mode)}"`);
+  }
 
   // Check rootHash matches expected
   if (disclosure.rootHash !== expectedRootHash) {
@@ -393,64 +455,147 @@ export async function verifyDisclosure(
     );
   }
 
-  // Verify each disclosed span
-  for (const disclosed of disclosure.disclosedSpans) {
-    // Verify the Merkle proof for this span
-    const proofValid = await verifyMerkleProof(disclosed.proof);
+  if (disclosure.disclosedSpans.length === 0) {
+    errors.push("Disclosure contains no spans");
+  }
 
-    if (!proofValid) {
-      errors.push(
-        `Merkle proof verification failed for span "${disclosed.spanId}"`
-      );
-      continue; // Skip further checks for this span
+  const seen = new Set<string>();
+  const disclosedEventIds = new Set<unknown>();
+  for (const disclosed of disclosure.disclosedSpans as unknown[]) {
+    if (!isRecord(disclosed) || typeof disclosed.spanId !== "string") {
+      errors.push("Disclosure entry must be an object with a string spanId");
+      continue;
     }
-
-    // Verify proof rootHash matches expected
-    if (disclosed.proof.rootHash !== expectedMerkleRoot) {
-      errors.push(
-        `Proof root hash mismatch for span "${disclosed.spanId}": ` +
-          `proof has "${disclosed.proof.rootHash}", expected "${expectedMerkleRoot}"`
-      );
+    const { spanId } = disclosed;
+    if (seen.has(spanId)) {
+      errors.push(`Duplicate disclosure for span "${spanId}"`);
+      continue;
     }
+    seen.add(spanId);
 
-    // For full mode with data, verify span hash recomputation
-    if (disclosure.mode === "full" && disclosed.span && disclosed.events) {
-      const spanVerification = await verifySpanDisclosure(
-        {
-          spanId: disclosed.spanId,
-          proof: disclosed.proof,
-          span: disclosed.span,
-          events: disclosed.events,
-        },
-        expectedMerkleRoot
-      );
-
-      if (!spanVerification.valid) {
-        errors.push(...spanVerification.errors);
+    if (disclosure.mode === "full" || disclosed.span !== undefined || disclosed.events !== undefined) {
+      const entry = await verifyFullEntry(disclosed, expectedMerkleRoot, options);
+      errors.push(...entry.errors);
+      if (entry.committed !== undefined) {
+        for (const { id } of entry.committed.events) {
+          if (disclosedEventIds.has(id)) {
+            errors.push(`Event ID "${id}" is disclosed in more than one span`);
+          }
+          disclosedEventIds.add(id);
+        }
+        spans.push({ spanId, ...entry.committed });
+      }
+    } else {
+      const entryErrors = await membershipErrors(spanId, disclosed.proof, expectedMerkleRoot, options);
+      errors.push(...entryErrors);
+      if (entryErrors.length === 0) {
+        spans.push({ spanId });
       }
     }
   }
 
-  return {
-    valid: errors.length === 0,
-    errors,
-  };
+  return { errors, spans };
+}
+
+/** The leaf hash the caller authenticated for `spanId`, if any. */
+function authenticatedLeaf(leafHashes: VerifyDisclosureOptions["leafHashes"], spanId: string): string | undefined {
+  return leafHashes !== undefined && Object.hasOwn(leafHashes, spanId) ? leafHashes[spanId] : undefined;
+}
+
+/**
+ * Bind a span-data entry to its spanId, to the leaf hash the caller
+ * authenticated for that spanId if any, and to the expected root, then check
+ * its data.
+ */
+async function verifyFullEntry(
+  disclosed: Record<string, unknown>,
+  expectedMerkleRoot: string,
+  { leafHashes, leafCount }: VerifyDisclosureOptions
+): Promise<{ errors: string[]; committed?: { span: TraceSpan; events: TraceEvent[] } }> {
+  const { spanId, proof, span, events } = disclosed;
+  if (!isRecord(span) || !Array.isArray(events)) {
+    return { errors: [`Disclosure for span "${String(spanId)}" requires span and events`] };
+  }
+  const errors: string[] = [];
+  if (span.id !== spanId) {
+    errors.push(`Span ID mismatch for "${String(spanId)}": body has "${String(span.id)}"`);
+  }
+  const check = await checkSpanData(proof as MerkleProof, span, events, leafCount);
+  errors.push(...check.errors);
+  if (isRecord(proof) && proof.rootHash !== expectedMerkleRoot) {
+    errors.push(
+      `Proof root hash mismatch for span "${String(spanId)}": ` +
+        `proof has "${String(proof.rootHash)}", expected "${expectedMerkleRoot}"`
+    );
+  }
+  const pinned = authenticatedLeaf(leafHashes, String(spanId));
+  if (pinned !== undefined && (!isRecord(proof) || proof.leafHash !== pinned)) {
+    errors.push(`Disclosed span "${String(spanId)}" does not hash to its authenticated leaf hash`);
+  }
+  return errors.length === 0 && check.committed !== undefined
+    ? { errors, committed: check.committed }
+    : { errors };
+}
+
+/**
+ * A membership entry has no span data to hash, so only the caller's
+ * authenticated leaf hash binds its span ID, and only the authenticated leaf
+ * count rules out padded indices and internal nodes presented as leaves.
+ */
+async function membershipErrors(
+  spanId: string,
+  proof: unknown,
+  expectedMerkleRoot: string,
+  { leafHashes, leafCount }: VerifyDisclosureOptions
+): Promise<string[]> {
+  const leafHash = authenticatedLeaf(leafHashes, spanId);
+  if (leafHash === undefined) {
+    return [
+      `Membership entry for span "${spanId}" is unbound: span id not authenticated. ` +
+        "Pass its leaf hash from an authenticated source in options.leafHashes.",
+    ];
+  }
+  if (leafCount === undefined) {
+    return [
+      `Membership entry for span "${spanId}" is unbound: the tree's leaf count is not authenticated. ` +
+        "Pass it in options.leafCount.",
+    ];
+  }
+  if (!isRecord(proof) || proof.leafHash !== leafHash) {
+    return [`Membership proof for span "${spanId}" does not prove its authenticated leaf hash`];
+  }
+  const errors: string[] = [];
+  if (!(await verifyMerkleProof(proof as unknown as MerkleProof, leafCount))) {
+    errors.push(`Merkle proof verification failed for span "${spanId}"`);
+  }
+  if (proof.rootHash !== expectedMerkleRoot) {
+    errors.push(
+      `Proof root hash mismatch for span "${spanId}": ` +
+        `proof has "${String(proof.rootHash)}", expected "${expectedMerkleRoot}"`
+    );
+  }
+  return errors;
 }
 
 /**
  * Verify a single span's disclosure (with data).
  *
  * This function performs detailed verification of a disclosed span:
- * 1. Recomputes the span hash from the provided span and events
- * 2. Computes the expected leaf hash from the span hash
- * 3. Verifies the leaf hash matches the proof's leafHash
- * 4. Verifies the Merkle proof is valid
+ * 1. Requires the span body's ID to equal `spanId`
+ * 2. Recomputes every event hash, then the span hash from the provided span
+ *    and events; the span may carry only header fields and a `hash` equal to
+ *    the recomputed one
+ * 3. Verifies the resulting leaf hash matches the proof's leafHash
+ * 4. Verifies the Merkle proof is valid and ends at `expectedMerkleRoot`
  *
- * This is used for "full" mode disclosures where span data is provided.
+ * This is used for "full" mode disclosures where span data is provided. The
+ * entry is read once, before any check. When valid, `span` and `events` hold
+ * the committed data in `seq` order.
  *
  * @param disclosed - Object containing spanId, proof, span data, and events
  * @param expectedMerkleRoot - Expected Merkle root from anchor/on-chain commitment
- * @returns Promise resolving to verification result with validity status and errors
+ * @returns Promise resolving to verification result with validity status, errors
+ *   and, when valid, the committed span and events
  *
  * @example
  * ```typescript
@@ -477,51 +622,14 @@ export async function verifySpanDisclosure(
     events: TraceEvent[];
   },
   expectedMerkleRoot: string
-): Promise<{ valid: boolean; errors: string[] }> {
-  const errors: string[] = [];
-
-  // Sort events by seq for deterministic hash computation
-  const sortedEvents = [...disclosed.events].sort((a, b) => a.seq - b.seq);
-
-  // Get event hashes in seq order
-  const eventHashes = sortedEvents.map((e) => e.hash ?? "");
-
-  // Recompute span hash from span + events
-  const computedSpanHash = await computeSpanHash(disclosed.span, eventHashes);
-
-  // Compute expected leaf hash: H("poi-trace:leaf:v1|" + spanHash)
-  const computedLeafHash = await sha256StringHex(
-    HASH_DOMAIN_PREFIXES.leaf + computedSpanHash
-  );
-
-  // Verify leaf hash matches proof.leafHash
-  if (computedLeafHash !== disclosed.proof.leafHash) {
-    errors.push(
-      `Span hash verification failed for "${disclosed.spanId}": ` +
-        `computed leaf hash "${computedLeafHash}" does not match ` +
-        `proof leaf hash "${disclosed.proof.leafHash}". ` +
-        `The span data may have been modified.`
-    );
+): Promise<{ valid: boolean; errors: string[]; span?: TraceSpan; events?: TraceEvent[] }> {
+  const read = readOnce(disclosed);
+  if ("error" in read) {
+    return { valid: false, errors: [`Disclosure entry is ${read.error}`] };
   }
-
-  // Verify Merkle proof
-  const proofValid = await verifyMerkleProof(disclosed.proof);
-  if (!proofValid) {
-    errors.push(
-      `Merkle proof verification failed for span "${disclosed.spanId}"`
-    );
+  if (!isRecord(read.data)) {
+    return { valid: false, errors: ["Disclosure entry must be an object"] };
   }
-
-  // Verify proof rootHash matches expected
-  if (disclosed.proof.rootHash !== expectedMerkleRoot) {
-    errors.push(
-      `Proof root hash mismatch for span "${disclosed.spanId}": ` +
-        `proof has "${disclosed.proof.rootHash}", expected "${expectedMerkleRoot}"`
-    );
-  }
-
-  return {
-    valid: errors.length === 0,
-    errors,
-  };
+  const { errors, committed } = await verifyFullEntry(read.data, expectedMerkleRoot, {});
+  return committed !== undefined ? { valid: true, errors, ...committed } : { valid: false, errors };
 }

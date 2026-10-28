@@ -21,7 +21,10 @@
 import {
   sha256StringHex,
   canonicalize,
+  bytesToHex,
+  normalizeJson,
 } from "@fluxpointstudios/orynq-sdk-core/utils";
+import { sha256 } from "@noble/hashes/sha256";
 
 import type {
   TraceMerkleTree,
@@ -30,19 +33,54 @@ import type {
   TraceEvent,
 } from "./types.js";
 import { HASH_DOMAIN_PREFIXES } from "./types.js";
+import { committedEvent, verifyEventHashes } from "./rolling-hash.js";
+import { isRecord, readOnce, repeated } from "./guards.js";
 
 // =============================================================================
 // SPAN HASH COMPUTATION
 // =============================================================================
 
+/** The span header fields {@link computeSpanHash} commits to. */
+const SPAN_HEADER_KEYS = [
+  "id", "spanSeq", "parentSpanId", "name", "status", "visibility",
+  "startedAt", "endedAt", "durationMs", "eventIds", "childSpanIds", "metadata",
+] as const satisfies ReadonlyArray<keyof TraceSpan>;
+
+const SPAN_KEYS: ReadonlySet<string> = new Set([...SPAN_HEADER_KEYS, "hash"]);
+
+function spanHeader(span: TraceSpan): Record<string, unknown> {
+  const header: Record<string, unknown> = {};
+  for (const key of SPAN_HEADER_KEYS) {
+    if (span[key] !== undefined) {
+      header[key] = span[key];
+    }
+  }
+  return header;
+}
+
+/** Keys of `span` that are neither header fields nor `hash`; no span hash commits to them. */
+export function uncommittedSpanKeys(span: object): string[] {
+  return Object.keys(span).filter((key) => !SPAN_KEYS.has(key));
+}
+
+/**
+ * The span as {@link computeSpanHash} commits to it, carrying `hash`: header
+ * fields only, without the null-valued keys canonicalization drops.
+ */
+export function committedSpan(span: TraceSpan, hash: string): TraceSpan {
+  return { ...normalizeJson(spanHeader(span)), hash } as unknown as TraceSpan;
+}
+
 /**
  * Compute the hash for a span including its event hashes.
  *
  * The span hash is computed as:
- * H("poi-trace:span:v1|" + canon(spanHeaderWithoutHash) + "|" + eventHash1 + "|" + eventHash2 + ...)
+ * H("poi-trace:span:v1|" + canon(spanHeader) + "|" + eventHash1 + "|" + eventHash2 + ...)
  *
- * The span header includes all fields except the `hash` field itself.
- * Event hashes are concatenated in sequence order, joined by "|".
+ * The span header is `id`, `spanSeq`, `parentSpanId`, `name`, `status`,
+ * `visibility`, `startedAt`, `endedAt`, `durationMs`, `eventIds`,
+ * `childSpanIds` and `metadata`; any other key, including `hash`, is not
+ * committed. Event hashes are concatenated in sequence order, joined by "|".
  *
  * @param span - The span to compute hash for
  * @param eventHashes - Array of event hashes in sequence order
@@ -55,34 +93,8 @@ export async function computeSpanHash(
   span: TraceSpan,
   eventHashes: string[]
 ): Promise<string> {
-  // Extract span header (all fields except hash)
-  const spanHeader: Omit<TraceSpan, "hash"> = {
-    id: span.id,
-    spanSeq: span.spanSeq,
-    name: span.name,
-    status: span.status,
-    visibility: span.visibility,
-    startedAt: span.startedAt,
-    eventIds: span.eventIds,
-    childSpanIds: span.childSpanIds,
-  };
-
-  // Include optional fields only if they exist
-  if (span.parentSpanId !== undefined) {
-    (spanHeader as Record<string, unknown>).parentSpanId = span.parentSpanId;
-  }
-  if (span.endedAt !== undefined) {
-    (spanHeader as Record<string, unknown>).endedAt = span.endedAt;
-  }
-  if (span.durationMs !== undefined) {
-    (spanHeader as Record<string, unknown>).durationMs = span.durationMs;
-  }
-  if (span.metadata !== undefined) {
-    (spanHeader as Record<string, unknown>).metadata = span.metadata;
-  }
-
   // Canonicalize the span header
-  const canonicalHeader = canonicalize(spanHeader, { removeNulls: true });
+  const canonicalHeader = canonicalize(spanHeader(span), { removeNulls: true });
 
   // Build the hash input: prefix + canon(header) + "|" + eventHashes joined by "|"
   let hashInput = HASH_DOMAIN_PREFIXES.span + canonicalHeader;
@@ -229,11 +241,44 @@ async function buildTreeFromLeaves(
 // MERKLE PROOF GENERATION
 // =============================================================================
 
+const utf8 = new TextEncoder();
+
+/**
+ * Every level of each tree, leaves first, computed once so that later proofs
+ * from the same tree cost O(log n). An entry is reused only while the tree
+ * still holds the same leaf array, at the same length, under the same root.
+ */
+const treeLevels = new WeakMap<TraceMerkleTree, { leaves: string[]; levels: string[][] }>();
+
+function levelsOf(tree: TraceMerkleTree): string[][] {
+  const cached = treeLevels.get(tree);
+  if (
+    cached?.leaves === tree.leafHashes &&
+    cached.levels[0]!.length === tree.leafHashes.length &&
+    cached.levels[cached.levels.length - 1]![0] === tree.rootHash
+  ) {
+    return cached.levels;
+  }
+  const levels = [[...tree.leafHashes]];
+  for (let level = levels[0]!; level.length > 1; level = levels[levels.length - 1]!) {
+    const next: string[] = [];
+    for (let i = 0; i < level.length; i += 2) {
+      const left = level[i]!;
+      const right = level[i + 1] ?? left;
+      next.push(bytesToHex(sha256(utf8.encode(HASH_DOMAIN_PREFIXES.node + left + "|" + right))));
+    }
+    levels.push(next);
+  }
+  treeLevels.set(tree, { leaves: tree.leafHashes, levels });
+  return levels;
+}
+
 /**
  * Generate a Merkle proof for a specific span by index.
  *
  * The proof contains the sibling hashes along the path from the leaf to the root,
  * with position hints ("left" or "right") indicating which side each sibling is on.
+ * The first proof from a tree computes its levels; later proofs reuse them.
  *
  * @param tree - The complete Merkle tree
  * @param spanIndex - 0-indexed position of the span in the tree
@@ -249,80 +294,28 @@ export function generateMerkleProof(
   spanIndex: number
 ): MerkleProof {
   // Validate index bounds
-  if (spanIndex < 0 || spanIndex >= tree.leafCount) {
+  if (!Number.isSafeInteger(spanIndex) || spanIndex < 0 || spanIndex >= tree.leafCount) {
     throw new Error(
       `Span index ${spanIndex} is out of bounds (0-${tree.leafCount - 1})`
     );
-  }
-
-  // Handle single leaf case - no siblings needed
-  if (tree.leafCount === 1) {
-    const leafHash = tree.leafHashes[0];
-    if (leafHash === undefined) {
-      throw new Error("Unexpected empty leaf hash array in tree");
-    }
-    return {
-      leafHash,
-      leafIndex: 0,
-      siblings: [],
-      rootHash: tree.rootHash,
-    };
-  }
-
-  const siblings: Array<{ hash: string; position: "left" | "right" }> = [];
-
-  // We need to rebuild the tree structure to get sibling hashes
-  // Start with leaf level and work up
-  let currentLevel = [...tree.leafHashes];
-  let currentIndex = spanIndex;
-
-  while (currentLevel.length > 1) {
-    // Get sibling index and position
-    const isLeftChild = currentIndex % 2 === 0;
-    const siblingIndex = isLeftChild ? currentIndex + 1 : currentIndex - 1;
-
-    // Handle odd-leaf case: if no sibling exists, it's a duplicate of current
-    let siblingHash: string;
-    if (siblingIndex >= currentLevel.length) {
-      // This is the duplicate case - sibling is the same as current
-      const currentHash = currentLevel[currentIndex];
-      if (currentHash === undefined) {
-        throw new Error("Unexpected undefined hash at current index");
-      }
-      siblingHash = currentHash;
-    } else {
-      const hash = currentLevel[siblingIndex];
-      if (hash === undefined) {
-        throw new Error("Unexpected undefined hash at sibling index");
-      }
-      siblingHash = hash;
-    }
-
-    // Position is where the sibling sits relative to current node
-    siblings.push({
-      hash: siblingHash,
-      position: isLeftChild ? "right" : "left",
-    });
-
-    // Build next level (synchronously since we already have hashes)
-    // We need to compute the next level to continue traversal
-    const nextLevel: string[] = [];
-    for (let i = 0; i < currentLevel.length; i += 2) {
-      const left = currentLevel[i] ?? "";
-      const right = i + 1 < currentLevel.length ? (currentLevel[i + 1] ?? left) : left;
-      // We don't actually need to compute the hash here, just track structure
-      nextLevel.push(`${left}|${right}`); // Placeholder for structure tracking
-    }
-
-    // Move up the tree
-    currentLevel = nextLevel;
-    currentIndex = Math.floor(currentIndex / 2);
   }
 
   const leafHash = tree.leafHashes[spanIndex];
   if (leafHash === undefined) {
     throw new Error(`Unexpected undefined leaf hash at index ${spanIndex}`);
   }
+
+  const levels = levelsOf(tree);
+  const siblings: MerkleProof["siblings"] = [];
+  let index = spanIndex;
+  for (const level of levels.slice(0, -1)) {
+    const isLeftChild = index % 2 === 0;
+    // The odd last node of a level is paired with itself.
+    const siblingHash = level[isLeftChild ? index + 1 : index - 1] ?? level[index]!;
+    siblings.push({ hash: siblingHash, position: isLeftChild ? "right" : "left" });
+    index = Math.floor(index / 2);
+  }
+
   return {
     leafHash,
     leafIndex: spanIndex,
@@ -335,14 +328,44 @@ export function generateMerkleProof(
 // MERKLE PROOF VERIFICATION
 // =============================================================================
 
+function isMerkleProof(value: unknown): value is MerkleProof {
+  return (
+    isRecord(value) &&
+    typeof value.leafHash === "string" &&
+    typeof value.rootHash === "string" &&
+    typeof value.leafIndex === "number" &&
+    Array.isArray(value.siblings) &&
+    value.siblings.every((sibling) =>
+      isRecord(sibling) &&
+      typeof sibling.hash === "string" &&
+      (sibling.position === "left" || sibling.position === "right"))
+  );
+}
+
+/** Levels above the leaves in a v1 tree of `leafCount` leaves. */
+function treeDepth(leafCount: number): number {
+  let depth = 0;
+  for (let width = leafCount; width > 1; width = Math.ceil(width / 2)) {
+    depth++;
+  }
+  return depth;
+}
+
 /**
  * Verify a Merkle proof against the expected root.
  *
  * Starting from the leaf hash, the proof is recomputed by combining with
  * sibling hashes according to their positions. The final computed root
- * must match the expected rootHash in the proof.
+ * must match the expected rootHash in the proof, and `leafIndex` must be the
+ * index the sibling directions encode.
+ *
+ * A v1 proof does not carry the tree's leaf count, so on its own it cannot
+ * rule out a padded index past the last leaf or an internal node presented as
+ * a leaf. Pass `leafCount` from an authenticated source to require an index
+ * below it and a path exactly as deep as that tree.
  *
  * @param proof - The Merkle proof to verify
+ * @param leafCount - Authenticated number of leaves in the tree
  * @returns Promise resolving to true if the proof is valid
  *
  * @example
@@ -351,12 +374,27 @@ export function generateMerkleProof(
  *   throw new Error("Merkle proof verification failed");
  * }
  */
-export async function verifyMerkleProof(proof: MerkleProof): Promise<boolean> {
+export async function verifyMerkleProof(proof: MerkleProof, leafCount?: number): Promise<boolean> {
+  if (!isMerkleProof(proof) || !Number.isSafeInteger(proof.leafIndex) || proof.leafIndex < 0) {
+    return false;
+  }
+  if (
+    leafCount !== undefined &&
+    !(Number.isSafeInteger(leafCount) && proof.leafIndex < leafCount &&
+      proof.siblings.length === treeDepth(leafCount))
+  ) {
+    return false;
+  }
+  let index = proof.leafIndex;
   // Start with the leaf hash
   let currentHash = proof.leafHash;
 
   // Traverse up the tree using the sibling hashes
   for (const sibling of proof.siblings) {
+    if (sibling.position !== (index % 2 === 0 ? "right" : "left")) {
+      return false;
+    }
+    index = Math.floor(index / 2);
     // Combine hashes based on sibling position
     let left: string;
     let right: string;
@@ -378,15 +416,81 @@ export async function verifyMerkleProof(proof: MerkleProof): Promise<boolean> {
   }
 
   // Verify computed root matches expected root
-  return currentHash === proof.rootHash;
+  return index === 0 && currentHash === proof.rootHash;
+}
+
+/**
+ * Check that span data hashes to the proof's leaf and that the proof is valid:
+ * every event hash is recomputed from its body, no event ID repeats, and the
+ * span may carry only header fields and a `hash` equal to the recomputed one.
+ * Without errors, the result holds the span and its events, in `seq` order, as
+ * committed. Callers pass data read once (see `readOnce`).
+ */
+export async function checkSpanData(
+  proof: MerkleProof,
+  span: unknown,
+  events: unknown,
+  leafCount?: number
+): Promise<{ errors: string[]; committed?: { span: TraceSpan; events: TraceEvent[] } }> {
+  if (!isRecord(span) || !Array.isArray(events)) {
+    return { errors: ["Span data requires a span object and an events array"] };
+  }
+  const spanId = String(span.id);
+  const errors = await verifyEventHashes(events as TraceEvent[]);
+  const extra = uncommittedSpanKeys(span);
+  if (extra.length > 0) {
+    errors.push(`Span "${spanId}" carries fields its hash does not commit to: ${extra.join(", ")}`);
+  }
+  for (const id of repeated(events.filter(isRecord).map((event) => event.id))) {
+    errors.push(`Span "${spanId}" discloses event ID "${String(id)}" more than once`);
+  }
+  if (errors.length > 0) {
+    return { errors };
+  }
+
+  const sortedEvents = [...(events as TraceEvent[])].sort((a, b) => a.seq - b.seq);
+  let spanHash: string;
+  try {
+    spanHash = await computeSpanHash(span as unknown as TraceSpan, sortedEvents.map((e) => e.hash ?? ""));
+  } catch (error) {
+    return {
+      errors: [`Failed to compute hash for span "${spanId}": ${error instanceof Error ? error.message : String(error)}`],
+    };
+  }
+  if (span.hash !== undefined && span.hash !== spanHash) {
+    errors.push(`Span hash mismatch for "${spanId}": span has ${String(span.hash)}, computed ${spanHash}`);
+  }
+  const leafHash = await sha256StringHex(HASH_DOMAIN_PREFIXES.leaf + spanHash);
+  if (!isMerkleProof(proof)) {
+    errors.push(`Merkle proof for span "${spanId}" is malformed`);
+  } else if (leafHash !== proof.leafHash) {
+    errors.push(
+      `Span hash verification failed for "${spanId}": computed leaf hash "${leafHash}" ` +
+        `does not match proof leaf hash "${proof.leafHash}". The span data may have been modified.`
+    );
+  } else if (!(await verifyMerkleProof(proof, leafCount))) {
+    errors.push(`Merkle proof verification failed for span "${spanId}"`);
+  }
+  if (errors.length > 0) {
+    return { errors };
+  }
+  return {
+    errors,
+    committed: {
+      span: committedSpan(span as unknown as TraceSpan, spanHash),
+      events: sortedEvents.map((event) => committedEvent(event, event.hash!)),
+    },
+  };
 }
 
 /**
  * Verify a span's inclusion using its proof and data.
  *
- * This function recomputes the span hash from the provided span and events,
- * then verifies that the resulting leaf hash matches the proof and that
- * the proof is valid against the expected root.
+ * This function recomputes every event hash and the span hash from the
+ * provided data, then verifies that the resulting leaf hash matches the proof
+ * and that the proof is valid against its root. The span may carry only the
+ * header fields its hash commits to, plus a `hash` equal to the recomputed one,
+ * and no event ID may repeat. The input is read once, before any check.
  *
  * @param proof - The Merkle proof for the span
  * @param span - The span data to verify
@@ -404,25 +508,10 @@ export async function verifySpanInclusion(
   span: TraceSpan,
   events: TraceEvent[]
 ): Promise<boolean> {
-  // Sort events by seq to get deterministic order
-  const sortedEvents = [...events].sort((a, b) => a.seq - b.seq);
-
-  // Get event hashes in seq order
-  const eventHashes = sortedEvents.map((e) => e.hash ?? "");
-
-  // Recompute the span hash
-  const spanHash = await computeSpanHash(span, eventHashes);
-
-  // Compute the expected leaf hash
-  const computedLeafHash = await sha256StringHex(
-    HASH_DOMAIN_PREFIXES.leaf + spanHash
-  );
-
-  // Verify the leaf hash matches what's in the proof
-  if (computedLeafHash !== proof.leafHash) {
+  const read = readOnce({ proof, span, events });
+  if ("error" in read || !isRecord(read.data)) {
     return false;
   }
-
-  // Verify the Merkle proof itself
-  return verifyMerkleProof(proof);
+  const data = read.data;
+  return (await checkSpanData(data.proof as MerkleProof, data.span, data.events)).errors.length === 0;
 }
