@@ -9,7 +9,12 @@ const STOP = new Error("receipt captured");
 function capturingProvider() {
   const seen: unknown[][] = [];
   const api = { tx: { orinqReceipts: { submitReceipt: (...args: unknown[]) => { seen.push(args); throw STOP; } } } };
-  const provider = { getApi: () => api, getKeypair: () => ({ address: "5Fixture", sign: () => new Uint8Array(64) }) } as unknown as MateriosProvider;
+  const provider = {
+    inclusionTimeoutMs: 120_000,
+    connection: async () => api,
+    getApi: () => api,
+    getKeypair: () => ({ address: "5Fixture", sign: () => new Uint8Array(64) }),
+  } as unknown as MateriosProvider;
   return { provider, seen };
 }
 const slot = (args: unknown[] | undefined, index: number) => `0x${Buffer.from(args![index] as number[]).toString("hex")}`;

@@ -24,16 +24,27 @@ export interface MateriosAnchorConfig {
   rpcUrl: string;
   /** Signer URI (e.g. "//Alice" for dev, or seed phrase) */
   signerUri: string;
-  /** Request timeout in milliseconds */
+  /** Connection readiness budget in ms (default: 30000). */
+  connectTimeoutMs?: number;
+  /** Total submission budget in ms, including recovery (default: 120000). */
+  inclusionTimeoutMs?: number;
+  /** Legacy field; unused. Use connectTimeoutMs / inclusionTimeoutMs. */
   timeout?: number;
-  /** Number of retry attempts */
+  /** Legacy field; unused. */
   retries?: number;
+}
+
+export interface TimeoutOptions {
+  /** Total operation budget in milliseconds. */
+  timeoutMs?: number;
 }
 
 /** Result of anchor submission to Materios */
 export interface MateriosAnchorResult {
-  /** Block hash containing the anchor extrinsic */
+  /** Inclusion block hash, or finalized storage observation block when reconciled. */
   blockHash: string;
+  /** Recovery proved storage at blockHash; that block need not contain this extrinsic. */
+  reconciled?: boolean;
   /** Extrinsic index within the block */
   extrinsicIndex?: number;
   /** Anchor ID (H256 key in storage) */
@@ -104,10 +115,12 @@ export interface ReceiptInput {
 export interface ReceiptSubmitResult {
   /** Receipt ID (H256) stored on-chain */
   receiptId: string;
-  /** Block hash containing the extrinsic */
+  /** Inclusion block hash, or storage observation block when reconciled. */
   blockHash: string;
   /** Block number */
   blockNumber: number;
+  /** Recovery proved storage at blockHash/blockNumber, rather than observing inclusion. */
+  reconciled?: boolean;
   /** Transaction (extrinsic) hash. Present when the tx was broadcast. */
   txHash?: string;
   /**
@@ -125,6 +138,25 @@ export interface ReceiptSubmitResult {
    */
   status?: "submitted" | "failed";
 }
+
+/** How finalized storage settled an `inclusion-unknown` submission. */
+export type InclusionResolution =
+  | {
+    /** A finalized block holds the matching record. */
+    status: "landed";
+    id: string;
+    blockHash: string;
+    blockNumber: number;
+  }
+  | {
+    /** The extrinsic can never land; resubmit with the same id. */
+    status: "not-landed";
+    /** `expired`: finalized past its mortality end; `nonce-consumed`: its nonce was used by another extrinsic. */
+    reason: "expired" | "nonce-consumed";
+    id: string;
+    blockHash: string;
+    blockNumber: number;
+  };
 
 /** On-chain receipt record. */
 export interface ReceiptRecord {
@@ -293,6 +325,7 @@ export interface BatchMetadata {
 
 export interface CertifiedReceiptOptions {
   blobGateway: BlobGatewayConfig;
+  submissionOpts?: TimeoutOptions;
   waitForAnchor?: boolean;
   certificationPollOpts?: PollOptions;
   anchorPollOpts?: PollOptions & { scanWindow?: number };
@@ -302,6 +335,7 @@ export interface CertifiedReceiptResult {
   receiptId: string;
   blockHash: string;
   blockNumber: number;
+  reconciled?: boolean;
   /** Transaction (extrinsic) hash from the receipt submission. */
   txHash?: string;
   /** Whether the receipt was confirmed in on-chain storage after inclusion. */
