@@ -98,7 +98,7 @@ export class SubmissionReceipt {
     const url = `${base}/receipts/${this.contentHash}`;
     const headers: Record<string, string> = {
       accept: "application/json",
-      "user-agent": "orynq-observe-js/0.1.0",
+      "user-agent": "orynq-observe-js/0.1.3",
     };
     if (opts.apiKey) headers["authorization"] = `Bearer ${opts.apiKey}`;
     const f = opts.fetchImpl ?? fetch;
@@ -249,7 +249,7 @@ export async function submitObservation(
   const headers: Record<string, string> = {
     authorization: `Bearer ${opts.apiKey}`,
     "content-type": "application/json",
-    "user-agent": "orynq-observe-js/0.1.0",
+    "user-agent": "orynq-observe-js/0.1.3",
     "x-schema-version": SCHEMA_VERSION,
   };
 

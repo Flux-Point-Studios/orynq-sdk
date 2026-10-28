@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-hydra-batcher",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "High-frequency L2 commitment lane using Cardano Hydra for PoI",
   "type": "module",
   "main": "dist/index.js",

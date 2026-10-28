@@ -15,7 +15,7 @@ export function createOrynqServer() {
 
   const server = new McpServer({
     name: "orynq-mcp",
-    version: "0.1.0",
+    version: "0.7.1",
   });
 
   registerAllTools(server, store, config);

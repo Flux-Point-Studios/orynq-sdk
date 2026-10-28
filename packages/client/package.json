@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-client",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Main PoI client with auto-pay functionality for dual-protocol commerce",
   "type": "module",
   "main": "./dist/index.cjs",

@@ -188,7 +188,7 @@ void isMateriosPaymentPayload;
 // Version constant — bumped alongside the `version` in package.json.
 // Kept in sync manually; the build does NOT auto-stamp it (tsup doesn't
 // have a built-in version-injector and we don't want a postinstall script).
-export const VERSION = "0.1.0";
+export const VERSION = "0.1.3";
 
 // Type-only re-exports require the types to be referenced somewhere for
 // the tsc cli to keep them in the .d.ts. The `type` re-exports above

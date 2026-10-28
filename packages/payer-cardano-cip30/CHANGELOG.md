@@ -1,5 +1,12 @@
 # @fluxpointstudios/orynq-sdk-payer-cardano-cip30
 
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies [14bb540]
+  - @fluxpointstudios/orynq-sdk-core@0.4.0
+
 ## 0.2.0
 
 ### Minor Changes

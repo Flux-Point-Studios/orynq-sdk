@@ -61,4 +61,4 @@ export { createSigningProxy } from "./signing-proxy.js";
 export type { SigningProxy, SigningProxyOptions, JwsAlg } from "./signing-proxy.js";
 
 /** Package version. */
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.2";

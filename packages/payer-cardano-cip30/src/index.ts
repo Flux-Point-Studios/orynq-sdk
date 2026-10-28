@@ -169,6 +169,5 @@ export { BrowserWallet } from "@meshsdk/core";
 
 /**
  * Package version.
- * Updated automatically during build/release.
  */
-export const VERSION = "0.0.0";
+export const VERSION = "0.2.1";
