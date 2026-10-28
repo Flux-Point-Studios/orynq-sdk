@@ -21,6 +21,15 @@ for (const name of ["conduct", "core", "process-trace"]) {
   for (const file of ["package.json", "src", ...(name === "conduct" ? ["tests", "docs"] : [])]) cpSync(join(root, "packages", name, file), join(dest, file), { recursive: true });
   symlinkSync(join(root, "packages", name, "node_modules"), join(dest, "node_modules"), "dir");
 }
+// Each mutant must apply exactly once and produce source no other mutant produces, so counts are of distinct mutants.
+const produced = new Map();
+for (const [name, file, from, to] of selected) {
+  const original = readFileSync(join(layout, "packages/conduct/src", file), "utf8");
+  assert.equal(original.split(from).length, 2, `${name}: mutation must match exactly once`);
+  const key = `${file}\0${original.replace(from, to)}`;
+  assert.ok(!produced.has(key), `${name} duplicates ${produced.get(key)}`);
+  produced.set(key, name);
+}
 // Every conduct test file, including the child-process restart and composition suites, runs against each mutant.
 function run(name) {
   const report = join(work, `${name}.json`);
@@ -40,13 +49,12 @@ const baseline = run("baseline");
 assert.equal(baseline.exit, 0, `baseline failed; evidence: ${work}`);
 assert.equal(baseline.report.numFailedTests, 0);
 assert.equal(baseline.report.numPendingTests, 0);
-assert.ok(baseline.report.numPassedTests >= 317, `baseline ran ${baseline.report.numPassedTests} tests`);
+assert.ok(baseline.report.numPassedTests >= 334, `baseline ran ${baseline.report.numPassedTests} tests`);
 console.log(`BASELINE ${baseline.report.numPassedTests} passed in isolated harness layout`);
 const rows = [];
 for (const [name, file, from, to] of selected) {
   const path = join(layout, "packages/conduct/src", file);
   const original = readFileSync(path, "utf8");
-  assert.equal(original.split(from).length, 2, `${name}: mutation must match exactly once`);
   writeFileSync(path, original.replace(from, to));
   let result;
   try { result = run(name); } finally { writeFileSync(path, original); }

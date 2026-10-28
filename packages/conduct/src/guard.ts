@@ -6,8 +6,11 @@ import { decodeMandate, encodeMandate } from "./codec.js";
 import { EGRESS_ALLOWLIST, EGRESS_DENY_ALL, type MandateV1 } from "./types.js";
 import { actionDigestHex, validateAction, type GuardAction, type PaymentAction } from "./actions.js";
 import { guardEventData, snapshotGuardEvent, type GuardEvent } from "./events.js";
-import { GUARD_LOG_GENESIS, nextGuardLogHead, readGuardLogHead, type GuardHistory, type GuardLogHead } from "./log.js";
+import { formatGuardLogHead, GUARD_LOG_GENESIS, nextGuardLogHead, readGuardLogHead, sameGuardLogHead, type GuardHistory, type GuardLogHead } from "./log.js";
 import { DENIAL_RULES, type DenialReason, type GuardDecision } from "./verdict.js";
+
+/** Appends `event` only if the log's head is still `previous` (count and hash), and returns the head after the append. */
+export type GuardEventSink = (event: GuardEvent, previous: GuardLogHead) => GuardLogHead | PromiseLike<GuardLogHead>;
 
 export interface GuardConfig {
   readonly mandate: MandateV1;
@@ -15,8 +18,7 @@ export interface GuardConfig {
   readonly egressAllowlist?: readonly string[];
   /** `"fresh"` only for an empty event log; otherwise the complete ordered events and the head the log reports. */
   readonly history: "fresh" | GuardHistory;
-  /** Appends the event at log position `event.seq`; must fail without writing unless the log holds exactly `event.seq` events. */
-  readonly onEvent?: (event: GuardEvent) => unknown;
+  readonly onEvent?: GuardEventSink;
   readonly now?: () => bigint;
 }
 
@@ -30,17 +32,31 @@ export class GuardConfigError extends Error {
 interface Prepared {
   readonly event: GuardEvent;
   readonly decision: GuardDecision;
+  readonly previous: GuardLogHead;
   readonly head: GuardLogHead;
 }
 
 const deny = (reason: DenialReason): GuardDecision => ({ allowed: false, reason, rule: DENIAL_RULES[reason] });
+
+// A sink that skipped the append, wrote elsewhere or reports another position cannot return the head this append produces.
+function confirmHead(returned: unknown, expected: GuardLogHead): void {
+  let head: GuardLogHead;
+  try {
+    head = readGuardLogHead(returned as GuardLogHead);
+  } catch (cause) {
+    throw new Error("event sink must return the log head after the append", { cause });
+  }
+  if (!sameGuardLogHead(head, expected)) {
+    throw new Error(`event sink returned log head ${formatGuardLogHead(head)}, expected ${formatGuardLogHead(expected)}`);
+  }
+}
 
 function readHistory(history: unknown): { events: GuardEvent[]; head: GuardLogHead } {
   if (history === "fresh") return { events: [], head: GUARD_LOG_GENESIS };
   const message = 'history must be "fresh" or { events, head } from the guard event log';
   if (typeof history !== "object" || history === null) throw new GuardConfigError(message);
   const { events, head } = history as GuardHistory;
-  if (!Array.isArray(events) || typeof head !== "object" || head === null) throw new GuardConfigError(message);
+  if (!Array.isArray(events)) throw new GuardConfigError(message);
   try {
     return { events: Array.from(events), head: readGuardLogHead(head) };
   } catch (cause) {
@@ -102,7 +118,7 @@ export class MandateGuard {
         throw new GuardConfigError(`invalid recorded guard event: ${cause instanceof Error ? cause.message : "validation failed"}`, { cause });
       }
     }
-    if (this.logHead.count !== recorded.head.count || this.logHead.hash !== recorded.head.hash) {
+    if (!sameGuardLogHead(this.logHead, recorded.head)) {
       throw new GuardConfigError("recorded guard events do not end at the expected log head");
     }
   }
@@ -189,7 +205,7 @@ export class MandateGuard {
           reason: decision.reason,
           rule: decision.rule,
         });
-    return { event, decision, head: nextGuardLogHead(this.logHead, event) };
+    return { event, decision, previous: this.logHead, head: nextGuardLogHead(this.logHead, event) };
   }
 
   private reserve({ event, decision, head }: Prepared): void {
@@ -214,16 +230,19 @@ export class MandateGuard {
 
   enforce(action: GuardAction): GuardDecision {
     this.checkSink();
+    const sink = this.onEvent;
     const prepared = this.prepare(action, this.now());
-    if (prepared.event.actionKind === "payment" && !this.onEvent) throw new Error("payment enforcement requires an event sink");
+    if (prepared.event.actionKind === "payment" && !sink) throw new Error("payment enforcement requires an event sink");
     this.reserve(prepared);
+    if (!sink) return prepared.decision;
     try {
-      const result = this.onEvent?.(prepared.event);
+      const result: unknown = sink(prepared.event, prepared.previous);
       if (result !== null && (typeof result === "object" || typeof result === "function") && "then" in result && typeof result.then === "function") {
         // Observe the rejected sink while the synchronous caller receives a hard failure.
         void Promise.resolve(result).catch(cause => { this.sinkError = new Error("async event sink failed", { cause }); });
         throw new Error("promise-returning event sink requires enforceAsync");
       }
+      confirmHead(result, prepared.head);
     } catch (cause) {
       this.sinkError = new Error("event sink failed", { cause });
       throw cause;
@@ -233,12 +252,13 @@ export class MandateGuard {
 
   async enforceAsync(action: GuardAction): Promise<GuardDecision> {
     this.checkSink();
-    if (!this.onEvent) throw new Error("enforceAsync requires an event sink");
+    const sink = this.onEvent;
+    if (!sink) throw new Error("enforceAsync requires an event sink");
     const prepared = this.prepare(action, this.now());
     this.reserve(prepared);
     this.pending = true;
     try {
-      await this.onEvent(prepared.event);
+      confirmHead(await sink(prepared.event, prepared.previous), prepared.head);
       return prepared.decision;
     } catch (cause) {
       this.sinkError = new Error("event sink failed", { cause });

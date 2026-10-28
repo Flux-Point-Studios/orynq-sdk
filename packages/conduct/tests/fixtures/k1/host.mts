@@ -29,12 +29,12 @@ export async function runHost(repeat: number): Promise<void> {
     guard = new MandateGuard({
       mandate: mandate(), counterpartyAllowlist: ["supplier"], now: () => NOW,
       ...declaredHistory(log),
-      onEvent: event => {
-        log.append(event);
+      onEvent: (event, previous) => {
+        const head = log.append(event, previous);
         const recording = recordTrace(event);
         recordings.push(recording);
-        if (mode === "detached") return;
-        return recording;
+        if (mode === "detached") return head;
+        return recording.then(() => head);
       },
     } as GuardConfig);
   } catch (error) {

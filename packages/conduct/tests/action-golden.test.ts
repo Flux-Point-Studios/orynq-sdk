@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { computeEventHash } from "@fluxpointstudios/orynq-sdk-process-trace";
 import { ACTION_DIGEST_DOMAIN, actionDigestHex, buildAllowlistRoot, MandateGuard, mandateCommitmentHex, toProcessTraceEvent, type GuardAction, type GuardEvent, type MandateV1 } from "../src/index.js";
+import { record } from "./fixtures/record.js";
 
 const vectors = JSON.parse(readFileSync(new URL("./fixtures/action-vectors.json", import.meta.url), "utf8"));
 for (const v of vectors.cases) {
@@ -22,7 +23,7 @@ it("F5 trace data binds the exact action digest and mandate commitment for allow
     approvedMeasurementSetRoot: new Uint8Array(32), validityWindow: { notBefore: 0n, notAfter: 100_000n },
     disclosurePolicy: { committeeId: "c", threshold: 1n, committeeSize: 1n },
   };
-  const guard = new MandateGuard({ mandate, counterpartyAllowlist: ["supplier"], now: () => 7200n, history: "fresh", onEvent: e => events.push(e) });
+  const guard = new MandateGuard({ mandate, counterpartyAllowlist: ["supplier"], now: () => 7200n, history: "fresh", onEvent: record(events) });
   const action = { ...vectors.cases[0].action, amount: 6n, timestamp: 7200n } as GuardAction;
   expect(guard.enforce(action).allowed).toBe(true);
   expect(guard.enforce(action).allowed).toBe(false);

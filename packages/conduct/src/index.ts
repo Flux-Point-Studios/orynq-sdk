@@ -83,5 +83,5 @@ export {
 } from "./log.js";
 export type { GuardHistory, GuardLogHead } from "./log.js";
 export { GuardConfigError, MandateGuard } from "./guard.js";
-export type { GuardConfig } from "./guard.js";
+export type { GuardConfig, GuardEventSink } from "./guard.js";
 export type { DenialReason, GuardDecision } from "./verdict.js";

@@ -3,6 +3,7 @@ import {
   actionDigestHex, buildAllowlistRoot, compileMandatePredicate, decodeMandate, encodeMandate, MandateGuard, MemoryGuardLog,
   toProcessTraceEvent, type GuardAction, type GuardEvent, type MandateV1,
 } from "../src/index.js";
+import { record } from "./fixtures/record.js";
 
 const mandate = (): MandateV1 => ({
   schemaVersion: 1n, mandateId: new Uint8Array(16), principalDid: "did:key:z123456789", agentDid: "did:key:z987654321",
@@ -39,7 +40,7 @@ describe("caller-owned values are read once", () => {
 
   it("trace conversion validates and emits one snapshot of the event action", () => {
     const log = new MemoryGuardLog();
-    new MandateGuard({ mandate: mandate(), counterpartyAllowlist: ["supplier"], history: "fresh", now: () => 7200n, onEvent: e => log.append(e) }).enforce(pay);
+    new MandateGuard({ mandate: mandate(), counterpartyAllowlist: ["supplier"], history: "fresh", now: () => 7200n, onEvent: (e, previous) => log.append(e, previous) }).enforce(pay);
     const event = log.history().events[0]!;
     const source = { ...event, action: flipping(event.action, "amount", 6n, 7n) } as GuardEvent;
     let data: Record<string, unknown> | undefined;
@@ -76,12 +77,13 @@ describe("caller-owned values are read once", () => {
 describe("emitted events are immutable", () => {
   it("every sink receives a frozen event and a frozen action", () => {
     const seen: GuardEvent[] = [];
+    const append = record(seen);
     const guard = new MandateGuard({
       mandate: mandate(), counterpartyAllowlist: ["supplier"], history: "fresh", now: () => 7200n,
-      onEvent: event => {
-        seen.push(event);
+      onEvent: (event, previous) => {
         expect(() => { (event as { seq: bigint }).seq = 9n; }).toThrow(TypeError);
         expect(() => { (event.action as { timestamp: bigint }).timestamp = 0n; }).toThrow(TypeError);
+        return append(event, previous);
       },
     });
     guard.enforce(pay);

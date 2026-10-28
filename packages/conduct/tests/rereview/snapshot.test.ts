@@ -21,7 +21,7 @@ const pay = { kind: "payment", asset: "lovelace", amount: 1n, counterparty: "mal
 
 it("SNAPSHOT guard counterparties: second-pass member cannot become allowed", () => {
   const log = new MemoryGuardLog();
-  const g = new MandateGuard({ mandate: base(), counterpartyAllowlist: stateful("supplier", "mallory"), history: "fresh", now: () => 7200n, onEvent: e => log.append(e) });
+  const g = new MandateGuard({ mandate: base(), counterpartyAllowlist: stateful("supplier", "mallory"), history: "fresh", now: () => 7200n, onEvent: (e, previous) => log.append(e, previous) });
   expect(g.enforce(pay)).toMatchObject({ allowed: false, reason: "COUNTERPARTY_NOT_ALLOWED" });
 });
 it("SNAPSHOT guard egress: second-pass destination cannot become allowed", () => {

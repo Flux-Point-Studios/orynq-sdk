@@ -13,7 +13,7 @@ const log = new FileGuardLog(`${ledger}.log`);
 const guard = new MandateGuard({
   mandate: mandate(), counterpartyAllowlist: ["supplier"], now: () => NOW,
   ...declaredHistory(log),
-  onEvent: event => log.append(event),
+  onEvent: (event, previous) => log.append(event, previous),
 } as GuardConfig);
 while (cursor < queue.length) {
   const args = JSON.parse(queue[cursor]!);

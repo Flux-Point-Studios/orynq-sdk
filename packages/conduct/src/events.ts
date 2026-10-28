@@ -71,7 +71,8 @@ export function toProcessTraceEvent(
   return { id: context.id, seq: context.seq, timestamp: context.timestamp, ...customEventFields(event, context.visibility) };
 }
 
-// The returned promise settles when the trace holds the event; use the sink with enforceAsync.
+// The returned promise settles when the trace holds the event. It reports no log head, so a guard refuses it as its
+// only sink: compose it after a durable log append that returns the head, and use enforceAsync.
 export function processTraceSink(run: TraceRun, spanId: string, visibility: Visibility = "private"): (event: GuardEvent) => Promise<TraceEvent> {
   return event => addEvent(run, spanId, customEventFields(event, visibility));
 }

@@ -15,8 +15,10 @@ import {
   processTraceSink,
   toProcessTraceEvent,
   type GuardEvent,
+  type GuardEventSink,
   type MandateV1,
 } from "../src/index.js";
+import { record } from "./fixtures/record.js";
 
 function mandate(): MandateV1 {
   return {
@@ -39,16 +41,20 @@ const payment = { kind: "payment", asset: "lovelace", amount: 6n, counterparty: 
 describe("process-trace integration", () => {
   it("hashes an allowed action and a denial through the existing rolling trace", async () => {
     const events: CustomEvent[] = [];
+    const append = record();
     const guard = new MandateGuard({ now: () => 100n,
       mandate: mandate(),
       counterpartyAllowlist: ["supplier"],
       history: "fresh",
-      onEvent: (event) => events.push(toProcessTraceEvent(event, {
-        id: `550e8400-e29b-41d4-a716-${String(events.length).padStart(12, "0")}`,
-        seq: events.length + 7,
-        timestamp: "2026-10-27T00:00:00.000Z",
-        visibility: "private",
-      })),
+      onEvent: (event, previous) => {
+        events.push(toProcessTraceEvent(event, {
+          id: `550e8400-e29b-41d4-a716-${String(events.length).padStart(12, "0")}`,
+          seq: events.length + 7,
+          timestamp: "2026-10-27T00:00:00.000Z",
+          visibility: "private",
+        }));
+        return append(event, previous);
+      },
     });
     expect(guard.enforce(payment)).toEqual({ allowed: true });
     expect(guard.enforce(payment)).toMatchObject({ allowed: false, reason: "SPEND_CAP_EXCEEDED" });
@@ -70,7 +76,7 @@ describe("process-trace integration", () => {
 
   it("preserves uint64 action timestamps without converting them to a JavaScript Date", () => {
     const events: GuardEvent[] = [];
-    const explicit = new MandateGuard({ mandate: mandate(), counterpartyAllowlist: ["supplier"], history: "fresh", now: () => (1n << 64n) - 2n, onEvent: e => events.push(e) });
+    const explicit = new MandateGuard({ mandate: mandate(), counterpartyAllowlist: ["supplier"], history: "fresh", now: () => (1n << 64n) - 2n, onEvent: record(events) });
     explicit.enforce({ ...payment, timestamp: (1n << 64n) - 2n });
     const event = toProcessTraceEvent(events[0]!, { id: "test", seq: 0, timestamp: "2026-10-27T00:00:00.000Z", visibility: "private" });
     expect(event.data.timestamp).toBe("18446744073709551614");
@@ -82,7 +88,7 @@ describe("guard state integrity", () => {
   it("keeps the committed mandate stable when caller-owned fields are changed", () => {
     const original = mandate();
     const log = new MemoryGuardLog();
-    const guard = new MandateGuard({ now: () => 100n, mandate: original, counterpartyAllowlist: ["supplier"], history: "fresh", onEvent: e => log.append(e) });
+    const guard = new MandateGuard({ now: () => 100n, mandate: original, counterpartyAllowlist: ["supplier"], history: "fresh", onEvent: record([], log) });
     Object.assign(original.spendCap, { amount: 100n });
     expect(guard.enforce(payment)).toEqual({ allowed: true });
     expect(guard.enforce(payment)).toMatchObject({ allowed: false, reason: "SPEND_CAP_EXCEEDED" });
@@ -90,7 +96,7 @@ describe("guard state integrity", () => {
 
   it("rejects malformed actions before spending or emitting", () => {
     const events: GuardEvent[] = [];
-    const guard = new MandateGuard({ now: () => 100n, mandate: mandate(), counterpartyAllowlist: ["supplier"], history: "fresh", onEvent: (e) => events.push(e) });
+    const guard = new MandateGuard({ now: () => 100n, mandate: mandate(), counterpartyAllowlist: ["supplier"], history: "fresh", onEvent: record(events) });
     for (const amount of [-1n, 1n << 64n]) {
       expect(() => guard.enforce({ ...payment, amount })).toThrow();
       expect(() => guard.evaluate({ ...payment, amount })).toThrow();
@@ -103,7 +109,7 @@ describe("guard state integrity", () => {
 
   it("keeps emitted action data stable after caller mutation", () => {
     const events: GuardEvent[] = [];
-    const guard = new MandateGuard({ now: () => 100n, mandate: mandate(), counterpartyAllowlist: ["supplier"], history: "fresh", onEvent: (e) => events.push(e) });
+    const guard = new MandateGuard({ now: () => 100n, mandate: mandate(), counterpartyAllowlist: ["supplier"], history: "fresh", onEvent: record(events) });
     const action = { ...payment };
     guard.enforce(action);
     expect(() => Object.assign(action, { amount: 999n })).not.toThrow();
@@ -121,7 +127,11 @@ describe("process-trace sink adapter", () => {
     const recordTrace = processTraceSink(run, span.id);
     const guard = new MandateGuard({
       now: () => 100n, mandate: mandate(), counterpartyAllowlist: ["supplier"], history: "fresh",
-      onEvent: async event => { log.append(event); await recordTrace(event); },
+      onEvent: async (event, previous) => {
+        const head = log.append(event, previous);
+        await recordTrace(event);
+        return head;
+      },
     });
     return { run, span, log, guard };
   }
@@ -160,13 +170,59 @@ describe("process-trace sink adapter", () => {
     expect(log.history().events).toHaveLength(1);
   });
 
-  it("synchronous enforce refuses the adapter's promise and fails closed", async () => {
+  it("synchronous enforce refuses the composed sink's promise and fails closed", async () => {
     const run = await createTrace({ agentId: "agent" });
     const span = addSpan(run, { name: "conduct" });
-    const guard = new MandateGuard({ now: () => 100n, mandate: mandate(), counterpartyAllowlist: ["supplier"], history: "fresh", onEvent: processTraceSink(run, span.id) });
-    expect(() => guard.enforce(payment)).toThrow(/promise-returning event sink requires enforceAsync/);
+    const log = new MemoryGuardLog();
+    const recordTrace = processTraceSink(run, span.id);
+    const composed: GuardEventSink = async (event, previous) => {
+      const head = log.append(event, previous);
+      await recordTrace(event);
+      return head;
+    };
+    const guard = new MandateGuard({ now: () => 100n, mandate: mandate(), counterpartyAllowlist: ["supplier"], history: "fresh", onEvent: composed });
+    expect(() => guard.enforce(payment)).toThrow(/^promise-returning event sink requires enforceAsync$/);
     await new Promise(resolve => setImmediate(resolve));
     expect(() => guard.enforce(payment)).toThrow(/event sink failed; restore a new guard/);
+  });
+
+  it("used as the only sink it reports no log head, so the guard refuses and latches", async () => {
+    const run = await createTrace({ agentId: "agent" });
+    const span = addSpan(run, { name: "conduct" });
+    const guard = new MandateGuard({
+      now: () => 100n, mandate: mandate(), counterpartyAllowlist: ["supplier"], history: "fresh",
+      onEvent: processTraceSink(run, span.id) as unknown as GuardEventSink,
+    });
+    await expect(guard.enforceAsync(payment)).rejects.toThrow(/^event sink must return the log head after the append$/);
+    await expect(guard.enforceAsync(payment)).rejects.toThrow(/event sink failed; restore a new guard/);
+    expect(run.events).toHaveLength(1);
+  });
+
+  it("records into the span it was given", async () => {
+    const run = await createTrace({ agentId: "agent" });
+    const first = addSpan(run, { name: "first" });
+    const second = addSpan(run, { name: "second" });
+    const { log, guard } = await traced();
+    await guard.enforceAsync(payment);
+    const event = await processTraceSink(run, second.id)(log.history().events[0]!);
+    expect(second.eventIds).toEqual([event.id]);
+    expect(first.eventIds).toEqual([]);
+  });
+
+  it("PRIVACY: trace events keep exactly the visibility they were given", async () => {
+    const { log, guard } = await traced();
+    await guard.enforceAsync(payment);
+    const event = log.history().events[0]!;
+    for (const visibility of ["private", "secret", "public"] as const) {
+      expect(toProcessTraceEvent(event, { ...ctx, visibility }).visibility).toBe(visibility);
+      const run = await createTrace({ agentId: "agent" });
+      const span = addSpan(run, { name: "conduct" });
+      await expect(processTraceSink(run, span.id, visibility)(event)).resolves.toMatchObject({ visibility });
+      expect(run.events.map(e => e.visibility)).toEqual([visibility]);
+    }
+    const run = await createTrace({ agentId: "agent" });
+    const span = addSpan(run, { name: "conduct" });
+    await expect(processTraceSink(run, span.id)(event)).resolves.toMatchObject({ visibility: "private" });
   });
 
   it("refuses a guard event with a non-string denial reason", async () => {
@@ -175,8 +231,8 @@ describe("process-trace sink adapter", () => {
     const denial = log.history().events[0]! as Extract<GuardEvent, { type: "orynq.conduct.guard.denial.v1" }>;
     const run = await createTrace({ agentId: "agent" });
     const span = addSpan(run, { name: "conduct" });
-    const record = processTraceSink(run, span.id);
-    expect(() => record({ ...denial, reason: [denial.reason] } as unknown as GuardEvent)).toThrow(/invalid guard denial reason or rule/);
+    const recordTrace = processTraceSink(run, span.id);
+    expect(() => recordTrace({ ...denial, reason: [denial.reason] } as unknown as GuardEvent)).toThrow(/invalid guard denial reason or rule/);
     expect(run.events).toHaveLength(0);
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildAllowlistRoot, compileMandatePredicate, MandateGuard, MemoryGuardLog, type GuardConfig, type GuardEvent, type MandateV1 } from "../src/index.js";
+import { record } from "./fixtures/record.js";
 
 const pay = { kind: "payment", asset: "lovelace", amount: 6n, counterparty: "supplier", timestamp: 7200n } as const;
 const mandate = (): MandateV1 => ({
@@ -11,14 +12,14 @@ const mandate = (): MandateV1 => ({
 });
 const config = (extra: Partial<GuardConfig> = {}): GuardConfig => {
   const log = new MemoryGuardLog();
-  return { mandate: mandate(), counterpartyAllowlist: ["supplier"], now: () => 7200n, history: "fresh", onEvent: e => log.append(e), ...extra };
+  return { mandate: mandate(), counterpartyAllowlist: ["supplier"], now: () => 7200n, history: "fresh", onEvent: (e, previous) => log.append(e, previous), ...extra };
 };
 
 it("F2: default clock is system time in seconds", () => {
   vi.spyOn(Date, "now").mockReturnValue(7_200_999);
   try {
     const log = new MemoryGuardLog();
-    const g = new MandateGuard({ mandate: mandate(), counterpartyAllowlist: ["supplier"], history: "fresh", onEvent: e => log.append(e) });
+    const g = new MandateGuard({ mandate: mandate(), counterpartyAllowlist: ["supplier"], history: "fresh", onEvent: (e, previous) => log.append(e, previous) });
     expect(() => g.enforce(pay)).not.toThrow();
     expect(log.history().events.map(e => [e.enforcedAt, e.type])).toEqual([[7200n, "orynq.conduct.guard.action.v1"]]);
     expect(() => g.enforce({ ...pay, timestamp: 3600n })).toThrow(/timestamp/);
@@ -54,7 +55,7 @@ it("F2: same-window backdating cannot extend mandate validity", () => {
 it("NF-6: an action timestamp later than the guard clock is refused before state or events", () => {
   let now = 7200n;
   const log = new MemoryGuardLog();
-  const g = new MandateGuard(config({ now: () => now, onEvent: e => log.append(e) }));
+  const g = new MandateGuard(config({ now: () => now, onEvent: (e, previous) => log.append(e, previous) }));
   expect(() => g.enforce({ kind: "egress", destination: "x", timestamp: 7201n })).toThrow(/action timestamp must not be later than the guard clock/);
   expect(() => g.enforce({ ...pay, timestamp: 10_799n })).toThrow(/action timestamp must not be later than the guard clock/);
   expect(log.history().events).toHaveLength(0);
@@ -68,7 +69,7 @@ it("NF-6: an action timestamp later than the guard clock is refused before state
 it("NF-6: an agent-chosen end-of-window timestamp cannot pin later host-stamped actions", () => {
   let now = 7200n;
   const log = new MemoryGuardLog();
-  const g = new MandateGuard(config({ now: () => now, onEvent: e => log.append(e) }));
+  const g = new MandateGuard(config({ now: () => now, onEvent: (e, previous) => log.append(e, previous) }));
   expect(() => g.enforce({ kind: "egress", destination: "x", timestamp: 10_799n })).toThrow(/later than the guard clock/);
   now = 7300n;
   expect(g.enforce({ ...pay, timestamp: now }).allowed).toBe(true);
@@ -79,7 +80,7 @@ it("NF-6: an agent-chosen end-of-window timestamp cannot pin later host-stamped 
 it("F2: malformed guard clocks reject before state or events", () => {
   for (const now of [-1n, 1n << 64n, 7200 as unknown as bigint]) {
     const events: GuardEvent[] = [];
-    const g = new MandateGuard(config({ now: () => now, onEvent: e => events.push(e) }));
+    const g = new MandateGuard(config({ now: () => now, onEvent: record(events) }));
     expect(() => g.enforce(pay)).toThrow(/clock/);
     expect(g.spentInWindow(7200n)).toBe(0n);
     expect(events).toHaveLength(0);
@@ -90,7 +91,8 @@ describe("K1/K2 awaited evidence", () => {
   it("authorizes only after the sink accepts and blocks overlapping enforcement", async () => {
     let accept!: () => void;
     const pending = new Promise<void>(resolve => { accept = resolve; });
-    const g = new MandateGuard(config({ onEvent: () => pending }));
+    const log = new MemoryGuardLog();
+    const g = new MandateGuard(config({ onEvent: (e, previous) => pending.then(() => log.append(e, previous)) }));
     let authorized = false;
     const decision = g.enforceAsync(pay).then(d => { authorized = d.allowed; });
     await Promise.resolve();
@@ -119,12 +121,12 @@ describe("K1/K2 awaited evidence", () => {
   it("restores sequence, monotonic time, spend and denials without re-emitting", () => {
     const log = new MemoryGuardLog();
     let now = 7200n;
-    const g = new MandateGuard(config({ now: () => now, onEvent: e => log.append(e) }));
+    const g = new MandateGuard(config({ now: () => now, onEvent: (e, previous) => log.append(e, previous) }));
     g.enforce(pay);
     now = 7202n;
     g.enforce({ ...pay, timestamp: 7202n });
     const restored: GuardEvent[] = [];
-    const h = new MandateGuard(config({ now: () => 7202n, history: log.history(), onEvent: e => restored.push(e) }));
+    const h = new MandateGuard(config({ now: () => 7202n, history: log.history(), onEvent: record(restored, log) }));
     expect(restored).toHaveLength(0);
     expect(h.spentInWindow(7200n)).toBe(6n);
     expect(() => h.enforce(pay)).toThrow(/timestamp/);
@@ -135,23 +137,30 @@ describe("K1/K2 awaited evidence", () => {
 
   it("rejects altered, reordered, foreign and overspending replay events", () => {
     const log = new MemoryGuardLog();
-    const g = new MandateGuard(config({ onEvent: e => log.append(e) }));
+    const g = new MandateGuard(config({ onEvent: (e, previous) => log.append(e, previous) }));
     g.enforce(pay);
     g.enforce(pay);
     const { events, head } = log.history();
     const first = events[0]!;
-    for (const corrupt of [
-      [{ ...first, mandateCommitment: "0".repeat(64) }],
-      [{ ...first, actionDigest: "0".repeat(64) }],
-      [{ ...first, actionKind: "egress" }],
-      [{ ...first, timestamp: 7201n }],
-      [{ ...first, seq: 1n }],
-      [{ ...first, enforcedAt: 3600n }],
-      [first, { ...first, seq: 1n }],
-      [...events].reverse(),
-      [first, { ...events[1], reason: "ASSET_MISMATCH" }],
-      [first, { ...events[1], rule: "forged" }],
-    ]) expect(() => new MandateGuard(config({ history: { events: corrupt as GuardEvent[], head } }))).toThrow(/recorded/);
+    const mismatch = "event does not match replayed decision";
+    const fields = "invalid guard event fields or action digest";
+    const denial = "invalid guard denial reason or rule";
+    const cases: [unknown[], string][] = [
+      [[{ ...first, mandateCommitment: "0".repeat(64) }], mismatch],
+      [[{ ...first, actionDigest: "0".repeat(64) }], fields],
+      [[{ ...first, actionKind: "egress" }], fields],
+      [[{ ...first, timestamp: 7201n }], fields],
+      [[{ ...first, seq: 1n }], mismatch],
+      [[{ ...first, enforcedAt: 3600n }], "action timestamp must be in the guard clock's current window"],
+      [[first, { ...first, seq: 1n }], mismatch],
+      [[...events].reverse(), mismatch],
+      [[first, { ...events[1], reason: "ASSET_MISMATCH" }], denial],
+      [[first, { ...events[1], rule: "forged" }], denial],
+    ];
+    expect(() => new MandateGuard(config({ history: { events, head } }))).not.toThrow();
+    for (const [corrupt, reason] of cases) {
+      expect(() => new MandateGuard(config({ history: { events: corrupt as GuardEvent[], head } }))).toThrow(`invalid recorded guard event: ${reason}`);
+    }
   });
 });
 
@@ -174,7 +183,7 @@ it("Info: compiler uses the same allowlist snapshot for hashing and membership",
 
 it("Info: a replay event action getter is copied once before validation", () => {
   const log = new MemoryGuardLog();
-  new MandateGuard(config({ onEvent: e => log.append(e) })).enforce(pay);
+  new MandateGuard(config({ onEvent: (e, previous) => log.append(e, previous) })).enforce(pay);
   const { events, head } = log.history();
   let reads = 0;
   const source = { ...events[0]!, get action() { reads++; return reads === 1 ? pay : { ...pay, amount: 1n }; } };

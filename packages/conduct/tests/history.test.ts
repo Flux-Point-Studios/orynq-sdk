@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
-  buildAllowlistRoot, GUARD_LOG_DOMAIN, GUARD_LOG_GENESIS, GuardConfigError, MandateGuard, MemoryGuardLog, nextGuardLogHead,
-  toProcessTraceEvent, type GuardConfig, type GuardEvent, type GuardHistory, type MandateV1,
+  actionDigestHex, buildAllowlistRoot, GUARD_LOG_DOMAIN, GUARD_LOG_GENESIS, GuardConfigError, MandateGuard, MemoryGuardLog, nextGuardLogHead,
+  toProcessTraceEvent, type GuardConfig, type GuardEvent, type GuardEventSink, type GuardHistory, type MandateV1,
 } from "../src/index.js";
 
 const pay = { kind: "payment", asset: "lovelace", amount: 6n, counterparty: "supplier", timestamp: 7200n } as const;
@@ -14,7 +14,8 @@ const mandate = (): MandateV1 => ({
   disclosurePolicy: { committeeId: "c", threshold: 1n, committeeSize: 1n },
 });
 const base = () => ({ mandate: mandate(), counterpartyAllowlist: ["supplier"], now: () => 7200n });
-const sinkTo = (log: MemoryGuardLog) => (event: GuardEvent) => log.append(event);
+const sinkTo = (log: MemoryGuardLog): GuardEventSink => (event, previous) => log.append(event, previous);
+const staleWriter = /^guard log head is 1:[0-9a-f]{64}, but the append expected 0:0{64}$/;
 
 function threeEventLog(): { log: MemoryGuardLog; history: GuardHistory } {
   const log = new MemoryGuardLog();
@@ -52,15 +53,49 @@ describe("R-1: accounting state is an explicit constructor input", () => {
     expect(guard.spentInWindow(7200n)).toBe(0n);
   });
 
-  it("payment enforcement without an event sink is refused before any state change", () => {
+  it("payment enforcement without an event sink is refused before any state change, allowed or denied", () => {
     const guard = new MandateGuard({ ...base(), history: "fresh" });
-    expect(() => guard.enforce(pay)).toThrow(/payment enforcement requires an event sink/);
+    for (const payment of [pay, { ...pay, counterparty: "mallory" }, { ...pay, amount: 11n }]) {
+      expect(() => guard.enforce(payment)).toThrow(/^payment enforcement requires an event sink$/);
+    }
     expect(guard.spentInWindow(7200n)).toBe(0n);
     expect(guard.head).toEqual(GUARD_LOG_GENESIS);
     expect(guard.evaluate(pay)).toEqual({ allowed: true });
-    expect(guard.enforce({ kind: "egress", destination: "api.example.com", timestamp: 7200n })).toMatchObject({ allowed: false, reason: "EGRESS_DENIED" });
-    expect(guard.head.count).toBe(1n);
-    expect(() => guard.enforce(pay)).toThrow(/payment enforcement requires an event sink/);
+    expect(guard.evaluate({ ...pay, counterparty: "mallory" })).toMatchObject({ allowed: false, reason: "COUNTERPARTY_NOT_ALLOWED" });
+  });
+
+  it("egress enforcement without an event sink returns its decision and advances only the guard's head", () => {
+    const destinations = ["api.example.com"];
+    const guard = new MandateGuard({
+      ...base(), history: "fresh", egressAllowlist: destinations,
+      mandate: { ...mandate(), egressPolicy: { mode: 1n, allowlistRoot: buildAllowlistRoot(destinations) } },
+    });
+    const decisions: unknown[] = [];
+    expect(() => decisions.push(guard.enforce({ kind: "egress", destination: "api.example.com", timestamp: 7200n }))).not.toThrow();
+    expect(() => decisions.push(guard.enforce({ kind: "egress", destination: "evil.example", timestamp: 7200n }))).not.toThrow();
+    expect(decisions).toEqual([{ allowed: true }, expect.objectContaining({ allowed: false, reason: "EGRESS_NOT_ALLOWED" })]);
+    expect(guard.head.count).toBe(2n);
+    expect(() => guard.enforce(pay)).toThrow(/^payment enforcement requires an event sink$/);
+  });
+
+  it("configuration errors keep their cause", () => {
+    const failure = (config: GuardConfig): Error => {
+      try {
+        new MandateGuard(config);
+      } catch (error) {
+        return error as Error;
+      }
+      throw new Error("construction succeeded");
+    };
+    const shape = failure({ ...base(), history: { events: [], head: { count: -1n, hash: GUARD_LOG_GENESIS.hash } } });
+    expect(shape).toBeInstanceOf(GuardConfigError);
+    expect(shape.cause).toBeInstanceOf(Error);
+    expect(shape).toHaveProperty("cause.message", "guard log head must be { count: bigint in [0, 2^64], hash: 64 lowercase hex }");
+    const { history } = threeEventLog();
+    const replay = failure({ ...base(), history: { events: [{ ...history.events[0]!, actionDigest: "0".repeat(64) }], head: history.head } });
+    expect(replay.message).toBe("invalid recorded guard event: invalid guard event fields or action digest");
+    expect(replay.cause).toBeInstanceOf(Error);
+    expect(replay).toHaveProperty("cause.message", "invalid guard event fields or action digest");
   });
 });
 
@@ -76,11 +111,11 @@ describe("R-1: the sink contract admits exactly one writer per log position", ()
   it("MemoryGuardLog refuses an event whose seq is not the log length, without writing", () => {
     const { log, history } = threeEventLog();
     for (const event of [history.events[0]!, history.events[2]!]) {
-      expect(() => log.append(event)).toThrow(/cannot append guard event seq \d+ at log length 3/);
+      expect(() => log.append(event, history.head)).toThrow(/^cannot append guard event seq \d+ at log length 3$/);
     }
     expect(log.history()).toEqual(history);
     const empty = new MemoryGuardLog();
-    expect(() => empty.append(history.events[1]!)).toThrow(/cannot append guard event seq 1 at log length 0/);
+    expect(() => empty.append(history.events[1]!, GUARD_LOG_GENESIS)).toThrow(/^cannot append guard event seq 1 at log length 0$/);
     expect(empty.history()).toEqual({ events: [], head: GUARD_LOG_GENESIS });
   });
 
@@ -88,7 +123,7 @@ describe("R-1: the sink contract admits exactly one writer per log position", ()
     const { history } = threeEventLog();
     const log = new MemoryGuardLog();
     const event = { ...history.events[0]! };
-    log.append(event);
+    expect(log.append(event, GUARD_LOG_GENESIS)).toEqual(nextGuardLogHead(GUARD_LOG_GENESIS, history.events[0]!));
     (event as { seq: bigint }).seq = 5n;
     expect(log.history().events[0]!.seq).toBe(0n);
     expect(Object.isFrozen(log.history().events[0])).toBe(true);
@@ -108,7 +143,7 @@ describe("R-1: the sink contract admits exactly one writer per log position", ()
     const first = new MandateGuard({ ...base(), history: "fresh", onEvent: sinkTo(log) });
     const second = new MandateGuard({ ...base(), history: "fresh", onEvent: sinkTo(log) });
     expect(first.enforce({ ...pay, amount: 10n })).toEqual({ allowed: true });
-    expect(() => second.enforce({ ...pay, amount: 10n })).toThrow(/cannot append guard event seq 0 at log length 1/);
+    expect(() => second.enforce({ ...pay, amount: 10n })).toThrow(staleWriter);
     expect(() => second.enforce({ ...pay, amount: 1n })).toThrow(/event sink failed; restore a new guard/);
     expect(log.history().events).toHaveLength(1);
     const restored = new MandateGuard({ ...base(), history: log.history(), onEvent: sinkTo(log) });
@@ -117,12 +152,12 @@ describe("R-1: the sink contract admits exactly one writer per log position", ()
 
   it("two live async guards: the slower writer is refused after its awaited sink fails", async () => {
     const log = new MemoryGuardLog();
-    const delayed = (event: GuardEvent) => new Promise<void>(resolve => setTimeout(resolve, 5)).then(() => log.append(event));
+    const delayed: GuardEventSink = (event, previous) => new Promise<void>(resolve => setTimeout(resolve, 5)).then(() => log.append(event, previous));
     const first = new MandateGuard({ ...base(), history: "fresh", onEvent: delayed });
     const second = new MandateGuard({ ...base(), history: "fresh", onEvent: delayed });
     const results = await Promise.allSettled([first.enforceAsync({ ...pay, amount: 10n }), second.enforceAsync({ ...pay, amount: 10n })]);
     expect(results.map(r => r.status)).toEqual(["fulfilled", "rejected"]);
-    expect((results[1] as PromiseRejectedResult).reason.message).toMatch(/cannot append guard event seq 0 at log length 1/);
+    expect((results[1] as PromiseRejectedResult).reason.message).toMatch(staleWriter);
     expect(log.history().events).toHaveLength(1);
   });
 
@@ -134,7 +169,7 @@ describe("R-1: the sink contract admits exactly one writer per log position", ()
       try {
         if (guard.enforce({ ...pay, amount: 10n }).allowed) executed += 10n;
       } catch (error) {
-        expect((error as Error).message).toMatch(/cannot append guard event seq 0 at log length 1/);
+        expect((error as Error).message).toMatch(staleWriter);
       }
     }
     expect(executed).toBe(10n);
@@ -201,6 +236,26 @@ describe("R-3: restore must end at the head the sink reports", () => {
       expect(() => new MandateGuard({ ...base(), history: { events: history.events, head: { count, hash: history.head.hash } } }))
         .toThrow(/do not end at the expected log head/);
     }
+  });
+
+  it("a rewrite of a non-final event that keeps the count and the final event is refused", () => {
+    const log = new MemoryGuardLog();
+    const guard = new MandateGuard({ ...base(), history: "fresh", onEvent: sinkTo(log) });
+    guard.enforce(pay);
+    guard.enforce({ kind: "egress", destination: "api.example.com", timestamp: 7200n });
+    const { events, head } = log.history();
+    const action = { ...events[0]!.action, amount: 1n } as GuardEvent["action"];
+    const rewritten = [{ ...events[0]!, action, actionDigest: actionDigestHex(action) } as GuardEvent, events[1]!];
+    expect(() => new MandateGuard({ ...base(), history: { events, head } })).not.toThrow();
+    expect(() => new MandateGuard({ ...base(), history: { events: rewritten, head } })).toThrow(/^recorded guard events do not end at the expected log head$/);
+  });
+
+  it("a head may count up to 2^64 events: larger is malformed, 2^64 is well-formed but holds no position", () => {
+    const top = { count: 1n << 64n, hash: GUARD_LOG_GENESIS.hash };
+    expect(() => new MandateGuard({ ...base(), history: { events: [], head: top } })).toThrow(/^recorded guard events do not end at the expected log head$/);
+    const { history } = threeEventLog();
+    expect(() => nextGuardLogHead(top, history.events[0]!)).toThrow(/^cannot append guard event seq 0 at log length 18446744073709551616$/);
+    expect(() => nextGuardLogHead({ ...top, count: (1n << 64n) + 1n }, history.events[0]!)).toThrow(/^guard log head must be/);
   });
 
   it("head mismatch is checked after replay, so replay errors keep their reason", () => {

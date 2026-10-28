@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { GuardAction, GuardEvent } from "../src/index.js";
 import { GuardConfigError, MandateGuard, MemoryGuardLog } from "../src/index.js";
+import { record } from "./fixtures/record.js";
 
 interface JsonAction {
   kind: "payment" | "egress";
@@ -99,7 +100,7 @@ function runCase(c: JsonCase, egressMode: 0n | 1n, events: GuardEvent[] = []): v
     counterpartyAllowlist: vectors.counterpartyAllowlist,
     ...(egressMode === 1n ? { egressAllowlist: vectors.egressAllowlist } : {}),
     history: "fresh",
-    onEvent: (e: GuardEvent) => events.push(e),
+    onEvent: record(events),
   });
   for (const [i, step] of c.sequence.entries()) {
     now = BigInt(step.action.timestamp);
@@ -153,7 +154,7 @@ describe("guard trace events", () => {
       counterpartyAllowlist: vectors.counterpartyAllowlist,
       egressAllowlist: vectors.egressAllowlist,
       history: "fresh",
-      onEvent: (e) => events.push(e),
+      onEvent: record(events),
     });
     const pay: GuardAction = {
       kind: "payment",
@@ -227,7 +228,7 @@ describe("guard construction binds allowlists to the mandate roots", () => {
       counterpartyAllowlist: vectors.counterpartyAllowlist,
       egressAllowlist: vectors.egressAllowlist,
       history: "fresh",
-      onEvent: (e) => log.append(e),
+      onEvent: (e, previous) => log.append(e, previous),
     });
     const pay: GuardAction = {
       kind: "payment",

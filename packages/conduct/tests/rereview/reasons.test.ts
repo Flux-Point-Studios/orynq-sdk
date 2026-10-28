@@ -1,6 +1,7 @@
 // Right-reason pins: each DEFENDED rejection must come from the intended boundary.
 import { expect, it } from "vitest";
 import { buildAllowlistRoot, GuardConfigError, MandateGuard, MemoryGuardLog, type GuardAction, type GuardConfig, type GuardEvent, type MandateV1 } from "../../src/index.js";
+import { record } from "../fixtures/record.js";
 
 const CP = ["supplier"];
 const mandate = (over: Partial<MandateV1> = {}): MandateV1 => ({
@@ -13,7 +14,7 @@ const mandate = (over: Partial<MandateV1> = {}): MandateV1 => ({
 const pay = { kind: "payment", asset: "lovelace", amount: 6n, counterparty: "supplier", timestamp: 7200n } as const;
 const cfg = (extra: Partial<GuardConfig> = {}): GuardConfig => {
   const log = new MemoryGuardLog();
-  return { mandate: mandate(), counterpartyAllowlist: CP, now: () => 7200n, history: "fresh", onEvent: e => log.append(e), ...extra };
+  return { mandate: mandate(), counterpartyAllowlist: CP, now: () => 7200n, history: "fresh", onEvent: record([], log), ...extra };
 };
 const msg = (f: () => unknown) => { try { f(); return "NO THROW"; } catch (e) { return `${(e as Error).name}: ${(e as Error).message}`; } };
 
@@ -48,11 +49,11 @@ it("clock / window rejections come from prepare's clock and window guards", () =
 
 it("replay rejections come from the decision comparison or snapshot, not an unrelated guard", () => {
   const log = new MemoryGuardLog();
-  const g = new MandateGuard(cfg({ onEvent: e => log.append(e) }));
+  const g = new MandateGuard(cfg({ onEvent: record([], log) }));
   g.enforce(pay); g.enforce({ ...pay, amount: 4n }); g.enforce({ ...pay, amount: 1n });
   const { events, head } = log.history();
   const fe: GuardEvent[] = [];
-  new MandateGuard(cfg({ mandate: mandate({ mandateId: new Uint8Array(16).fill(7) }), onEvent: e => { fe.push(e); } })).enforce(pay);
+  new MandateGuard(cfg({ mandate: mandate({ mandateId: new Uint8Array(16).fill(7) }), onEvent: record(fe) })).enforce(pay);
   const { reason: _r, rule: _u, ...rest } = events[2] as Extract<GuardEvent, { type: "orynq.conduct.guard.denial.v1" }>;
   const cases: [string, GuardEvent[]][] = [
     ["foreign", fe], ["duplicate", [events[0]!, events[0]!]], ["reordered", [events[1]!, events[0]!]], ["suffix", events.slice(1)],

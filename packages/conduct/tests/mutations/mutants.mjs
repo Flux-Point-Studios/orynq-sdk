@@ -11,8 +11,12 @@ const cap = `    const spent = this.spentInWindow(action.timestamp);
 const clockDecision = 'const decision = enforcedAt >= this.policy.validityWindow.notAfter ? deny("MANDATE_EXPIRED") : this.evaluate(action);';
 const syncLatch = '    } catch (cause) {\n      this.sinkError = new Error("event sink failed", { cause });\n      throw cause;\n    }\n    return prepared.decision;';
 const asyncLatch = '      return prepared.decision;\n    } catch (cause) {\n      this.sinkError = new Error("event sink failed", { cause });\n      throw cause;\n    } finally {';
-const paymentSink = '    if (prepared.event.actionKind === "payment" && !this.onEvent) throw new Error("payment enforcement requires an event sink");\n';
-const headCheck = "if (this.logHead.count !== recorded.head.count || this.logHead.hash !== recorded.head.hash) {";
+const paymentSink = '    if (prepared.event.actionKind === "payment" && !sink) throw new Error("payment enforcement requires an event sink");\n';
+const paymentSinkCheck = 'if (prepared.event.actionKind === "payment" && !sink)';
+const headCheck = "if (!sameGuardLogHead(this.logHead, recorded.head)) {";
+const syncAppend = "      const result: unknown = sink(prepared.event, prepared.previous);";
+const asyncAppend = "      confirmHead(await sink(prepared.event, prepared.previous), prepared.head);";
+const traceVisibility = "...customEventFields(event, context.visibility) };";
 
 // Semantic mutants from the first review.
 const review = [
@@ -37,13 +41,13 @@ const review = [
 // The re-review's mutants of the first fix round, rebased onto the current code. N05 (clock notBefore check removed)
 // has no target: an action time is never later than the guard clock, so evaluate's action-time check decides every
 // case the clock check did and the redundant check was deleted. H16_evaluate_notBefore_removed covers that path.
+// N07 duplicated N04 and N32 duplicated M13 once rebased; both were dropped.
 const rereview = [
   ["N01_clock_backward_allowed", "guard.ts", "enforcedAt < this.lastEnforcedAt || ", ""],
   ["N02_window_check_removed", "guard.ts", "    if (this.windowIndex(action.timestamp) !== this.windowIndex(enforcedAt)) {\n      throw new Error(\"action timestamp must be in the guard clock's current window\");\n    }\n", ""],
   ["N03_action_time_backward_allowed", "guard.ts", "    if (action.timestamp < this.lastTimestamp) throw new Error(\"action timestamp must not move backward\");\n", ""],
   ["N04_clock_validity_removed", "guard.ts", clockDecision, "const decision = this.evaluate(action);"],
   ["N06_clock_notAfter_inclusive", "guard.ts", "enforcedAt >= this.policy.validityWindow.notAfter", "enforcedAt > this.policy.validityWindow.notAfter"],
-  ["N07_clock_notAfter_removed", "guard.ts", clockDecision, "const decision = this.evaluate(action);"],
   ["N08_clock_uint64_bound_removed", "guard.ts", " || enforcedAt >= 1n << 64n) {", ") {"],
   ["N09_replay_compare_removed", "guard.ts", "if (canonicalize(guardEventData(event)) !== canonicalize(guardEventData(prepared.event))) {", "if (false) {"],
   ["N10_replay_no_reserve", "guard.ts", "        this.reserve(prepared);\n      } catch (cause) {", "      } catch (cause) {"],
@@ -54,20 +58,19 @@ const rereview = [
   ["N16_pending_not_set", "guard.ts", "    this.pending = true;\n", ""],
   ["N17_checkSink_ignores_error", "guard.ts", "if (this.sinkError) throw", "if (false) throw"],
   ["N18_checkSink_ignores_pending", "guard.ts", "if (this.pending) throw", "if (false) throw"],
-  ["N19_enforceAsync_not_awaited", "guard.ts", "      await this.onEvent(prepared.event);", "      void this.onEvent(prepared.event);"],
-  ["N20_precheck_canonicalize_removed", "guard.ts", "    return { event, decision, head: nextGuardLogHead(this.logHead, event) };", "    return { event, decision, head: this.logHead };"],
-  ["N21_reserve_after_sync_sink", "guard.ts", "    this.reserve(prepared);\n    try {\n      const result = this.onEvent?.(prepared.event);", "    try {\n      const result = this.onEvent?.(prepared.event);\n      this.reserve(prepared);"],
+  ["N19_enforceAsync_not_awaited", "guard.ts", asyncAppend, "      void sink(prepared.event, prepared.previous);"],
+  ["N20_precheck_canonicalize_removed", "guard.ts", "    return { event, decision, previous: this.logHead, head: nextGuardLogHead(this.logHead, event) };", "    return { event, decision, previous: this.logHead, head: this.logHead };"],
+  ["N21_reserve_after_sync_sink", "guard.ts", "    this.reserve(prepared);\n    if (!sink) return prepared.decision;\n    try {\n" + syncAppend, "    if (!sink) {\n      this.reserve(prepared);\n      return prepared.decision;\n    }\n    try {\n" + syncAppend + "\n      this.reserve(prepared);"],
   ["N22_lastEnforcedAt_not_tracked", "guard.ts", "    this.lastEnforcedAt = event.enforcedAt;\n", ""],
   ["N23_lastTimestamp_not_tracked", "guard.ts", "    this.lastTimestamp = event.timestamp;\n", ""],
   ["N24_action_not_frozen", "guard.ts", "      action: Object.freeze(action),", "      action,"],
   ["N25_event_not_frozen", "guard.ts", "const event: GuardEvent = Object.freeze(decision.allowed", "const event: GuardEvent = (decision.allowed"],
   ["N26_seq_not_incremented", "guard.ts", "    this.logHead = head;\n", ""],
   ["N27_default_clock_ms", "guard.ts", "(() => BigInt(Math.floor(Date.now() / 1000)))", "(() => BigInt(Date.now()))"],
-  ["N28_async_sink_required_removed", "guard.ts", "    if (!this.onEvent) throw new Error(\"enforceAsync requires an event sink\");\n", ""],
+  ["N28_async_sink_required_removed", "guard.ts", "    if (!sink) throw new Error(\"enforceAsync requires an event sink\");\n", ""],
   ["N29_counterparty_snapshot_removed", "guard.ts", "this.counterparties = new Set(counterparties);", "this.counterparties = new Set(counterpartyAllowlist);"],
   ["N30_egress_snapshot_removed", "guard.ts", "this.egressDestinations = new Set(egressList);", "this.egressDestinations = new Set(egressAllowlist);"],
   ["N31_policy_not_snapshotted", "guard.ts", "this.policy = decodeMandate(encodeMandate(mandate));", "this.policy = mandate; encodeMandate(mandate);"],
-  ["N32_prepare_action_copy_removed", "guard.ts", "    action = { ...action };\n    validateAction(action);\n    if (typeof enforcedAt", "    validateAction(action);\n    if (typeof enforcedAt"],
   ["N33_evaluate_action_copy_removed", "guard.ts", "    action = { ...action };\n    validateAction(action);\n    const { validityWindow }", "    validateAction(action);\n    const { validityWindow }"],
   ["N34_replay_snapshot_skipped", "guard.ts", "const event = snapshotGuardEvent(source);", "const event = source;"],
   ["E01_event_unknown_key_check_removed", "events.ts", "  if (Reflect.ownKeys(event).some(key => typeof key !== \"string\" || !keys.includes(key))) throw new Error(\"unknown guard event field\");\n", ""],
@@ -99,7 +102,7 @@ const rereview = [
 // Accounting state, the sink contract, the log head and the trace sink.
 const accounting = [
   ["H01_history_defaults_to_fresh", "guard.ts", "  if (history === \"fresh\") return", "  if (history === \"fresh\" || history === undefined) return"],
-  ["H02_history_shape_unchecked", "guard.ts", "  if (!Array.isArray(events) || typeof head !== \"object\" || head === null) throw new GuardConfigError(message);\n", ""],
+  ["H02_history_shape_unchecked", "guard.ts", "  if (!Array.isArray(events)) throw new GuardConfigError(message);\n", ""],
   ["H03_payment_sink_not_required", "guard.ts", paymentSink, ""],
   ["H04_payment_sink_checked_after_reserve", "guard.ts", paymentSink + "    this.reserve(prepared);\n", "    this.reserve(prepared);\n" + paymentSink],
   ["H05_log_position_unchecked", "log.ts", "  if (snapshot.seq !== current.count) {", "  if (false) {"],
@@ -122,4 +125,32 @@ const accounting = [
   ["H22_snapshot_not_frozen", "events.ts", "  Object.freeze(event.action);\n  return Object.freeze(event);", "  return event;"],
 ];
 
-export const mutants = [...review, ...rereview, ...accounting];
+// The appended-head contract and the compare-and-swap append.
+const appendContract = [
+  ["H23_sync_head_unconfirmed", "guard.ts", "      confirmHead(result, prepared.head);\n", ""],
+  ["H24_async_head_unconfirmed", "guard.ts", asyncAppend, "      await sink(prepared.event, prepared.previous);"],
+  ["H25_head_compare_count_only", "log.ts", "a.count === b.count && a.hash === b.hash", "a.count === b.count"],
+  ["H26_head_compare_hash_only", "log.ts", "a.count === b.count && a.hash === b.hash", "a.hash === b.hash"],
+  ["H27_missing_head_accepted", "guard.ts", "function confirmHead(returned: unknown, expected: GuardLogHead): void {\n", "function confirmHead(returned: unknown, expected: GuardLogHead): void {\n  if (returned === undefined) return;\n"],
+  ["H28_memory_log_without_cas", "log.ts", "    if (!sameGuardLogHead(expected, this.head)) {", "    if (false) {"],
+  ["H29_sync_append_expects_new_head", "guard.ts", syncAppend, "      const result: unknown = sink(prepared.event, prepared.head);"],
+  ["H30_async_append_expects_new_head", "guard.ts", asyncAppend, "      confirmHead(await sink(prepared.event, prepared.head), prepared.head);"],
+  ["H31_memory_log_returns_previous_head", "log.ts", "    this.events.push(snapshot);\n    return this.head;", "    this.events.push(snapshot);\n    return expected;"],
+  ["H32_replay_error_drops_cause", "guard.ts", '`invalid recorded guard event: ${cause instanceof Error ? cause.message : "validation failed"}`, { cause });', '`invalid recorded guard event: ${cause instanceof Error ? cause.message : "validation failed"}`);'],
+  ["H33_head_shape_accepts_non_object", "log.ts", "  if (typeof source !== \"object\" || source === null) throw new Error(shape);\n", ""],
+  ["H34_egress_without_sink_calls_sink", "guard.ts", "    if (!sink) return prepared.decision;\n", ""],
+  ["H35_head_mismatch_tolerated", "guard.ts", "  if (!sameGuardLogHead(head, expected)) {", "  if (false) {"],
+];
+
+// Outputs the second skeptic review found unpinned (their K numbering), now asserted.
+const skeptic = [
+  ["K02_trace_sink_ignores_spanId", "events.ts", "  return event => addEvent(run, spanId, customEventFields(event, visibility));", "  return event => addEvent(run, run.spans[0]!.id, customEventFields(event, visibility));"],
+  ["K03_config_error_drops_cause", "guard.ts", "    throw new GuardConfigError(message, { cause });", "    throw new GuardConfigError(message);"],
+  ["K05_head_count_bound_exclusive", "log.ts", "count > 1n << 64n", "count >= 1n << 64n"],
+  ["K06_denied_payment_without_sink_enforced", "guard.ts", paymentSinkCheck, 'if (prepared.decision.allowed && prepared.event.actionKind === "payment" && !sink)'],
+  ["K07_toProcessTraceEvent_ignores_visibility", "events.ts", traceVisibility, '...customEventFields(event, "private") };'],
+  ["K11_egress_without_sink_refused", "guard.ts", paymentSinkCheck, "if (!sink)"],
+  ["K14_toProcessTraceEvent_forces_public", "events.ts", traceVisibility, '...customEventFields(event, "public") };'],
+];
+
+export const mutants = [...review, ...rereview, ...accounting, ...appendContract, ...skeptic];

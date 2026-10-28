@@ -9,7 +9,7 @@ import { FileGuardLog } from "./fixtures/k1/file-log.mjs";
 const CAP = 10_000_000n;
 const clean = '{"asset":"lovelace","amount":"10000000","counterparty":"supplier"}';
 const poison = '{"asset":"lovelace","amount":"10000000","counterparty":"supplier","note":1e999}';
-const conflict = /cannot append guard event seq 0 at log length 1|EEXIST/;
+const conflict = /^guard log head is 1:[0-9a-f]{64}, but the append expected 0:0{64}$|EEXIST/;
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true }); });
 function ledger(): string {
@@ -63,7 +63,7 @@ function supervise(path: string, history: string, maxRuns: number) {
   return { runs, status, crashes };
 }
 const poisonCrash = "MandateError: SCHEMA_UNKNOWN_KEY: unknown action key";
-const conflictCrash = "Error: cannot append guard event seq 0 at log length 1";
+const conflictCrash = expect.stringMatching(/^Error: guard log head is 1:[0-9a-f]{64}, but the append expected 0:0{64}$/);
 
 describe("S2: restarted hosts share one spend cap", () => {
   it("restarts that omit history are refused at construction and execute nothing", () => {

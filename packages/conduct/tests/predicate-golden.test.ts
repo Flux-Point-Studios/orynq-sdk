@@ -32,7 +32,7 @@ describe("predicate ABI golden sequences", () => {
       const compiled = compileMandatePredicate(mandate, lists);
       let now = 0n;
       const log = new MemoryGuardLog();
-      const guard = new MandateGuard({ mandate, ...lists, now: () => now, history: "fresh", onEvent: e => log.append(e) });
+      const guard = new MandateGuard({ mandate, ...lists, now: () => now, history: "fresh", onEvent: (e, previous) => log.append(e, previous) });
       for (const step of vector.steps) {
         const a = step.action;
         const action: GuardAction = a.kind === "payment"

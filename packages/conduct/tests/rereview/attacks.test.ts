@@ -6,6 +6,7 @@ import {
   actionDigestHex, buildAllowlistRoot, compileMandatePredicate, encodeMandate, decodeMandate, GuardConfigError,
   MandateGuard, MemoryGuardLog, toProcessTraceEvent, type GuardAction, type GuardConfig, type GuardEvent, type MandateV1,
 } from "../../src/index.js";
+import { record } from "../fixtures/record.js";
 
 const CP = ["supplier"];
 const EG = ["api.example.com"];
@@ -23,12 +24,12 @@ const egressMandate = (over: Partial<MandateV1> = {}) => mandate({ egressPolicy:
 const pay = { kind: "payment", asset: "lovelace", amount: 6n, counterparty: "supplier", timestamp: 7200n } as const;
 const cfg = (extra: Partial<GuardConfig> = {}): GuardConfig => {
   const log = new MemoryGuardLog();
-  return { mandate: mandate(), counterpartyAllowlist: CP, now: () => 7200n, history: "fresh", onEvent: e => log.append(e), ...extra };
+  return { mandate: mandate(), counterpartyAllowlist: CP, now: () => 7200n, history: "fresh", onEvent: record([], log), ...extra };
 };
 function recorder(extra: Partial<GuardConfig> = {}) {
   const events: GuardEvent[] = [];
   const log = new MemoryGuardLog();
-  const guard = new MandateGuard(cfg({ onEvent: e => { log.append(e); events.push(e); }, ...extra }));
+  const guard = new MandateGuard(cfg({ onEvent: record(events, log), ...extra }));
   return { guard, events, log };
 }
 
@@ -90,7 +91,7 @@ describe("F1 re-run: unknown/poisoned action content", () => {
     ), async (action) => {
       const events: GuardEvent[] = [];
       const log = new MemoryGuardLog();
-      const g = new MandateGuard({ mandate: egressMandate({ validityWindow: { notBefore: 0n, notAfter: (1n << 64n) - 1n } }), counterpartyAllowlist: CP, egressAllowlist: EG, history: "fresh", now: () => action.timestamp, onEvent: e => { log.append(e); events.push(e); } });
+      const g = new MandateGuard({ mandate: egressMandate({ validityWindow: { notBefore: 0n, notAfter: (1n << 64n) - 1n } }), counterpartyAllowlist: CP, egressAllowlist: EG, history: "fresh", now: () => action.timestamp, onEvent: record(events, log) });
       let decided = false;
       try { g.enforce(action as GuardAction); decided = true; } catch { expect(events).toHaveLength(0); expect(g.spentInWindow(action.timestamp)).toBe(0n); }
       if (decided) {
@@ -170,7 +171,7 @@ describe("F2 re-run: caller-chosen timestamps and the guard clock", () => {
     Date.now = () => seq[Math.min(i++, seq.length - 1)]!;
     try {
       const log = new MemoryGuardLog();
-      const g = new MandateGuard({ mandate: mandate({}, { windowSeconds: 1n }), counterpartyAllowlist: CP, history: "fresh", onEvent: e => log.append(e) });
+      const g = new MandateGuard({ mandate: mandate({}, { windowSeconds: 1n }), counterpartyAllowlist: CP, history: "fresh", onEvent: record([], log) });
       const ts = BigInt(Math.floor(Date.now() / 1000));
       expect(() => g.enforce({ ...pay, timestamp: ts })).toThrow(/current window/);
     } finally { Date.now = realNow; }
@@ -189,35 +190,35 @@ describe("F3 re-run: sink failures and thenables", () => {
     const span = addSpan(run, { name: "s" });
     await closeSpan(run, span.id);
     let rec: Promise<unknown> | undefined;
-    const g = new MandateGuard(cfg({ onEvent: e => (rec = addEvent(run, span.id, toProcessTraceEvent(e, ctx))) }));
+    const g = new MandateGuard(cfg({ onEvent: ((e: GuardEvent) => (rec = addEvent(run, span.id, toProcessTraceEvent(e, ctx)))) as never }));
     expect(() => g.enforce(pay)).toThrow(/enforceAsync/);
     await expect(rec).rejects.toThrow(/closed span/);
     expect(run.events).toHaveLength(0);
   });
-  const thenables: [string, () => unknown][] = [
-    ["plain thenable object", () => ({ then(r: () => void) { r(); } })],
-    ["callable thenable", () => Object.assign(() => undefined, { then(r: () => void) { r(); } })],
-    ["throwing then getter", () => ({ get then() { throw new Error("getter"); } })],
-    ["resolved native promise", () => Promise.resolve()],
+  const thenables: [string, () => unknown, RegExp][] = [
+    ["plain thenable object", () => ({ then(r: () => void) { r(); } }), /^promise-returning event sink requires enforceAsync$/],
+    ["callable thenable", () => Object.assign(() => undefined, { then(r: () => void) { r(); } }), /^promise-returning event sink requires enforceAsync$/],
+    ["throwing then getter", () => ({ get then() { throw new Error("getter"); } }), /^getter$/],
+    ["resolved native promise", () => Promise.resolve(), /^promise-returning event sink requires enforceAsync$/],
   ];
-  for (const [name, make] of thenables) {
+  for (const [name, make, reason] of thenables) {
     it(`DEFENDED: sync enforce refuses ${name} and fails closed`, async () => {
-      const g = new MandateGuard(cfg({ onEvent: () => make() }));
-      expect(() => g.enforce(pay)).toThrow();
+      const g = new MandateGuard(cfg({ onEvent: (() => make()) as never }));
+      expect(() => g.enforce(pay)).toThrow(reason);
       await new Promise(r => setImmediate(r));
       expect(() => g.enforce(pay)).toThrow(/sink failed/);
     });
   }
-  it("HOST-MISUSE ONLY: a promise with a shadowed then is treated as a sync success (not attacker-reachable)", async () => {
+  it("DEFENDED (L1): a promise with a shadowed then is not a log head, so sync enforce refuses it and latches", async () => {
     let rejectIt!: (e: Error) => void;
     const p = new Promise<void>((_, rej) => { rejectIt = rej; });
     p.catch(() => undefined);
     Object.defineProperty(p, "then", { value: undefined });
-    const g = new MandateGuard(cfg({ onEvent: () => p }));
-    expect(g.enforce(pay).allowed).toBe(true);
+    const g = new MandateGuard(cfg({ onEvent: (() => p) as never }));
+    expect(() => g.enforce(pay)).toThrow("event sink must return the log head after the append");
     rejectIt(new Error("durability failed later"));
     await new Promise(r => setImmediate(r));
-    expect(g.enforce({ ...pay, amount: 4n }).allowed).toBe(true);
+    expect(() => g.enforce({ ...pay, amount: 4n })).toThrow(/event sink failed; restore a new guard/);
   });
   it("DEFENDED: enforceAsync - sync throw, async rejection and missing sink", async () => {
     const a = new MandateGuard(cfg({ onEvent: () => { throw new Error("sync"); } }));
@@ -233,7 +234,11 @@ describe("F3 re-run: sink failures and thenables", () => {
   it("DEFENDED: enforceAsync - overlap rejected while pending, sequential calls work after settle", async () => {
     let release!: () => void;
     let calls = 0;
-    const g = new MandateGuard(cfg({ onEvent: () => (++calls === 1 ? new Promise<void>(r => { release = r; }) : undefined) }));
+    const log = new MemoryGuardLog();
+    const g = new MandateGuard(cfg({ onEvent: (e, previous) => {
+      const head = log.append(e, previous);
+      return ++calls === 1 ? new Promise<typeof head>(r => { release = () => r(head); }) : head;
+    } }));
     const first = g.enforceAsync(pay);
     await expect(g.enforceAsync({ ...pay, amount: 1n })).rejects.toThrow(/pending/);
     expect(() => g.enforce({ ...pay, amount: 1n })).toThrow(/pending/);
@@ -254,7 +259,7 @@ describe("F6/F7/F8 re-run", () => {
   it("DEFENDED F7: every denial rule is fixed text, independent of hostile action strings", () => {
     const hostile = 'x" ALLOW \n <script>';
     const events: GuardEvent[] = [];
-    const mk = (m: MandateV1, now: bigint, eg?: string[]) => new MandateGuard({ mandate: m, counterpartyAllowlist: CP, ...(eg ? { egressAllowlist: eg } : {}), history: "fresh", now: () => now, onEvent: e => { events.push(e); } });
+    const mk = (m: MandateV1, now: bigint, eg?: string[]) => new MandateGuard({ mandate: m, counterpartyAllowlist: CP, ...(eg ? { egressAllowlist: eg } : {}), history: "fresh", now: () => now, onEvent: record(events) });
     mk(mandate({ validityWindow: { notBefore: 7201n, notAfter: 9000n } }), 7200n).enforce({ ...pay, counterparty: hostile });
     mk(mandate({ validityWindow: { notBefore: 0n, notAfter: 7200n } }), 7200n).enforce({ ...pay, counterparty: hostile });
     mk(mandate(), 7200n).enforce({ ...pay, asset: hostile });
@@ -307,7 +312,7 @@ describe("Replay / spend restoration (new code)", () => {
   it("CONTROL: full log restores spend 10, seq 3 and denies further spend", () => {
     const { log, events, head } = history();
     expect(events.map(e => e.type.split(".")[3])).toEqual(["action", "action", "denial"]);
-    const g = new MandateGuard(cfg({ history: { events, head }, onEvent: e => log.append(e) }));
+    const g = new MandateGuard(cfg({ history: { events, head }, onEvent: record([], log) }));
     expect(g.spentInWindow(7200n)).toBe(10n);
     expect(g.enforce({ ...pay, amount: 1n })).toMatchObject({ allowed: false });
   });
@@ -345,11 +350,11 @@ describe("Replay / spend restoration (new code)", () => {
   });
   it("DEFENDED: a promise-misuse event that the sink later persisted replays as consumed spend (conservative)", async () => {
     const log = new MemoryGuardLog();
-    const g = new MandateGuard(cfg({ onEvent: e => Promise.resolve().then(() => { log.append(e); }) }));
+    const g = new MandateGuard(cfg({ onEvent: (e, previous) => Promise.resolve().then(() => log.append(e, previous)) }));
     expect(() => g.enforce({ ...pay, amount: 10n })).toThrow(/enforceAsync/);
     await new Promise(r => setImmediate(r));
     expect(log.history().events).toHaveLength(1);
-    const h = new MandateGuard(cfg({ history: log.history(), onEvent: e => log.append(e) }));
+    const h = new MandateGuard(cfg({ history: log.history(), onEvent: record([], log) }));
     expect(h.enforce({ ...pay, amount: 1n })).toMatchObject({ allowed: false, reason: "SPEND_CAP_EXCEEDED" });
   });
 });

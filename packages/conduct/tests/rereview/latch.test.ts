@@ -10,7 +10,7 @@ const mandate = (): MandateV1 => ({
   disclosurePolicy: { committeeId: "c", threshold: 1n, committeeSize: 1n },
 });
 const pay = { kind: "payment", asset: "lovelace", amount: 1n, counterparty: "supplier", timestamp: 7200n } as const;
-const cfg = (onEvent: NonNullable<GuardConfig["onEvent"]>): GuardConfig => ({ mandate: mandate(), counterpartyAllowlist: ["supplier"], now: () => 7200n, history: "fresh", onEvent });
+const cfg = (onEvent: () => unknown): GuardConfig => ({ mandate: mandate(), counterpartyAllowlist: ["supplier"], now: () => 7200n, history: "fresh", onEvent: onEvent as never });
 
 it("LATCH sync: after one transient sink throw, a now-healthy sink still cannot authorize", () => {
   let fail = true;
