@@ -1,5 +1,12 @@
 # @fluxpointstudios/orynq-sdk-anchors-midnight
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies [14bb540]
+  - @fluxpointstudios/orynq-sdk-core@0.4.0
+
 ## 0.4.0
 
 ### Minor Changes

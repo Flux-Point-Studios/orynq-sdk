@@ -1,5 +1,13 @@
 # @orynq/observe
 
+## 0.1.3
+
+### Patch Changes
+
+- Updated dependencies [14bb540]
+- Updated dependencies [655c2df]
+  - @fluxpointstudios/orynq-sdk-anchors-materios@0.7.0
+
 ## 0.1.2
 
 ### Patch Changes

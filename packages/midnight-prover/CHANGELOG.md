@@ -1,5 +1,52 @@
 # @fluxpointstudios/poi-sdk-midnight-prover
 
+## 0.4.0
+
+### Minor Changes
+
+- 14bb540: `SelectiveDisclosureProver.verifyProof` returns true only for a full disclosure
+  whose span and events hash to the public span hash, or a membership proof that
+  discloses no data. A proof made with `includeEventData: false` or
+  `includeSpanData: false` never verifies, even with authenticated leaves: nothing
+  binds its disclosed data, so `verifyDisclosure` reports `unbound: true`, names
+  the authenticated span its Merkle path proves and returns none of that data.
+  Read disclosed data from `verifyDisclosure`'s result, never from
+  `proof.disclosedSpan` or `proof.disclosedEvents`.
+
+  `verifyDisclosure` and `verifyProof` take the anchored tree's Merkle root as
+  `expectedMerkleRoot`, which the proof's public Merkle root must equal, and
+  refuse `leafHashes` or `leafCount` without it, so a full disclosure from another
+  tree of the same depth no longer passes as bound to the caller's tree. Only the
+  options' own properties count.
+
+- 390169a: `verifyMerkleProof`, `verifySpanInclusion` and `computeSpanHash` are now the
+  process-trace implementations: span inclusion recomputes every event hash, and
+  a Merkle proof must use the leaf index its path encodes.
+  `generateMerkleInclusionProof` builds its proof with process-trace.
+
+  The simulation `SelectiveDisclosureProver` gains
+  `verifyDisclosure(proof, options)`, which verifies the Merkle path in the proof
+  bytes and reports what the proof binds; `verifyProof` takes the same options
+  and returns its `valid`. A full disclosure must hash to the public span hash,
+  and the result holds its span and events as committed. A proof made with
+  `includeEventData: false` or `includeSpanData: false` discloses data nothing
+  binds, so it is reported `unbound` instead of passing on unchecked data.
+  `DefaultMidnightProver.verify` returns the reason in `errors`.
+
+### Patch Changes
+
+- Updated dependencies [390169a]
+- Updated dependencies [14bb540]
+- Updated dependencies [ab2e261]
+- Updated dependencies [14bb540]
+- Updated dependencies [14bb540]
+- Updated dependencies [ab2e261]
+  - @fluxpointstudios/orynq-sdk-anchors-cardano@0.5.1
+  - @fluxpointstudios/orynq-sdk-attestor@0.2.0
+  - @fluxpointstudios/orynq-sdk-core@0.4.0
+  - @fluxpointstudios/orynq-sdk-process-trace@0.4.0
+  - @fluxpointstudios/orynq-sdk-anchors-midnight@0.4.1
+
 ## 0.3.0
 
 ### Minor Changes

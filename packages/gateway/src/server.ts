@@ -148,7 +148,7 @@ export function createGatewayServer(config: GatewayConfig): GatewayServer {
     res.json({
       status: "ok",
       gateway: "x402",
-      version: "0.0.0",
+      version: "0.2.1",
       timestamp: new Date().toISOString(),
     });
   });

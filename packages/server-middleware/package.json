@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-server-middleware",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Server middleware for orynq-sdk dual-protocol payment layer (Flux and x402)",
   "type": "module",
   "main": "./dist/index.cjs",

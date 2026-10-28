@@ -1,5 +1,13 @@
 # @fluxpointstudios/orynq-sdk-payer-materios-x402
 
+## 0.1.3
+
+### Patch Changes
+
+- Updated dependencies [14bb540]
+  - @fluxpointstudios/orynq-sdk-core@0.4.0
+  - @fluxpointstudios/orynq-sdk-transport-x402@0.2.1
+
 ## 0.1.2
 
 ### Patch Changes

@@ -133,7 +133,7 @@ export class ManifestBuilder {
       manifestHash: "",
       inputs: { promptHash: "" },
       params: { model: "unknown" },
-      runtime: { recorderVersion: "0.1.0" },
+      runtime: { recorderVersion: "0.2.0" },
       chunks: [],
       outputs: {
         transcriptRollingHash: "",

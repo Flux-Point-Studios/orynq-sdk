@@ -299,7 +299,7 @@ export class Observation {
     const url = `${base}/blobs`;
     const headers: Record<string, string> = {
       "content-type": "application/octet-stream",
-      "user-agent": "orynq-observe-js/0.1.0",
+      "user-agent": "orynq-observe-js/0.1.3",
     };
     if (apiKey) headers["authorization"] = `Bearer ${apiKey}`;
 

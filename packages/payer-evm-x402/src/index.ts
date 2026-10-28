@@ -193,6 +193,5 @@ export type SupportedChainId = (typeof SUPPORTED_CHAINS)[number];
 
 /**
  * Package version.
- * Updated automatically during build.
  */
-export const VERSION = "0.0.0";
+export const VERSION = "0.2.1";

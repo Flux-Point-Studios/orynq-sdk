@@ -1,5 +1,13 @@
 # @fluxpointstudios/anchor-worker
 
+## 1.0.3
+
+### Patch Changes
+
+- Updated dependencies [390169a]
+- Updated dependencies [14bb540]
+  - @fluxpointstudios/orynq-sdk-anchors-cardano@0.5.1
+
 ## 1.0.2
 
 ### Patch Changes

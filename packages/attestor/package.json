@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-attestor",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "TEE attestation types and backend scaffolding for PoI; hardware verification fails closed",
   "type": "module",
   "main": "dist/index.js",

@@ -1,5 +1,20 @@
 # @fluxpointstudios/orynq-sdk-quickstart
 
+## 0.4.3
+
+### Patch Changes
+
+- 612bca2: `orynq verify midnight --hidden` and `orynq anchor midnight --hidden` take the
+  attribute from the model manifest hash the bundle's root commits to
+  (`privateRun.modelManifestHash`), not from the unhashed top-level copy, and
+  refuse a bundle whose top-level copy differs.
+- Updated dependencies [14bb540]
+- Updated dependencies [655c2df]
+- Updated dependencies [14bb540]
+- Updated dependencies [ab2e261]
+  - @fluxpointstudios/orynq-sdk-anchors-materios@0.7.0
+  - @fluxpointstudios/orynq-sdk-process-trace@0.4.0
+
 ## 0.4.2
 
 ### Patch Changes
