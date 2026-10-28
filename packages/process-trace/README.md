@@ -19,6 +19,17 @@ Canonicalization drops null-valued keys, so neither hash commits to them.
 `committedSpan()` and `committedEvent()` return a span or event exactly as its
 hash commits to it.
 
+## Building traces
+
+`addEvent()` calls on one run append one at a time, in call order, so events
+added concurrently all chain into the rolling hash. An event the run cannot
+take changes nothing: one that cannot be hashed, or whose span closes or run is
+finalized before it is appended, is refused.
+
+`verifyRollingHash(events, expectedHash)` requires the events' `seq` values to
+be exactly 0 to n - 1, in any order: a list that leaves out events, matching a
+chain stored over fewer events than the run holds, never verifies.
+
 ## Bundles
 
 `verifyBundle()` recomputes every event hash, span hash, the rolling hash, the
@@ -84,7 +95,9 @@ const result = await verifyDisclosure(disclosure, anchor.rootHash, anchor.merkle
 Without them, the entry fails with an `unbound: span id not authenticated`
 error. With them, the proof must carry that leaf hash, use an index below the
 leaf count and have a path exactly as deep as that tree, which also rules out a
-root or internal node presented as a leaf.
+root or internal node presented as a leaf. Only the options' own properties
+count, and only span IDs `leafHashes` lists as its own keys: nothing inherited,
+as from a polluted `Object.prototype`, authenticates a span.
 
 ## Merkle proofs
 

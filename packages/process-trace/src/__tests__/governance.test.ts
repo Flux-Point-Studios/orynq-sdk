@@ -380,7 +380,11 @@ describe("eip712 governance verification", () => {
     expect(summaries[0]!.verified).toBe(false);
   });
 
-  it("matches the pinned types without consulting the host collation", async () => {
+  /**
+   * Whether an eip712 attestation signed over `pinned`'s fields, listed in
+   * reverse, verifies against `pinned`, with `localeCompare` refusing to run.
+   */
+  async function verifiesReversedFields(pinned: typeof EIP712_TYPES): Promise<boolean> {
     const signedAt = "2026-07-11T00:00:00.000Z";
     const run = await createTrace({ agentId: "agent-1" });
     const span = addSpan(run, { name: "approve", visibility: "public" });
@@ -395,8 +399,7 @@ describe("eip712 governance verification", () => {
       signedAt,
       eip712: {
         domain: EIP712_DOMAIN,
-        // The same fields as the pinned type, listed in another order.
-        types: { Attestation: [...EIP712_TYPES.Attestation].reverse() },
+        types: { Attestation: [...pinned.Attestation].reverse() },
         primaryType: "Attestation",
         message: { role: "compliance", policyRef: "sha256:policy", decisionRef: "decision-1", runId: run.id, signedAt },
       },
@@ -407,7 +410,7 @@ describe("eip712 governance verification", () => {
       verifyTypedData: async () => true,
       expectedDomain: EIP712_DOMAIN,
       expectedPrimaryType: "Attestation",
-      expectedTypes: EIP712_TYPES,
+      expectedTypes: pinned,
       nowMs: Date.parse(signedAt),
     });
     const collation = vi.spyOn(String.prototype, "localeCompare").mockImplementation(() => {
@@ -418,9 +421,24 @@ describe("eip712 governance verification", () => {
         verifiers: { eip712: verifier },
         authorizedAttestors: [EIP712_ATTESTOR],
       });
-      expect(summaries[0]!.verified).toBe(true);
+      return summaries[0]!.verified;
     } finally {
       collation.mockRestore();
     }
+  }
+
+  it("matches the pinned types without consulting the host collation", async () => {
+    expect(await verifiesReversedFields(EIP712_TYPES)).toBe(true);
+  });
+
+  it("matches pinned field names every collation calls equal, whichever order they are listed in", async () => {
+    // "é" and "e" with a combining acute are canonically equivalent: collation
+    // ties them, while their UTF-16 code units still order them one way.
+    const [precomposed, combining] = ["é", "é"];
+    expect(new Intl.Collator().compare(precomposed, combining)).toBe(0);
+    const pinned = {
+      Attestation: [...EIP712_TYPES.Attestation, { name: precomposed, type: "string" }, { name: combining, type: "uint256" }],
+    };
+    expect(await verifiesReversedFields(pinned)).toBe(true);
   });
 });

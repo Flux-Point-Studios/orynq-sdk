@@ -68,11 +68,18 @@ const valuesBefore = await coinValues();
 const feeAsItIs = await wallet.calculateFee([baseTransaction]);
 const coinsBefore = JSON.stringify((await coins()).map(String));
 
+// Each transaction's encoded size, and its DUST actions' share of it.
+const encodedSizes = (transaction: { serialize(): Uint8Array; intents: Map<number, { dustActions: { serialize(): Uint8Array } | undefined }> | undefined }) => ({
+  bytes: transaction.serialize().length,
+  dustBytes: [...(transaction.intents?.values() ?? [])].reduce((sum, intent) => sum + (intent.dustActions?.serialize().length ?? 0), 0),
+});
+
 // Intent.new samples binding randomness. Its merged scalar has variable-width encoding,
 // so independently sampled fee intents can differ by a priced byte even at a fixed clock.
 // Keep valid intent entropy repeatable only in this isolated regression process: the oracle
 // and real wallet still execute their own ledger dry runs, spend selection and proof paths.
 // Select both scalar encoding classes so the former intermittent mismatch stays exercised.
+// Every transaction a dry run prices is recorded with its encoded sizes.
 const bindingCase = process.argv[3] ?? "full/full";
 const repeatableFeeIntents = () => {
   const [quoteClass, actualClass] = bindingCase.split("/");
@@ -80,6 +87,8 @@ const repeatableFeeIntents = () => {
   const makeIntent = L.Intent.new;
   const prototype = Transacting.TransactingCapabilityImplementation.prototype;
   const dryRunFee = prototype.dryRunFee;
+  const calculateFee = prototype.calculateFee;
+  const priced: Array<{ fee: bigint; bytes: number; dustBytes: number }> = [];
   const templates = new Map<number, Uint8Array>();
   let longest = 0;
   // The prefix and marker lengths are constant; the varying merged scalar is the only
@@ -98,13 +107,18 @@ const repeatableFeeIntents = () => {
     const previous = pricing; pricing = true;
     try { return dryRunFee.apply(this, args); } finally { pricing = previous; }
   };
+  prototype.calculateFee = function (transaction, parameters) {
+    const fee = calculateFee.call(this, transaction, parameters);
+    if (pricing) priced.push({ fee, ...encodedSizes(transaction) });
+    return fee;
+  };
   L.Intent.new = expiry => {
     if (expiry.getTime() !== ttl.getTime()) throw new Error("unexpected fee-intent TTL");
     return L.Intent.deserialize("signature", "pre-proof", "pre-binding", pricing ? quote : actual);
   };
   return {
-    quoteLength, actualLength,
-    restore() { L.Intent.new = makeIntent; prototype.dryRunFee = dryRunFee; },
+    quoteLength, actualLength, priced,
+    restore() { L.Intent.new = makeIntent; prototype.dryRunFee = dryRunFee; prototype.calculateFee = calculateFee; },
   };
 };
 const fixedFeeIntents = scenario === "multi-round" ? repeatableFeeIntents() : undefined;
@@ -136,13 +150,23 @@ const executeBalance = async () => {
 const balancing = await executeBalance().finally(() => fixedFeeIntents?.restore());
 const finalSnapshot = await run(simulator.getLatestState());
 const finalParameters = finalSnapshot.ledger.parameters;
+// The dry run that set the fee the DUST spends pay, beside the balanced transaction; the
+// simulator's proving service erases proofs, as dry runs do.
+const quotedAndBalanced = (paid: L.ProofErasedTransaction) => {
+  const fee = [...paid.intents!.values()].flatMap((intent) => intent.dustActions?.spends.map((spend) => spend.vFee) ?? []).reduce((sum, vFee) => sum + vFee, 0n);
+  const quoted = [...fixedFeeIntents!.priced].reverse().find((entry) => entry.fee === fee);
+  if (!quoted) throw new Error(`no dry run priced the paid fee ${fee}`);
+  const balanced = encodedSizes(paid);
+  return { quotedBytes: quoted.bytes, quotedDustBytes: quoted.dustBytes, balancedBytes: balanced.bytes, balancedDustBytes: balanced.dustBytes };
+};
 const observed =
   "error" in balancing
     ? balancing
     : {
         ...(scenario === "mainnet-anchor" ? { anchorCalls: anchorCallsIn(balancing.paid, [(anchorEvidence as { registry: string }).registry], "mainnet-price simulator").calls.map(call => ({ kind: call.kind, entryPoint: call.entryPoint, commitment: call.commitment })) } : {}),
         ...(scenario === "multi-round" ? { actualMinimumFee: balancing.paid.fees(finalParameters), actualFeeWithMargin: balancing.paid.feesWithMargin(finalParameters, 5) + 1n,
-          pricingParametersUnchanged: pricingParameters === Buffer.from(finalParameters.serialize()).toString("hex"), pricingTimeUnchanged: pricingTime === finalSnapshot.currentTime.getTime() } : {}),
+          pricingParametersUnchanged: pricingParameters === Buffer.from(finalParameters.serialize()).toString("hex"), pricingTimeUnchanged: pricingTime === finalSnapshot.currentTime.getTime(),
+          ...quotedAndBalanced(balancing.paid) } : {}),
         // Each intent's DUST spends, by the fee each pays, or null for an intent without DUST actions.
         intents: [...balancing.paid.intents!.values()].map((intent) => intent.dustActions?.spends.map((spend) => spend.vFee) ?? null),
         coinsUntouched: JSON.stringify((await coins()).map(String)) === coinsBefore,

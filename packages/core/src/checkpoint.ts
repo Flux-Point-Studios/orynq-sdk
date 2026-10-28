@@ -91,9 +91,12 @@ export function merkleRoot(leaves: readonly string[]): string {
   return layer[0]!;
 }
 
+const isLeafCount = (count: number) => Number.isSafeInteger(count) && count >= 1;
+const isLeafIndex = (index: unknown, count: number): index is number => Number.isSafeInteger(index) && (index as number) >= 0 && (index as number) < count;
+
 function checkIndex(index: number, count: number): void {
-  if (!Number.isSafeInteger(count) || count < 1) throw new Error("Invalid leaf count");
-  if (!Number.isSafeInteger(index) || index < 0 || index >= count) throw new Error("Invalid leaf index");
+  if (!isLeafCount(count)) throw new Error("Invalid leaf count");
+  if (!isLeafIndex(index, count)) throw new Error("Invalid leaf index");
 }
 
 export function merklePath(leaves: readonly string[], index: number): string[] {
@@ -108,30 +111,69 @@ export function merklePath(leaves: readonly string[], index: number): string[] {
   return path;
 }
 
-export function merkleInclusionProof(leaves: readonly string[], index: number): { siblings: { hash: string; position: "L" | "R" }[] } {
-  return { siblings: merklePath(leaves, index).map((hash, depth) => ({ hash, position: Math.floor(index / 2 ** depth) % 2 ? "L" : "R" })) };
+/** The proof that a leaf sits at `index`: its path's siblings, leaves first, each on the side `index` puts it. */
+export interface MerkleInclusionProof {
+  index: number;
+  siblings: readonly { hash: string; position: "L" | "R" }[];
 }
 
-export function verifyMerkleProof(leaf: string, proof: { siblings: readonly { hash: string; position: "L" | "R" }[] }, root: string): boolean {
-  let current = `0x${bareHash(leaf)}`;
-  for (const sibling of proof.siblings) current = sibling.position === "L" ? pair(sibling.hash, current) : pair(current, sibling.hash);
-  return current === `0x${bareHash(root)}`;
+const siblingPosition = (index: number, depth: number): "L" | "R" => (Math.floor(index / 2 ** depth) % 2 ? "L" : "R");
+
+export function merkleInclusionProof(leaves: readonly string[], index: number): MerkleInclusionProof {
+  return { index, siblings: merklePath(leaves, index).map((hash, depth) => ({ hash, position: siblingPosition(index, depth) })) };
 }
 
-export function rootFromPath(leaf: string, index: number, count: number, path: readonly string[]): string {
-  checkIndex(index, count);
+const isLowercaseHash = (value: unknown): value is string => typeof value === "string" && /^(?:0x)?[0-9a-f]{64}$/.test(value);
+
+/** A proof shaped as `merkleInclusionProof` makes it, for a leaf index below `leafCount`. */
+function isInclusionProof(value: unknown, leafCount: number): value is MerkleInclusionProof {
+  if (typeof value !== "object" || value === null) return false;
+  const { index, siblings } = value as { index?: unknown; siblings?: unknown };
+  return isLeafIndex(index, leafCount) && Array.isArray(siblings) && siblings.every((sibling: unknown) => {
+    if (typeof sibling !== "object" || sibling === null) return false;
+    const { hash, position } = sibling as { hash?: unknown; position?: unknown };
+    return isLowercaseHash(hash) && (position === "L" || position === "R");
+  });
+}
+
+/**
+ * Verify that `leaf` is the leaf at `proof.index` of the tree of `leafCount`
+ * leaves under `root`, a count the caller takes from an authenticated source
+ * such as the anchored manifest. The siblings must follow exactly the path
+ * `merkleInclusionProof` gives that index in such a tree, so neither the root
+ * nor an internal node passes as a leaf, except the root of a one-leaf tree.
+ * Every hash must be lowercase SHA-256 hex, with or without 0x. Malformed
+ * input returns false.
+ */
+export function verifyMerkleProof(leaf: string, proof: MerkleInclusionProof, root: string, leafCount: number): boolean {
+  if (!isLowercaseHash(leaf) || !isLowercaseHash(root) || !isLeafCount(leafCount) || !isInclusionProof(proof, leafCount)) {
+    return false;
+  }
+  if (proof.siblings.some((sibling, depth) => sibling.position !== siblingPosition(proof.index, depth))) return false;
+  const walked = walkPath(leaf, proof.index, leafCount, proof.siblings.map((sibling) => sibling.hash));
+  return "root" in walked && walked.root === `0x${bareHash(root)}`;
+}
+
+/** The root `path` leads to from `leaf` at `index` of `count` leaves, or why the path does not fit that position. */
+function walkPath(leaf: string, index: number, count: number, path: readonly string[]): { root: string } | { refusal: string } {
   let current = `0x${bareHash(leaf)}`;
   let depth = 0;
   while (count > 1) {
-    if (depth >= path.length) throw new Error("Merkle path too short");
+    if (depth >= path.length) return { refusal: "Merkle path too short" };
     const sibling = `0x${bareHash(path[depth++]!)}`;
-    if (index === count - 1 && count % 2 === 1 && sibling !== current) throw new Error("Odd-node sibling must duplicate the node");
+    if (index === count - 1 && count % 2 === 1 && sibling !== current) return { refusal: "Odd-node sibling must duplicate the node" };
     current = index % 2 ? pair(sibling, current) : pair(current, sibling);
     index = Math.floor(index / 2);
     count = Math.ceil(count / 2);
   }
-  if (depth !== path.length) throw new Error("Merkle path too long");
-  return current;
+  return depth === path.length ? { root: current } : { refusal: "Merkle path too long" };
+}
+
+export function rootFromPath(leaf: string, index: number, count: number, path: readonly string[]): string {
+  checkIndex(index, count);
+  const walked = walkPath(leaf, index, count, path);
+  if ("refusal" in walked) throw new Error(walked.refusal);
+  return walked.root;
 }
 
 export function decodeReceiptRecord(raw: Uint8Array): ReceiptRecord {

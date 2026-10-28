@@ -18,7 +18,7 @@
  * ```typescript
  * import { SelectiveDisclosureProver } from './selective-disclosure.js';
  *
- * const prover = new SelectiveDisclosureProver();
+ * const prover = new SelectiveDisclosureProver({ mode: 'simulation' });
  *
  * const proof = await prover.generateProof({
  *   bundle: traceBundle,
@@ -27,7 +27,8 @@
  *   cardanoAnchorTxHash: 'txhash...',
  * });
  *
- * const isValid = await prover.verifyProof(proof);
+ * const result = await prover.verifyDisclosure(proof, { expectedMerkleRoot: anchoredMerkleRoot });
+ * const disclosedSpan = result.valid ? result.span : undefined;
  * ```
  */
 
@@ -94,37 +95,67 @@ export interface SelectiveDisclosureProverOptions {
 
 /**
  * Facts the caller supplies to {@link SelectiveDisclosureProver.verifyDisclosure}
- * from a source it already trusts, never from the proof: the contract of
- * process-trace's `verifyDisclosure` for membership entries.
+ * about the anchored tree, from a source it already trusts, never from the
+ * proof: the contract of process-trace's `verifyDisclosure`. Only the options'
+ * own properties count.
  */
 export interface DisclosureProofVerifyOptions {
   /**
-   * Merkle leaf hash for each span ID. A partial disclosure verifies only as
-   * membership of a span listed here, and a full disclosure of a listed span
-   * must hash to that leaf.
+   * Merkle leaf hash for each span ID. A full disclosure of a listed span must
+   * hash to that leaf, and a partial disclosure's Merkle path names the listed
+   * span with the proven leaf.
    */
   leafHashes?: Readonly<Record<string, string>>;
-  /** Number of leaves in the anchored tree; when given, the proof's path must be exactly as deep. */
+  /** Number of leaves in the anchored tree; the proof's path must be exactly as deep. */
   leafCount?: number;
+  /**
+   * The anchored tree's Merkle root, which the proof's public Merkle root must
+   * equal. Required with `leafHashes` or `leafCount`, which describe that tree;
+   * without it a proof verifies only against its own public Merkle root.
+   */
+  expectedMerkleRoot?: string;
 }
 
-/** Result of {@link SelectiveDisclosureProver.verifyDisclosure}. */
+/**
+ * Result of {@link SelectiveDisclosureProver.verifyDisclosure}. Read disclosed
+ * data from `span` and `events`, never from the proof.
+ */
 export interface DisclosureProofVerification {
+  /**
+   * The proof verifies, and nothing it discloses is unbound:
+   * {@link SelectiveDisclosureProver.verifyProof} returns this.
+   */
   valid: boolean;
   /**
    * The proof discloses a span without its events, or events without their
-   * span. Nothing binds such data to the public span hash, so the proof shows
-   * only that a span is in the tree, and only for a span whose leaf hash, and
-   * the tree's leaf count, the caller authenticated.
+   * span: data nothing binds to the public span hash. Such a proof never
+   * verifies, and the result returns none of its data.
    */
   unbound: boolean;
-  /** The span the proof shows to be in the tree: the disclosed span, or the authenticated span with the proven leaf. */
+  /**
+   * The span the proof shows to be in the tree: a full disclosure's span, or,
+   * for an unbound partial disclosure, the authenticated span with the proven leaf.
+   */
   spanId?: string;
   /** A full disclosure's span, as committed. */
   span?: TraceSpan;
   /** A full disclosure's events, in `seq` order, as committed. */
   events?: TraceEvent[];
   errors: string[];
+}
+
+/** The verify options the caller set as own properties, each `undefined` otherwise. */
+interface AnchoredTree {
+  leafHashes: Readonly<Record<string, string>> | undefined;
+  leafCount: number | undefined;
+  expectedMerkleRoot: string | undefined;
+}
+
+/** `options` read as own properties: a key `options` inherits, as from a polluted Object.prototype, authenticates nothing. */
+function anchoredTree(options: DisclosureProofVerifyOptions): AnchoredTree {
+  const own = <K extends keyof DisclosureProofVerifyOptions>(key: K): DisclosureProofVerifyOptions[K] | undefined =>
+    Object.hasOwn(options, key) ? options[key] : undefined;
+  return { leafHashes: own("leafHashes"), leafCount: own("leafCount"), expectedMerkleRoot: own("expectedMerkleRoot") };
 }
 
 /**
@@ -260,7 +291,7 @@ async function fullDisclosure(
   path: MerkleProof,
   span: TraceSpan,
   events: TraceEvent[],
-  { leafHashes }: DisclosureProofVerifyOptions
+  { leafHashes }: AnchoredTree
 ): Promise<DisclosureProofVerification> {
   const checked = await verifySpanDisclosure({ spanId: String(span.id), proof: path, span, events }, path.rootHash);
   if (!checked.valid || checked.span === undefined || checked.events === undefined) {
@@ -274,24 +305,26 @@ async function fullDisclosure(
 }
 
 /**
- * A span without its events, or events without their span, as membership of
- * the authenticated span whose leaf hash `leafHash` is.
+ * A span without its events, or events without their span. Nothing binds
+ * such data to the span hash, so the proof never verifies; given the anchored
+ * tree, the result names the authenticated span whose leaf hash `leafHash` is.
  */
 function partialDisclosure(
   leafHash: string,
   span: TraceSpan | undefined,
-  { leafHashes, leafCount }: DisclosureProofVerifyOptions
+  { leafHashes, leafCount }: AnchoredTree
 ): DisclosureProofVerification {
-  const unbound = (reason: string): DisclosureProofVerification => ({
+  const unbound = (detail: string, spanId?: string): DisclosureProofVerification => ({
     valid: false,
     unbound: true,
+    ...(spanId === undefined ? {} : { spanId }),
     errors: [
-      `Partial disclosure is unbound: ${reason}. A span without its events, or events without their span, ` +
-        "verify only as membership: pass the anchored tree's leaf hashes and leaf count from an authenticated source.",
+      "Partial disclosure is unbound: nothing binds a span without its events, or events without their span, " +
+        `to the span hash, so the proof never verifies and its data is not returned; ${detail}.`,
     ],
   });
   if (leafHashes === undefined || leafCount === undefined) {
-    return unbound("no authenticated leaf hashes and leaf count were given");
+    return unbound("pass the anchored tree's leaf hashes, leaf count and Merkle root to learn which span its Merkle path proves");
   }
   if (span !== undefined) {
     if (typeof span.id !== "string") {
@@ -301,7 +334,7 @@ function partialDisclosure(
       return unbound(`span "${span.id}" has no authenticated leaf hash`);
     }
     return leafHashes[span.id] === leafHash
-      ? { valid: true, unbound: false, spanId: span.id, errors: [] }
+      ? unbound(`its Merkle path proves only that span "${span.id}" is in the tree`, span.id)
       : invalid(`Disclosed span "${span.id}" is not the span with the proven leaf hash`);
   }
   const owners = Object.keys(leafHashes).filter((id) => leafHashes[id] === leafHash);
@@ -309,7 +342,7 @@ function partialDisclosure(
     return unbound("no authenticated span has the proven leaf hash");
   }
   return owners.length === 1
-    ? { valid: true, unbound: false, spanId: owners[0]!, errors: [] }
+    ? unbound(`its Merkle path proves only that span "${owners[0]!}" is in the tree`, owners[0]!)
     : invalid("More than one authenticated span has the proven leaf hash");
 }
 
@@ -326,11 +359,14 @@ function partialDisclosure(
  *
  * @example
  * ```typescript
- * const prover = new SelectiveDisclosureProver();
+ * const prover = new SelectiveDisclosureProver({ mode: "simulation" });
  * const proof = await prover.generateProof(input);
  *
- * // Proof includes optional span data for verification
- * console.log(proof.disclosedSpan?.name); // e.g., "inference"
+ * // Read disclosed data from the verification result, never from the proof
+ * const result = await prover.verifyDisclosure(proof, { expectedMerkleRoot: anchoredMerkleRoot });
+ * if (result.valid) {
+ *   console.log(result.span?.name); // e.g., "inference"
+ * }
  * ```
  */
 export class SelectiveDisclosureProver {
@@ -433,11 +469,14 @@ export class SelectiveDisclosureProver {
   }
 
   /**
-   * Verify a selective disclosure proof; true exactly when
-   * {@link verifyDisclosure} returns `valid`.
+   * Verify a selective disclosure proof: true only for a full disclosure that
+   * binds its span and events, or a membership proof that discloses no data,
+   * exactly when {@link verifyDisclosure} returns `valid`. A true result says
+   * nothing about the proof object afterwards: read disclosed data from
+   * {@link verifyDisclosure}'s result, never from the proof.
    *
    * @param proof - The disclosure proof to verify
-   * @param options - Authenticated leaf hashes and leaf count
+   * @param options - The anchored tree's Merkle root, leaf hashes and leaf count
    * @returns Promise resolving to true if valid
    */
   async verifyProof(proof: DisclosureProof, options: DisclosureProofVerifyOptions = {}): Promise<boolean> {
@@ -448,18 +487,20 @@ export class SelectiveDisclosureProver {
    * Verify a selective disclosure proof and report what it binds.
    *
    * The Merkle path carried in the proof bytes must lead from the public span
-   * hash to the public Merkle root. Then:
+   * hash to the public Merkle root, which must equal `options.expectedMerkleRoot`
+   * when given; `options.leafHashes` and `options.leafCount` describe the
+   * anchored tree and require it. Then:
    * - a full disclosure (span and events) must recompute to the public span
    *   hash; the result holds the span and events as committed;
    * - a membership proof (neither) shows only that the public span hash is in
    *   the tree;
    * - a partial disclosure (a span without its events, or events without their
-   *   span) cannot be hashed, so it verifies as membership of the span whose
-   *   leaf hash the caller authenticated, given the tree's authenticated leaf
-   *   count, and is reported `unbound` without them. Its data is not returned.
+   *   span) cannot be hashed, so it is `unbound` and never valid; given the
+   *   anchored tree, `spanId` names the authenticated span whose leaf the path
+   *   proves. Its data is not returned.
    *
    * @param proof - The disclosure proof to verify
-   * @param options - Authenticated leaf hashes and leaf count
+   * @param options - The anchored tree's Merkle root, leaf hashes and leaf count
    * @returns Promise resolving to the verification result
    */
   async verifyDisclosure(
@@ -492,19 +533,27 @@ export class SelectiveDisclosureProver {
         return invalid("Proof ID does not match the public inputs");
       }
 
+      const tree = anchoredTree(options);
+      if ((tree.leafHashes !== undefined || tree.leafCount !== undefined) && tree.expectedMerkleRoot === undefined) {
+        return invalid("Authenticated leaf hashes or a leaf count describe the anchored tree: pass its Merkle root as expectedMerkleRoot");
+      }
+      if (tree.expectedMerkleRoot !== undefined && publicInputs.merkleRoot !== tree.expectedMerkleRoot) {
+        return invalid(`The proof's Merkle root ${publicInputs.merkleRoot} is not the expected Merkle root ${tree.expectedMerkleRoot}`);
+      }
+
       const path = await this.merklePath(proof.proof, publicInputs);
-      if (path === null || !(await verifyMerkleProof(path, options.leafCount))) {
+      if (path === null || !(await verifyMerkleProof(path, tree.leafCount))) {
         return invalid("The Merkle path in the proof bytes does not lead from the public span hash to the public Merkle root");
       }
 
       const { disclosedSpan: span, disclosedEvents: events } = proof;
       if (span !== undefined && events !== undefined) {
-        return fullDisclosure(path, span, events, options);
+        return fullDisclosure(path, span, events, tree);
       }
       if (span === undefined && events === undefined) {
         return { valid: true, unbound: false, errors: [] };
       }
-      return partialDisclosure(path.leafHash, span, options);
+      return partialDisclosure(path.leafHash, span, tree);
     } catch (error) {
       if (this.debug) {
         console.error("[SelectiveDisclosureProver] Verification error:", error);

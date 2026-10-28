@@ -462,6 +462,36 @@ describe('verifyRollingHash', () => {
 
     expect(isValid).toBe(false);
   });
+
+  // The chain covers whichever events it is given, so only their seqs show what a list leaves out.
+  it.each([
+    ['omits seq 0 and 1', [2]],
+    ['starts at seq 1', [1, 2]],
+    ['skips seq 1', [0, 2]],
+    ['repeats seq 0', [0, 0, 1]],
+    ['has a fractional seq', [0, 0.5, 1]],
+    ['has a negative seq', [-1, 0]],
+    ['has a string seq', [0, '1']],
+  ])('rejects a list that %s, even against its own chain', async (_name, seqs) => {
+    const events = seqs.map((seq, i) => createCommandEvent({ seq: seq as number, command: `cmd-${i}` }));
+    expect(await verifyRollingHash(events, await computeRollingHash(events))).toBe(false);
+  });
+
+  it('accepts every seq from 0, listed in any order', async () => {
+    const events = [2, 0, 1].map((seq) => createCommandEvent({ seq, command: `cmd-${seq}` }));
+    expect(await verifyRollingHash(events, await computeRollingHash(events))).toBe(true);
+  });
+
+  it('rejects both the complete list and seq 2 alone against a chain over seq 2 alone', async () => {
+    const events = [0, 1, 2].map((seq) => createCommandEvent({ seq, command: `cmd-${seq}` }));
+    const chainOverLast = (await updateRollingHash(await initRollingHash(), await computeEventHash(events[2]!))).currentHash;
+    expect(await verifyRollingHash([events[2]!], chainOverLast)).toBe(false);
+    expect(await verifyRollingHash(events, chainOverLast)).toBe(false);
+  });
+
+  it.each([[[null]], [[{}]], [[{ seq: 0 }, null]]])('returns false for the malformed events %j', async (events) => {
+    expect(await verifyRollingHash(events as unknown as TraceEvent[], await getGenesisHash())).toBe(false);
+  });
 });
 
 // -----------------------------------------------------------------------------

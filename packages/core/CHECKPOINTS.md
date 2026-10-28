@@ -6,6 +6,6 @@ Checkpoint primitives are available from `@fluxpointstudios/orynq-sdk-core/check
 
 `memberSnapshot` stores public receipt fields and their certificate formats in leaf order. `parseMemberSnapshot` checks the 1.5 MiB budget, rejects unknown fields and formats, and recomputes the leaves, root, manifest and identity. A snapshot alone proves neither chain inclusion nor certification.
 
-The Merkle tree uses SHA-256 over raw child bytes, repeats the last node at odd layers, and leaves a single leaf unchanged. `rootFromPath` binds a proof to its index and leaf count and rejects inconsistent odd-node siblings.
+The Merkle tree uses SHA-256 over raw child bytes, repeats the last node at odd layers, and leaves a single leaf unchanged. `rootFromPath` binds a proof to its index and leaf count and rejects inconsistent odd-node siblings. `verifyMerkleProof(leaf, proof, root, leafCount)` holds a `merkleInclusionProof` to the same path for `proof.index` in a tree of the authenticated `leafCount`, so neither the root nor an internal node passes as a leaf except in a one-leaf tree; it takes lowercase hex only and returns false for malformed input.
 
 Public receipt fixtures were captured from Materios genesis `0e46e33f639a56cc8780fd871d9a15e16d99af248526f907cb560cb40849f7bf`. Certificate bytes, leaves and manifest hashes were independently computed with Python `hashlib`, `struct` and `cbor2`.

@@ -9,7 +9,7 @@
  * Merkle tree construction, and inclusion proof validation.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   SelectiveDisclosureProver,
   createSelectiveDisclosureProver,
@@ -875,8 +875,42 @@ describe("SelectiveDisclosureProver.generateMembershipProof", () => {
   });
 });
 
+const ANCHOR_TX = "abc123def456789012345678901234567890123456789012345678901234";
+
+/** What a verifier holding the anchored tree of `bundle` knows. */
+async function anchoredTree(bundle: TraceBundle) {
+  const tree = await processTrace.buildSpanMerkleTree(bundle.privateRun.spans, bundle.privateRun.events);
+  const ordered = [...bundle.privateRun.spans].sort((a, b) => a.spanSeq - b.spanSeq);
+  return {
+    leafHashes: Object.fromEntries(ordered.map((span, i) => [span.id, tree.leafHashes[i]!])),
+    leafCount: tree.leafCount,
+    expectedMerkleRoot: tree.rootHash,
+  };
+}
+
+/** A finalized trace of public spans in `spanSeq` order, each holding one decision event as `decisions` lists. */
+async function decisionTrace(decisions: readonly string[]): Promise<TraceBundle> {
+  const run = await processTrace.createTrace({ agentId: "selective-disclosure" });
+  for (const decision of decisions) {
+    const span = processTrace.addSpan(run, { name: `decide-${decision}`, visibility: "public" });
+    await processTrace.addEvent<"decision">(run, span.id, { kind: "decision", decision, visibility: "public" });
+    await processTrace.closeSpan(run, span.id);
+  }
+  const unpinnedManifestWarning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  try {
+    return await processTrace.finalizeTrace(run);
+  } finally {
+    unpinnedManifestWarning.mockRestore();
+  }
+}
+
+const spanAt = (bundle: TraceBundle, spanSeq: number) => bundle.privateRun.spans.find((span) => span.spanSeq === spanSeq)!;
+
+const proofFrom = (bundle: TraceBundle, spanId: string, options: SelectiveDisclosureProverOptions = {}) =>
+  new SelectiveDisclosureProver({ mode: "simulation", ...options })
+    .generateProof({ bundle, spanId, merkleRoot: bundle.merkleRoot, cardanoAnchorTxHash: ANCHOR_TX });
+
 describe("SelectiveDisclosureProver partial disclosures", () => {
-  const anchor = "abc123def456789012345678901234567890123456789012345678901234";
   const partial: Record<string, SelectiveDisclosureProverOptions> = {
     "a span without its events": { includeEventData: false },
     "events without their span": { includeSpanData: false },
@@ -889,40 +923,71 @@ describe("SelectiveDisclosureProver partial disclosures", () => {
 
   /** A proof of span-2 of five, and what a verifier holding the anchored tree knows. */
   async function proofOf(options: SelectiveDisclosureProverOptions) {
-    const { bundle, merkleRoot } = await createTestBundle(5);
-    const proof = await new SelectiveDisclosureProver({ mode: "simulation", ...options })
-      .generateProof({ bundle, spanId: "span-2", merkleRoot, cardanoAnchorTxHash: anchor });
-    const tree = await processTrace.buildSpanMerkleTree(bundle.privateRun.spans, bundle.privateRun.events);
-    const ordered = [...bundle.privateRun.spans].sort((a, b) => a.spanSeq - b.spanSeq);
-    const authenticated = {
-      leafHashes: Object.fromEntries(ordered.map((span, i) => [span.id, tree.leafHashes[i]!])),
-      leafCount: tree.leafCount,
-    };
-    return { proof, authenticated };
+    const { bundle } = await createTestBundle(5);
+    return { proof: await proofFrom(bundle, "span-2", options), authenticated: await anchoredTree(bundle) };
   }
 
-  it.each(Object.entries(partial))("reports %s as unbound without authenticated leaves", async (_name, options) => {
+  it.each(Object.entries(partial))("never verifies %s, with or without the anchored tree", async (_name, options) => {
     const { proof, authenticated } = await proofOf(options);
-    for (const given of [undefined, { leafHashes: authenticated.leafHashes }, { leafCount: authenticated.leafCount }]) {
+    const { leafHashes, leafCount, expectedMerkleRoot } = authenticated;
+    for (const given of [undefined, authenticated, { leafHashes, leafCount }, { leafHashes, expectedMerkleRoot }]) {
       const result = await prover.verifyDisclosure(proof, given);
-      expect(result).toMatchObject({ valid: false, unbound: true });
-      expect(result.errors.join("\n")).toMatch(/unbound/);
+      expect(result.valid).toBe(false);
+      expect(result.span).toBeUndefined();
+      expect(result.events).toBeUndefined();
       expect(await prover.verifyProof(proof, given)).toBe(false);
+    }
+    // Without the tree's leaf count nothing rules out an internal node presented as a leaf, so no span is named.
+    for (const given of [undefined, { leafHashes, expectedMerkleRoot }]) {
+      expect(await prover.verifyDisclosure(proof, given)).toEqual({ valid: false, unbound: true, errors: [expect.stringMatching(/unbound/)] });
     }
   });
 
-  it.each(Object.entries(partial))("verifies %s as membership of its authenticated span", async (_name, options) => {
-    const { proof, authenticated } = await proofOf(options);
-    expect(await prover.verifyDisclosure(proof, authenticated))
-      .toEqual({ valid: true, unbound: false, spanId: "span-2", errors: [] });
-    expect(await prover.verifyProof(proof, authenticated)).toBe(true);
+  it("names no span for a span disclosed without its events that the anchored tree does not list", async () => {
+    const { proof, authenticated } = await proofOf(partial["a span without its events"]!);
+    const leafHashes = Object.fromEntries(Object.entries(authenticated.leafHashes).filter(([spanId]) => spanId !== "span-2"));
+    expect(await prover.verifyDisclosure(proof, { ...authenticated, leafHashes }))
+      .toEqual({ valid: false, unbound: true, errors: [expect.stringMatching(/span "span-2" has no authenticated leaf hash/)] });
   });
 
-  it("returns none of a partial disclosure's data, which nothing binds", async () => {
-    const { proof, authenticated } = await proofOf(partial["a span without its events"]!);
-    proof.disclosedSpan = { ...proof.disclosedSpan!, name: "forged" };
-    const result = await prover.verifyDisclosure(proof, authenticated);
-    expect(result).toEqual({ valid: true, unbound: false, spanId: "span-2", errors: [] });
+  it.each(Object.entries(partial))("names the authenticated span whose membership %s proves, and returns none of its data", async (_name, options) => {
+    const { proof, authenticated } = await proofOf(options);
+    expect(await prover.verifyDisclosure(proof, authenticated))
+      .toEqual({ valid: false, unbound: true, spanId: "span-2", errors: [expect.stringMatching(/unbound/)] });
+  });
+
+  it("does not verify a span disclosed without its events whose name was changed", async () => {
+    const bundle = await decisionTrace(["ok", "ok", "REJECTED", "ok", "ok"]);
+    const target = spanAt(bundle, 2);
+    const authenticated = await anchoredTree(bundle);
+    const proof = await proofFrom(bundle, target.id, partial["a span without its events"]);
+    proof.disclosedSpan = { ...proof.disclosedSpan!, name: "decide-APPROVED" };
+    for (const given of [undefined, authenticated]) {
+      expect(await prover.verifyProof(proof, given)).toBe(false);
+    }
+    expect(await prover.verifyDisclosure(proof, authenticated))
+      .toEqual({ valid: false, unbound: true, spanId: target.id, errors: [expect.stringMatching(/unbound/)] });
+  });
+
+  it("does not verify events disclosed without their span after one was invented", async () => {
+    const bundle = await decisionTrace(["ok", "ok", "REJECTED", "ok", "ok"]);
+    const target = spanAt(bundle, 2);
+    const authenticated = await anchoredTree(bundle);
+    const proof = await proofFrom(bundle, target.id, partial["events without their span"]);
+    expect(proof.disclosedEvents!.map((event) => (event as { decision?: string }).decision)).toEqual(["REJECTED"]);
+    proof.disclosedEvents = [{ ...proof.disclosedEvents![0]!, id: "evt-invented", decision: "APPROVED", hash: "00".repeat(32) } as TraceEvent];
+    for (const given of [undefined, authenticated]) {
+      expect(await prover.verifyProof(proof, given)).toBe(false);
+    }
+    expect(await prover.verifyDisclosure(proof, authenticated))
+      .toEqual({ valid: false, unbound: true, spanId: target.id, errors: [expect.stringMatching(/unbound/)] });
+  });
+
+  it("names no span for events disclosed without their span whose leaf more than one authenticated span has", async () => {
+    const { proof, authenticated } = await proofOf(partial["events without their span"]!);
+    const leafHashes = { ...authenticated.leafHashes, "span-2-alias": authenticated.leafHashes["span-2"]! };
+    expect(await prover.verifyDisclosure(proof, { ...authenticated, leafHashes }))
+      .toEqual({ valid: false, unbound: false, errors: [expect.stringMatching(/more than one authenticated span/i)] });
   });
 
   it("rejects a partial disclosure naming a span authenticated for another leaf", async () => {
@@ -949,11 +1014,15 @@ describe("SelectiveDisclosureProver partial disclosures", () => {
   });
 
   it("holds every proof to an authenticated leaf count", async () => {
-    for (const options of [{}, { includeSpanData: false, includeEventData: false }, partial["events without their span"]!]) {
+    for (const options of [{}, { includeSpanData: false, includeEventData: false }]) {
       const { proof, authenticated } = await proofOf(options);
       expect((await prover.verifyDisclosure(proof, authenticated)).valid).toBe(true);
       expect((await prover.verifyDisclosure(proof, { ...authenticated, leafCount: 9 })).valid).toBe(false);
     }
+    const { proof, authenticated } = await proofOf(partial["events without their span"]!);
+    expect((await prover.verifyDisclosure(proof, authenticated)).spanId).toBe("span-2");
+    expect(await prover.verifyDisclosure(proof, { ...authenticated, leafCount: 9 }))
+      .toEqual({ valid: false, unbound: false, errors: [expect.stringMatching(/Merkle path/)] });
   });
 
   it("names the unbound partial disclosure in DefaultMidnightProver.verify", async () => {
@@ -961,6 +1030,82 @@ describe("SelectiveDisclosureProver partial disclosures", () => {
     const result = await new DefaultMidnightProver({ mode: "simulation" }).verify(proof);
     expect(result.valid).toBe(false);
     expect(result.errors.join("\n")).toMatch(/unbound/);
+  });
+});
+
+describe("SelectiveDisclosureProver anchored tree", () => {
+  let prover: SelectiveDisclosureProver;
+
+  beforeEach(() => {
+    prover = new SelectiveDisclosureProver({ mode: "simulation" });
+  });
+
+  it("requires the anchored tree's Merkle root with its leaf hashes or leaf count", async () => {
+    const bundle = await decisionTrace(["a", "b", "c", "d", "e"]);
+    const proof = await proofFrom(bundle, spanAt(bundle, 1).id);
+    const { leafHashes, leafCount, expectedMerkleRoot } = await anchoredTree(bundle);
+    for (const given of [{ leafHashes }, { leafCount }, { leafHashes, leafCount }]) {
+      const result = await prover.verifyDisclosure(proof, given);
+      expect(result).toEqual({ valid: false, unbound: false, errors: [expect.stringMatching(/expectedMerkleRoot/)] });
+      expect(await prover.verifyProof(proof, given)).toBe(false);
+    }
+    expect(await prover.verifyProof(proof, { leafHashes, leafCount, expectedMerkleRoot })).toBe(true);
+  });
+
+  it("rejects a full disclosure from another tree of the same depth", async () => {
+    const anchored = await decisionTrace(["a", "b", "c", "d", "e"]);
+    const foreign = await decisionTrace(["v", "KYC PASSED", "x", "y", "z"]);
+    const authenticated = await anchoredTree(anchored);
+    const forged = await proofFrom(foreign, spanAt(foreign, 1).id);
+    // Without the anchored tree, a proof verifies only against its own public Merkle root.
+    expect(forged.publicInputs.merkleRoot).not.toBe(anchored.merkleRoot);
+    expect(await prover.verifyProof(forged)).toBe(true);
+
+    const result = await prover.verifyDisclosure(forged, authenticated);
+    expect(result).toEqual({ valid: false, unbound: false, errors: [expect.stringMatching(/Merkle root/)] });
+    expect(await prover.verifyProof(forged, authenticated)).toBe(false);
+    const honest = await proofFrom(anchored, spanAt(anchored, 1).id);
+    expect(await prover.verifyDisclosure(honest, authenticated)).toMatchObject({ valid: true, spanId: spanAt(anchored, 1).id });
+  });
+
+  it("checks a proof against an expectedMerkleRoot given alone", async () => {
+    const bundle = await decisionTrace(["a", "b", "c"]);
+    for (const options of [{}, { includeSpanData: false, includeEventData: false }]) {
+      const proof = await proofFrom(bundle, spanAt(bundle, 2).id, options);
+      expect(await prover.verifyProof(proof, { expectedMerkleRoot: bundle.merkleRoot })).toBe(true);
+      expect(await prover.verifyProof(proof, { expectedMerkleRoot: "ab".repeat(32) })).toBe(false);
+    }
+  });
+});
+
+/** Runs `body` while Object.prototype carries `inherited`, as a polluted prototype would. */
+async function withInherited<T>(inherited: Record<string, unknown>, body: () => Promise<T>): Promise<T> {
+  for (const [key, value] of Object.entries(inherited)) {
+    Object.defineProperty(Object.prototype, key, { value, configurable: true, writable: true });
+  }
+  try {
+    return await body();
+  } finally {
+    for (const key of Object.keys(inherited)) delete (Object.prototype as Record<string, unknown>)[key];
+  }
+}
+
+describe("SelectiveDisclosureProver verify options", () => {
+  it("reads only the options' own properties, never ones they inherit", async () => {
+    const prover = new SelectiveDisclosureProver({ mode: "simulation" });
+    const bundle = await decisionTrace(["ok", "ok", "REJECTED"]);
+    const target = spanAt(bundle, 2);
+    const eventsOnly = await proofFrom(bundle, target.id, { includeSpanData: false });
+    const full = await proofFrom(bundle, target.id);
+    const authenticated = await anchoredTree(bundle);
+
+    const bound = await withInherited(authenticated, () =>
+      Promise.all([prover.verifyDisclosure(eventsOnly), prover.verifyDisclosure(eventsOnly, {})]));
+    for (const result of bound) {
+      expect(result).toEqual({ valid: false, unbound: true, errors: [expect.stringMatching(/unbound/)] });
+    }
+    const verified = await withInherited({ expectedMerkleRoot: "ab".repeat(32), leafCount: 9 }, () => prover.verifyProof(full));
+    expect(verified).toBe(true);
   });
 });
 
