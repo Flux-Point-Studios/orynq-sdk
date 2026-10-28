@@ -695,6 +695,9 @@ importers:
       '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
+      '@noble/hashes':
+        specifier: ^1.8.0
+        version: 1.8.0
     devDependencies:
       '@polkadot/util':
         specifier: ^13.5.0

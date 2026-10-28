@@ -28,6 +28,12 @@ import {
   addEvent,
   closeSpan,
   finalizeTrace,
+  createBundle,
+  computeEventHash,
+  computeRollingHash,
+  computeRootHash,
+  computeSpanHash,
+  getBundleSpanEvents,
 } from "@fluxpointstudios/orynq-sdk-process-trace";
 import type { TraceBundle } from "@fluxpointstudios/orynq-sdk-process-trace";
 
@@ -1023,6 +1029,87 @@ describe("verifyAnchor fetchBundle rejects unbound projected data (#77 round-5)"
     expect(run.metadata).toBeUndefined();
     expect(run.agentId).toBeUndefined();
     expect(run.status).toBeUndefined();
+  });
+
+  it("returns only the span and event fields the hashes commit to", async () => {
+    const bundle = await buildRealBundle();
+    const anchorRoot = bundle.rootHash;
+
+    // Span hashes cover a fixed header and both hashes skip null-valued keys, so
+    // these additions leave the root unchanged.
+    const forged = JSON.parse(JSON.stringify(bundle)) as TraceBundle;
+    Object.assign(forged.privateRun.spans[0]!, {
+      approvedBy: "compliance-officer",
+      verified: true,
+      parentSpanId: null,
+    });
+    Object.assign(forged.privateRun.events[0]!, { approvedBy: null });
+
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [
+        { type: "https", uri: "https://storage.example.com/b.json", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(forged));
+
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+    });
+
+    expect(result.valid).toBe(true);
+    const run = (result.bundle as { privateRun: TraceBundle["privateRun"] }).privateRun;
+    expect(run.spans).toEqual(JSON.parse(JSON.stringify(bundle.privateRun.spans)));
+    expect(run.events).toEqual(JSON.parse(JSON.stringify(bundle.privateRun.events)));
+    expect(Object.keys(run.spans[0]!)).not.toContain("parentSpanId");
+    expect(Object.keys(run.events[0]!)).not.toContain("approvedBy");
+  });
+
+  it.each(["spans", "events"] as const)("rejects a committed bundle whose %s repeat an ID", async (repeated) => {
+    // The producer commits the repeated IDs itself, so the root still matches the anchor.
+    const run = await createTrace({ agentId: "repeated-ids" });
+    for (const decision of ["REJECTED", "APPROVED"]) {
+      const span = addSpan(run, { name: "approval", visibility: "public" });
+      await addEvent<"decision">(run, span.id, { kind: "decision", decision, visibility: "public" });
+      await closeSpan(run, span.id);
+    }
+    if (repeated === "spans") {
+      for (const span of run.spans) span.id = "approval";
+    } else {
+      run.events[1]!.id = run.events[0]!.id;
+      run.spans[1]!.eventIds = [run.events[0]!.id];
+    }
+    for (const event of run.events) event.hash = await computeEventHash(event);
+    run.rollingHash = await computeRollingHash(run.events);
+    for (const span of run.spans) {
+      span.hash = await computeSpanHash(span, getBundleSpanEvents(span, run.events).map((event) => event.hash!));
+    }
+    run.status = "completed";
+    run.rootHash = await computeRootHash(run.rollingHash, run.spans);
+    const bundle = await createBundle(run);
+
+    const entry = createValidEntry({
+      rootHash: bundle.rootHash,
+      storageRefs: [
+        { type: "https", uri: "https://storage.example.com/b.json", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const result = await verifyAnchor(provider, "tx123", bundle.rootHash, {
+      fetchBundle: true,
+      fetchFn: vi.fn().mockResolvedValue(jsonResponse(bundle)) as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.bundle).toBeUndefined();
   });
 
   it("rejects a bundle whose manifest content does not hash to the committed pin", async () => {

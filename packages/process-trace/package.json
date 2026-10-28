@@ -55,7 +55,8 @@
   "homepage": "https://github.com/Flux-Point-Studios/orynq-sdk#readme",
   "bugs": "https://github.com/Flux-Point-Studios/orynq-sdk/issues",
   "dependencies": {
-    "@fluxpointstudios/orynq-sdk-core": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*",
+    "@noble/hashes": "^1.8.0"
   },
   "peerDependencies": {
     "@polkadot/util": "^13.0.0",

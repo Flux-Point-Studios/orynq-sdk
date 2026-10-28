@@ -215,6 +215,43 @@ describe("Policy Engine", () => {
     expect(result.passed).toBe(false);
     expect(result.firmwareVersionOk).toBe(false);
   });
+
+  describe("fails requested checks it cannot run", () => {
+    const measurement = "dd".repeat(48);
+    const measurements: Measurements = {
+      firmwareVersion: "1.0.0",
+      sevSnp: { launchMeasurement: measurement, guestPolicy: "0x0", vmpl: undefined },
+      tdx: undefined,
+      sgx: undefined,
+      nitro: undefined,
+    };
+    const policy = (overrides: Partial<VerifierPolicy>): VerifierPolicy => ({
+      ...createPermissivePolicy(),
+      expectedMeasurements: [measurement],
+      ...overrides,
+    });
+
+    it("passes when every requested check runs and passes", () => {
+      expect(evaluatePolicy(measurements, policy({ minFirmwareVersion: "1.0.0" }), "sev-snp").passed).toBe(true);
+    });
+
+    it.each([
+      ["allowed signer keys", policy({ allowedSignerKeys: ["only-this-key"] }), measurements, "signerKeysMatch"],
+      ["revocation checking (strict policy default)", createStrictPolicy([measurement]), measurements, "notRevoked"],
+      ["revocation checking against a list", policy({ checkRevocation: true, revocationListUri: "https://crl.example" }),
+        measurements, "notRevoked"],
+      ["a minimum firmware version with no reported version", policy({ minFirmwareVersion: "9.9.9" }),
+        { ...measurements, firmwareVersion: undefined }, "firmwareVersionOk"],
+      ["a minimum firmware version against an unparseable version", policy({ minFirmwareVersion: "9.9.9" }),
+        { ...measurements, firmwareVersion: "x.99.0" }, "firmwareVersionOk"],
+      ["a minimum SVN for a TEE without one", policy({ minSvn: 99 }), measurements, "svnOk"],
+    ] as const)("fails a policy requiring %s", (_name, requested, reported, check) => {
+      const result = evaluatePolicy(reported, requested, "sev-snp");
+      expect(result.passed).toBe(false);
+      expect(result[check]).toBe(false);
+      expect(result.errors.length).toBeGreaterThan(0);
+    });
+  });
 });
 
 describe("Attestor Registry", () => {
@@ -292,7 +329,7 @@ describe("NitroVerifier", () => {
     expect(verifier.teeType).toBe("nitro");
   });
 
-  it("should verify bundle with correct type", async () => {
+  it("should report unavailable Nitro verification", async () => {
     const builder = new AttestationBundleBuilder();
     const bundle = builder
       .setTee("nitro", "1.0")
@@ -304,7 +341,8 @@ describe("NitroVerifier", () => {
     const result = await verifyBundle(bundle);
 
     expect(result.teeType).toBe("nitro");
-    // Note: Verification may fail due to mock data, but should not error
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe("VERIFICATION_UNAVAILABLE");
   });
 
   it("should fail verification for wrong TEE type", async () => {
@@ -346,7 +384,7 @@ describe("SevSnpVerifier", () => {
     expect(verifier.teeType).toBe("sev-snp");
   });
 
-  it("should verify bundle with correct type", async () => {
+  it("should report unavailable SEV-SNP verification", async () => {
     const builder = new AttestationBundleBuilder();
     const bundle = builder
       .setTee("sev-snp", "1.0")
@@ -359,5 +397,7 @@ describe("SevSnpVerifier", () => {
     const result = await verifier.verify(bundle);
 
     expect(result.teeType).toBe("sev-snp");
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe("VERIFICATION_UNAVAILABLE");
   });
 });

@@ -1,8 +1,8 @@
 /**
  * PoI Attestor Package
  *
- * TEE attestation backends for hardware-rooted trust.
- * Supports AWS Nitro Enclaves, AMD SEV-SNP, and more.
+ * TEE attestation types and backend scaffolding.
+ * Bundled hardware verification fails closed with VERIFICATION_UNAVAILABLE.
  *
  * @example
  * ```typescript

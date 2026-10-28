@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shutil
 import subprocess
 from copy import deepcopy
@@ -22,15 +23,16 @@ import orynq_sdk.trace as trace
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _verify(bundle):
+def _verify(bundle, locale=None):
     tsx = shutil.which("tsx") or REPO_ROOT / "node_modules" / ".bin" / "tsx"
     if not Path(tsx).exists():
         pytest.skip("Install workspace Node dependencies to run TS trace verification")
+    env = None if locale is None else {**os.environ, "LANG": locale, "LC_ALL": locale}
     proc = subprocess.run(
         [str(tsx), "--tsconfig", str(Path(__file__).with_name("tsconfig.trace-parity.json")),
          str(Path(__file__).with_name("_trace_ts_verifier.mts"))],
         input=json.dumps(bundle), capture_output=True, text=True,
-        cwd=REPO_ROOT, timeout=60,
+        cwd=REPO_ROOT, timeout=60, env=env,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -122,3 +124,26 @@ def test_numeric_and_utf16_payloads_verify_in_typescript(fixed_clock_and_ids):
     assert actual["rootHash"] == bundle.root_hash
     assert actual["contentHash"] == bundle.manifest_hash
     assert trace.canonical_json(payload["😀"]) == '[null,{"value":0}]'
+
+
+@pytest.mark.parametrize("locale", ["en_US.UTF-8", "da_DK.UTF-8", "nb_NO.UTF-8"])
+def test_redacted_spans_verify_under_any_host_locale(locale, fixed_clock_and_ids, monkeypatch):
+    """Danish and Norwegian collation sort "aa" after "b"; code points sort it first."""
+    ids = iter([
+        "00000000-0000-4000-8000-000000000000",
+        "b03e2d11-7a9c-4f10-8b2d-6e5f4a3b2c1d", "10000000-0000-4000-8000-000000000001",
+        "aa5f0c1e-3b1d-4c55-9e0a-1f2b3c4d5e6f", "10000000-0000-4000-8000-000000000002",
+        "c0000000-0000-4000-8000-000000000003", "10000000-0000-4000-8000-000000000003",
+    ])
+    monkeypatch.setattr(trace.uuid, "uuid4", lambda: next(ids))
+    run = trace.create_trace(agent_id="host-locale")
+    for name, visibility in (("b", "private"), ("a", "private"), ("pub", "public")):
+        span = trace.add_span(run, name=name, visibility=visibility)
+        trace.add_event(run, span.id, kind="command", command=name)
+        trace.close_span(run, span.id)
+    bundle = trace.finalize_trace(run)
+    assert [r["spanId"][:2] for r in bundle.public_view["redactedSpanHashes"]] == ["aa", "b0"]
+    actual = _verify(bundle.to_dict(), locale)
+    assert actual["collation"] == locale.split(".")[0].replace("_", "-")
+    assert actual["report"]["valid"], actual["report"]
+    assert actual["publicView"] == bundle.public_view

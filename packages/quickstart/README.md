@@ -59,12 +59,13 @@ hosted author policy. See [receipt verification](https://github.com/Flux-Point-S
   did; a mismatch makes the status `invalid`, so it never reads like the key you named.
 - `matched`: what the anchor's commitment binds that your bundle supplied. Kind 1 binds the
   bundle's `rootHash`, `manifestHash` and `merkleRoot`; kind 2 (`--hidden`) binds only the
-  attribute, the bundle's model manifest hash. A bare transaction hash matches nothing; the
-  command prints the commitment without checking it.
+  attribute, the model manifest hash the bundle's root commits to (`privateRun.modelManifestHash`).
+  A bare transaction hash matches nothing; the command prints the commitment without checking it.
 - every check, with what it found. `--json` prints the same report as JSON.
 
 A bundle must be intact (its events and model manifest hash to its own `rootHash` and
-`merkleRoot`) and carry the `manifestHash` of its storage manifest, the same entry a Cardano
+`merkleRoot`, and any top-level copy of the model manifest equals the committed one) and carry
+the `manifestHash` of its storage manifest, the same entry a Cardano
 anchor of the bundle commits to. The source is Blockfrost (`--blockfrost-file <file>`, a file only
 you can read that holds the project id, or `ORYNQ_MIDNIGHT_BLOCKFROST_FILE`), or any Midnight
 indexer and node (`--indexer <graphql url> --rpc <json-rpc url>`). `--network` is `mainnet` (the

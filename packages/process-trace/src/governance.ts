@@ -49,6 +49,7 @@ import type {
 } from "./types.js";
 import { HASH_DOMAIN_PREFIXES } from "./types.js";
 import { addEvent } from "./trace-builder.js";
+import { compareCodeUnits } from "./order.js";
 
 // =============================================================================
 // PREIMAGE
@@ -703,7 +704,7 @@ function typesMatch(
           .sort()
           .map((k) => [
             k,
-            [...t[k]!].sort((a, b) => a.name.localeCompare(b.name)).map((f) => `${f.name}:${f.type}`),
+            [...t[k]!].sort((a, b) => compareCodeUnits(a.name, b.name)).map((f) => `${f.name}:${f.type}`),
           ])
       )
     );

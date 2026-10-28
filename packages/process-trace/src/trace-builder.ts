@@ -43,13 +43,11 @@ import type {
   TraceSpan,
   TraceEvent,
   TraceBundle,
-  TraceBundlePublicView,
   CreateTraceOptions,
   CreateSpanOptions,
   Visibility,
   TraceStatus,
   TraceEventKind,
-  AnnotatedSpan,
 } from "./types.js";
 import { DEFAULT_EVENT_VISIBILITY } from "./types.js";
 import {
@@ -59,6 +57,7 @@ import {
   computeRootHash,
 } from "./rolling-hash.js";
 import { buildSpanMerkleTree, computeSpanHash } from "./merkle.js";
+import { createPublicView } from "./public-view.js";
 import {
   computeModelManifestHash,
   validateModelManifest,
@@ -605,8 +604,14 @@ export async function finalizeTrace(run: TraceRun): Promise<TraceBundle> {
   );
   run.rootHash = rootHash;
 
-  // Create public view
+  // Create public view; the model-state commitment is public-safe (it is only a hash).
   const publicView = createPublicView(run, merkleTree.rootHash);
+  if (run.modelManifestHash !== undefined) {
+    publicView.modelManifestHash = run.modelManifestHash;
+  }
+  if (run.modelManifest !== undefined) {
+    publicView.modelManifest = run.modelManifest;
+  }
 
   // Build and return the complete bundle
   const bundle: TraceBundle = {
@@ -626,96 +631,6 @@ export async function finalizeTrace(run: TraceRun): Promise<TraceBundle> {
   }
 
   return bundle;
-}
-
-// =============================================================================
-// PUBLIC VIEW GENERATION
-// =============================================================================
-
-/**
- * Create a public view of the trace suitable for external sharing.
- *
- * The public view includes:
- * - Run metadata (id, agentId, timestamps, etc.)
- * - Cryptographic commitments (rootHash, merkleRoot)
- * - Public spans with their events
- * - Hashes of redacted (non-public) spans
- *
- * Private and secret data is excluded, but their hashes are included
- * for verification purposes.
- *
- * @param run - The finalized trace run
- * @param merkleRoot - The Merkle root from the span tree
- * @returns The public view of the trace bundle
- */
-function createPublicView(
-  run: TraceRun,
-  merkleRoot: string
-): TraceBundlePublicView {
-  // Build event lookup map
-  const eventMap = new Map(run.events.map((e) => [e.id, e]));
-
-  // Separate public spans from non-public
-  const publicSpans: AnnotatedSpan[] = [];
-  const redactedSpanHashes: Array<{ spanId: string; hash: string }> = [];
-
-  for (const span of run.spans) {
-    if (span.visibility === "public") {
-      // Include public spans with their events
-      const spanEvents = span.eventIds
-        .map((id) => eventMap.get(id))
-        .filter((e): e is TraceEvent => e !== undefined)
-        // Only include public events within public spans
-        .filter((e) => e.visibility === "public")
-        .sort((a, b) => a.seq - b.seq);
-
-      const annotatedSpan: AnnotatedSpan = {
-        ...span,
-        events: spanEvents,
-      };
-      publicSpans.push(annotatedSpan);
-    } else {
-      // Include only the hash for non-public spans
-      if (span.hash) {
-        redactedSpanHashes.push({
-          spanId: span.id,
-          hash: span.hash,
-        });
-      }
-    }
-  }
-
-  // Sort public spans by spanSeq
-  publicSpans.sort((a, b) => a.spanSeq - b.spanSeq);
-
-  // Sort redacted span hashes by spanId for consistency
-  redactedSpanHashes.sort((a, b) => a.spanId.localeCompare(b.spanId));
-
-  const publicView: TraceBundlePublicView = {
-    runId: run.id,
-    agentId: run.agentId,
-    schemaVersion: run.schemaVersion,
-    startedAt: run.startedAt,
-    endedAt: run.endedAt ?? run.startedAt, // Fallback for safety
-    durationMs: run.durationMs ?? 0,
-    status: run.status,
-    totalEvents: run.events.length,
-    totalSpans: run.spans.length,
-    rootHash: run.rootHash ?? "",
-    merkleRoot,
-    publicSpans,
-    redactedSpanHashes,
-  };
-
-  // Model-state commitment is public-safe (it is only a hash).
-  if (run.modelManifestHash !== undefined) {
-    publicView.modelManifestHash = run.modelManifestHash;
-  }
-  if (run.modelManifest !== undefined) {
-    publicView.modelManifest = run.modelManifest;
-  }
-
-  return publicView;
 }
 
 // =============================================================================

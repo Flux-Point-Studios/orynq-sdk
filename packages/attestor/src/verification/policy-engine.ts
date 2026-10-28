@@ -25,13 +25,17 @@ export interface PolicyEvaluationResult {
 
 /**
  * Evaluate measurements against a policy.
+ *
+ * A requested check that cannot run fails: signer keys and revocation status
+ * are never available to this function, a minimum firmware version needs a
+ * reported dotted-numeric version, and a minimum SVN needs a TEE that reports
+ * one.
  */
 export function evaluatePolicy(
   measurements: Measurements,
   policy: VerifierPolicy,
   teeType: TeeType
 ): PolicyEvaluationResult {
-  const warnings: string[] = [];
   const errors: string[] = [];
 
   // Check measurements
@@ -49,17 +53,24 @@ export function evaluatePolicy(
     }
   }
 
-  // Check signer keys (placeholder - would need actual key comparison)
-  const signerKeysMatch = true; // TODO: Implement signer key verification
+  // Measurements carry no signing key to compare
+  const signerKeysMatch = !policy.allowedSignerKeys?.length;
+  if (!signerKeysMatch) {
+    errors.push("Signer key verification is unavailable");
+  }
 
   // Check firmware version
   let firmwareVersionOk = true;
-  if (policy.minFirmwareVersion && measurements.firmwareVersion) {
-    firmwareVersionOk = compareVersions(
-      measurements.firmwareVersion,
-      policy.minFirmwareVersion
-    ) >= 0;
-    if (!firmwareVersionOk) {
+  if (policy.minFirmwareVersion) {
+    const order = measurements.firmwareVersion === undefined
+      ? undefined
+      : compareVersions(measurements.firmwareVersion, policy.minFirmwareVersion);
+    firmwareVersionOk = order !== undefined && order >= 0;
+    if (order === undefined) {
+      errors.push(
+        `Firmware version ${measurements.firmwareVersion ?? "(not reported)"} cannot be compared with minimum ${policy.minFirmwareVersion}`
+      );
+    } else if (!firmwareVersionOk) {
       errors.push(
         `Firmware version ${measurements.firmwareVersion} is below minimum ${policy.minFirmwareVersion}`
       );
@@ -70,19 +81,18 @@ export function evaluatePolicy(
   let svnOk = true;
   if (policy.minSvn !== undefined) {
     const actualSvn = getSvn(measurements, teeType);
-    if (actualSvn !== undefined) {
-      svnOk = actualSvn >= policy.minSvn;
-      if (!svnOk) {
-        errors.push(`SVN ${actualSvn} is below minimum ${policy.minSvn}`);
-      }
+    svnOk = actualSvn !== undefined && actualSvn >= policy.minSvn;
+    if (actualSvn === undefined) {
+      errors.push(`No SVN is reported for ${teeType}, so minimum ${policy.minSvn} cannot be checked`);
+    } else if (!svnOk) {
+      errors.push(`SVN ${actualSvn} is below minimum ${policy.minSvn}`);
     }
   }
 
-  // Check revocation (placeholder - would need revocation list lookup)
-  let notRevoked = true;
-  if (policy.checkRevocation && policy.revocationListUri) {
-    // TODO: Implement revocation checking
-    warnings.push("Revocation checking not implemented");
+  // Revocation status is never looked up
+  const notRevoked = !policy.checkRevocation;
+  if (!notRevoked) {
+    errors.push("Revocation checking is unavailable");
   }
 
   const passed =
@@ -99,7 +109,7 @@ export function evaluatePolicy(
     firmwareVersionOk,
     svnOk,
     notRevoked,
-    warnings,
+    warnings: [],
     errors,
   };
 }
@@ -164,12 +174,18 @@ function getSvn(measurements: Measurements, teeType: TeeType): number | undefine
 }
 
 /**
- * Compare two version strings.
- * Returns: negative if v1 < v2, 0 if equal, positive if v1 > v2
+ * Compare two dotted-numeric version strings.
+ * Returns: negative if v1 < v2, 0 if equal, positive if v1 > v2, or undefined
+ * when either is not dotted-numeric.
  */
-function compareVersions(v1: string, v2: string): number {
-  const parts1 = v1.split(".").map(p => parseInt(p, 10));
-  const parts2 = v2.split(".").map(p => parseInt(p, 10));
+function compareVersions(v1: string, v2: string): number | undefined {
+  const parse = (version: string) =>
+    version.split(".").map((part) => (/^\d+$/.test(part) ? Number(part) : Number.NaN));
+  const parts1 = parse(v1);
+  const parts2 = parse(v2);
+  if ([...parts1, ...parts2].some(Number.isNaN)) {
+    return undefined;
+  }
 
   const maxLen = Math.max(parts1.length, parts2.length);
 
