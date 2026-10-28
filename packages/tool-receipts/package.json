@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-tool-receipts",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Verifiable tool-call receipts for the Orynq process-trace SDK — RFC 9421, webhook-signature, and JWS verifiers",
   "type": "module",
   "main": "./dist/index.cjs",

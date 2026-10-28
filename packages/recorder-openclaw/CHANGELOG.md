@@ -1,5 +1,12 @@
 # @fluxpointstudios/orynq-sdk-recorder-openclaw
 
+## 0.3.2
+
+### Patch Changes
+
+- Updated dependencies [ab2e261]
+  - @fluxpointstudios/orynq-sdk-process-trace@0.4.0
+
 ## 0.3.1
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@fluxpointstudios/orynq-sdk-anchors-midnight-submit",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Deploys the orynq-anchor-registry on Midnight and writes anchors to it: a WalletFacade operator, in-process proving from sha256-pinned key material, and write-ahead submission",
   "type": "module",

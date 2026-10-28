@@ -1,5 +1,34 @@
 # @fluxpointstudios/poi-sdk-midnight-prover
 
+## 0.4.0
+
+### Minor Changes
+
+- 390169a: `verifyMerkleProof`, `verifySpanInclusion` and `computeSpanHash` are now the
+  process-trace implementations: span inclusion recomputes every event hash, and
+  a Merkle proof must use the leaf index its path encodes.
+  `generateMerkleInclusionProof` builds its proof with process-trace.
+
+  The simulation `SelectiveDisclosureProver` gains
+  `verifyDisclosure(proof, { leafHashes, leafCount })`, which verifies the Merkle
+  path in the proof bytes and reports what the proof binds; `verifyProof` takes
+  the same options and returns its `valid`. A full disclosure must hash to the
+  public span hash, and the result holds its span and events as committed. A
+  proof made with `includeEventData: false` or `includeSpanData: false` discloses
+  data nothing binds, so it verifies only as membership of the span whose leaf
+  hash and leaf count the caller authenticated, and is reported `unbound`
+  without them instead of passing on unchecked data. `DefaultMidnightProver.verify`
+  returns the reason in `errors`.
+
+### Patch Changes
+
+- Updated dependencies [390169a]
+- Updated dependencies [ab2e261]
+- Updated dependencies [ab2e261]
+  - @fluxpointstudios/orynq-sdk-anchors-cardano@0.5.1
+  - @fluxpointstudios/orynq-sdk-attestor@0.2.0
+  - @fluxpointstudios/orynq-sdk-process-trace@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes

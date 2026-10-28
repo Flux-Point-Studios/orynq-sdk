@@ -1,5 +1,13 @@
 # @fluxpointstudios/orynq-sdk-anchors-midnight-submit
 
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies [390169a]
+  - @fluxpointstudios/orynq-sdk-midnight-prover@0.4.0
+  - @fluxpointstudios/orynq-sdk-anchors-midnight@0.4.0
+
 ## 0.2.0
 
 ### Minor Changes

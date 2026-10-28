@@ -1,5 +1,16 @@
 # @fluxpointstudios/orynq-sdk-anchors-cardano
 
+## 0.5.1
+
+### Patch Changes
+
+- 390169a: `verifyAnchor` with `fetchBundle` returns each fetched event and span exactly
+  as its hash commits to it, without span fields outside the hashed header or
+  null-valued keys, and rejects a fetched bundle that repeats a span or event ID,
+  in which one ID would name different committed data.
+- Updated dependencies [ab2e261]
+  - @fluxpointstudios/orynq-sdk-process-trace@0.4.0
+
 ## 0.5.0
 
 ### Minor Changes

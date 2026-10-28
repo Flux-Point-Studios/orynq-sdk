@@ -1,5 +1,12 @@
 # @fluxpointstudios/orynq-sdk-tool-receipts
 
+## 0.2.2
+
+### Patch Changes
+
+- Updated dependencies [ab2e261]
+  - @fluxpointstudios/orynq-sdk-process-trace@0.4.0
+
 ## 0.2.1
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @fluxpointstudios/orynq-sdk-cli
 
+## 0.2.1
+
+### Patch Changes
+
+- 7a591cb: Importing the package no longer runs the CLI; the `poi` bin is a separate entry.
+
 ## 0.2.0
 
 ### Patch Changes
