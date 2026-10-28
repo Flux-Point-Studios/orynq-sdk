@@ -20,7 +20,9 @@ import {
   generateMerkleInclusionProof,
   verifyMerkleProof,
   verifySpanInclusion,
+  type SelectiveDisclosureProverOptions,
 } from "../proofs/selective-disclosure.js";
+import { DefaultMidnightProver } from "../prover.js";
 import type {
   DisclosureInput,
 } from "../types.js";
@@ -870,6 +872,95 @@ describe("SelectiveDisclosureProver.generateMembershipProof", () => {
     const isValid = await prover.verifyProof(proof);
 
     expect(isValid).toBe(true);
+  });
+});
+
+describe("SelectiveDisclosureProver partial disclosures", () => {
+  const anchor = "abc123def456789012345678901234567890123456789012345678901234";
+  const partial: Record<string, SelectiveDisclosureProverOptions> = {
+    "a span without its events": { includeEventData: false },
+    "events without their span": { includeSpanData: false },
+  };
+  let prover: SelectiveDisclosureProver;
+
+  beforeEach(() => {
+    prover = new SelectiveDisclosureProver({ mode: "simulation" });
+  });
+
+  /** A proof of span-2 of five, and what a verifier holding the anchored tree knows. */
+  async function proofOf(options: SelectiveDisclosureProverOptions) {
+    const { bundle, merkleRoot } = await createTestBundle(5);
+    const proof = await new SelectiveDisclosureProver({ mode: "simulation", ...options })
+      .generateProof({ bundle, spanId: "span-2", merkleRoot, cardanoAnchorTxHash: anchor });
+    const tree = await processTrace.buildSpanMerkleTree(bundle.privateRun.spans, bundle.privateRun.events);
+    const ordered = [...bundle.privateRun.spans].sort((a, b) => a.spanSeq - b.spanSeq);
+    const authenticated = {
+      leafHashes: Object.fromEntries(ordered.map((span, i) => [span.id, tree.leafHashes[i]!])),
+      leafCount: tree.leafCount,
+    };
+    return { proof, authenticated };
+  }
+
+  it.each(Object.entries(partial))("reports %s as unbound without authenticated leaves", async (_name, options) => {
+    const { proof, authenticated } = await proofOf(options);
+    for (const given of [undefined, { leafHashes: authenticated.leafHashes }, { leafCount: authenticated.leafCount }]) {
+      const result = await prover.verifyDisclosure(proof, given);
+      expect(result).toMatchObject({ valid: false, unbound: true });
+      expect(result.errors.join("\n")).toMatch(/unbound/);
+      expect(await prover.verifyProof(proof, given)).toBe(false);
+    }
+  });
+
+  it.each(Object.entries(partial))("verifies %s as membership of its authenticated span", async (_name, options) => {
+    const { proof, authenticated } = await proofOf(options);
+    expect(await prover.verifyDisclosure(proof, authenticated))
+      .toEqual({ valid: true, unbound: false, spanId: "span-2", errors: [] });
+    expect(await prover.verifyProof(proof, authenticated)).toBe(true);
+  });
+
+  it("returns none of a partial disclosure's data, which nothing binds", async () => {
+    const { proof, authenticated } = await proofOf(partial["a span without its events"]!);
+    proof.disclosedSpan = { ...proof.disclosedSpan!, name: "forged" };
+    const result = await prover.verifyDisclosure(proof, authenticated);
+    expect(result).toEqual({ valid: true, unbound: false, spanId: "span-2", errors: [] });
+  });
+
+  it("rejects a partial disclosure naming a span authenticated for another leaf", async () => {
+    const { proof, authenticated } = await proofOf(partial["a span without its events"]!);
+    proof.disclosedSpan = { ...proof.disclosedSpan!, id: "span-3" };
+    expect(await prover.verifyDisclosure(proof, authenticated)).toMatchObject({ valid: false, unbound: false });
+  });
+
+  it("returns a full disclosure's span and events as committed", async () => {
+    const { proof, authenticated } = await proofOf({});
+    const expected = {
+      valid: true, unbound: false, spanId: "span-2", errors: [],
+      span: processTrace.committedSpan(proof.disclosedSpan!, proof.publicInputs.spanHash),
+      events: proof.disclosedEvents!.map((event) => processTrace.committedEvent(event, event.hash!)),
+    };
+    expect(await prover.verifyDisclosure(proof)).toEqual(expected);
+    expect(await prover.verifyDisclosure(proof, authenticated)).toEqual(expected);
+  });
+
+  it("checks a full disclosure against the leaf hash the caller authenticated for its span", async () => {
+    const { proof, authenticated } = await proofOf({});
+    const pinnedElsewhere = { ...authenticated, leafHashes: { ...authenticated.leafHashes, "span-2": authenticated.leafHashes["span-3"]! } };
+    expect(await prover.verifyDisclosure(proof, pinnedElsewhere)).toMatchObject({ valid: false, unbound: false });
+  });
+
+  it("holds every proof to an authenticated leaf count", async () => {
+    for (const options of [{}, { includeSpanData: false, includeEventData: false }, partial["events without their span"]!]) {
+      const { proof, authenticated } = await proofOf(options);
+      expect((await prover.verifyDisclosure(proof, authenticated)).valid).toBe(true);
+      expect((await prover.verifyDisclosure(proof, { ...authenticated, leafCount: 9 })).valid).toBe(false);
+    }
+  });
+
+  it("names the unbound partial disclosure in DefaultMidnightProver.verify", async () => {
+    const { proof } = await proofOf(partial["events without their span"]!);
+    const result = await new DefaultMidnightProver({ mode: "simulation" }).verify(proof);
+    expect(result.valid).toBe(false);
+    expect(result.errors.join("\n")).toMatch(/unbound/);
   });
 });
 

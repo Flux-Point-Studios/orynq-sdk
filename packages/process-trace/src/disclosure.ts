@@ -64,7 +64,7 @@ import {
   buildSpanMerkleTree,
   checkSpanData,
 } from "./merkle.js";
-import { isRecord } from "./guards.js";
+import { isRecord, readOnce } from "./guards.js";
 
 // =============================================================================
 // DISCLOSURE REQUEST
@@ -94,7 +94,11 @@ export interface DisclosureRequest {
  * already trusts, never from the disclosure itself.
  */
 export interface VerifyDisclosureOptions {
-  /** Merkle leaf hash for each span id; a membership entry verifies only for a span id listed here. */
+  /**
+   * Merkle leaf hash for each span id. A membership entry verifies only for a
+   * span id listed here, and a full entry for a listed span id must hash to
+   * that leaf.
+   */
   leafHashes?: Readonly<Record<string, string>>;
   /**
    * Number of leaves in the anchored tree. Required for membership entries;
@@ -366,15 +370,19 @@ export async function selectiveDisclose(
  * This function performs comprehensive verification of a disclosure result:
  * 1. Checks that rootHash matches the expected value from the anchor
  * 2. Checks that merkleRoot matches the expected value from the anchor
- * 3. Requires at least one entry and at most one entry per span ID
+ * 3. Requires at least one entry, at most one entry per span ID and no event
+ *    ID disclosed twice
  * 4. For full entries, recomputes every event hash, the span hash and the
- *    leaf, and verifies the Merkle proof
+ *    leaf, verifies the Merkle proof, and, when `options.leafHashes` lists the
+ *    span ID, requires that leaf
  * 5. For membership entries, which carry no span data, requires the caller's
  *    authenticated leaf hash for the span ID and the tree's leaf count, then
  *    verifies the Merkle proof against both
  *
- * Read span data from the result's `spans`, which holds only committed
- * fields, rather than from the disclosure itself.
+ * The disclosure is read once, as JSON data, before any check, so changes to
+ * it after the call cannot reach the result. Read span data from the result's
+ * `spans`, which holds only committed fields, rather than from the disclosure
+ * itself.
  *
  * @param disclosure - The disclosure result to verify
  * @param expectedRootHash - Expected root hash from anchor/on-chain commitment
@@ -405,8 +413,24 @@ export async function verifyDisclosure(
   expectedMerkleRoot: string,
   options: VerifyDisclosureOptions = {}
 ): Promise<DisclosureVerificationResult> {
+  const read = readOnce(disclosure);
+  if ("error" in read) {
+    return { valid: false, errors: [`Disclosure is ${read.error}`], spans: [] };
+  }
+  const result = await verifyDisclosureData(read.data, expectedRootHash, expectedMerkleRoot, options);
+  const valid = result.errors.length === 0;
+  return { valid, errors: result.errors, spans: valid ? result.spans : [] };
+}
+
+/** {@link verifyDisclosure} on plain data that nothing else can change while it runs. */
+async function verifyDisclosureData(
+  disclosure: unknown,
+  expectedRootHash: string,
+  expectedMerkleRoot: string,
+  options: VerifyDisclosureOptions
+): Promise<{ errors: string[]; spans: VerifiedDisclosedSpan[] }> {
   if (!isRecord(disclosure) || !Array.isArray(disclosure.disclosedSpans)) {
-    return { valid: false, errors: ["Disclosure must be an object with a disclosedSpans array"], spans: [] };
+    return { errors: ["Disclosure must be an object with a disclosedSpans array"], spans: [] };
   }
   const errors: string[] = [];
   const spans: VerifiedDisclosedSpan[] = [];
@@ -436,6 +460,7 @@ export async function verifyDisclosure(
   }
 
   const seen = new Set<string>();
+  const disclosedEventIds = new Set<unknown>();
   for (const disclosed of disclosure.disclosedSpans as unknown[]) {
     if (!isRecord(disclosed) || typeof disclosed.spanId !== "string") {
       errors.push("Disclosure entry must be an object with a string spanId");
@@ -449,9 +474,15 @@ export async function verifyDisclosure(
     seen.add(spanId);
 
     if (disclosure.mode === "full" || disclosed.span !== undefined || disclosed.events !== undefined) {
-      const entry = await verifyFullEntry(disclosed, expectedMerkleRoot, options.leafCount);
+      const entry = await verifyFullEntry(disclosed, expectedMerkleRoot, options);
       errors.push(...entry.errors);
       if (entry.committed !== undefined) {
+        for (const { id } of entry.committed.events) {
+          if (disclosedEventIds.has(id)) {
+            errors.push(`Event ID "${id}" is disclosed in more than one span`);
+          }
+          disclosedEventIds.add(id);
+        }
         spans.push({ spanId, ...entry.committed });
       }
     } else {
@@ -463,15 +494,23 @@ export async function verifyDisclosure(
     }
   }
 
-  const valid = errors.length === 0;
-  return { valid, errors, spans: valid ? spans : [] };
+  return { errors, spans };
 }
 
-/** Bind a span-data entry to its spanId and the expected root, then check its data. */
+/** The leaf hash the caller authenticated for `spanId`, if any. */
+function authenticatedLeaf(leafHashes: VerifyDisclosureOptions["leafHashes"], spanId: string): string | undefined {
+  return leafHashes !== undefined && Object.hasOwn(leafHashes, spanId) ? leafHashes[spanId] : undefined;
+}
+
+/**
+ * Bind a span-data entry to its spanId, to the leaf hash the caller
+ * authenticated for that spanId if any, and to the expected root, then check
+ * its data.
+ */
 async function verifyFullEntry(
   disclosed: Record<string, unknown>,
   expectedMerkleRoot: string,
-  leafCount: number | undefined
+  { leafHashes, leafCount }: VerifyDisclosureOptions
 ): Promise<{ errors: string[]; committed?: { span: TraceSpan; events: TraceEvent[] } }> {
   const { spanId, proof, span, events } = disclosed;
   if (!isRecord(span) || !Array.isArray(events)) {
@@ -489,6 +528,10 @@ async function verifyFullEntry(
         `proof has "${String(proof.rootHash)}", expected "${expectedMerkleRoot}"`
     );
   }
+  const pinned = authenticatedLeaf(leafHashes, String(spanId));
+  if (pinned !== undefined && (!isRecord(proof) || proof.leafHash !== pinned)) {
+    errors.push(`Disclosed span "${String(spanId)}" does not hash to its authenticated leaf hash`);
+  }
   return errors.length === 0 && check.committed !== undefined
     ? { errors, committed: check.committed }
     : { errors };
@@ -505,7 +548,7 @@ async function membershipErrors(
   expectedMerkleRoot: string,
   { leafHashes, leafCount }: VerifyDisclosureOptions
 ): Promise<string[]> {
-  const leafHash = leafHashes !== undefined && Object.hasOwn(leafHashes, spanId) ? leafHashes[spanId] : undefined;
+  const leafHash = authenticatedLeaf(leafHashes, spanId);
   if (leafHash === undefined) {
     return [
       `Membership entry for span "${spanId}" is unbound: span id not authenticated. ` +
@@ -545,8 +588,9 @@ async function membershipErrors(
  * 3. Verifies the resulting leaf hash matches the proof's leafHash
  * 4. Verifies the Merkle proof is valid and ends at `expectedMerkleRoot`
  *
- * This is used for "full" mode disclosures where span data is provided. When
- * valid, `span` and `events` hold the committed data in `seq` order.
+ * This is used for "full" mode disclosures where span data is provided. The
+ * entry is read once, before any check. When valid, `span` and `events` hold
+ * the committed data in `seq` order.
  *
  * @param disclosed - Object containing spanId, proof, span data, and events
  * @param expectedMerkleRoot - Expected Merkle root from anchor/on-chain commitment
@@ -579,9 +623,13 @@ export async function verifySpanDisclosure(
   },
   expectedMerkleRoot: string
 ): Promise<{ valid: boolean; errors: string[]; span?: TraceSpan; events?: TraceEvent[] }> {
-  if (!isRecord(disclosed)) {
+  const read = readOnce(disclosed);
+  if ("error" in read) {
+    return { valid: false, errors: [`Disclosure entry is ${read.error}`] };
+  }
+  if (!isRecord(read.data)) {
     return { valid: false, errors: ["Disclosure entry must be an object"] };
   }
-  const { errors, committed } = await verifyFullEntry(disclosed, expectedMerkleRoot, undefined);
+  const { errors, committed } = await verifyFullEntry(read.data, expectedMerkleRoot, {});
   return committed !== undefined ? { valid: true, errors, ...committed } : { valid: false, errors };
 }

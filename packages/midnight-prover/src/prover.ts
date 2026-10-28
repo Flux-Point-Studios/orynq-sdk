@@ -331,9 +331,12 @@ export class DefaultMidnightProver extends AbstractMidnightProver {
           valid = await this.policyProver.verifyProof(proof as PolicyProof);
           break;
 
-        case "selective-disclosure":
-          valid = await this.disclosureProver.verifyProof(proof as DisclosureProof);
+        case "selective-disclosure": {
+          const disclosure = await this.disclosureProver.verifyDisclosure(proof as DisclosureProof);
+          valid = disclosure.valid;
+          errors.push(...disclosure.errors);
           break;
+        }
 
         case "attestation-valid":
           warnings.push("Attestation proof verification not yet implemented");

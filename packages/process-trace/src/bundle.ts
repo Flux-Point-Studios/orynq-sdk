@@ -75,7 +75,9 @@ import { buildSpanMerkleTree, computeSpanHash, uncommittedSpanKeys } from "./mer
 
 import { createPublicView } from "./public-view.js";
 
-import { isRecord } from "./guards.js";
+import { isRecord, repeated } from "./guards.js";
+
+import { compareCodeUnits } from "./order.js";
 
 import {
   verifyGovernanceAttestations,
@@ -310,8 +312,14 @@ export function extractPublicView(bundle: TraceBundle): TraceBundlePublicView {
  * - Merkle root matches (recomputed from span tree)
  * - Event sequence is monotonic (0, 1, 2, ...)
  * - Span sequence is monotonic (0, 1, 2, ...)
+ * - No two events or spans share an ID, and no event ID is listed twice in
+ *   the spans' `eventIds`
  * - The public view equals the private run's public projection, apart from
- *   the model-manifest fields, which are bound separately
+ *   the model-manifest fields, which are bound separately: redacted span
+ *   hashes may come in any order, and a run without an end time may show no
+ *   end time or one no earlier than its start
+ * - Top-level `modelManifestHash` and `modelManifest`, when present, equal the
+ *   committed run's
  *
  * The root does not commit to run-level fields such as the run ID, agent ID,
  * status or timestamps (see `computeRootHash`), so a valid result shows only
@@ -395,7 +403,7 @@ export async function verifyBundle(
   // ---------------------------------------------------------------------------
 
   const expectedView = createPublicView(run, bundle.merkleRoot);
-  const publicViewErrors = publicViewMismatches(bundle.publicView, expectedView);
+  const publicViewErrors = publicViewMismatches(bundle.publicView, expectedView, run);
   checks.publicViewValid = publicViewErrors.length === 0;
   errors.push(...publicViewErrors);
 
@@ -565,6 +573,20 @@ export async function verifyBundle(
     }
   }
 
+  // finalizeTrace() also repeats the pin at the top level, where anchoring
+  // tools read it. Nothing hashes those copies, so they must equal the
+  // committed run's.
+  if (bundle.modelManifestHash !== undefined && bundle.modelManifestHash !== run.modelManifestHash) {
+    checks.modelManifestValid = false;
+    errors.push(
+      `Top-level modelManifestHash (${String(bundle.modelManifestHash)}) does not match the committed run's (${String(run.modelManifestHash)})`
+    );
+  }
+  if (bundle.modelManifest !== undefined && !canonicalEquals(bundle.modelManifest, run.modelManifest, KEEP_NULLS)) {
+    checks.modelManifestValid = false;
+    errors.push("Top-level modelManifest does not match the committed run's");
+  }
+
   // ---------------------------------------------------------------------------
   // Additional Warnings
   // ---------------------------------------------------------------------------
@@ -675,32 +697,85 @@ function bundleShapeErrors(bundle: unknown): string[] {
 /** Fields whose binding the model-manifest checks verify instead of the projection. */
 const PUBLIC_VIEW_MANIFEST_FIELDS: ReadonlySet<string> = new Set(["modelManifest", "modelManifestHash"]);
 
+/** Comparison keeps null-valued keys: hashing ignores them, so only comparison stops a copy adding or dropping one. */
+const KEEP_NULLS = { removeNulls: false } as const;
+
 /**
- * Compare the bundle's public view with the projection of its private run,
- * field by field, keeping null-valued keys: hashing ignores them, so only
- * this comparison stops the public view from adding or dropping one.
+ * Compare the bundle's public view with `expected`, the projection of its
+ * private run `run`, field by field.
  */
 function publicViewMismatches(
   actual: TraceBundlePublicView,
-  expected: TraceBundlePublicView
+  expected: TraceBundlePublicView,
+  run: TraceRun
 ): string[] {
   const shown = actual as unknown as Record<string, unknown>;
   const derived = expected as unknown as Record<string, unknown>;
   return [...new Set([...Object.keys(shown), ...Object.keys(derived)])]
     .filter((field) => !PUBLIC_VIEW_MANIFEST_FIELDS.has(field))
     .filter((field) => shown[field] !== undefined || derived[field] !== undefined)
-    .filter((field) => !canonicalEquals(shown[field], derived[field], { removeNulls: false }))
+    .filter((field) => !publicFieldMatches(field, shown[field], derived[field], run))
     .map((field) => `PublicView ${field} does not match the committed run`);
 }
 
 /**
- * Verify event and span sequences are monotonic.
+ * Whether a public-view field holds what the projection derived. Published
+ * producers ordered redacted span hashes by the host's collation, so they
+ * compare as a multiset. For a run without an end time, published
+ * `createBundle()` reported the time it made the bundle, so the public end
+ * time may be absent or any time from the run's start.
+ */
+function publicFieldMatches(field: string, shown: unknown, derived: unknown, run: TraceRun): boolean {
+  if (field === "redactedSpanHashes") {
+    return sameMultiset(shown, derived);
+  }
+  if (field === "endedAt" && (run.endedAt === undefined || run.endedAt === null)) {
+    return shown === undefined || notBefore(shown, run.startedAt);
+  }
+  return canonicalEquals(shown, derived, KEEP_NULLS);
+}
+
+function sameMultiset(shown: unknown, derived: unknown): boolean {
+  if (!Array.isArray(shown) || !Array.isArray(derived) || shown.length !== derived.length) {
+    return false;
+  }
+  try {
+    const canonicalSorted = (entries: unknown[]) =>
+      entries.map((entry) => canonicalize(entry, KEEP_NULLS)).sort(compareCodeUnits);
+    const left = canonicalSorted(shown);
+    const right = canonicalSorted(derived);
+    return left.every((entry, i) => entry === right[i]);
+  } catch {
+    // An entry without a canonical form (too deep, or not JSON) matches nothing.
+    return false;
+  }
+}
+
+/** A timestamp no earlier than `start`. */
+function notBefore(timestamp: unknown, start: unknown): boolean {
+  if (typeof timestamp !== "string" || typeof start !== "string") {
+    return false;
+  }
+  const at = Date.parse(timestamp);
+  return Number.isFinite(at) && at >= Date.parse(start);
+}
+
+/**
+ * Verify event and span sequences are monotonic and that each event and span
+ * is identified once: a repeated ID would let one ID name different committed
+ * data in a disclosure or a projection.
  *
  * @param run - The trace run to verify
  * @returns Array of error messages (empty if valid)
  */
 function verifySequences(run: TraceRun): string[] {
-  const errors: string[] = [];
+  const errors: string[] = [
+    ...repeated(run.spans.map((span) => span.id)).map((id) => `Span ID "${id}" is used by more than one span`),
+    ...repeated(run.events.map((event) => event.id)).map((id) => `Event ID "${id}" is used by more than one event`),
+    ...repeated(run.spans.flatMap((span) => span.eventIds)).map(
+      (id) => `Event ID "${String(id)}" is listed more than once in the spans' eventIds`
+    ),
+  ];
 
   // Sort events by seq to check monotonicity
   const sortedEvents = [...run.events].sort((a, b) => a.seq - b.seq);

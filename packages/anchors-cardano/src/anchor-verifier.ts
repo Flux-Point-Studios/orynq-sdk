@@ -1002,9 +1002,10 @@ export interface CommittedBundle {
  * spans, or the model-manifest pin changes the result; the returned rootHash and
  * merkleRoot are likewise recomputed, never trusted from the fetched document.
  * Returns null when the document is not a full bundle we can independently
- * recompute (e.g. a manifest with redacted spans), OR when it carries model-
- * manifest content whose bytes do not hash to the committed pin — in which case
- * integrity cannot be established from the fetch alone.
+ * recompute (e.g. a manifest with redacted spans), when it repeats a span or
+ * event ID, OR when it carries model-manifest content whose bytes do not hash
+ * to the committed pin — in which case integrity cannot be established from
+ * the fetch alone.
  */
 async function recomputeBundleRootHash(
   parsed: unknown
@@ -1019,6 +1020,16 @@ async function recomputeBundleRootHash(
   try {
     const events = run.events as TraceEvent[];
     const spans = run.spans as TraceSpan[];
+    // A repeated span or event ID names different committed data, so the
+    // projection below could attribute one event's hash to another.
+    const unique = (ids: unknown[]) => new Set(ids).size === ids.length;
+    if (
+      !unique(spans.map((s) => s.id)) ||
+      !unique(events.map((e) => e.id)) ||
+      !unique(spans.flatMap((s) => s.eventIds))
+    ) {
+      return null;
+    }
     const rollingHash = await computeRollingHash(events);
 
     // Recompute EACH event + span hash from actual content (the same derivation

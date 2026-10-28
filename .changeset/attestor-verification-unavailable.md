@@ -1,5 +1,5 @@
 ---
-"@fluxpointstudios/orynq-sdk-attestor": patch
+"@fluxpointstudios/orynq-sdk-attestor": minor
 ---
 
 Fail closed for unavailable hardware attestation verification. Nitro and SEV-SNP

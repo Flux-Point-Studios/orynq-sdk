@@ -4,11 +4,13 @@ import type {
   TraceEvent,
   TraceRun,
 } from "./types.js";
+import { compareCodeUnits } from "./order.js";
 
 /**
  * The public view of a run: its public spans with their public events in
- * `spanSeq` and `seq` order, and the hashes of its other spans ordered by span
- * ID. A run without an end time reports its start time.
+ * `spanSeq` and `seq` order, and the hashes of its other spans ordered by the
+ * UTF-16 code units of their span IDs. A run without an end time reports its
+ * start time.
  *
  * @param run - The finalized trace run
  * @param merkleRoot - The Merkle root of the run's spans
@@ -36,7 +38,7 @@ export function createPublicView(
   }
 
   publicSpans.sort((a, b) => a.spanSeq - b.spanSeq);
-  redactedSpanHashes.sort((a, b) => a.spanId.localeCompare(b.spanId));
+  redactedSpanHashes.sort((a, b) => compareCodeUnits(a.spanId, b.spanId));
 
   return {
     runId: run.id,

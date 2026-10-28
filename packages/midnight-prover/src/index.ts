@@ -106,6 +106,8 @@ export type {
   RuleEvaluator,
   SelectiveDisclosureProverOptions,
   MerkleInclusionResult,
+  DisclosureProofVerifyOptions,
+  DisclosureProofVerification,
 } from "./proofs/index.js";
 
 export {

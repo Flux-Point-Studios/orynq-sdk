@@ -61,6 +61,8 @@ export {
 export type {
   SelectiveDisclosureProverOptions,
   MerkleInclusionResult,
+  DisclosureProofVerifyOptions,
+  DisclosureProofVerification,
 } from "./selective-disclosure.js";
 
 export {

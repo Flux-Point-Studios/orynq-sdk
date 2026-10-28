@@ -34,7 +34,7 @@ import type {
 } from "./types.js";
 import { HASH_DOMAIN_PREFIXES } from "./types.js";
 import { committedEvent, verifyEventHashes } from "./rolling-hash.js";
-import { isRecord } from "./guards.js";
+import { isRecord, readOnce, repeated } from "./guards.js";
 
 // =============================================================================
 // SPAN HASH COMPUTATION
@@ -421,9 +421,10 @@ export async function verifyMerkleProof(proof: MerkleProof, leafCount?: number):
 
 /**
  * Check that span data hashes to the proof's leaf and that the proof is valid:
- * every event hash is recomputed from its body, and the span may carry only
- * header fields and a `hash` equal to the recomputed one. Without errors, the
- * result holds the span and its events, in `seq` order, as committed.
+ * every event hash is recomputed from its body, no event ID repeats, and the
+ * span may carry only header fields and a `hash` equal to the recomputed one.
+ * Without errors, the result holds the span and its events, in `seq` order, as
+ * committed. Callers pass data read once (see `readOnce`).
  */
 export async function checkSpanData(
   proof: MerkleProof,
@@ -439,6 +440,9 @@ export async function checkSpanData(
   const extra = uncommittedSpanKeys(span);
   if (extra.length > 0) {
     errors.push(`Span "${spanId}" carries fields its hash does not commit to: ${extra.join(", ")}`);
+  }
+  for (const id of repeated(events.filter(isRecord).map((event) => event.id))) {
+    errors.push(`Span "${spanId}" discloses event ID "${String(id)}" more than once`);
   }
   if (errors.length > 0) {
     return { errors };
@@ -485,7 +489,8 @@ export async function checkSpanData(
  * This function recomputes every event hash and the span hash from the
  * provided data, then verifies that the resulting leaf hash matches the proof
  * and that the proof is valid against its root. The span may carry only the
- * header fields its hash commits to, plus a `hash` equal to the recomputed one.
+ * header fields its hash commits to, plus a `hash` equal to the recomputed one,
+ * and no event ID may repeat. The input is read once, before any check.
  *
  * @param proof - The Merkle proof for the span
  * @param span - The span data to verify
@@ -503,5 +508,10 @@ export async function verifySpanInclusion(
   span: TraceSpan,
   events: TraceEvent[]
 ): Promise<boolean> {
-  return (await checkSpanData(proof, span, events)).errors.length === 0;
+  const read = readOnce({ proof, span, events });
+  if ("error" in read || !isRecord(read.data)) {
+    return false;
+  }
+  const data = read.data;
+  return (await checkSpanData(data.proof as MerkleProof, data.span, data.events)).errors.length === 0;
 }

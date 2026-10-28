@@ -445,6 +445,16 @@ export interface TraceBundlePublicView {
   merkleRoot: string;
   publicSpans: AnnotatedSpan[];
   redactedSpanHashes: Array<{ spanId: string; hash: string }>;
+  /**
+   * @deprecated Never set. No hash commits to it, so `verifyBundle()` rejects
+   * a public view that carries it.
+   */
+  redactionPolicyId?: never;
+  /**
+   * @deprecated Never set. No hash commits to it, so `verifyBundle()` rejects
+   * a public view that carries it.
+   */
+  redactionRulesHash?: never;
   /** Model-state commitment (public-safe: it is only a hash). */
   modelManifestHash?: string;
   /** Pinned model manifest (hashes only — public-safe). */

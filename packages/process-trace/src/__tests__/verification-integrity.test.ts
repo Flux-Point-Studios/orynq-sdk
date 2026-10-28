@@ -1,11 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import {
   addEvent, addSpan, buildSpanMerkleTree, closeSpan, createBundle, createTrace,
-  computeEventHash, finalizeTrace, generateMerkleProof, selectiveDisclose, verifyBundle,
+  computeEventHash, computeRollingHash, computeRootHash, computeSpanHash, finalizeTrace,
+  generateMerkleProof, getBundleSpanEvents, selectiveDisclose, verifyBundle,
   verifyDisclosure, verifyMerkleProof, verifySpanDisclosure, verifySpanInclusion,
 } from "../index.js";
-import type { DisclosureResult, MerkleProof, TraceBundle, TraceSpan } from "../index.js";
+import type { DisclosureResult, MerkleProof, TraceBundle, TraceRun, TraceSpan } from "../index.js";
 
 async function trace(spanCount = 1) {
   const run = await createTrace({ agentId: "verification-regression" });
@@ -218,17 +219,21 @@ describe("synchronous Merkle proofs", () => {
     expect(await verifyMerkleProof(proof)).toBe(true);
   });
 
-  it("discloses every span of a 1024-span trace in under a second", async () => {
+  it("proves every span of a 1024-span trace in under a second", async () => {
     const run = await createTrace({ agentId: "disclosure-cost" });
     for (let i = 0; i < 1024; i++) {
       const span = addSpan(run, { name: `s${i}`, visibility: "public" });
       await closeSpan(run, span.id);
     }
     const bundle = await finalizeTrace(run);
-    const ids = orderedSpans(bundle).map((span) => span.id);
+    // Time only the proofs: hashing the spans costs the same with or without cached levels.
+    const tree = await buildSpanMerkleTree(bundle.privateRun.spans, bundle.privateRun.events);
     const started = performance.now();
-    const disclosed = await selectiveDisclose(bundle, ids, "full");
+    for (let index = 0; index < tree.leafCount; index++) {
+      generateMerkleProof(tree, index);
+    }
     expect(performance.now() - started).toBeLessThan(1000);
+    const disclosed = await selectiveDisclose(bundle, orderedSpans(bundle).map((span) => span.id), "full");
     expect((await verifyDisclosure(disclosed, bundle.rootHash, bundle.merkleRoot)).valid).toBe(true);
   });
 });
@@ -592,5 +597,373 @@ describe("bundle public view", () => {
     publicSpan(bad).events = null;
     const results = await Promise.all([verifyBundle(clone(good)), verifyBundle(bad as TraceBundle), verifyBundle(clone(good))]);
     expect(results.map((r) => r.valid)).toEqual([true, false, true]);
+  });
+});
+
+/** A finalized trace with a private span for each of `spanIds`, created in that order, then one public span. */
+async function privateSpansTrace(spanIds: readonly string[]) {
+  const generated = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const queue = [generated(0), ...spanIds.flatMap((id, i) => [id, generated(i + 1)])];
+  let next = 1000;
+  const randomUUID = vi.spyOn(crypto, "randomUUID").mockImplementation(
+    () => (queue.shift() ?? generated(next++)) as ReturnType<typeof crypto.randomUUID>,
+  );
+  try {
+    const run = await createTrace({ agentId: "host-collation" });
+    for (const visibility of [...spanIds.map(() => "private" as const), "public" as const]) {
+      const span = addSpan(run, { name: visibility, visibility });
+      await addEvent<"command">(run, span.id, { kind: "command", command: "go", visibility: "public" });
+      await closeSpan(run, span.id);
+    }
+    return await finalizeTrace(run);
+  } finally {
+    randomUUID.mockRestore();
+  }
+}
+
+/** Runs `body` while `String.prototype.localeCompare` collates as `locale` does. */
+async function underCollation<T>(locale: string, body: () => Promise<T>): Promise<T> {
+  const collator = new Intl.Collator(locale);
+  const collation = vi.spyOn(String.prototype, "localeCompare").mockImplementation(function (this: string, other: string) {
+    return collator.compare(String(this), other);
+  });
+  try {
+    return await body();
+  } finally {
+    collation.mockRestore();
+  }
+}
+
+describe("redacted span hashes and the host collation", () => {
+  // Danish and Norwegian collation sorts "aa" after "z"; UTF-16 code units sort it before "b".
+  const spanIds = ["aa5f0c1e-3b1d-4c55-9e0a-1f2b3c4d5e6f", "b03e2d11-7a9c-4f10-8b2d-6e5f4a3b2c1d"];
+  const locales = ["en-US", "da-DK", "nb-NO"];
+
+  it("orders them by UTF-16 code units without consulting the host collation", async () => {
+    const collation = vi.spyOn(String.prototype, "localeCompare").mockImplementation(() => {
+      throw new Error("Protocol ordering must not use host collation");
+    });
+    try {
+      const bundle = await privateSpansTrace([...spanIds].reverse());
+      expect(bundle.publicView.redactedSpanHashes.map((entry) => entry.spanId)).toEqual(spanIds);
+      const rebuilt = await createBundle(bundle.privateRun);
+      expect(rebuilt.publicView.redactedSpanHashes.map((entry) => entry.spanId)).toEqual(spanIds);
+      expect((await verifyBundle(clone(bundle))).valid).toBe(true);
+    } finally {
+      collation.mockRestore();
+    }
+  });
+
+  it.each(locales)("verifies a view a producer ordered under %s collation under every host collation", async (producer) => {
+    const bundle = clone(await privateSpansTrace(spanIds));
+    const collator = new Intl.Collator(producer);
+    bundle.publicView.redactedSpanHashes.sort((a, b) => collator.compare(a.spanId, b.spanId));
+    for (const verifier of locales) {
+      const result = await underCollation(verifier, () => verifyBundle(clone(bundle)));
+      expect([verifier, result.valid, result.errors]).toEqual([verifier, true, []]);
+    }
+  });
+
+  it("still rejects a repeated, missing or relabelled redacted entry", async () => {
+    const bundle = clone(await privateSpansTrace(spanIds));
+    const [first, second] = bundle.publicView.redactedSpanHashes as [{ spanId: string; hash: string }, { spanId: string; hash: string }];
+    for (const redactedSpanHashes of [
+      [second, first, first],
+      [first, first],
+      [second],
+      [first, { spanId: second.spanId, hash: first.hash }],
+    ]) {
+      const forged = clone(bundle);
+      forged.publicView.redactedSpanHashes = clone(redactedSpanHashes);
+      expect((await verifyBundle(forged)).checks.publicViewValid).toBe(false);
+    }
+  });
+});
+
+describe("uncommitted run timestamps", () => {
+  type Mutable = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const shifted = (iso: string, ms: number) => new Date(Date.parse(iso) + ms).toISOString();
+
+  /** A run without an end time, bundled, with the public end time `endedAt` gives for its start. */
+  async function bundleWithoutEnd(endedAt: (startedAt: string) => unknown): Promise<TraceBundle> {
+    const run = clone((await mixedTrace(2)).privateRun) as Mutable;
+    delete run.endedAt;
+    delete run.durationMs;
+    const bundle = clone(await createBundle(run as TraceRun)) as Mutable;
+    const publicEnd = endedAt(run.startedAt);
+    if (publicEnd === undefined) delete bundle.publicView.endedAt;
+    else bundle.publicView.endedAt = publicEnd;
+    return bundle as TraceBundle;
+  }
+
+  it.each([
+    ["the creation time published createBundle reported", (startedAt: string) => shifted(startedAt, 1)],
+    ["a creation time a day after the start", (startedAt: string) => shifted(startedAt, 86_400_000)],
+    ["the start time", (startedAt: string) => startedAt],
+    ["no end time", () => undefined],
+  ])("accepts %s as the public end of a run without one", async (_name, endedAt) => {
+    const result = await verifyBundle(await bundleWithoutEnd(endedAt));
+    expect([result.valid, result.errors]).toEqual([true, []]);
+  });
+
+  it.each([
+    ["an end before the start", (startedAt: string) => shifted(startedAt, -1)],
+    ["an end that is not a timestamp", () => "after the audit"],
+    ["a numeric end", (startedAt: string) => Date.parse(startedAt) + 1],
+    ["a null end", () => null],
+  ])("rejects %s as the public end of a run without one", async (_name, endedAt) => {
+    const result = await verifyBundle(await bundleWithoutEnd(endedAt));
+    expect(result.checks.publicViewValid).toBe(false);
+  });
+
+  it("requires the run's own end time when the run has one", async () => {
+    const bundle = clone(await mixedTrace(2)) as Mutable;
+    bundle.publicView.endedAt = shifted(bundle.privateRun.endedAt, 1);
+    expect((await verifyBundle(clone(bundle) as TraceBundle)).checks.publicViewValid).toBe(false);
+    delete bundle.publicView.endedAt;
+    expect((await verifyBundle(clone(bundle) as TraceBundle)).checks.publicViewValid).toBe(false);
+  });
+});
+
+describe("top-level model manifest fields", () => {
+  type Mutable = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  async function pinnedTrace() {
+    const run = await createTrace({
+      agentId: "pinned", manifest: { modelHash: "sha256:" + "4d".repeat(32), framework: "anthropic", modelId: "m" },
+    });
+    const span = addSpan(run, { name: "infer", visibility: "public" });
+    await addEvent<"command">(run, span.id, { kind: "command", command: "go", visibility: "public" });
+    await closeSpan(run, span.id);
+    return clone(await finalizeTrace(run)) as Mutable;
+  }
+
+  const swaps: Record<string, (bundle: Mutable) => void> = {
+    "a swapped modelManifestHash": (b) => { b.modelManifestHash = "ff".repeat(32); },
+    "a swapped modelManifest": (b) => { b.modelManifest = { modelHash: "sha256:" + "ee".repeat(32) }; },
+    "both swapped": (b) => {
+      b.modelManifestHash = "ff".repeat(32);
+      b.modelManifest = { modelHash: "sha256:evil" };
+    },
+  };
+
+  it.each(Object.entries(swaps))("rejects %s at the top level", async (_name, swap) => {
+    const bundle = await pinnedTrace();
+    expect((await verifyBundle(clone(bundle) as TraceBundle)).valid).toBe(true);
+    swap(bundle);
+    const result = await verifyBundle(bundle as TraceBundle);
+    expect(result.valid).toBe(false);
+    expect(result.checks.modelManifestValid).toBe(false);
+  });
+
+  it("rejects top-level manifest fields on a bundle whose run pins no manifest", async () => {
+    const pinned = await pinnedTrace();
+    for (const field of ["modelManifestHash", "modelManifest"]) {
+      const bundle = clone(await trace(1)) as Mutable;
+      bundle[field] = pinned[field];
+      expect((await verifyBundle(bundle as TraceBundle)).valid).toBe(false);
+    }
+  });
+
+  it("accepts a pinned bundle with or without its top-level copies", async () => {
+    const bundle = await pinnedTrace();
+    bundle.modelManifest = Object.fromEntries(Object.entries(bundle.modelManifest).reverse());
+    expect((await verifyBundle(clone(bundle) as TraceBundle)).valid).toBe(true);
+    delete bundle.modelManifest;
+    delete bundle.modelManifestHash;
+    expect((await verifyBundle(bundle as TraceBundle)).valid).toBe(true);
+  });
+});
+
+describe("verifiers read their input once", () => {
+  async function publicDisclosure() {
+    const bundle = await trace(2);
+    const span = orderedSpans(bundle)[0]!;
+    return { bundle, span, disclosure: clone(await selectiveDisclose(bundle, [span.id], "full")) };
+  }
+
+  it("verifies and returns an event body as it was when verification began", async () => {
+    const { bundle, disclosure } = await publicDisclosure();
+    const honest = clone(disclosure.disclosedSpans[0]!.events![0]!);
+    const pending = verifyDisclosure(disclosure, bundle.rootHash, bundle.merkleRoot);
+    Object.assign(disclosure.disclosedSpans[0]!.events![0]!, { content: "changed after the call" });
+    const result = await pending;
+    expect(result.valid).toBe(true);
+    expect(result.spans[0]!.events).toEqual([honest]);
+  });
+
+  it("verifies and returns a span header as it was when verification began", async () => {
+    const { bundle, span, disclosure } = await publicDisclosure();
+    const pending = verifyDisclosure(disclosure, bundle.rootHash, bundle.merkleRoot);
+    disclosure.disclosedSpans[0]!.span!.name = "changed after the call";
+    const result = await pending;
+    expect(result.valid).toBe(true);
+    expect(result.spans[0]!.span!.name).toBe(span.name);
+  });
+
+  /** Makes `key` of `target` answer `first` once and something else on every later read. */
+  function changesAfterFirstRead(target: object, key: string, first: unknown) {
+    let reads = 0;
+    Object.defineProperty(target, key, { enumerable: true, get: () => (reads++ === 0 ? first : "changed on a later read") });
+    return () => reads;
+  }
+
+  it("reads a getter in a disclosure once", async () => {
+    const { bundle, disclosure } = await publicDisclosure();
+    const event = disclosure.disclosedSpans[0]!.events![0]! as unknown as Record<string, unknown>;
+    const honest = event.content;
+    const reads = changesAfterFirstRead(event, "content", honest);
+    const result = await verifyDisclosure(disclosure, bundle.rootHash, bundle.merkleRoot);
+    expect(result.valid).toBe(true);
+    expect((result.spans[0]!.events![0] as unknown as Record<string, unknown>).content).toBe(honest);
+    expect(reads()).toBe(1);
+  });
+
+  it("reads a getter in a span disclosure once", async () => {
+    const { bundle, disclosure } = await publicDisclosure();
+    const entry = disclosure.disclosedSpans[0]!;
+    const honest = entry.span!.name;
+    const reads = changesAfterFirstRead(entry.span!, "name", honest);
+    const result = await verifySpanDisclosure({ ...entry, span: entry.span!, events: entry.events! }, bundle.merkleRoot);
+    expect(result.valid).toBe(true);
+    expect(result.span!.name).toBe(honest);
+    expect(reads()).toBe(1);
+  });
+
+  it("reads a getter in span inclusion data once", async () => {
+    const { disclosure } = await publicDisclosure();
+    const entry = disclosure.disclosedSpans[0]!;
+    const reads = changesAfterFirstRead(entry.span!, "name", entry.span!.name);
+    expect(await verifySpanInclusion(entry.proof, entry.span!, entry.events!)).toBe(true);
+    expect(reads()).toBe(1);
+  });
+
+  type Mutable = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  it.each([
+    ["a bigint", (event: Mutable) => { event.data = { amount: 10n }; }],
+    ["a cycle", (event: Mutable) => { event.data = { self: event }; }],
+  ])("returns invalid for a disclosure holding %s", async (_name, mutate) => {
+    const { bundle, disclosure } = await publicDisclosure();
+    const entry = disclosure.disclosedSpans[0]!;
+    mutate(entry.events![0]! as unknown as Mutable);
+    expect((await verifyDisclosure(disclosure, bundle.rootHash, bundle.merkleRoot)).valid).toBe(false);
+    expect((await verifySpanDisclosure({ ...entry, span: entry.span!, events: entry.events! }, bundle.merkleRoot)).valid).toBe(false);
+    expect(await verifySpanInclusion(entry.proof, entry.span!, entry.events!)).toBe(false);
+  });
+});
+
+describe("repeated span and event IDs", () => {
+  /** Two committed spans, REJECTED then APPROVED, with one decision event each; not yet committed. */
+  async function twoDecisions(): Promise<TraceRun> {
+    const run = await createTrace({ agentId: "repeated-ids" });
+    for (const [decision, status] of [["REJECTED", "failed"], ["APPROVED", "completed"]] as const) {
+      const span = addSpan(run, { name: "approval", visibility: "public" });
+      await addEvent<"decision">(run, span.id, { kind: "decision", decision, visibility: "public" });
+      await closeSpan(run, span.id, status);
+    }
+    run.status = "completed";
+    return run;
+  }
+
+  /** Commits a run as its producer chose to, after it edited IDs. */
+  async function commit(run: TraceRun): Promise<TraceBundle> {
+    for (const event of run.events) event.hash = await computeEventHash(event);
+    run.rollingHash = await computeRollingHash(run.events);
+    for (const span of run.spans) {
+      span.hash = await computeSpanHash(span, getBundleSpanEvents(span, run.events).map((event) => event.hash!));
+    }
+    run.rootHash = await computeRootHash(run.rollingHash, run.spans);
+    return clone(await createBundle(run));
+  }
+
+  const edits: Record<string, (run: TraceRun) => void> = {
+    "two spans share an ID": (run) => {
+      for (const span of run.spans) span.id = "approval";
+    },
+    "two events share an ID": (run) => {
+      const [first, second] = run.events;
+      second!.id = first!.id;
+      run.spans[1]!.eventIds = [first!.id];
+    },
+    "two events share an ID and no span lists the second": (run) => {
+      const [first, second] = run.events;
+      second!.id = first!.id;
+      run.spans[1]!.eventIds = [];
+    },
+    "two spans list the same event": (run) => {
+      run.spans[1]!.eventIds = [...run.spans[0]!.eventIds];
+    },
+    "a span lists an event twice": (run) => {
+      run.spans[0]!.eventIds = [run.spans[0]!.eventIds[0]!, run.spans[0]!.eventIds[0]!];
+    },
+  };
+
+  it.each(Object.entries(edits))("verifyBundle rejects a bundle in which %s", async (_name, edit) => {
+    const honest = await commit(await twoDecisions());
+    expect((await verifyBundle(clone(honest))).valid).toBe(true);
+    const run = await twoDecisions();
+    edit(run);
+    const result = await verifyBundle(await commit(run));
+    expect(result.valid).toBe(false);
+    expect(result.checks.sequenceValid).toBe(false);
+  });
+
+  // A disclosure shows only the events its spans list, so these are the repeats it can carry.
+  const disclosedRepeats = ["two events share an ID", "two spans list the same event", "a span lists an event twice"];
+  it.each(Object.entries(edits).filter(([name]) => disclosedRepeats.includes(name)))(
+    "verifyDisclosure rejects a disclosure in which %s", async (_name, edit) => {
+      const run = await twoDecisions();
+      edit(run);
+      const bundle = await commit(run);
+      const disclosure = await selectiveDisclose(bundle, orderedSpans(bundle).map((span) => span.id), "full");
+      const result = await verifyDisclosure(clone(disclosure), bundle.rootHash, bundle.merkleRoot);
+      expect(result.valid).toBe(false);
+      expect(result.errors.join("\n")).toMatch(/event ID/i);
+    },
+  );
+
+  it("verifySpanDisclosure and verifySpanInclusion reject a span whose events repeat an ID", async () => {
+    const run = await twoDecisions();
+    edits["a span lists an event twice"]!(run);
+    const bundle = await commit(run);
+    const disclosure = await selectiveDisclose(bundle, [orderedSpans(bundle)[0]!.id], "full");
+    const entry = disclosure.disclosedSpans[0]!;
+    expect(entry.events!.map((event) => event.id)).toEqual([entry.events![0]!.id, entry.events![0]!.id]);
+    const result = await verifySpanDisclosure({ ...entry, span: entry.span!, events: entry.events! }, bundle.merkleRoot);
+    expect(result.valid).toBe(false);
+    expect(result.errors.join("\n")).toMatch(/event ID/i);
+    expect(await verifySpanInclusion(entry.proof, entry.span!, entry.events!)).toBe(false);
+  });
+
+  it("checks a full entry against the leaf hash the caller authenticated for its span ID", async () => {
+    const bundle = await trace(3);
+    const [first, second] = orderedSpans(bundle);
+    const disclosure = await selectiveDisclose(bundle, [first!.id], "full");
+    const { leafHashes, leafCount } = await authenticatedLeaves(bundle);
+    expect((await verifyDisclosure(clone(disclosure), bundle.rootHash, bundle.merkleRoot, { leafHashes, leafCount })).valid)
+      .toBe(true);
+    const pinnedElsewhere = { leafHashes: { ...leafHashes, [first!.id]: leafHashes[second!.id]! }, leafCount };
+    const result = await verifyDisclosure(clone(disclosure), bundle.rootHash, bundle.merkleRoot, pinnedElsewhere);
+    expect(result.valid).toBe(false);
+    expect(result.errors.join("\n")).toContain("authenticated leaf hash");
+  });
+
+  it("verifies only the span the caller authenticated when two committed spans share its ID", async () => {
+    const run = await twoDecisions();
+    for (const span of run.spans) span.id = "approval";
+    const bundle = await commit(run);
+    const tree = await buildSpanMerkleTree(bundle.privateRun.spans, bundle.privateRun.events);
+    const disclose = (index: number): DisclosureResult => {
+      const span = orderedSpans(bundle)[index]!;
+      return clone({
+        mode: "full", rootHash: bundle.rootHash, merkleRoot: bundle.merkleRoot,
+        disclosedSpans: [{
+          spanId: "approval", proof: generateMerkleProof(tree, index), span,
+          events: getBundleSpanEvents(span, bundle.privateRun.events),
+        }],
+      });
+    };
+    const options = { leafHashes: { approval: tree.leafHashes[0]! }, leafCount: tree.leafCount };
+    expect((await verifyDisclosure(disclose(0), bundle.rootHash, bundle.merkleRoot, options)).valid).toBe(true);
+    expect((await verifyDisclosure(disclose(1), bundle.rootHash, bundle.merkleRoot, options)).valid).toBe(false);
   });
 });
