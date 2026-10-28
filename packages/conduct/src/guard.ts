@@ -6,25 +6,47 @@ import { decodeMandate, encodeMandate } from "./codec.js";
 import { EGRESS_ALLOWLIST, EGRESS_DENY_ALL, type MandateV1 } from "./types.js";
 import { actionDigestHex, validateAction, type GuardAction, type PaymentAction } from "./actions.js";
 import { guardEventData, snapshotGuardEvent, type GuardEvent } from "./events.js";
+import { GUARD_LOG_GENESIS, nextGuardLogHead, readGuardLogHead, type GuardHistory, type GuardLogHead } from "./log.js";
 import { DENIAL_RULES, type DenialReason, type GuardDecision } from "./verdict.js";
 
 export interface GuardConfig {
   readonly mandate: MandateV1;
   readonly counterpartyAllowlist: readonly string[];
   readonly egressAllowlist?: readonly string[];
+  /** `"fresh"` only for an empty event log; otherwise the complete ordered events and the head the log reports. */
+  readonly history: "fresh" | GuardHistory;
+  /** Appends the event at log position `event.seq`; must fail without writing unless the log holds exactly `event.seq` events. */
   readonly onEvent?: (event: GuardEvent) => unknown;
   readonly now?: () => bigint;
-  readonly recordedEvents?: readonly GuardEvent[];
 }
 
 export class GuardConfigError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "GuardConfigError";
   }
 }
 
+interface Prepared {
+  readonly event: GuardEvent;
+  readonly decision: GuardDecision;
+  readonly head: GuardLogHead;
+}
+
 const deny = (reason: DenialReason): GuardDecision => ({ allowed: false, reason, rule: DENIAL_RULES[reason] });
+
+function readHistory(history: unknown): { events: GuardEvent[]; head: GuardLogHead } {
+  if (history === "fresh") return { events: [], head: GUARD_LOG_GENESIS };
+  const message = 'history must be "fresh" or { events, head } from the guard event log';
+  if (typeof history !== "object" || history === null) throw new GuardConfigError(message);
+  const { events, head } = history as GuardHistory;
+  if (!Array.isArray(events) || typeof head !== "object" || head === null) throw new GuardConfigError(message);
+  try {
+    return { events: Array.from(events), head: readGuardLogHead(head) };
+  } catch (cause) {
+    throw new GuardConfigError(message, { cause });
+  }
+}
 
 export class MandateGuard {
   private readonly policy: MandateV1;
@@ -33,15 +55,16 @@ export class MandateGuard {
   private readonly egressDestinations: ReadonlySet<string>;
   private readonly onEvent: GuardConfig["onEvent"];
   private readonly now: () => bigint;
-  private readonly spentByWindow = new Map<bigint, bigint>();
-  private seq = 0n;
+  private logHead: GuardLogHead = GUARD_LOG_GENESIS;
+  private spendWindow = 0n;
+  private windowSpent = 0n;
   private lastTimestamp = 0n;
   private lastEnforcedAt = 0n;
   private pending = false;
   private sinkError: Error | undefined;
 
   constructor(config: GuardConfig) {
-    const { mandate, counterpartyAllowlist, egressAllowlist, onEvent, now, recordedEvents } = config;
+    const { mandate, counterpartyAllowlist, egressAllowlist, onEvent, now, history } = config;
     this.policy = decodeMandate(encodeMandate(mandate));
     this.mandateCommitment = mandateCommitmentHex(this.policy);
     this.onEvent = onEvent;
@@ -66,17 +89,21 @@ export class MandateGuard {
       }
       this.egressDestinations = new Set();
     }
-    for (const source of Array.from(recordedEvents ?? [])) {
+    const recorded = readHistory(history);
+    for (const source of recorded.events) {
       try {
         const event = snapshotGuardEvent(source);
-        const { event: expected, decision } = this.prepare(event.action, event.enforcedAt);
-        if (canonicalize(guardEventData(event)) !== canonicalize(guardEventData(expected))) {
+        const prepared = this.prepare(event.action, event.enforcedAt);
+        if (canonicalize(guardEventData(event)) !== canonicalize(guardEventData(prepared.event))) {
           throw new Error("event does not match replayed decision");
         }
-        this.reserve(event, decision);
+        this.reserve(prepared);
       } catch (cause) {
-        throw new GuardConfigError(`invalid recorded guard event: ${cause instanceof Error ? cause.message : "validation failed"}`);
+        throw new GuardConfigError(`invalid recorded guard event: ${cause instanceof Error ? cause.message : "validation failed"}`, { cause });
       }
+    }
+    if (this.logHead.count !== recorded.head.count || this.logHead.hash !== recorded.head.hash) {
+      throw new GuardConfigError("recorded guard events do not end at the expected log head");
     }
   }
 
@@ -84,8 +111,13 @@ export class MandateGuard {
     return decodeMandate(encodeMandate(this.policy));
   }
 
+  get head(): GuardLogHead {
+    return this.logHead;
+  }
+
+  // Only the latest window holding an allowed payment is kept; enforcement never charges an earlier window.
   spentInWindow(timestamp: bigint): bigint {
-    return this.spentByWindow.get(this.windowIndex(timestamp)) ?? 0n;
+    return this.windowIndex(timestamp) === this.spendWindow ? this.windowSpent : 0n;
   }
 
   private windowIndex(timestamp: bigint): bigint {
@@ -127,19 +159,21 @@ export class MandateGuard {
     return { allowed: true };
   }
 
-  private prepare(action: GuardAction, enforcedAt: bigint): { event: GuardEvent; decision: GuardDecision } {
+  // Action time never exceeds the guard clock, so the action-time check in evaluate also covers clock < notBefore.
+  private prepare(action: GuardAction, enforcedAt: bigint): Prepared {
     action = { ...action };
     validateAction(action);
     if (typeof enforcedAt !== "bigint" || enforcedAt < this.lastEnforcedAt || enforcedAt >= 1n << 64n) {
       throw new Error("guard clock must be a monotonic uint64 Unix timestamp");
     }
-    if (this.windowIndex(action.timestamp) !== this.windowIndex(enforcedAt) || action.timestamp < this.lastTimestamp) {
-      throw new Error("action timestamp must be in the current window and must not move backward");
+    if (this.windowIndex(action.timestamp) !== this.windowIndex(enforcedAt)) {
+      throw new Error("action timestamp must be in the guard clock's current window");
     }
-    const decision = enforcedAt < this.policy.validityWindow.notBefore ? deny("MANDATE_NOT_YET_VALID")
-      : enforcedAt >= this.policy.validityWindow.notAfter ? deny("MANDATE_EXPIRED") : this.evaluate(action);
+    if (action.timestamp > enforcedAt) throw new Error("action timestamp must not be later than the guard clock");
+    if (action.timestamp < this.lastTimestamp) throw new Error("action timestamp must not move backward");
+    const decision = enforcedAt >= this.policy.validityWindow.notAfter ? deny("MANDATE_EXPIRED") : this.evaluate(action);
     const base = {
-      seq: this.seq,
+      seq: this.logHead.count,
       timestamp: action.timestamp,
       enforcedAt,
       mandateCommitment: this.mandateCommitment,
@@ -155,17 +189,20 @@ export class MandateGuard {
           reason: decision.reason,
           rule: decision.rule,
         });
-    canonicalize(guardEventData(event));
-    return { event, decision };
+    return { event, decision, head: nextGuardLogHead(this.logHead, event) };
   }
 
-  private reserve(event: GuardEvent, decision: GuardDecision): void {
+  private reserve({ event, decision, head }: Prepared): void {
     const action = event.action;
     if (decision.allowed && action.kind === "payment") {
-      const w = this.windowIndex(action.timestamp);
-      this.spentByWindow.set(w, (this.spentByWindow.get(w) ?? 0n) + action.amount);
+      const window = this.windowIndex(action.timestamp);
+      if (window !== this.spendWindow) {
+        this.spendWindow = window;
+        this.windowSpent = 0n;
+      }
+      this.windowSpent += action.amount;
     }
-    this.seq++;
+    this.logHead = head;
     this.lastTimestamp = event.timestamp;
     this.lastEnforcedAt = event.enforcedAt;
   }
@@ -177,10 +214,11 @@ export class MandateGuard {
 
   enforce(action: GuardAction): GuardDecision {
     this.checkSink();
-    const { event, decision } = this.prepare(action, this.now());
-    this.reserve(event, decision);
+    const prepared = this.prepare(action, this.now());
+    if (prepared.event.actionKind === "payment" && !this.onEvent) throw new Error("payment enforcement requires an event sink");
+    this.reserve(prepared);
     try {
-      const result = this.onEvent?.(event);
+      const result = this.onEvent?.(prepared.event);
       if (result !== null && (typeof result === "object" || typeof result === "function") && "then" in result && typeof result.then === "function") {
         // Observe the rejected sink while the synchronous caller receives a hard failure.
         void Promise.resolve(result).catch(cause => { this.sinkError = new Error("async event sink failed", { cause }); });
@@ -190,18 +228,18 @@ export class MandateGuard {
       this.sinkError = new Error("event sink failed", { cause });
       throw cause;
     }
-    return decision;
+    return prepared.decision;
   }
 
   async enforceAsync(action: GuardAction): Promise<GuardDecision> {
     this.checkSink();
     if (!this.onEvent) throw new Error("enforceAsync requires an event sink");
-    const { event, decision } = this.prepare(action, this.now());
-    this.reserve(event, decision);
+    const prepared = this.prepare(action, this.now());
+    this.reserve(prepared);
     this.pending = true;
     try {
-      await this.onEvent(event);
-      return decision;
+      await this.onEvent(prepared.event);
+      return prepared.decision;
     } catch (cause) {
       this.sinkError = new Error("event sink failed", { cause });
       throw cause;

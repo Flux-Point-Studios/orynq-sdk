@@ -69,12 +69,19 @@ export {
   actionDigestHex,
 } from "./actions.js";
 export type { EgressAction, GuardAction, PaymentAction } from "./actions.js";
-export { GUARD_EVENT_CUSTOM_KIND, toProcessTraceEvent } from "./events.js";
+export { GUARD_EVENT_CUSTOM_KIND, processTraceSink, toProcessTraceEvent } from "./events.js";
 export type {
   GuardActionEvent,
   GuardDenialEvent,
   GuardEvent,
 } from "./events.js";
+export {
+  GUARD_LOG_DOMAIN,
+  GUARD_LOG_GENESIS,
+  MemoryGuardLog,
+  nextGuardLogHead,
+} from "./log.js";
+export type { GuardHistory, GuardLogHead } from "./log.js";
 export { GuardConfigError, MandateGuard } from "./guard.js";
 export type { GuardConfig } from "./guard.js";
 export type { DenialReason, GuardDecision } from "./verdict.js";

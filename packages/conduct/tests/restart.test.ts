@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { deserialize } from "node:v8";
 import { afterEach, expect, it } from "vitest";
+import { FileGuardLog } from "./fixtures/k1/file-log.mjs";
 
 const dirs: string[] = [];
 function ledger(): string {
@@ -15,7 +15,7 @@ function ledger(): string {
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true }); });
 const clean = '{"asset":"lovelace","amount":"10000000","counterparty":"supplier"}';
 const poison = '{"asset":"lovelace","amount":"10000000","counterparty":"supplier","note":1e999}';
-function host(name: "agent" | "control", path: string, json: string, mode = "legacy") {
+function host(name: "agent" | "control", path: string, json: string, mode = "detached") {
   return spawnSync(process.execPath, ["--import", "tsx", fileURLToPath(new URL(`./fixtures/k1/${name}-host.mts`, import.meta.url)), path, json, mode], {
     encoding: "utf8", timeout: 20_000, maxBuffer: 100_000,
   });
@@ -57,8 +57,8 @@ it("K1 durable agent-host: three restarted guards share one cap and retain all e
     expect(result.stdout).toContain('"recordedEvents":1');
   }
   expect(readFileSync(path, "utf8")).toBe("10000000\n");
-  const events = deserialize(readFileSync(`${path}.events`));
-  expect(events.map((e: { seq: bigint }) => e.seq)).toEqual([0n, 1n, 2n]);
+  const events = new FileGuardLog(`${path}.log`).history().events;
+  expect(events.map(e => e.seq)).toEqual([0n, 1n, 2n]);
 });
 it("F3 agent-host: failed async trace and sync misuse never execute an effect", () => {
   const path = ledger();

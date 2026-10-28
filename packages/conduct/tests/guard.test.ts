@@ -7,7 +7,7 @@ import {
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { GuardAction, GuardEvent } from "../src/index.js";
-import { GuardConfigError, MandateGuard } from "../src/index.js";
+import { GuardConfigError, MandateGuard, MemoryGuardLog } from "../src/index.js";
 
 interface JsonAction {
   kind: "payment" | "egress";
@@ -90,7 +90,7 @@ function toAction(j: JsonAction): GuardAction {
   };
 }
 
-function runCase(c: JsonCase, egressMode: 0n | 1n, events?: GuardEvent[]): void {
+function runCase(c: JsonCase, egressMode: 0n | 1n, events: GuardEvent[] = []): void {
   let now = 0n;
   const mandate = fixtureMandate(egressMode);
   const guard = new MandateGuard({
@@ -98,7 +98,8 @@ function runCase(c: JsonCase, egressMode: 0n | 1n, events?: GuardEvent[]): void 
     mandate: { ...mandate, spendCap: { ...mandate.spendCap, amount: BigInt(c.capAmount ?? vectors.mandateParams.capAmount) } },
     counterpartyAllowlist: vectors.counterpartyAllowlist,
     ...(egressMode === 1n ? { egressAllowlist: vectors.egressAllowlist } : {}),
-    ...(events ? { onEvent: (e: GuardEvent) => events.push(e) } : {}),
+    history: "fresh",
+    onEvent: (e: GuardEvent) => events.push(e),
   });
   for (const [i, step] of c.sequence.entries()) {
     now = BigInt(step.action.timestamp);
@@ -151,6 +152,7 @@ describe("guard trace events", () => {
       mandate: fixtureMandate(1n),
       counterpartyAllowlist: vectors.counterpartyAllowlist,
       egressAllowlist: vectors.egressAllowlist,
+      history: "fresh",
       onEvent: (e) => events.push(e),
     });
     const pay: GuardAction = {
@@ -177,6 +179,7 @@ describe("guard construction binds allowlists to the mandate roots", () => {
           mandate: fixtureMandate(1n),
           counterpartyAllowlist: [...vectors.counterpartyAllowlist, "addr_test1_extra"],
           egressAllowlist: vectors.egressAllowlist,
+          history: "fresh",
         }),
     ).toThrowError(GuardConfigError);
   });
@@ -189,6 +192,7 @@ describe("guard construction binds allowlists to the mandate roots", () => {
           mandate: fixtureMandate(1n),
           counterpartyAllowlist: vectors.counterpartyAllowlist,
           egressAllowlist: ["exfil.example.org"],
+          history: "fresh",
         }),
     ).toThrowError(GuardConfigError);
   });
@@ -200,6 +204,7 @@ describe("guard construction binds allowlists to the mandate roots", () => {
     now: () => 1_500_000n,
           mandate: fixtureMandate(1n),
           counterpartyAllowlist: vectors.counterpartyAllowlist,
+          history: "fresh",
         }),
     ).toThrowError(GuardConfigError);
     expect(
@@ -209,16 +214,20 @@ describe("guard construction binds allowlists to the mandate roots", () => {
           mandate: fixtureMandate(0n),
           counterpartyAllowlist: vectors.counterpartyAllowlist,
           egressAllowlist: vectors.egressAllowlist,
+          history: "fresh",
         }),
     ).toThrowError(GuardConfigError);
   });
 
   it("evaluate() is pure: it never accrues spend", () => {
+    const log = new MemoryGuardLog();
     const guard = new MandateGuard({
     now: () => 1_500_000n,
       mandate: fixtureMandate(1n),
       counterpartyAllowlist: vectors.counterpartyAllowlist,
       egressAllowlist: vectors.egressAllowlist,
+      history: "fresh",
+      onEvent: (e) => log.append(e),
     });
     const pay: GuardAction = {
       kind: "payment",
@@ -233,5 +242,33 @@ describe("guard construction binds allowlists to the mandate roots", () => {
     expect(guard.enforce(pay).allowed).toBe(true);
     expect(guard.spentInWindow(1_500_000n)).toBe(10_000_000n);
     expect(guard.evaluate({ ...pay, amount: 1n }).allowed).toBe(false);
+  });
+});
+
+describe("denial rule texts", () => {
+  it("each denial reason carries its fixed rule text", () => {
+    const allowlist = new MandateGuard({
+      mandate: fixtureMandate(1n), counterpartyAllowlist: vectors.counterpartyAllowlist, egressAllowlist: vectors.egressAllowlist, history: "fresh",
+    });
+    const denyAll = new MandateGuard({ mandate: fixtureMandate(0n), counterpartyAllowlist: vectors.counterpartyAllowlist, history: "fresh" });
+    const pay: GuardAction = { kind: "payment", asset: "lovelace", amount: 1n, counterparty: "addr_test1_alpha_supplier", timestamp: 1_500_000n };
+    const decisions = [
+      allowlist.evaluate({ ...pay, timestamp: 999_999n }),
+      allowlist.evaluate({ ...pay, timestamp: 2_000_000n }),
+      allowlist.evaluate({ ...pay, asset: "tdust" }),
+      allowlist.evaluate({ ...pay, counterparty: "addr_test1_mallory" }),
+      allowlist.evaluate({ ...pay, amount: 10_000_001n }),
+      denyAll.evaluate({ kind: "egress", destination: "api.example.com", timestamp: 1_500_000n }),
+      allowlist.evaluate({ kind: "egress", destination: "exfil.example.org", timestamp: 1_500_000n }),
+    ];
+    expect(Object.fromEntries(decisions.map(d => (d.allowed ? ["ALLOW", ""] : [d.reason, d.rule])))).toEqual({
+      MANDATE_NOT_YET_VALID: "timestamp precedes mandate validity",
+      MANDATE_EXPIRED: "timestamp reaches or exceeds mandate expiry",
+      ASSET_MISMATCH: "asset is not the mandated asset",
+      COUNTERPARTY_NOT_ALLOWED: "counterparty is not in the mandate allowlist",
+      SPEND_CAP_EXCEEDED: "payment exceeds the remaining window spend cap",
+      EGRESS_DENIED: "mandate egress policy is deny-all",
+      EGRESS_NOT_ALLOWED: "destination is not in the egress allowlist",
+    });
   });
 });

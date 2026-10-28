@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  buildAllowlistRoot, compileMandatePredicate, MandateGuard, PREDICATE_LAYOUT,
+  buildAllowlistRoot, compileMandatePredicate, MandateGuard, MemoryGuardLog, PREDICATE_LAYOUT,
   type GuardAction, type MandateV1,
 } from "../src/index.js";
 
@@ -31,7 +31,8 @@ describe("predicate ABI golden sequences", () => {
       const lists = { counterpartyAllowlist: guardVectors.counterpartyAllowlist, ...(mode === 1n ? { egressAllowlist: guardVectors.egressAllowlist } : {}) };
       const compiled = compileMandatePredicate(mandate, lists);
       let now = 0n;
-      const guard = new MandateGuard({ mandate, ...lists, now: () => now });
+      const log = new MemoryGuardLog();
+      const guard = new MandateGuard({ mandate, ...lists, now: () => now, history: "fresh", onEvent: e => log.append(e) });
       for (const step of vector.steps) {
         const a = step.action;
         const action: GuardAction = a.kind === "payment"

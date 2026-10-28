@@ -32,10 +32,11 @@
     {
       "id": "conduct-guard",
       "name": "Conduct runtime guard",
-      "desc": "Payment/egress authorization with a trusted guard clock, monotonic action times and epoch-aligned spend caps. Trace-safe immutable events are validated before reservation. Synchronous enforcement rejects promise sinks; awaited enforcement authorizes only after sink acceptance and fails closed on errors. Complete ordered guard-event replay restores spend, sequence and clock state across restarts. Hosts own durable storage, log authentication/completeness, serialized access and all identity, attestation and disclosure checks.",
+      "desc": "Payment/egress authorization with a trusted guard clock, action times no later than the clock and epoch-aligned spend caps. Accounting state is an explicit constructor input: \"fresh\" or a replay that must end at the event log's head (count plus a domain-separated SHA-256 chain over canonical event data). Payments require an event sink; the sink contract appends only at position seq, so a second live guard or a stale restart fails closed (MemoryGuardLog is the reference). Trace-safe immutable events are validated before reservation; synchronous enforcement rejects promise sinks and awaited enforcement authorizes only after sink acceptance. processTraceSink records events in a process-trace span and returns the addEvent promise. Hosts own durable conditional-append storage, head custody (separate store, signature or anchor) and all identity, attestation and disclosure checks.",
       "kind": "toolkit",
       "paths": [
         "packages/conduct/src/guard.ts",
+        "packages/conduct/src/log.ts",
         "packages/conduct/src/events.ts",
         "packages/conduct/src/verdict.ts",
         "packages/conduct/src/index.ts",

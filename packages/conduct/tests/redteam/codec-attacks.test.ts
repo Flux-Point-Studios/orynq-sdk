@@ -117,7 +117,7 @@ describe("Info: hostile input snapshots", () => {
     const list = ["alice"];
     Object.defineProperty(list, Symbol.iterator, { value: function* () { yield "alice"; yield "mallory"; } });
     const m = { ...base, egressPolicy: { mode: 0n, allowlistRoot: new Uint8Array(32) } };
-    expect(() => new MandateGuard({ mandate: m, counterpartyAllowlist: list })).toThrow(/allowlist/);
+    expect(() => new MandateGuard({ mandate: m, counterpartyAllowlist: list, history: "fresh" })).toThrow(/allowlist/);
   });
   it("a proxied byte source validates and hashes the same copied bytes", () => {
     const evil = Uint8Array.from(wire);

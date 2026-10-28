@@ -47,7 +47,7 @@ validity_window = {
 }
 
 disclosure_policy = {
-  0: text .size (1..128),    ; committee_id (opaque); implementation limits UTF-16 code units
+  0: text .size (1..128),    ; committee_id (opaque), 1-128 UTF-8 bytes
   1: uint,                   ; threshold M, >= 1
   2: uint,                   ; committee_size N, >= M
 }

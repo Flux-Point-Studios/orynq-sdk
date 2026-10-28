@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { decodeMandate, encodeMandate, MandateError, type MandateV1 } from "../../src/index.js";
 
@@ -10,6 +11,10 @@ const m = (committeeId: string): MandateV1 => ({
 });
 
 describe("committee_id: CDDL says text .size (1..128) (UTF-8 bytes)", () => {
+  it("the normative CDDL states the committee_id bound in UTF-8 bytes", () => {
+    const line = readFileSync(new URL("../../docs/mandate-v1.cddl", import.meta.url), "utf8").split("\n").find(l => l.includes("committee_id"));
+    expect(line).toMatch(/text \.size \(1\.\.128\),\s+; committee_id \(opaque\), 1-128 UTF-8 bytes$/);
+  });
   it("CONTROL: 129 ASCII characters are rejected", () => {
     expect(() => encodeMandate(m("a".repeat(129)))).toThrow(MandateError);
   });

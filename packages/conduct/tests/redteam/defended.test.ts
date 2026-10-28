@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAllowlistRoot, compileMandatePredicate, MandateGuard, type GuardAction, type GuardEvent, type MandateV1 } from "../../src/index.js";
+import { buildAllowlistRoot, compileMandatePredicate, MandateGuard, MemoryGuardLog, type GuardAction, type GuardEvent, type MandateV1 } from "../../src/index.js";
 
 const CP = ["addr_test1_alpha", "café"];
 const EG = ["api.example.com"];
@@ -15,7 +15,8 @@ function mandate(): MandateV1 {
     disclosurePolicy: { committeeId: "c", threshold: 1n, committeeSize: 1n },
   };
 }
-const guard = () => new MandateGuard({ now: () => 5000n, mandate: mandate(), counterpartyAllowlist: [...CP], egressAllowlist: [...EG] });
+const sink = () => { const log = new MemoryGuardLog(); return (e: GuardEvent) => log.append(e); };
+const guard = () => new MandateGuard({ now: () => 5000n, mandate: mandate(), counterpartyAllowlist: [...CP], egressAllowlist: [...EG], history: "fresh", onEvent: sink() });
 const pay = (o: Partial<Record<string, unknown>> = {}) => ({ kind: "payment", asset: "lovelace", amount: 1n, counterparty: "addr_test1_alpha", timestamp: 5000n, ...o }) as GuardAction;
 const egress = (o: Partial<Record<string, unknown>> = {}) => ({ kind: "egress", destination: "api.example.com", timestamp: 5000n, ...o }) as GuardAction;
 
@@ -57,7 +58,7 @@ describe("uint64 extremes", () => {
   it("cap 2^64-1: exact max allowed, one more denied without wrap", () => {
     const max = (1n << 64n) - 1n;
     const m = { ...mandate(), spendCap: { asset: "lovelace", amount: max, windowSeconds: max } };
-    const g = new MandateGuard({ now: () => 5000n, mandate: m, counterpartyAllowlist: CP, egressAllowlist: EG });
+    const g = new MandateGuard({ now: () => 5000n, mandate: m, counterpartyAllowlist: CP, egressAllowlist: EG, history: "fresh", onEvent: sink() });
     expect(g.enforce(pay({ amount: max })).allowed).toBe(true);
     expect(g.enforce(pay({ amount: 1n }))).toMatchObject({ allowed: false, reason: "SPEND_CAP_EXCEEDED" });
     expect(g.spentInWindow(5000n)).toBe(max);
@@ -69,7 +70,7 @@ describe("snapshots", () => {
     const m = mandate();
     const list = [...CP];
     const events: GuardEvent[] = [];
-    const g = new MandateGuard({ now: () => 5000n, mandate: m, counterpartyAllowlist: list, egressAllowlist: [...EG], onEvent: (e) => { events.push(e); expect(() => { (e.action as { amount?: bigint }).amount = 0n; }).toThrow(); } });
+    const g = new MandateGuard({ now: () => 5000n, mandate: m, counterpartyAllowlist: list, egressAllowlist: [...EG], history: "fresh", onEvent: (e) => { events.push(e); expect(() => { (e.action as { amount?: bigint }).amount = 0n; }).toThrow(); } });
     list.push("mallory");
     m.counterpartyAllowlistRoot.fill(0);
     (g.mandate.spendCap as { amount: bigint }).amount = 1000n;
@@ -97,7 +98,7 @@ describe("malformed actions throw before any state change", () => {
   const bad: unknown[] = [null, undefined, {}, pay({ kind: "Payment" }), pay({ amount: 1 }), pay({ amount: "1" }), pay({ counterparty: undefined }), pay({ counterparty: "" }), pay({ asset: "\ud800" }), egress({ destination: 7 }), egress({ timestamp: -1n }), pay({ amount: 1n << 64n })];
   it("no spend, no seq, no event", () => {
     const events: GuardEvent[] = [];
-    const g = new MandateGuard({ now: () => 5000n, mandate: mandate(), counterpartyAllowlist: CP, egressAllowlist: EG, onEvent: (e) => events.push(e) });
+    const g = new MandateGuard({ now: () => 5000n, mandate: mandate(), counterpartyAllowlist: CP, egressAllowlist: EG, history: "fresh", onEvent: (e) => events.push(e) });
     for (const a of bad) expect(() => g.enforce(a as GuardAction)).toThrow();
     expect(events).toHaveLength(0);
     expect(g.spentInWindow(5000n)).toBe(0n);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addEvent, addSpan, closeSpan, computeEventHash, createTrace } from "@fluxpointstudios/orynq-sdk-process-trace";
-import { actionDigestHex, buildAllowlistRoot, MandateGuard, toProcessTraceEvent, type GuardAction, type GuardEvent, type MandateV1 } from "../../src/index.js";
+import { actionDigestHex, buildAllowlistRoot, MandateGuard, MemoryGuardLog, toProcessTraceEvent, type GuardAction, type GuardEvent, type MandateV1 } from "../../src/index.js";
 
 const CP = ["supplier"];
 function mandate(over: Partial<MandateV1["spendCap"]> = {}): MandateV1 {
@@ -17,7 +17,10 @@ function mandate(over: Partial<MandateV1["spendCap"]> = {}): MandateV1 {
 }
 const ctx = { id: "550e8400-e29b-41d4-a716-446655440000", seq: 0, timestamp: "2026-10-27T00:00:00.000Z", visibility: "private" as const };
 const pay = { kind: "payment", asset: "lovelace", amount: 6n, counterparty: "supplier", timestamp: 7200n } as const;
-const config = () => ({ mandate: mandate(), counterpartyAllowlist: CP, now: () => 7200n });
+const config = () => {
+  const log = new MemoryGuardLog();
+  return { mandate: mandate(), counterpartyAllowlist: CP, now: () => 7200n, history: "fresh" as const, onEvent: (e: GuardEvent) => log.append(e) };
+};
 
 describe("F1 action record integrity", () => {
   it("CONTROL: a clean allowed action converts and hashes", async () => {
@@ -92,11 +95,11 @@ describe("F2 guard-owned time", () => {
 });
 
 it("K1/K2: a reconstructed guard restores spend from recorded events", () => {
-  const events: GuardEvent[] = [];
-  const first = new MandateGuard({ ...config(), onEvent: e => events.push(e) });
+  const log = new MemoryGuardLog();
+  const first = new MandateGuard({ ...config(), onEvent: e => log.append(e) });
   expect(first.enforce({ ...pay, amount: 10n }).allowed).toBe(true);
   expect(first.enforce({ ...pay, amount: 10n }).allowed).toBe(false);
-  const second = new MandateGuard({ ...config(), recordedEvents: events });
+  const second = new MandateGuard({ ...config(), history: log.history(), onEvent: e => log.append(e) });
   expect(second.mandateCommitment).toBe(first.mandateCommitment);
   expect(second.enforce({ ...pay, amount: 10n }).allowed).toBe(false);
 });
