@@ -55,8 +55,14 @@ describe("proof release journal", () => {
   it("owns an immutable copy of confirmed bytes before settlement awaits", async () => {
     const { operator, w } = setup();
     try {
-      const prepared = await operator.prepare("deploy");
-      const replacement = await operator.prepare("deploy");
+      // A deploy's random scalars serialize without leading zeros, so two deploys can differ by a byte; the swap
+      // below needs a whole transaction of the confirmed length, so draw pairs until one matches.
+      let prepared = await operator.prepare("deploy");
+      let replacement = await operator.prepare("deploy");
+      for (let pairs = 1; pairs < 12 && replacement.bytes.length !== prepared.bytes.length; pairs++) {
+        prepared = await operator.prepare("deploy");
+        replacement = await operator.prepare("deploy");
+      }
       const confirmedHash = prepared.txHash;
       const confirmedBytes = new Uint8Array(prepared.bytes);
       expect(replacement.txHash).not.toBe(confirmedHash);
