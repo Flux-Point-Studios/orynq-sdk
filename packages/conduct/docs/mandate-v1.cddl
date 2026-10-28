@@ -1,0 +1,53 @@
+; Orynq conduct mandate v1 wire format — normative CDDL.
+;
+; Serialization: RFC 8949 section 4.2.1 deterministic CBOR, restricted to
+; the subset enforced by @fluxpointstudios/orynq-sdk-conduct: uint64 integers,
+; definite lengths only, map keys sorted bytewise on their encodings, no
+; duplicate keys, no floats / tags / negatives / null / undefined.
+; Decoders MUST reject any input outside this subset (strict verifier
+; semantics); error codes live in src/errors.ts.
+;
+; Commitment: sha256( 'orynq:conduct:mandate:v1|' || canonical-cbor(mandate_v1) ).
+
+mandate_v1 = {
+  0: 1,                      ; schema_version
+  1: bytes .size 16,         ; mandate_id, 16 random bytes, unique per principal
+  2: did_key,                ; principal_did
+  3: did_key,                ; agent_did
+  4: 0,                      ; did_format_version: 0 = did:key
+  5: spend_cap,
+  6: bytes .size 32,         ; counterparty_allowlist_root (Merkle root)
+  7: egress_policy,
+  8: bytes .size 32,         ; approved_measurement_set_root (Merkle root)
+  9: validity_window,
+  10: disclosure_policy,
+}
+
+; base58btc multibase-encoded public key, as in the did:key method.
+did_key = text .regexp "did:key:z[1-9A-HJ-NP-Za-km-z]{8,256}"
+
+spend_cap = {
+  0: asset_id,               ; asset
+  1: uint,                   ; amount, base units, cap per fixed/tumbling window (resets at each window_seconds boundary)
+  2: uint,                   ; window_seconds, >= 1; window aligned to unix epoch (index = floor(t / window_seconds))
+}
+
+; "lovelace", "tdust", or a Cardano unit (hex policy id ++ asset name).
+asset_id = text .regexp "[\\x21-\\x7e]{1,128}"
+
+egress_policy = {
+  0: 0 / 1,                  ; mode: 0 = deny-all, 1 = allowlist
+  1: bytes .size 32,         ; egress allowlist Merkle root; MUST be all-zero
+                             ;   when mode = 0
+}
+
+validity_window = {
+  0: uint,                   ; not_before, unix seconds, inclusive
+  1: uint,                   ; not_after, unix seconds, exclusive; > not_before
+}
+
+disclosure_policy = {
+  0: text .size (1..128),    ; committee_id (opaque), 1-128 UTF-8 bytes
+  1: uint,                   ; threshold M, >= 1
+  2: uint,                   ; committee_size N, >= M
+}

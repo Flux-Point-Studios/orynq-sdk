@@ -2,6 +2,51 @@
   "repo": "orynq-sdk",
   "primitives": [
     {
+      "id": "conduct-mandate",
+      "name": "Conduct mandate",
+      "desc": "Strict deterministic CBOR v1 mandates, domain-separated SHA-256 commitments, allowlist roots and validated payment/egress action digests. Canonical decoding preserves all UTF-8 text including a leading BOM. Schema validity does not establish principal authority. Inputs are copied before validation; identifier limits are UTF-8 byte bounds and payment actions reject zero amounts and unknown fields.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/conduct/src/types.ts",
+        "packages/conduct/src/bytes.ts",
+        "packages/conduct/src/cbor.ts",
+        "packages/conduct/src/codec.ts",
+        "packages/conduct/src/commitment.ts",
+        "packages/conduct/src/allowlist.ts",
+        "packages/conduct/src/actions.ts",
+        "packages/conduct/src/errors.ts",
+        "packages/conduct/docs"
+      ],
+      "consumes": [],
+      "status": "experimental"
+    },
+    {
+      "id": "conduct-predicate-compiler",
+      "name": "Conduct predicate compiler",
+      "desc": "Root-bound mandate compiler emitting a golden-fixture-pinned 12-slot predicate ABI with uint64 action and prior-spend validation. Circuit proof generation and authentication of witness membership/spend are separate obligations.",
+      "kind": "toolkit",
+      "paths": ["packages/conduct/src/predicate.ts"],
+      "consumes": ["conduct-mandate"],
+      "status": "experimental"
+    },
+    {
+      "id": "conduct-guard",
+      "name": "Conduct runtime guard",
+      "desc": "Payment/egress authorization with a trusted guard clock, action times no later than the clock and epoch-aligned spend caps. Accounting state is an explicit constructor input: \"fresh\" or a replay that must end at the event log's head (count plus a domain-separated SHA-256 chain over canonical event data). Payments require an event sink; the sink contract appends only if the log head still equals the expected previous head (count and hash) and returns the new head, which the guard verifies, so a second live guard, a stale restart, a forged replica or a sink that skips the append fails closed (MemoryGuardLog is the reference). Trace-safe immutable events are validated before reservation; synchronous enforcement rejects promise sinks and awaited enforcement authorizes only after sink acceptance. processTraceSink records events in a process-trace span and returns the addEvent promise. Hosts own durable conditional-append storage, head custody (separate store, signature or anchor) and all identity, attestation and disclosure checks.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/conduct/src/guard.ts",
+        "packages/conduct/src/log.ts",
+        "packages/conduct/src/events.ts",
+        "packages/conduct/src/verdict.ts",
+        "packages/conduct/src/index.ts",
+        "packages/conduct/tests",
+        "packages/conduct/README.md"
+      ],
+      "consumes": ["conduct-mandate", "conduct-predicate-compiler", "process-trace", "dual-protocol-payment-layer"],
+      "status": "experimental"
+    },
+    {
       "id": "process-trace",
       "name": "Process trace",
       "desc": "Cryptographic process-trace library: schemas, hashing, v1 Merkle trees and synchronous inclusion proofs, bundles whose span and event IDs are unique and whose public view and top-level model-manifest copies must equal the committed run's (redacted hashes in any order, so every locale's and release's bundles verify), and selective disclosure that reads its input once, recomputes event and span hashes, returns only committed fields, binds full entries to any caller-authenticated leaf hash for their span ID, and verifies membership entries only against caller-authenticated leaf hashes and leaf count.",

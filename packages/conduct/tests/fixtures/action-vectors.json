@@ -1,0 +1,51 @@
+{
+  "description": "Manually encoded CBOR, SHA-256 known answers independently calculated with Python hashlib.",
+  "cases": [
+    {
+      "name": "payment",
+      "action": {
+        "kind": "payment",
+        "asset": "lovelace",
+        "amount": "6",
+        "counterparty": "supplier",
+        "timestamp": "7200"
+      },
+      "cborHex": "a500677061796d656e7401686c6f76656c61636502060368737570706c69657204191c20",
+      "digestHex": "079d949bcfff250db9863fb7def912d90dfb737143e781cf71e86bbd6184ac42"
+    },
+    {
+      "name": "changed counterparty",
+      "action": {
+        "kind": "payment",
+        "asset": "lovelace",
+        "amount": "6",
+        "counterparty": "Supplier",
+        "timestamp": "7200"
+      },
+      "cborHex": "a500677061796d656e7401686c6f76656c61636502060368537570706c69657204191c20",
+      "digestHex": "3df63a3e306929aae1277e00e24efdd4476d48cbc2dfc221a054e60e3034aee8"
+    },
+    {
+      "name": "changed timestamp",
+      "action": {
+        "kind": "payment",
+        "asset": "lovelace",
+        "amount": "6",
+        "counterparty": "supplier",
+        "timestamp": "7201"
+      },
+      "cborHex": "a500677061796d656e7401686c6f76656c61636502060368737570706c69657204191c21",
+      "digestHex": "9c49ca4653b9626781b6b682c069c499fa359f7b6d9b22f144c9d01a6b660b89"
+    },
+    {
+      "name": "egress",
+      "action": {
+        "kind": "egress",
+        "destination": "api.example.com",
+        "timestamp": "7200"
+      },
+      "cborHex": "a30066656772657373016f6170692e6578616d706c652e636f6d02191c20",
+      "digestHex": "7b1dab6d67f9d4b217af6766677d950f59612c8deb2856397d5f881a2db44339"
+    }
+  ]
+}
