@@ -24,6 +24,7 @@ import {
 import type {
   DisclosureInput,
 } from "../types.js";
+import * as processTrace from "@fluxpointstudios/orynq-sdk-process-trace";
 import type {
   TraceBundle,
   TraceRun,
@@ -165,6 +166,7 @@ async function createTestBundle(spanCount: number = 1): Promise<{
   for (let i = 0; i < spanCount; i++) {
     const eventId = `event-${i}`;
     const event = createCommandEvent({ id: eventId, seq: i });
+    event.hash = await processTrace.computeEventHash(event);
     events.push(event);
 
     const span = createSpan({
@@ -455,6 +457,31 @@ describe("verifySpanInclusion", () => {
 
     expect(isValid).toBe(false);
   });
+
+  it("rejects a disclosed event body that no longer matches its hash", async () => {
+    const { bundle } = await createTestBundle(5);
+    const inclusion = await generateMerkleInclusionProof(bundle, "span-2");
+    const events = inclusion.events.map((event) => ({ ...event }));
+    expect(await verifySpanInclusion(inclusion.merkleProof, inclusion.span, events)).toBe(true);
+
+    Object.assign(events[0]!, { command: "transfer 1,000,000 to attacker" });
+    expect(await verifySpanInclusion(inclusion.merkleProof, inclusion.span, events)).toBe(false);
+  });
+});
+
+describe("Merkle verifiers", () => {
+  it("are the process-trace implementations", () => {
+    expect(verifyMerkleProof).toBe(processTrace.verifyMerkleProof);
+    expect(verifySpanInclusion).toBe(processTrace.verifySpanInclusion);
+    expect(computeSpanHash).toBe(processTrace.computeSpanHash);
+  });
+
+  it("reject a leaf index the sibling path does not encode", async () => {
+    const { bundle } = await createTestBundle(5);
+    const { merkleProof } = await generateMerkleInclusionProof(bundle, "span-2");
+    expect(await verifyMerkleProof(merkleProof)).toBe(true);
+    expect(await verifyMerkleProof({ ...merkleProof, leafIndex: -7 })).toBe(false);
+  });
 });
 
 // =============================================================================
@@ -741,6 +768,45 @@ describe("SelectiveDisclosureProver.verifyProof", () => {
     const proof = await prover.generateProof(input);
     proof.proofId = "tampered-proof-id";
 
+    expect(await prover.verifyProof(proof)).toBe(false);
+  });
+
+  it("rejects a disclosed event body that no longer matches its hash", async () => {
+    const { bundle, merkleRoot } = await createTestBundle(4);
+    const proof = await prover.generateProof({
+      bundle,
+      spanId: "span-2",
+      merkleRoot,
+      cardanoAnchorTxHash: "abc123def456789012345678901234567890123456789012345678901234",
+    });
+    expect(await prover.verifyProof(proof)).toBe(true);
+
+    proof.disclosedEvents = proof.disclosedEvents!.map((event) => ({ ...event, command: "forged" }) as TraceEvent);
+    expect(await prover.verifyProof(proof)).toBe(false);
+  });
+
+  it("rejects disclosed span data that comes without its events", async () => {
+    const { bundle, merkleRoot } = await createTestBundle(4);
+    const proof = await prover.generateProof({
+      bundle,
+      spanId: "span-2",
+      merkleRoot,
+      cardanoAnchorTxHash: "abc123def456789012345678901234567890123456789012345678901234",
+    });
+    delete proof.disclosedEvents;
+    proof.disclosedSpan = { ...proof.disclosedSpan!, name: "forged" };
+    expect(await prover.verifyProof(proof)).toBe(false);
+  });
+
+  it("rejects proof bytes that declare siblings but carry none", async () => {
+    const { bundle, merkleRoot } = await createTestBundle(4);
+    const proof = await prover.generateMembershipProof({
+      bundle,
+      spanId: "span-2",
+      merkleRoot,
+      cardanoAnchorTxHash: "abc123def456789012345678901234567890123456789012345678901234",
+    });
+    proof.proof = proof.proof.slice(0, 67);
     expect(await prover.verifyProof(proof)).toBe(false);
   });
 

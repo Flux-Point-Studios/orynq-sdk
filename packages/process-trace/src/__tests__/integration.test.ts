@@ -276,7 +276,17 @@ describe('integration: complete trace lifecycle', () => {
     expect(membershipDisclosure.disclosedSpans[0]?.proof.rootHash).toBe(bundle.merkleRoot);
 
     expect((await verifyDisclosure(fullDisclosure, bundle.rootHash, bundle.merkleRoot)).valid).toBe(true);
-    expect((await verifyDisclosure(membershipDisclosure, bundle.rootHash, bundle.merkleRoot)).valid).toBe(true);
+
+    // A membership entry carries no span data: the verifier binds its span ID
+    // with the leaf hash and leaf count it holds from an authenticated source.
+    expect((await verifyDisclosure(membershipDisclosure, bundle.rootHash, bundle.merkleRoot)).valid).toBe(false);
+    const authenticated = {
+      leafHashes: { [span2.id]: merkleTree.leafHashes[span2.spanSeq]! },
+      leafCount: merkleTree.leafCount,
+    };
+    expect(
+      (await verifyDisclosure(membershipDisclosure, bundle.rootHash, bundle.merkleRoot, authenticated)).valid
+    ).toBe(true);
   });
 
   it('handles tampered trace detection', async () => {

@@ -4,7 +4,7 @@
     {
       "id": "process-trace",
       "name": "Process trace",
-      "desc": "Cryptographic process-trace library: schemas, hashing, v1 Merkle trees, bundles and selective disclosure with event-body hash verification and synchronous inclusion proofs.",
+      "desc": "Cryptographic process-trace library: schemas, hashing, v1 Merkle trees and synchronous inclusion proofs, bundles whose public view must equal the committed run's projection, and selective disclosure that recomputes event and span hashes, returns only committed fields, and verifies membership entries only against caller-authenticated leaf hashes and leaf count.",
       "kind": "toolkit",
       "paths": [
         "packages/process-trace"

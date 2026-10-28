@@ -104,8 +104,13 @@ export type {
   DisclosureResult,
 } from "./types.js";
 
-// Disclosure request type (from disclosure module)
-export type { DisclosureRequest } from "./disclosure.js";
+// Disclosure request and verification types (from disclosure module)
+export type {
+  DisclosureRequest,
+  VerifyDisclosureOptions,
+  VerifiedDisclosedSpan,
+  DisclosureVerificationResult,
+} from "./disclosure.js";
 
 // Verification types
 export type {
@@ -158,6 +163,7 @@ export {
   // Event hash computation
   computeEventHash,
   computeEventHashes,
+  committedEvent,
 
   // Rolling hash state management
   initRollingHash,
@@ -183,6 +189,7 @@ export {
 export {
   // Span hash computation
   computeSpanHash,
+  committedSpan,
 
   // Tree building
   buildSpanMerkleTree,

@@ -36,12 +36,22 @@ import {
   canonicalize,
 } from "@fluxpointstudios/orynq-sdk-core/utils";
 
+import {
+  buildSpanMerkleTree,
+  computeSpanHash,
+  generateMerkleProof,
+  getBundleSpanEvents,
+  verifyMerkleProof,
+  verifySpanInclusion,
+} from "@fluxpointstudios/orynq-sdk-process-trace";
 import type {
   TraceBundle,
   TraceSpan,
   TraceEvent,
   MerkleProof,
 } from "@fluxpointstudios/orynq-sdk-process-trace";
+
+export { computeSpanHash, verifyMerkleProof, verifySpanInclusion };
 
 import type {
   DisclosureInput,
@@ -99,7 +109,6 @@ const DISCLOSURE_DOMAIN_PREFIXES = {
   proof: "poi-prover:disclosure:v1|",
   witness: "poi-prover:disclosure-witness:v1|",
   publicInput: "poi-prover:disclosure-input:v1|",
-  span: "poi-trace:span:v1|",
   leaf: "poi-trace:leaf:v1|",
   node: "poi-trace:node:v1|",
 } as const;
@@ -107,60 +116,6 @@ const DISCLOSURE_DOMAIN_PREFIXES = {
 // =============================================================================
 // MERKLE UTILITIES
 // =============================================================================
-
-/**
- * Compute the hash for a span including its event hashes.
- *
- * The span hash is computed as:
- * H("poi-trace:span:v1|" + canon(spanHeaderWithoutHash) + "|" + eventHashes joined by "|")
- *
- * @param span - The span to compute hash for
- * @param eventHashes - Array of event hashes in sequence order
- * @returns Promise resolving to the span hash as a hex string
- */
-export async function computeSpanHash(
-  span: TraceSpan,
-  eventHashes: string[]
-): Promise<string> {
-  // Extract span header (all fields except hash)
-  const spanHeader: Omit<TraceSpan, "hash"> = {
-    id: span.id,
-    spanSeq: span.spanSeq,
-    name: span.name,
-    status: span.status,
-    visibility: span.visibility,
-    startedAt: span.startedAt,
-    eventIds: span.eventIds,
-    childSpanIds: span.childSpanIds,
-  };
-
-  // Include optional fields only if they exist
-  if (span.parentSpanId !== undefined) {
-    (spanHeader as Record<string, unknown>).parentSpanId = span.parentSpanId;
-  }
-  if (span.endedAt !== undefined) {
-    (spanHeader as Record<string, unknown>).endedAt = span.endedAt;
-  }
-  if (span.durationMs !== undefined) {
-    (spanHeader as Record<string, unknown>).durationMs = span.durationMs;
-  }
-  if (span.metadata !== undefined) {
-    (spanHeader as Record<string, unknown>).metadata = span.metadata;
-  }
-
-  // Canonicalize the span header
-  const canonicalHeader = canonicalize(spanHeader, { removeNulls: true });
-
-  // Build the hash input: prefix + canon(header) + "|" + eventHashes joined by "|"
-  let hashInput = DISCLOSURE_DOMAIN_PREFIXES.span + canonicalHeader;
-
-  // Append event hashes if any exist
-  if (eventHashes.length > 0) {
-    hashInput += "|" + eventHashes.join("|");
-  }
-
-  return sha256StringHex(hashInput);
-}
 
 /**
  * Compute the leaf hash for a span.
@@ -199,135 +154,26 @@ export async function generateMerkleInclusionProof(
   bundle: TraceBundle,
   spanId: string
 ): Promise<MerkleInclusionResult> {
-  const { privateRun } = bundle;
-  const spans = privateRun.spans;
-  const events = privateRun.events;
+  const { spans, events } = bundle.privateRun;
 
-  // Find the span
-  const span = spans.find((s) => s.id === spanId);
-  if (!span) {
+  // Leaves are ordered by spanSeq
+  const sortedSpans = [...spans].sort((a, b) => a.spanSeq - b.spanSeq);
+  const spanIndex = sortedSpans.findIndex((s) => s.id === spanId);
+  const span = sortedSpans[spanIndex];
+  if (span === undefined) {
     throw new MidnightProverException(
       MidnightProverError.SPAN_NOT_FOUND,
       `Span not found: ${spanId}`
     );
   }
 
-  // Create event map for quick lookup
-  const eventMap = new Map<string, TraceEvent>();
-  for (const event of events) {
-    eventMap.set(event.id, event);
-  }
-
-  // Get events for this span in seq order
-  const spanEvents = span.eventIds
-    .map((id) => eventMap.get(id))
-    .filter((e): e is TraceEvent => e !== undefined)
-    .sort((a, b) => a.seq - b.seq);
-
-  const eventHashes = spanEvents.map((e) => e.hash ?? "");
-
-  // Compute span hash
-  const spanHash = await computeSpanHash(span, eventHashes);
-
-  // Sort spans by spanSeq for consistent ordering
-  const sortedSpans = [...spans].sort((a, b) => a.spanSeq - b.spanSeq);
-  const spanIndex = sortedSpans.findIndex((s) => s.id === spanId);
-
-  if (spanIndex === -1) {
-    throw new MidnightProverException(
-      MidnightProverError.SPAN_NOT_FOUND,
-      `Span not found in sorted spans: ${spanId}`
-    );
-  }
-
-  // Build leaf hashes for all spans
-  const leafHashes: string[] = [];
-  for (const s of sortedSpans) {
-    const sEvents = s.eventIds
-      .map((id) => eventMap.get(id))
-      .filter((e): e is TraceEvent => e !== undefined)
-      .sort((a, b) => a.seq - b.seq);
-    const sEventHashes = sEvents.map((e) => e.hash ?? "");
-    const sSpanHash = await computeSpanHash(s, sEventHashes);
-    const sLeafHash = await computeLeafHash(sSpanHash);
-    leafHashes.push(sLeafHash);
-  }
-
-  // Compute the leaf hash for the target span
-  const leafHash = await computeLeafHash(spanHash);
-
-  // Generate Merkle proof (sibling path from leaf to root)
-  const siblings: Array<{ hash: string; position: "left" | "right" }> = [];
-
-  if (leafHashes.length > 1) {
-    let currentLevel = [...leafHashes];
-    let currentIndex = spanIndex;
-
-    while (currentLevel.length > 1) {
-      const isLeftChild = currentIndex % 2 === 0;
-      const siblingIndex = isLeftChild ? currentIndex + 1 : currentIndex - 1;
-
-      // Handle odd-leaf case: if no sibling exists, duplicate current
-      let siblingHash: string;
-      if (siblingIndex >= currentLevel.length) {
-        const currentHash = currentLevel[currentIndex];
-        if (!currentHash) {
-          throw new MidnightProverException(
-            MidnightProverError.PROOF_GENERATION_FAILED,
-            "Unexpected undefined hash at current index"
-          );
-        }
-        siblingHash = currentHash;
-      } else {
-        const hash = currentLevel[siblingIndex];
-        if (!hash) {
-          throw new MidnightProverException(
-            MidnightProverError.PROOF_GENERATION_FAILED,
-            "Unexpected undefined hash at sibling index"
-          );
-        }
-        siblingHash = hash;
-      }
-
-      siblings.push({
-        hash: siblingHash,
-        position: isLeftChild ? "right" : "left",
-      });
-
-      // Build next level
-      const nextLevel: string[] = [];
-      for (let i = 0; i < currentLevel.length; i += 2) {
-        const left = currentLevel[i] ?? "";
-        const right = i + 1 < currentLevel.length ? (currentLevel[i + 1] ?? left) : left;
-        const parentHash = await computeNodeHash(left, right);
-        nextLevel.push(parentHash);
-      }
-
-      currentLevel = nextLevel;
-      currentIndex = Math.floor(currentIndex / 2);
-    }
-  }
-
-  // Compute root hash for verification
-  const rootHash = leafHashes.length === 1 ? leafHashes[0] : await computeMerkleRoot(leafHashes);
-
-  if (!rootHash) {
-    throw new MidnightProverException(
-      MidnightProverError.PROOF_GENERATION_FAILED,
-      "Failed to compute Merkle root"
-    );
-  }
-
-  const merkleProof: MerkleProof = {
-    leafHash,
-    leafIndex: spanIndex,
-    siblings,
-    rootHash,
-  };
+  const spanEvents = getBundleSpanEvents(span, events);
+  const spanHash = await computeSpanHash(span, spanEvents.map((e) => e.hash ?? ""));
+  const merkleProof = generateMerkleProof(await buildSpanMerkleTree(spans, events), spanIndex);
 
   return {
     spanHash,
-    leafHash,
+    leafHash: merkleProof.leafHash,
     merkleProof,
     span,
     events: spanEvents,
@@ -365,65 +211,6 @@ export async function computeMerkleRoot(leafHashes: string[]): Promise<string> {
   }
 
   return currentLevel[0] ?? "";
-}
-
-/**
- * Verify a Merkle inclusion proof.
- *
- * @param proof - The Merkle proof to verify
- * @returns Promise resolving to true if valid
- */
-export async function verifyMerkleProof(proof: MerkleProof): Promise<boolean> {
-  let currentHash = proof.leafHash;
-
-  for (const sibling of proof.siblings) {
-    let left: string;
-    let right: string;
-
-    if (sibling.position === "left") {
-      left = sibling.hash;
-      right = currentHash;
-    } else {
-      left = currentHash;
-      right = sibling.hash;
-    }
-
-    currentHash = await computeNodeHash(left, right);
-  }
-
-  return currentHash === proof.rootHash;
-}
-
-/**
- * Verify span inclusion using the proof and span data.
- *
- * @param proof - The Merkle proof
- * @param span - The span data
- * @param events - The events belonging to the span
- * @returns Promise resolving to true if span is validly included
- */
-export async function verifySpanInclusion(
-  proof: MerkleProof,
-  span: TraceSpan,
-  events: TraceEvent[]
-): Promise<boolean> {
-  // Sort events by seq for deterministic order
-  const sortedEvents = [...events].sort((a, b) => a.seq - b.seq);
-  const eventHashes = sortedEvents.map((e) => e.hash ?? "");
-
-  // Recompute span hash
-  const spanHash = await computeSpanHash(span, eventHashes);
-
-  // Compute expected leaf hash
-  const computedLeafHash = await computeLeafHash(spanHash);
-
-  // Verify leaf hash matches
-  if (computedLeafHash !== proof.leafHash) {
-    return false;
-  }
-
-  // Verify Merkle proof
-  return verifyMerkleProof(proof);
 }
 
 // =============================================================================
@@ -548,8 +335,9 @@ export class SelectiveDisclosureProver {
   /**
    * Verify a selective disclosure proof.
    *
-   * This method verifies the cryptographic validity of the proof and
-   * optionally verifies that disclosed span data matches the proof.
+   * This method verifies the Merkle path carried in the proof bytes against
+   * the public inputs. Disclosed span data must come with its events, and both
+   * must recompute to the public span hash.
    *
    * @param proof - The disclosure proof to verify
    * @returns Promise resolving to true if valid
@@ -587,26 +375,19 @@ export class SelectiveDisclosureProver {
         return false;
       }
 
-      // Extract Merkle proof from proof bytes and verify
-      const merkleProofValid = await this.verifyProofBytes(proof.proof, publicInputs);
-      if (!merkleProofValid) {
+      const path = await this.merklePath(proof.proof, publicInputs);
+      if (path === null || !(await verifyMerkleProof(path))) {
         return false;
       }
 
-      // If disclosed span data is provided, verify it matches the span hash
-      if (proof.disclosedSpan && proof.disclosedEvents) {
-        // Note: This simplified verification doesn't check full Merkle path
-        // In production, we'd extract and verify the full Merkle proof
-        const sortedEvents = [...proof.disclosedEvents].sort((a, b) => a.seq - b.seq);
-        const eventHashes = sortedEvents.map((e) => e.hash ?? "");
-        const recomputedSpanHash = await computeSpanHash(proof.disclosedSpan, eventHashes);
-
-        if (recomputedSpanHash !== publicInputs.spanHash) {
-          return false;
-        }
+      if (proof.disclosedSpan === undefined && proof.disclosedEvents === undefined) {
+        return true;
       }
-
-      return true;
+      return (
+        proof.disclosedSpan !== undefined &&
+        proof.disclosedEvents !== undefined &&
+        verifySpanInclusion(path, proof.disclosedSpan, proof.disclosedEvents)
+      );
     } catch (error) {
       if (this.debug) {
         console.error("[SelectiveDisclosureProver] Verification error:", error);
@@ -747,71 +528,50 @@ export class SelectiveDisclosureProver {
   }
 
   /**
-   * Verify mock proof bytes.
+   * Read the Merkle path from mock proof bytes, or null if the bytes are
+   * malformed. The bytes carry no leaf index, so it is the one the sibling
+   * positions encode.
    */
-  private async verifyProofBytes(
+  private async merklePath(
     proofBytes: Uint8Array,
     publicInputs: DisclosurePublicInputs
-  ): Promise<boolean> {
-    // Check minimum proof size
-    if (proofBytes.length < 67) {
-      return false;
+  ): Promise<MerkleProof | null> {
+    // Check minimum proof size and version byte
+    if (proofBytes.length < 67 || proofBytes[0] !== 0x01) {
+      return null;
     }
 
-    // Check version byte
-    if (proofBytes[0] !== 0x01) {
-      return false;
-    }
-
-    // Extract and verify commitment is non-zero
-    const commitmentBytes = proofBytes.slice(1, 33);
-    const witnessHashBytes = proofBytes.slice(33, 65);
-
-    const commitmentNonZero = commitmentBytes.some((b) => b !== 0);
-    const witnessNonZero = witnessHashBytes.some((b) => b !== 0);
-
+    // Commitment and witness hash must be non-zero
+    const commitmentNonZero = proofBytes.slice(1, 33).some((b) => b !== 0);
+    const witnessNonZero = proofBytes.slice(33, 65).some((b) => b !== 0);
     if (!commitmentNonZero || !witnessNonZero) {
-      return false;
+      return null;
     }
 
-    // Extract sibling count
     const siblingCount = (proofBytes[65]! << 8) | proofBytes[66]!;
-
-    // Extract and parse sibling data if present
-    if (siblingCount > 0 && proofBytes.length > 67) {
+    let encoded: Array<{ hash: string; pos: number }> = [];
+    if (siblingCount > 0) {
       try {
-        const siblingJson = new TextDecoder().decode(proofBytes.slice(67));
-        const siblings = JSON.parse(siblingJson) as Array<{ hash: string; pos: number }>;
-
-        if (siblings.length !== siblingCount) {
-          return false;
-        }
-
-        // Reconstruct Merkle proof and verify
-        const merkleProof: MerkleProof = {
-          leafHash: await computeLeafHash(publicInputs.spanHash),
-          leafIndex: 0, // Not needed for verification
-          siblings: siblings.map((s) => ({
-            hash: s.hash,
-            position: s.pos === 0 ? "left" : "right",
-          })),
-          rootHash: publicInputs.merkleRoot,
-        };
-
-        return verifyMerkleProof(merkleProof);
+        encoded = JSON.parse(new TextDecoder().decode(proofBytes.slice(67))) as typeof encoded;
       } catch (error) {
         if (this.debug) console.error("[SelectiveDisclosureProver] Invalid simulation fixture:", error);
-        return false;
+        return null;
+      }
+      if (!Array.isArray(encoded) || encoded.length !== siblingCount) {
+        return null;
       }
     }
 
-    // For single-leaf trees (no siblings), verify leaf hash equals root
-    if (siblingCount === 0) {
-      const leafHash = await computeLeafHash(publicInputs.spanHash);
-      return leafHash === publicInputs.merkleRoot;
-    }
-
-    return true;
+    const siblings: MerkleProof["siblings"] = encoded.map((s) => ({
+      hash: s.hash,
+      position: s.pos === 0 ? "left" : "right",
+    }));
+    return {
+      leafHash: await computeLeafHash(publicInputs.spanHash),
+      leafIndex: siblings.reduce((index, s, level) => (s.position === "left" ? index + 2 ** level : index), 0),
+      siblings,
+      rootHash: publicInputs.merkleRoot,
+    };
   }
 
   /**

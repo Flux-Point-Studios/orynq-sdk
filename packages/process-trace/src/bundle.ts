@@ -47,6 +47,7 @@
 
 import {
   canonicalize,
+  canonicalEquals,
   bytesToHex,
   hexToBytes,
 } from "@fluxpointstudios/orynq-sdk-core/utils";
@@ -57,7 +58,6 @@ import type {
   TraceRun,
   TraceSpan,
   TraceEvent,
-  AnnotatedSpan,
   TraceVerificationResult,
   SignatureProvider,
   Visibility,
@@ -71,7 +71,11 @@ import {
 
 import { computeModelManifestHash } from "./model-manifest.js";
 
-import { buildSpanMerkleTree, computeSpanHash } from "./merkle.js";
+import { buildSpanMerkleTree, computeSpanHash, uncommittedSpanKeys } from "./merkle.js";
+
+import { createPublicView } from "./public-view.js";
+
+import { isRecord } from "./guards.js";
 
 import {
   verifyGovernanceAttestations,
@@ -257,75 +261,6 @@ export async function createBundle(run: TraceRun): Promise<TraceBundle> {
   return bundle;
 }
 
-/**
- * Internal helper to create the public view from a run.
- *
- * @param run - The finalized trace run
- * @param merkleRoot - The computed Merkle root
- * @returns The TraceBundlePublicView
- */
-function createPublicView(
-  run: TraceRun,
-  merkleRoot: string
-): TraceBundlePublicView {
-  // Create event lookup map
-  const eventMap = new Map<string, TraceEvent>();
-  for (const event of run.events) {
-    eventMap.set(event.id, event);
-  }
-
-  // Separate public and non-public spans
-  const publicSpans: AnnotatedSpan[] = [];
-  const redactedSpanHashes: Array<{ spanId: string; hash: string }> = [];
-
-  for (const span of run.spans) {
-    if (isPublicSpan(span)) {
-      // Get events for this span and filter to public only
-      const spanEvents = span.eventIds
-        .map((id) => eventMap.get(id))
-        .filter((e): e is TraceEvent => e !== undefined)
-        .filter(isPublicEvent)
-        .sort((a, b) => a.seq - b.seq);
-
-      // Create annotated span with embedded events
-      const annotatedSpan: AnnotatedSpan = {
-        ...span,
-        events: spanEvents,
-      };
-
-      publicSpans.push(annotatedSpan);
-    } else {
-      // Non-public span: include only hash reference
-      redactedSpanHashes.push({
-        spanId: span.id,
-        hash: span.hash ?? "",
-      });
-    }
-  }
-
-  // Sort public spans by spanSeq for deterministic ordering
-  publicSpans.sort((a, b) => a.spanSeq - b.spanSeq);
-
-  // Sort redacted hashes by spanId for deterministic ordering
-  redactedSpanHashes.sort((a, b) => a.spanId.localeCompare(b.spanId));
-
-  return {
-    runId: run.id,
-    agentId: run.agentId,
-    schemaVersion: run.schemaVersion,
-    startedAt: run.startedAt,
-    endedAt: run.endedAt ?? new Date().toISOString(),
-    durationMs: run.durationMs ?? 0,
-    status: run.status,
-    totalEvents: run.events.length,
-    totalSpans: run.spans.length,
-    rootHash: run.rootHash ?? "",
-    merkleRoot,
-    publicSpans,
-    redactedSpanHashes,
-  };
-}
-
 // =============================================================================
 // PUBLIC VIEW EXTRACTION
 // =============================================================================
@@ -367,12 +302,22 @@ export function extractPublicView(bundle: TraceBundle): TraceBundlePublicView {
  *
  * Performs comprehensive validation including:
  * - Event hashes are correct (recomputed and compared)
- * - Span hashes are correct (recomputed and compared)
+ * - Span hashes are correct (recomputed and compared); spans carry only the
+ *   fields their hashes commit to
  * - Rolling hash matches (recomputed from events)
- * - Root hash matches (recomputed from rolling hash + span hashes)
+ * - Root hash matches (recomputed from rolling hash + span hashes), and so
+ *   does the private run's own `rootHash`
  * - Merkle root matches (recomputed from span tree)
  * - Event sequence is monotonic (0, 1, 2, ...)
  * - Span sequence is monotonic (0, 1, 2, ...)
+ * - The public view equals the private run's public projection, apart from
+ *   the model-manifest fields, which are bound separately
+ *
+ * The root does not commit to run-level fields such as the run ID, agent ID,
+ * status or timestamps (see `computeRootHash`), so a valid result shows only
+ * that the public view repeats them.
+ *
+ * Malformed input yields `valid: false` with errors; it does not throw.
  *
  * @param bundle - The trace bundle to verify
  * @returns Promise resolving to comprehensive verification result
@@ -402,7 +347,13 @@ export async function verifyBundle(
     spanHashesValid: false,
     eventHashesValid: false,
     sequenceValid: false,
+    publicViewValid: false,
   };
+
+  const shapeErrors = bundleShapeErrors(bundle);
+  if (shapeErrors.length > 0) {
+    return { valid: false, errors: shapeErrors, warnings, checks };
+  }
 
   const run = bundle.privateRun;
 
@@ -440,36 +391,13 @@ export async function verifyBundle(
   }
 
   // ---------------------------------------------------------------------------
-  // Verify disclosed public bodies against the committed private run
+  // Verify the public view is the projection of the committed private run
   // ---------------------------------------------------------------------------
 
-  const committedSpans = new Map(run.spans.map((span) => [span.id, span]));
-  const committedEvents = new Map(run.events.map((event) => [event.id, event]));
-  for (const span of bundle.publicView.publicSpans) {
-    const publicEventErrors = await verifyEventHashes(span.events);
-    if (publicEventErrors.length > 0) {
-      checks.eventHashesValid = false;
-      errors.push(...publicEventErrors);
-    }
-    const committedSpan = committedSpans.get(span.id);
-    const committedEventIds = new Set(committedSpan?.eventIds);
-    for (const event of span.events) {
-      if (!committedEventIds.has(event.id) || committedEvents.get(event.id)?.hash !== event.hash) {
-        checks.eventHashesValid = false;
-        errors.push(`PublicView event ${event.id} does not match committed span "${span.id}"`);
-      }
-    }
-    if (!committedSpan) {
-      checks.spanHashesValid = false;
-      errors.push(`PublicView span "${span.id}" is not in the committed run`);
-      continue;
-    }
-    const { events: _events, ...publicHeader } = span;
-    if (canonicalize(publicHeader) !== canonicalize(committedSpan)) {
-      checks.spanHashesValid = false;
-      errors.push(`PublicView span header mismatch for "${span.id}"`);
-    }
-  }
+  const expectedView = createPublicView(run, bundle.merkleRoot);
+  const publicViewErrors = publicViewMismatches(bundle.publicView, expectedView);
+  checks.publicViewValid = publicViewErrors.length === 0;
+  errors.push(...publicViewErrors);
 
   // ---------------------------------------------------------------------------
   // Verify Rolling Hash
@@ -502,12 +430,16 @@ export async function verifyBundle(
       run.spans,
       run.modelManifestHash
     );
-    if (computedRootHash === bundle.rootHash) {
-      checks.rootHashValid = true;
-    } else {
+    if (computedRootHash !== bundle.rootHash) {
       errors.push(
         `Root hash mismatch: expected ${bundle.rootHash}, computed ${computedRootHash}`
       );
+    } else if (run.rootHash !== bundle.rootHash) {
+      errors.push(
+        `privateRun rootHash ${String(run.rootHash)} does not match the bundle rootHash ${bundle.rootHash}`
+      );
+    } else {
+      checks.rootHashValid = true;
     }
   } catch (error) {
     errors.push(
@@ -638,17 +570,10 @@ export async function verifyBundle(
   // ---------------------------------------------------------------------------
 
   // Warn if there are no public spans
-  if (bundle.publicView.publicSpans.length === 0 && run.spans.length > 0) {
+  if (expectedView.publicSpans.length === 0 && run.spans.length > 0) {
     warnings.push(
       "No public spans in bundle. The public view will be empty. " +
         "Consider marking some spans as public for transparency."
-    );
-  }
-
-  // Warn if run status doesn't match public view status
-  if (bundle.publicView.status !== run.status) {
-    warnings.push(
-      `Status mismatch between publicView (${bundle.publicView.status}) and privateRun (${run.status})`
     );
   }
 
@@ -705,6 +630,7 @@ export async function verifyBundle(
     checks.spanHashesValid &&
     checks.eventHashesValid &&
     checks.sequenceValid &&
+    checks.publicViewValid === true &&
     checks.modelManifestValid !== false &&
     checks.governanceValid !== false &&
     checks.toolReceiptsValid !== false;
@@ -715,6 +641,56 @@ export async function verifyBundle(
     warnings,
     checks,
   };
+}
+
+/** The structure verifyBundle relies on, so malformed input fails as errors rather than exceptions. */
+function bundleShapeErrors(bundle: unknown): string[] {
+  if (!isRecord(bundle)) {
+    return ["Bundle must be an object"];
+  }
+  const errors: string[] = [];
+  const run = bundle.privateRun;
+  if (!isRecord(run)) {
+    errors.push("Bundle privateRun must be an object");
+  } else {
+    if (!Array.isArray(run.events) || !run.events.every(isRecord)) {
+      errors.push("privateRun.events must be an array of objects");
+    }
+    if (
+      !Array.isArray(run.spans) ||
+      !run.spans.every((span) => isRecord(span) && typeof span.id === "string" && Array.isArray(span.eventIds))
+    ) {
+      errors.push("privateRun.spans must be an array of objects with a string id and an eventIds array");
+    }
+    if (run.modelManifestHash !== undefined && typeof run.modelManifestHash !== "string") {
+      errors.push("privateRun.modelManifestHash must be a string");
+    }
+  }
+  if (!isRecord(bundle.publicView)) {
+    errors.push("Bundle publicView must be an object");
+  }
+  return errors;
+}
+
+/** Fields whose binding the model-manifest checks verify instead of the projection. */
+const PUBLIC_VIEW_MANIFEST_FIELDS: ReadonlySet<string> = new Set(["modelManifest", "modelManifestHash"]);
+
+/**
+ * Compare the bundle's public view with the projection of its private run,
+ * field by field, keeping null-valued keys: hashing ignores them, so only
+ * this comparison stops the public view from adding or dropping one.
+ */
+function publicViewMismatches(
+  actual: TraceBundlePublicView,
+  expected: TraceBundlePublicView
+): string[] {
+  const shown = actual as unknown as Record<string, unknown>;
+  const derived = expected as unknown as Record<string, unknown>;
+  return [...new Set([...Object.keys(shown), ...Object.keys(derived)])]
+    .filter((field) => !PUBLIC_VIEW_MANIFEST_FIELDS.has(field))
+    .filter((field) => shown[field] !== undefined || derived[field] !== undefined)
+    .filter((field) => !canonicalEquals(shown[field], derived[field], { removeNulls: false }))
+    .map((field) => `PublicView ${field} does not match the committed run`);
 }
 
 /**
@@ -777,6 +753,13 @@ async function verifySpanHashes(
   }
 
   for (const span of spans) {
+    const uncommitted = uncommittedSpanKeys(span);
+    if (uncommitted.length > 0) {
+      errors.push(
+        `Span ${span.id} carries fields its hash does not commit to: ${uncommitted.join(", ")}`
+      );
+    }
+
     if (!span.hash) {
       errors.push(
         `Span ${span.id} (spanSeq ${span.spanSeq}) is missing hash`

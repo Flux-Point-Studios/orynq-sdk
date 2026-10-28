@@ -56,6 +56,8 @@ import {
   computeRollingHash,
   computeEventHash,
   computeSpanHash,
+  committedEvent,
+  committedSpan,
   buildSpanMerkleTree,
   computeModelManifestHash,
 } from "@fluxpointstudios/orynq-sdk-process-trace";
@@ -960,7 +962,8 @@ async function resolveHostAddresses(
  * The ONLY private-run fields the anchor rootHash structurally commits to: the
  * events (via the recomputed rolling hash), the spans (rehashed into the root +
  * Merkle tree), the rolling/root hashes themselves, and — only when its content
- * hashes to the committed pin — the model manifest. Every other `TraceRun` field
+ * hashes to the committed pin — the model manifest. Events and spans hold only
+ * the keys their hashes commit to. Every other `TraceRun` field
  * (id, agentId, status, metadata, timestamps, schemaVersion, strict, nextSeq…)
  * is NOT folded into the root, so it is attacker-controllable in a fetched
  * document and is deliberately absent from this type: an auditor cannot read an
@@ -1021,14 +1024,15 @@ async function recomputeBundleRootHash(
     // Recompute EACH event + span hash from actual content (the same derivation
     // the bundle builder uses) — never trust the fetched span.hash/event.hash.
     // Tampering with any span-header field, event, or ordering changes the root.
+    // Carry each event and span only as its hash commits to it, so keys the
+    // hashes skip (null values, non-header span keys) cannot read as verified.
     const eventHashById = new Map<string, string>();
     for (const event of events) {
       eventHashById.set(event.id, await computeEventHash(event));
     }
-    const rehashedEvents: TraceEvent[] = events.map((e) => ({
-      ...e,
-      hash: eventHashById.get(e.id) ?? "",
-    }));
+    const rehashedEvents: TraceEvent[] = events.map((e) =>
+      committedEvent(e, eventHashById.get(e.id) ?? "")
+    );
     const rehashedSpans: TraceSpan[] = [];
     for (const span of spans) {
       const spanEventHashes = span.eventIds
@@ -1037,7 +1041,7 @@ async function recomputeBundleRootHash(
         .sort((a, b) => a.event.seq - b.event.seq)
         .map((x) => eventHashById.get(x.id) ?? "");
       const spanHash = await computeSpanHash(span, spanEventHashes);
-      rehashedSpans.push({ ...span, hash: spanHash });
+      rehashedSpans.push(committedSpan(span, spanHash));
     }
 
     const rootHash = await computeRootHash(rollingHash, rehashedSpans, run.modelManifestHash);

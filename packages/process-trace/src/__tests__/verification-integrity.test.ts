@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import {
-  addEvent, addSpan, buildSpanMerkleTree, closeSpan, createTrace,
+  addEvent, addSpan, buildSpanMerkleTree, closeSpan, createBundle, createTrace,
   computeEventHash, finalizeTrace, generateMerkleProof, selectiveDisclose, verifyBundle,
   verifyDisclosure, verifyMerkleProof, verifySpanDisclosure, verifySpanInclusion,
 } from "../index.js";
-import type { TraceSpan } from "../index.js";
+import type { DisclosureResult, MerkleProof, TraceBundle, TraceSpan } from "../index.js";
 
 async function trace(spanCount = 1) {
   const run = await createTrace({ agentId: "verification-regression" });
@@ -18,12 +19,46 @@ async function trace(spanCount = 1) {
   return finalizeTrace(run);
 }
 
+/** Odd spans private; every span mixes public and private events. */
+async function mixedTrace(spanCount: number) {
+  const run = await createTrace({ agentId: "verification-regression" });
+  for (let i = 0; i < spanCount; i++) {
+    const span = addSpan(run, {
+      name: `span-${i}`, visibility: i % 2 === 1 ? "private" : "public", metadata: { step: i },
+    });
+    await addEvent(run, span.id, { kind: "command", command: `deploy-${i}`, visibility: "public" });
+    await addEvent(run, span.id, { kind: "decision", decision: "approve", visibility: "private" });
+    await addEvent(run, span.id, {
+      kind: "observation", observation: "state", data: { nested: { k: [1, { z: "y" }] } }, visibility: "public",
+    });
+    await closeSpan(run, span.id);
+  }
+  return finalizeTrace(run);
+}
+
 async function disclosure() {
   const bundle = await trace();
   const result = await selectiveDisclose(bundle, [bundle.privateRun.spans[0]!.id], "full");
   const disclosed = result.disclosedSpans[0]!;
   return { bundle, result, disclosed };
 }
+
+const orderedSpans = (bundle: TraceBundle) =>
+  [...bundle.privateRun.spans].sort((a, b) => a.spanSeq - b.spanSeq);
+
+/** What a verifier holding the verified bundle knows: each span's leaf hash and the leaf count. */
+async function authenticatedLeaves(bundle: TraceBundle) {
+  const tree = await buildSpanMerkleTree(bundle.privateRun.spans, bundle.privateRun.events);
+  return {
+    leafHashes: Object.fromEntries(orderedSpans(bundle).map((span, i) => [span.id, tree.leafHashes[i]!])),
+    leafCount: tree.leafCount,
+  };
+}
+
+const nodeHash = (left: string, right: string) =>
+  createHash("sha256").update(`poi-trace:node:v1|${left}|${right}`, "utf8").digest("hex");
+
+const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 describe("disclosed event integrity", () => {
   it.each([false, true])("rejects changed public-view event bodies (rehash: %s)", async (rehash) => {
@@ -34,7 +69,7 @@ describe("disclosed event integrity", () => {
     if (rehash) event.hash = await computeEventHash(event);
     const result = await verifyBundle(bundle);
     expect(result.valid).toBe(false);
-    expect(result.checks.eventHashesValid).toBe(false);
+    expect(result.checks.publicViewValid).toBe(false);
   });
 
   it("rejects changed public-view span headers with the original hash", async () => {
@@ -43,7 +78,7 @@ describe("disclosed event integrity", () => {
     bundle.publicView.publicSpans[0]!.name = "altered public span";
     const result = await verifyBundle(bundle);
     expect(result.valid).toBe(false);
-    expect(result.checks.spanHashesValid).toBe(false);
+    expect(result.checks.publicViewValid).toBe(false);
   });
 
   it("rejects changed event content with its original hash", async () => {
@@ -130,4 +165,432 @@ describe("synchronous Merkle proofs", () => {
       expect(await verifyMerkleProof({ ...proof, leafIndex })).toBe(false);
     },
   );
+
+  it.each([1.5, 1.25])("rejects the fractional odd leafIndex %s", async (leafIndex) => {
+    const bundle = await trace(2);
+    const tree = await buildSpanMerkleTree(bundle.privateRun.spans, bundle.privateRun.events);
+    const proof = generateMerkleProof(tree, 1);
+    expect(await verifyMerkleProof(proof)).toBe(true);
+    expect(await verifyMerkleProof({ ...proof, leafIndex })).toBe(false);
+  });
+
+  it.each([-1, 3, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53])(
+    "refuses to generate a proof for span index %s", async (index) => {
+      const bundle = await trace(3);
+      const tree = await buildSpanMerkleTree(bundle.privateRun.spans, bundle.privateRun.events);
+      expect(() => generateMerkleProof(tree, index)).toThrow(/out of bounds/);
+    },
+  );
+
+  it("binds leafIndex and path length to an authenticated leaf count", async () => {
+    const bundle = await trace(5);
+    const tree = await buildSpanMerkleTree(bundle.privateRun.spans, bundle.privateRun.events);
+    const honest = generateMerkleProof(tree, 4);
+    // v1 duplicates the odd last node, so leaf 4 also has a consistent path at padded index 5.
+    const padded: MerkleProof = {
+      ...honest,
+      leafIndex: 5,
+      siblings: honest.siblings.map((sibling, level) => ({ ...sibling, position: (5 >> level) & 1 ? "left" : "right" })),
+    };
+    const first = generateMerkleProof(tree, 0);
+    const internalAsLeaf: MerkleProof = {
+      ...first,
+      leafHash: nodeHash(first.leafHash, first.siblings[0]!.hash),
+      siblings: first.siblings.slice(1),
+    };
+    expect(await verifyMerkleProof(honest, 5)).toBe(true);
+    expect(await verifyMerkleProof(padded)).toBe(true);
+    expect(await verifyMerkleProof(padded, 5)).toBe(false);
+    expect(await verifyMerkleProof(internalAsLeaf)).toBe(true);
+    expect(await verifyMerkleProof(internalAsLeaf, 5)).toBe(false);
+    for (const leafCount of [0, -1, 4, 6.5, Number.NaN, 9]) {
+      expect(await verifyMerkleProof(honest, leafCount)).toBe(false);
+    }
+  });
+
+  it("recomputes the levels of a tree whose leaves and root are replaced", async () => {
+    const tree = await buildSpanMerkleTree((await trace(3)).privateRun.spans, []);
+    expect(await verifyMerkleProof(generateMerkleProof(tree, 1))).toBe(true);
+    const other = await buildSpanMerkleTree((await trace(3)).privateRun.spans, []);
+    Object.assign(tree, { leafHashes: other.leafHashes, rootHash: other.rootHash });
+    const proof = generateMerkleProof(tree, 1);
+    expect(proof.rootHash).toBe(other.rootHash);
+    expect(await verifyMerkleProof(proof)).toBe(true);
+  });
+
+  it("discloses every span of a 1024-span trace in under a second", async () => {
+    const run = await createTrace({ agentId: "disclosure-cost" });
+    for (let i = 0; i < 1024; i++) {
+      const span = addSpan(run, { name: `s${i}`, visibility: "public" });
+      await closeSpan(run, span.id);
+    }
+    const bundle = await finalizeTrace(run);
+    const ids = orderedSpans(bundle).map((span) => span.id);
+    const started = performance.now();
+    const disclosed = await selectiveDisclose(bundle, ids, "full");
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect((await verifyDisclosure(disclosed, bundle.rootHash, bundle.merkleRoot)).valid).toBe(true);
+  });
+});
+
+describe("membership disclosures", () => {
+  it("reports membership entries as unbound without authenticated leaf hashes", async () => {
+    const bundle = await trace(5);
+    const membership = await selectiveDisclose(bundle, [orderedSpans(bundle)[1]!.id], "membership");
+    const result = await verifyDisclosure(membership, bundle.rootHash, bundle.merkleRoot);
+    expect(result.valid).toBe(false);
+    expect(result.errors.join("\n")).toContain("unbound: span id not authenticated");
+    expect(result.spans).toEqual([]);
+  });
+
+  it("verifies membership entries against authenticated leaf hashes and leaf count", async () => {
+    const bundle = await trace(5);
+    const id = orderedSpans(bundle)[1]!.id;
+    const membership = await selectiveDisclose(bundle, [id], "membership");
+    const result = await verifyDisclosure(
+      membership, bundle.rootHash, bundle.merkleRoot, await authenticatedLeaves(bundle),
+    );
+    expect(result).toEqual({ valid: true, errors: [], spans: [{ spanId: id }] });
+  });
+
+  // Each forgery needs only the public Merkle root and, at most, one honest proof.
+  const forgeries: Record<string, (bundle: TraceBundle, honest: DisclosureResult) => DisclosureResult> = {
+    relabelled: (_bundle, honest) => {
+      const forged = clone(honest);
+      forged.disclosedSpans[0]!.spanId = "kyc-check-passed";
+      return forged;
+    },
+    "root as leaf": (bundle) => ({
+      mode: "membership", rootHash: bundle.rootHash, merkleRoot: bundle.merkleRoot,
+      disclosedSpans: [{
+        spanId: "kyc-check-passed",
+        proof: { leafHash: bundle.merkleRoot, leafIndex: 0, siblings: [], rootHash: bundle.merkleRoot },
+      }],
+    }),
+    "internal node as leaf": (bundle, honest) => {
+      const { leafHash, leafIndex, siblings } = honest.disclosedSpans[0]!.proof;
+      const [first, ...rest] = siblings;
+      const internal = first!.position === "left" ? nodeHash(first!.hash, leafHash) : nodeHash(leafHash, first!.hash);
+      return {
+        mode: "membership", rootHash: bundle.rootHash, merkleRoot: bundle.merkleRoot,
+        disclosedSpans: [{
+          spanId: "sanctions-screening",
+          proof: { leafHash: internal, leafIndex: Math.floor(leafIndex / 2), siblings: rest, rootHash: bundle.merkleRoot },
+        }],
+      };
+    },
+  };
+
+  it.each(Object.entries(forgeries))("rejects a %s membership proof", async (_name, forge) => {
+    const bundle = await trace(5);
+    const honest = await selectiveDisclose(bundle, [orderedSpans(bundle)[1]!.id], "membership");
+    const forged = forge(bundle, honest);
+    expect(await verifyMerkleProof(forged.disclosedSpans[0]!.proof)).toBe(true);
+    for (const options of [undefined, await authenticatedLeaves(bundle)]) {
+      expect((await verifyDisclosure(clone(forged), bundle.rootHash, bundle.merkleRoot, options)).valid).toBe(false);
+    }
+  });
+
+  it("rejects a valid proof relabelled with another authenticated span id", async () => {
+    const bundle = await trace(5);
+    const [, second, , fourth] = orderedSpans(bundle);
+    const relabelled = await selectiveDisclose(bundle, [second!.id], "membership");
+    relabelled.disclosedSpans[0]!.spanId = fourth!.id;
+    const options = await authenticatedLeaves(bundle);
+    expect(await verifyMerkleProof(relabelled.disclosedSpans[0]!.proof, options.leafCount)).toBe(true);
+    expect((await verifyDisclosure(relabelled, bundle.rootHash, bundle.merkleRoot, options)).valid).toBe(false);
+  });
+
+  it("rejects a proof shorter than the authenticated tree depth even for a leaf hash the caller lists", async () => {
+    const bundle = await trace(5);
+    const honest = await selectiveDisclose(bundle, [orderedSpans(bundle)[1]!.id], "membership");
+    for (const forge of [forgeries["root as leaf"]!, forgeries["internal node as leaf"]!]) {
+      const forged = forge(bundle, honest);
+      const { spanId, proof } = forged.disclosedSpans[0]!;
+      const options = { leafHashes: { [spanId]: proof.leafHash }, leafCount: 5 };
+      expect((await verifyDisclosure(forged, bundle.rootHash, bundle.merkleRoot, options)).valid).toBe(false);
+    }
+  });
+
+  it("accepts a leaf equal to the root only when the authenticated leaf count is 1", async () => {
+    const bundle = await trace(1);
+    const id = bundle.privateRun.spans[0]!.id;
+    const membership = await selectiveDisclose(bundle, [id], "membership");
+    expect(membership.disclosedSpans[0]!.proof.leafHash).toBe(bundle.merkleRoot);
+    const leafHashes = { [id]: bundle.merkleRoot };
+    const verify = (leafCount: number) =>
+      verifyDisclosure(clone(membership), bundle.rootHash, bundle.merkleRoot, { leafHashes, leafCount });
+    expect((await verify(1)).valid).toBe(true);
+    expect((await verify(2)).valid).toBe(false);
+  });
+
+  it("requires the authenticated leaf count for membership entries", async () => {
+    const bundle = await trace(5);
+    const membership = await selectiveDisclose(bundle, [orderedSpans(bundle)[1]!.id], "membership");
+    const { leafHashes } = await authenticatedLeaves(bundle);
+    expect((await verifyDisclosure(membership, bundle.rootHash, bundle.merkleRoot, { leafHashes })).valid).toBe(false);
+  });
+
+  it("rejects forged membership entries appended to a full disclosure", async () => {
+    const bundle = await trace(4);
+    const disclosed = await selectiveDisclose(bundle, [orderedSpans(bundle)[0]!.id], "full");
+    for (const spanId of ["kyc-passed", "human-approved"]) {
+      disclosed.disclosedSpans.push({
+        spanId, proof: { leafHash: bundle.merkleRoot, leafIndex: 0, siblings: [], rootHash: bundle.merkleRoot },
+      });
+    }
+    const result = await verifyDisclosure(disclosed, bundle.rootHash, bundle.merkleRoot, await authenticatedLeaves(bundle));
+    expect(result.valid).toBe(false);
+  });
+});
+
+describe("disclosed span fields", () => {
+  const forgeries: Record<string, (span: Record<string, unknown>, other: TraceSpan) => void> = {
+    "another span's hash": (span, other) => { span.hash = other.hash; },
+    "uncommitted keys": (span) => { Object.assign(span, { approvedBy: "CEO", verified: true }); },
+    "injected events": (span) => {
+      span.events = [{ kind: "output", content: "FORGED", id: "z", seq: 0, timestamp: "t", visibility: "public" }];
+    },
+  };
+
+  it.each(Object.entries(forgeries))("rejects a disclosed span carrying %s", async (_name, forge) => {
+    const bundle = await trace(3);
+    const [first, , third] = orderedSpans(bundle);
+    const disclosed = await selectiveDisclose(bundle, [first!.id], "full");
+    const entry = disclosed.disclosedSpans[0]!;
+    forge(entry.span as unknown as Record<string, unknown>, third!);
+    expect((await verifyDisclosure(disclosed, bundle.rootHash, bundle.merkleRoot)).valid).toBe(false);
+    expect((await verifySpanDisclosure({ ...entry, span: entry.span!, events: entry.events! }, bundle.merkleRoot)).valid)
+      .toBe(false);
+    expect(await verifySpanInclusion(entry.proof, entry.span!, entry.events!)).toBe(false);
+  });
+
+  it("returns only the committed span and event fields", async () => {
+    const bundle = await mixedTrace(3);
+    const span = orderedSpans(bundle)[0]!;
+    const disclosed = await selectiveDisclose(bundle, [span.id], "full");
+    const entry = disclosed.disclosedSpans[0]!;
+    const committed = clone({ span: entry.span, events: entry.events });
+    // Hashing drops null-valued keys, so these still verify; the result must not repeat them.
+    Object.assign(entry.span!, { parentSpanId: null, metadata: { ...entry.span!.metadata, injected: null } });
+    Object.assign(entry.events![0]!, { approvedBy: null });
+    entry.events!.reverse();
+    const result = await verifyDisclosure(disclosed, bundle.rootHash, bundle.merkleRoot);
+    expect(result.valid).toBe(true);
+    expect(result.spans).toEqual([{ spanId: span.id, ...committed }]);
+    const returned = result.spans[0]!;
+    expect(Object.keys(returned.span!)).not.toContain("parentSpanId");
+    expect(Object.keys(returned.span!.metadata!)).not.toContain("injected");
+    expect(Object.keys(returned.events![0]!)).not.toContain("approvedBy");
+  });
+});
+
+describe("disclosure entries", () => {
+  it("rejects duplicate span entries", async () => {
+    const { bundle, result } = await disclosure();
+    result.disclosedSpans.push(clone(result.disclosedSpans[0]!));
+    const verified = await verifyDisclosure(result, bundle.rootHash, bundle.merkleRoot);
+    expect(verified.valid).toBe(false);
+    expect(verified.errors.join("\n")).toContain("Duplicate disclosure");
+  });
+
+  it("rejects a disclosure without spans", async () => {
+    const { bundle, result } = await disclosure();
+    result.disclosedSpans = [];
+    expect((await verifyDisclosure(result, bundle.rootHash, bundle.merkleRoot)).valid).toBe(false);
+  });
+
+  it("refuses to produce empty or duplicate disclosures", async () => {
+    const bundle = await trace(1);
+    const id = bundle.privateRun.spans[0]!.id;
+    await expect(selectiveDisclose(bundle, [], "full")).rejects.toThrow(/at least one span/);
+    await expect(selectiveDisclose(bundle, [id, id], "full")).rejects.toThrow(/more than once/);
+  });
+});
+
+describe("malformed verifier inputs", () => {
+  const deep = () => {
+    const root: Record<string, unknown> = {};
+    let node = root;
+    for (let i = 0; i < 120; i++) {
+      node.x = {};
+      node = node.x as Record<string, unknown>;
+    }
+    return root;
+  };
+  type Mutable = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const cases: Record<string, (d: Mutable) => void> = {
+    "no disclosedSpans": (d) => { delete d.disclosedSpans; },
+    "a null entry": (d) => { d.disclosedSpans[0] = null; },
+    "a numeric spanId": (d) => { d.disclosedSpans[0].spanId = 7; },
+    "no proof": (d) => { delete d.disclosedSpans[0].proof; },
+    "a null proof": (d) => { d.disclosedSpans[0].proof = null; },
+    "no siblings": (d) => { delete d.disclosedSpans[0].proof.siblings; },
+    "string siblings": (d) => { d.disclosedSpans[0].proof.siblings = "abc"; },
+    "a null sibling": (d) => { d.disclosedSpans[0].proof.siblings = [null]; },
+    "a null event": (d) => { d.disclosedSpans[0].events[0] = null; },
+    "an events object": (d) => { d.disclosedSpans[0].events = { length: 0 }; },
+    "a null span": (d) => { d.disclosedSpans[0].span = null; },
+    "over-deep span metadata": (d) => { d.disclosedSpans[0].span.metadata = deep(); },
+    "over-deep event data": (d) => { d.disclosedSpans[0].events[0].data = deep(); },
+    "an unknown mode": (d) => { d.mode = "Full"; },
+    "an unknown mode and no span data": (d) => {
+      d.mode = "Full";
+      delete d.disclosedSpans[0].span;
+      delete d.disclosedSpans[0].events;
+    },
+  };
+
+  it.each(Object.entries(cases))("returns invalid for a disclosure with %s", async (_name, mutate) => {
+    const bundle = await trace(3);
+    const disclosed = clone(await selectiveDisclose(bundle, [orderedSpans(bundle)[0]!.id], "full")) as Mutable;
+    mutate(disclosed);
+    const result = await verifyDisclosure(disclosed as DisclosureResult, bundle.rootHash, bundle.merkleRoot);
+    expect(result.valid).toBe(false);
+    expect(result.errors.length).toBeGreaterThan(0);
+  });
+
+  it.each([null, undefined, 42, {}, { leafHash: "a", leafIndex: 0, rootHash: "a" },
+    { leafHash: "a", leafIndex: 0, siblings: [null], rootHash: "a" }])(
+    "verifyMerkleProof returns false for %j", async (proof) => {
+      expect(await verifyMerkleProof(proof as unknown as MerkleProof)).toBe(false);
+    },
+  );
+
+  it("verifySpanInclusion returns false for malformed span data", async () => {
+    const { disclosed } = await disclosure();
+    const events = disclosed.events!;
+    expect(await verifySpanInclusion(disclosed.proof, null as unknown as TraceSpan, events)).toBe(false);
+    expect(await verifySpanInclusion(disclosed.proof, disclosed.span!, [null] as unknown as typeof events)).toBe(false);
+  });
+});
+
+describe("bundle public view", () => {
+  type Mutable = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const publicSpan = (bundle: Mutable, index = 0) => bundle.publicView.publicSpans[index];
+  const mutations: Record<string, (bundle: Mutable, other: TraceBundle) => void> = {
+    "a dropped public event": (b) => { publicSpan(b).events.splice(0, 1); },
+    "a duplicated public event": (b) => { publicSpan(b).events.push(clone(publicSpan(b).events[0])); },
+    "reordered public events": (b) => { publicSpan(b).events.reverse(); },
+    "a dropped public span": (b) => { b.publicView.publicSpans.splice(0, 1); },
+    "a duplicated public span": (b) => { b.publicView.publicSpans.push(clone(publicSpan(b))); },
+    "a forged status": (b) => { b.publicView.status = "failed"; },
+    "a forged agentId": (b) => { b.publicView.agentId = "trusted-agent"; },
+    "a forged runId": (b) => { b.publicView.runId = "other-run"; },
+    "forged totals": (b) => { b.publicView.totalEvents = 1; b.publicView.totalSpans = 1; },
+    "a forged rootHash": (b) => { b.publicView.rootHash = "33".repeat(32); },
+    "a forged merkleRoot": (b) => { b.publicView.merkleRoot = "44".repeat(32); },
+    "the roots of another trace": (b, other) => {
+      b.publicView.rootHash = other.rootHash;
+      b.publicView.merkleRoot = other.merkleRoot;
+    },
+    "a forged redacted hash": (b) => { b.publicView.redactedSpanHashes[0].hash = "55".repeat(32); },
+    "a dropped redacted entry": (b) => { b.publicView.redactedSpanHashes.splice(0, 1); },
+    "a private span made public": (b) => {
+      const hidden = b.privateRun.spans.find((span: TraceSpan) => span.visibility !== "public");
+      b.publicView.publicSpans.push({ ...clone(hidden), events: [] });
+    },
+    "a null-valued span key": (b) => { publicSpan(b).parentSpanId = null; },
+    "a null-valued event key": (b) => { publicSpan(b).events[0].approvedBy = null; },
+    "forged timestamps": (b) => {
+      b.publicView.startedAt = "2000-01-01T00:00:00.000Z";
+      b.publicView.durationMs = 1;
+    },
+    "an uncommitted field": (b) => { b.publicView.redactionPolicyId = "approved-by-compliance"; },
+  };
+
+  it.each(Object.entries(mutations))("rejects a public view with %s", async (_name, mutate) => {
+    const bundle = clone(await mixedTrace(4)) as Mutable;
+    expect((await verifyBundle(clone(bundle) as TraceBundle)).valid).toBe(true);
+    mutate(bundle, await trace(1));
+    const result = await verifyBundle(bundle as TraceBundle);
+    expect(result.valid).toBe(false);
+    expect(result.checks.publicViewValid).toBe(false);
+  });
+
+  it("rejects span keys the span hash does not commit to", async () => {
+    const bundle = clone(await mixedTrace(2));
+    const id = bundle.publicView.publicSpans[0]!.id;
+    for (const span of [bundle.privateRun.spans.find((s) => s.id === id)!, bundle.publicView.publicSpans[0]!]) {
+      Object.assign(span, { approvedBy: "CEO" });
+    }
+    const result = await verifyBundle(bundle);
+    expect(result.valid).toBe(false);
+    expect(result.checks.spanHashesValid).toBe(false);
+  });
+
+  it("rejects a privateRun rootHash that differs from the bundle rootHash", async () => {
+    const bundle = clone(await mixedTrace(2));
+    bundle.privateRun.rootHash = "66".repeat(32);
+    bundle.publicView.rootHash = "66".repeat(32);
+    expect((await verifyBundle(bundle)).valid).toBe(false);
+  });
+
+  it("verifies the views createBundle and finalizeTrace produce, with and without a pinned manifest", async () => {
+    const manifest = { modelHash: "sha256:" + "1".repeat(64) };
+    for (const options of [{ agentId: "a" }, { agentId: "a", manifest }]) {
+      const run = await createTrace(options);
+      const span = addSpan(run, { name: "infer", visibility: "public" });
+      await addEvent(run, span.id, { kind: "command", command: "go", visibility: "public" });
+      await closeSpan(run, span.id);
+      const finalized = await finalizeTrace(run);
+      expect((await verifyBundle(clone(finalized))).valid).toBe(true);
+      expect((await verifyBundle(clone(await createBundle(finalized.privateRun)))).valid).toBe(true);
+    }
+  });
+
+  it("derives the public end time of a run without one from its start", async () => {
+    const run = clone((await mixedTrace(2)).privateRun);
+    delete run.endedAt;
+    delete run.durationMs;
+    const bundle = await createBundle(run);
+    expect(bundle.publicView.endedAt).toBe(run.startedAt);
+    expect((await verifyBundle(clone(bundle))).valid).toBe(true);
+  });
+
+  const deep = () => {
+    const root: Record<string, unknown> = {};
+    let node = root;
+    for (let i = 0; i < 120; i++) {
+      node.x = {};
+      node = node.x as Record<string, unknown>;
+    }
+    return root;
+  };
+  const malformed: Record<string, (bundle: Mutable) => void> = {
+    "null public events": (b) => { publicSpan(b).events = null; },
+    "missing public events": (b) => { delete publicSpan(b).events; },
+    "a null public event": (b) => { publicSpan(b).events.push(null); },
+    "a null public span": (b) => { b.publicView.publicSpans.push(null); },
+    "over-deep public metadata": (b) => { publicSpan(b).metadata = deep(); },
+    "non-finite public metadata": (b) => { publicSpan(b).metadata = { n: Number.POSITIVE_INFINITY }; },
+    "a null public view": (b) => { b.publicView = null; },
+    "a null private span": (b) => { b.privateRun.spans[0] = null; },
+    "a null private event": (b) => { b.privateRun.events[0] = null; },
+    "string eventIds": (b) => { b.privateRun.spans[0].eventIds = "x"; },
+    "a null privateRun": (b) => { b.privateRun = null; },
+    "a null modelManifestHash": (b) => { b.privateRun.modelManifestHash = null; },
+  };
+
+  it.each(Object.entries(malformed))("returns errors instead of throwing for %s", async (_name, mutate) => {
+    const bundle = clone(await mixedTrace(3)) as Mutable;
+    mutate(bundle);
+    const result = await verifyBundle(bundle as TraceBundle);
+    expect(result.valid).toBe(false);
+    expect(result.errors.length).toBeGreaterThan(0);
+  });
+
+  it.each([null, undefined, 42, "bundle"])("returns errors for the non-bundle %j", async (value) => {
+    const result = await verifyBundle(value as unknown as TraceBundle);
+    expect(result.valid).toBe(false);
+    expect(result.errors.length).toBeGreaterThan(0);
+  });
+
+  it("settles a batch that includes a malformed bundle", async () => {
+    const good = await trace(2);
+    const bad = clone(good) as Mutable;
+    publicSpan(bad).events = null;
+    const results = await Promise.all([verifyBundle(clone(good)), verifyBundle(bad as TraceBundle), verifyBundle(clone(good))]);
+    expect(results.map((r) => r.valid)).toEqual([true, false, true]);
+  });
 });

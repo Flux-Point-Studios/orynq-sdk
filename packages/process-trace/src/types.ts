@@ -429,9 +429,7 @@ export interface AnnotatedSpan extends TraceSpan {
 /**
  * Public view of a trace bundle - safe to share externally.
  * Contains only public spans with their events, plus hashes of redacted spans.
- *
- * @property redactionPolicyId - Identifies which redaction rules were applied
- * @property redactionRulesHash - H(canonical(redactionRules)) for reproducibility
+ * `verifyBundle()` requires it to equal the projection of the private run.
  */
 export interface TraceBundlePublicView {
   runId: string;
@@ -447,8 +445,6 @@ export interface TraceBundlePublicView {
   merkleRoot: string;
   publicSpans: AnnotatedSpan[];
   redactedSpanHashes: Array<{ spanId: string; hash: string }>;
-  redactionPolicyId?: string;
-  redactionRulesHash?: string;
   /** Model-state commitment (public-safe: it is only a hash). */
   modelManifestHash?: string;
   /** Pinned model manifest (hashes only — public-safe). */
@@ -571,7 +567,9 @@ export interface TraceManifest {
 
 /**
  * Disclosure mode determines what data is revealed.
- * - "membership": Merkle proof only (proves span exists, hash matches)
+ * - "membership": Merkle proof only; binds a span ID only for a verifier that
+ *   holds the span's leaf hash and the tree's leaf count from an authenticated
+ *   source
  * - "full": Merkle proof + span data + event data
  */
 export type DisclosureMode = "membership" | "full";
@@ -609,6 +607,12 @@ export interface TraceVerificationResult {
     spanHashesValid: boolean;
     eventHashesValid: boolean;
     sequenceValid: boolean;
+    /**
+     * The public view equals the projection of the private run (always set by
+     * verifyBundle; the model-manifest fields are covered by
+     * `modelManifestValid`).
+     */
+    publicViewValid?: boolean;
     /**
      * Model-manifest pin binding (#59): the pinned manifest hashes to its
      * recorded commitment AND that commitment is folded into the committed

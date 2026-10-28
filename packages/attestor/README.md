@@ -20,8 +20,15 @@ also return false: comparing caller-supplied fields cannot authenticate evidence
 `extractMeasurements()` reads untrusted fields and legacy development data. Its
 output is not proof of hardware identity. The attestor implementations generate
 development evidence; their output must not be treated as vendor-signed evidence.
-Policy evaluation and `validateBinding()` are data checks, not cryptographic
-attestation verification.
+Policy evaluation and `validateBinding()` only compare data fields.
+
+`evaluatePolicy()` fails every check a policy requests that it cannot run:
+`allowedSignerKeys` and `checkRevocation` always fail, because measurements
+carry no signing key and no revocation status is looked up; `minFirmwareVersion`
+fails without a reported dotted-numeric firmware version; `minSvn` fails for a
+TEE that reports no SVN. `createStrictPolicy()` requests revocation checking by
+default, so pass `checkRevocation: false` to evaluate a strict policy that can
+pass.
 
 Applications may register their own `AttestationVerifier`; they are responsible
 for its trust roots and cryptographic checks. Tests requiring successful

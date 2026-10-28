@@ -1025,6 +1025,45 @@ describe("verifyAnchor fetchBundle rejects unbound projected data (#77 round-5)"
     expect(run.status).toBeUndefined();
   });
 
+  it("returns only the span and event fields the hashes commit to", async () => {
+    const bundle = await buildRealBundle();
+    const anchorRoot = bundle.rootHash;
+
+    // Span hashes cover a fixed header and both hashes skip null-valued keys, so
+    // these additions leave the root unchanged.
+    const forged = JSON.parse(JSON.stringify(bundle)) as TraceBundle;
+    Object.assign(forged.privateRun.spans[0]!, {
+      approvedBy: "compliance-officer",
+      verified: true,
+      parentSpanId: null,
+    });
+    Object.assign(forged.privateRun.events[0]!, { approvedBy: null });
+
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [
+        { type: "https", uri: "https://storage.example.com/b.json", hash: "" },
+      ],
+    });
+    const provider = createMockProvider({
+      getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(forged));
+
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+    });
+
+    expect(result.valid).toBe(true);
+    const run = (result.bundle as { privateRun: TraceBundle["privateRun"] }).privateRun;
+    expect(run.spans).toEqual(JSON.parse(JSON.stringify(bundle.privateRun.spans)));
+    expect(run.events).toEqual(JSON.parse(JSON.stringify(bundle.privateRun.events)));
+    expect(Object.keys(run.spans[0]!)).not.toContain("parentSpanId");
+    expect(Object.keys(run.events[0]!)).not.toContain("approvedBy");
+  });
+
   it("rejects a bundle whose manifest content does not hash to the committed pin", async () => {
     // A pinned-manifest bundle: rootHash folds the modelManifestHash STRING.
     const run = await createTrace({
