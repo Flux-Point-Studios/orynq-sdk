@@ -9,7 +9,7 @@ const cap = `    const spent = this.spentInWindow(action.timestamp);
     }
 `;
 const clockDecision = 'const decision = enforcedAt >= this.policy.validityWindow.notAfter ? deny("MANDATE_EXPIRED") : this.evaluate(action);';
-const syncLatch = '    } catch (cause) {\n      this.sinkError = new Error("event sink failed", { cause });\n      throw cause;\n    }\n    return prepared.decision;';
+const syncLatch = '    } catch (cause) {\n      this.sinkError = new Error("event sink failed", { cause });\n      throw cause;\n    }\n    this.complete(prepared.head);';
 const asyncLatch = '      return prepared.decision;\n    } catch (cause) {\n      this.sinkError = new Error("event sink failed", { cause });\n      throw cause;\n    } finally {';
 const paymentSink = '    if (prepared.event.actionKind === "payment" && !sink) throw new Error("payment enforcement requires an event sink");\n';
 const paymentSinkCheck = 'if (prepared.event.actionKind === "payment" && !sink)';
@@ -53,14 +53,14 @@ const rereview = [
   ["N10_replay_no_reserve", "guard.ts", "        this.reserve(prepared);\n      } catch (cause) {", "      } catch (cause) {"],
   ["N12_thenable_check_removed", "guard.ts", "if (result !== null && (typeof result === \"object\" || typeof result === \"function\") && \"then\" in result && typeof result.then === \"function\") {", "if (false) {"],
   ["N13_callable_thenable_missed", "guard.ts", "(typeof result === \"object\" || typeof result === \"function\")", "typeof result === \"object\""],
-  ["N14_sync_sink_error_not_latched", "guard.ts", syncLatch, "    } catch (cause) {\n      throw cause;\n    }\n    return prepared.decision;"],
+  ["N14_sync_sink_error_not_latched", "guard.ts", syncLatch, "    } catch (cause) {\n      throw cause;\n    }\n    this.complete(prepared.head);"],
   ["N15_async_sink_error_not_latched", "guard.ts", asyncLatch, "      return prepared.decision;\n    } catch (cause) {\n      throw cause;\n    } finally {"],
   ["N16_pending_not_set", "guard.ts", "    this.pending = true;\n", ""],
   ["N17_checkSink_ignores_error", "guard.ts", "if (this.sinkError) throw", "if (false) throw"],
   ["N18_checkSink_ignores_pending", "guard.ts", "if (this.pending) throw", "if (false) throw"],
   ["N19_enforceAsync_not_awaited", "guard.ts", asyncAppend, "      void sink(prepared.event, prepared.previous);"],
   ["N20_precheck_canonicalize_removed", "guard.ts", "    return { event, decision, previous: this.logHead, head: nextGuardLogHead(this.logHead, event) };", "    return { event, decision, previous: this.logHead, head: this.logHead };"],
-  ["N21_reserve_after_sync_sink", "guard.ts", "    this.reserve(prepared);\n    if (!sink) return prepared.decision;\n    try {\n" + syncAppend, "    if (!sink) {\n      this.reserve(prepared);\n      return prepared.decision;\n    }\n    try {\n" + syncAppend + "\n      this.reserve(prepared);"],
+  ["N21_reserve_after_sync_sink", "guard.ts", "    this.reserve(prepared);\n    if (!sink) {\n      this.complete(prepared.head);\n      return prepared.decision;\n    }\n    try {\n" + syncAppend, "    if (!sink) {\n      this.reserve(prepared);\n      this.complete(prepared.head);\n      return prepared.decision;\n    }\n    try {\n" + syncAppend + "\n      this.reserve(prepared);"],
   ["N22_lastEnforcedAt_not_tracked", "guard.ts", "    this.lastEnforcedAt = event.enforcedAt;\n", ""],
   ["N23_lastTimestamp_not_tracked", "guard.ts", "    this.lastTimestamp = event.timestamp;\n", ""],
   ["N24_action_not_frozen", "guard.ts", "      action: Object.freeze(action),", "      action,"],
@@ -138,7 +138,7 @@ const appendContract = [
   ["H31_memory_log_returns_previous_head", "log.ts", "    this.events.push(snapshot);\n    return this.head;", "    this.events.push(snapshot);\n    return expected;"],
   ["H32_replay_error_drops_cause", "guard.ts", '`invalid recorded guard event: ${cause instanceof Error ? cause.message : "validation failed"}`, { cause });', '`invalid recorded guard event: ${cause instanceof Error ? cause.message : "validation failed"}`);'],
   ["H33_head_shape_accepts_non_object", "log.ts", "  if (typeof source !== \"object\" || source === null) throw new Error(shape);\n", ""],
-  ["H34_egress_without_sink_calls_sink", "guard.ts", "    if (!sink) return prepared.decision;\n", ""],
+  ["H34_egress_without_sink_calls_sink", "guard.ts", "    if (!sink) {\n      this.complete(prepared.head);\n      return prepared.decision;\n    }\n", ""],
   ["H35_head_mismatch_tolerated", "guard.ts", "  if (!sameGuardLogHead(head, expected)) {", "  if (false) {"],
 ];
 
@@ -153,4 +153,16 @@ const skeptic = [
   ["K14_toProcessTraceEvent_forces_public", "events.ts", traceVisibility, '...customEventFields(event, "public") };'],
 ];
 
-export const mutants = [...review, ...rereview, ...accounting, ...appendContract, ...skeptic];
+// guard.head reports confirmed heads only; confirmation covers every event kind and decision.
+const confirmedHead = [
+  ["H36_head_reports_reserved", "guard.ts", "    return this.confirmedHead;", "    return this.logHead;"],
+  ["H37_confirmed_head_can_move_back", "guard.ts", "    if (head.count > this.confirmedHead.count) this.confirmedHead = head;", "    this.confirmedHead = head;"],
+  ["H38_sinkless_completion_unrecorded", "guard.ts", "    if (!sink) {\n      this.complete(prepared.head);\n      return prepared.decision;", "    if (!sink) {\n      return prepared.decision;"],
+  ["H39_sync_confirmation_unrecorded", "guard.ts", "    this.complete(prepared.head);\n    return prepared.decision;\n  }", "    return prepared.decision;\n  }"],
+  ["H40_async_confirmation_unrecorded", "guard.ts", "      this.complete(prepared.head);\n      return prepared.decision;\n    } catch", "      return prepared.decision;\n    } catch"],
+  ["H41_restored_head_unconfirmed", "guard.ts", "    this.confirmedHead = this.logHead;\n", ""],
+  ["K18_confirm_payments_only_sync", "guard.ts", "      confirmHead(result, prepared.head);\n", '      if (prepared.event.actionKind === "payment") confirmHead(result, prepared.head);\n'],
+  ["K19_confirm_allowed_only_async", "guard.ts", asyncAppend, "      const returned = await sink(prepared.event, prepared.previous);\n      if (prepared.decision.allowed) confirmHead(returned, prepared.head);"],
+];
+
+export const mutants = [...review, ...rereview, ...accounting, ...appendContract, ...skeptic, ...confirmedHead];

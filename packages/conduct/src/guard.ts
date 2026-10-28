@@ -38,7 +38,8 @@ interface Prepared {
 
 const deny = (reason: DenialReason): GuardDecision => ({ allowed: false, reason, rule: DENIAL_RULES[reason] });
 
-// A sink that skipped the append, wrote elsewhere or reports another position cannot return the head this append produces.
+// Catches a sink that reports its real state after a skipped, misplaced or stale append. It cannot prove the append
+// happened: a sink can compute this head with nextGuardLogHead without writing, so the host's log is trusted for that.
 function confirmHead(returned: unknown, expected: GuardLogHead): void {
   let head: GuardLogHead;
   try {
@@ -72,6 +73,9 @@ export class MandateGuard {
   private readonly onEvent: GuardConfig["onEvent"];
   private readonly now: () => bigint;
   private logHead: GuardLogHead = GUARD_LOG_GENESIS;
+  // What `head` reports: the reserved logHead runs ahead of it until the sink confirms the append, so a sink cannot
+  // read the head it is meant to produce.
+  private confirmedHead: GuardLogHead = GUARD_LOG_GENESIS;
   private spendWindow = 0n;
   private windowSpent = 0n;
   private lastTimestamp = 0n;
@@ -121,6 +125,7 @@ export class MandateGuard {
     if (!sameGuardLogHead(this.logHead, recorded.head)) {
       throw new GuardConfigError("recorded guard events do not end at the expected log head");
     }
+    this.confirmedHead = this.logHead;
   }
 
   get mandate(): MandateV1 {
@@ -128,7 +133,7 @@ export class MandateGuard {
   }
 
   get head(): GuardLogHead {
-    return this.logHead;
+    return this.confirmedHead;
   }
 
   // Only the latest window holding an allowed payment is kept; enforcement never charges an earlier window.
@@ -223,6 +228,11 @@ export class MandateGuard {
     this.lastEnforcedAt = event.enforcedAt;
   }
 
+  // A nested enforce inside a sink confirms a later head first, so an earlier confirmation must not move it back.
+  private complete(head: GuardLogHead): void {
+    if (head.count > this.confirmedHead.count) this.confirmedHead = head;
+  }
+
   private checkSink(): void {
     if (this.sinkError) throw new Error("event sink failed; restore a new guard from durable events", { cause: this.sinkError });
     if (this.pending) throw new Error("an async enforcement is pending");
@@ -234,7 +244,10 @@ export class MandateGuard {
     const prepared = this.prepare(action, this.now());
     if (prepared.event.actionKind === "payment" && !sink) throw new Error("payment enforcement requires an event sink");
     this.reserve(prepared);
-    if (!sink) return prepared.decision;
+    if (!sink) {
+      this.complete(prepared.head);
+      return prepared.decision;
+    }
     try {
       const result: unknown = sink(prepared.event, prepared.previous);
       if (result !== null && (typeof result === "object" || typeof result === "function") && "then" in result && typeof result.then === "function") {
@@ -247,6 +260,7 @@ export class MandateGuard {
       this.sinkError = new Error("event sink failed", { cause });
       throw cause;
     }
+    this.complete(prepared.head);
     return prepared.decision;
   }
 
@@ -259,6 +273,7 @@ export class MandateGuard {
     this.pending = true;
     try {
       confirmHead(await sink(prepared.event, prepared.previous), prepared.head);
+      this.complete(prepared.head);
       return prepared.decision;
     } catch (cause) {
       this.sinkError = new Error("event sink failed", { cause });
