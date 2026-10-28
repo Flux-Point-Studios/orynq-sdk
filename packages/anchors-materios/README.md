@@ -78,38 +78,99 @@ await provider.disconnect();
 options retain their independent budgets. Legacy `timeout` and `retries` config
 fields remain unused. Budgets must be positive, finite, and at most 2147483647 ms.
 
-The submission budget includes receipt signing, dry-run, watching, confirmation,
-and recovery. The last `min(30000, timeoutMs / 2)` milliseconds are reserved for
-recovery, so a silent watch ends before the total budget. A disconnect ends the
-watch immediately. Recovery opens an isolated connection to the same RPC URL,
-checks its genesis hash, and reads the content-addressed record at a pinned block.
-It never broadcasts a replacement transaction. Anchor recovery requires finalized
-storage; receipt recovery, like normal receipt inclusion, does not promise finality.
+The submission budget covers every step below. The last `min(30000, timeoutMs / 2)`
+milliseconds are reserved for recovery, so a silent watch ends before the total budget.
 
-| Error | Code | Retry contract |
-| --- | --- | --- |
-| `MateriosConnectionError` | `connect-timeout` / `connect-failed` | No submission was attempted by `connect`; retry connection. Includes `timeoutMs`. |
-| `MateriosSubmissionError` | `not-landed` | `safeToResubmit === true`: preparation failed or timed out before broadcasting. |
-| `MateriosSubmissionError` | `inclusion-unknown` | `safeToResubmit === false`: inspect storage and transaction state before resubmitting. |
-| `MateriosSubmissionError` | `dispatch` | `safeToResubmit === false`: fix the reported dispatch or validity failure before deciding to retry. |
+1. **Connection.** The provider's connection is replaced first if an earlier read or
+   watch on it timed out, and awaited while it reconnects on its own.
+2. **Signing.** Receipts and anchors are signed with `signAsync` before anything is
+   sent, so a failure here never broadcasts.
+3. **Storage check.** The record at the id is read: receipts at the best block,
+   anchors at the finalized block. A record with the same payload returns success
+   (`reconciled: true`) without broadcasting; a different payload is `dispatch`.
+4. **Dry-run** (receipts only), when the node allows `system_dryRun`. A dispatch error it
+   predicts stops the broadcast (`ReceiptAlreadyExists` with the same payload is
+   success). Validity is left to the pool: the dry-run applies on the best block's own
+   state, so it reports `exhaustsResources` whenever the runtime fills that block with
+   mandatory weight, for a transaction the next block accepts.
+5. **Broadcast and watch** until inclusion: a best block for receipts, a finalized
+   block for anchors.
+6. **Recovery** after a lost watch (disconnect, watch timeout, or a pool report of
+   dropped, invalid, usurped or finality timeout): an isolated connection to the same
+   RPC URL, checked against the genesis hash, re-reads storage once per new block
+   until the deadline, best blocks for receipts and finalized blocks for anchors. It
+   never broadcasts a replacement transaction.
 
-Submission errors include `id` (receipt or anchor ID). An empty storage read after
-a dropped watch is **inclusion-unknown**: the transaction can still be pending in
-a node's pool and land later. Unreadable storage, mismatched content, and a stalled
-recovery connection also produce this error. A timed-out `signAndSend` may still
-complete signing later; its outcome is unknown, never safe to blindly retry.
+### Retry contract
 
-Normal successful results are unchanged. Recovery returns `reconciled: true` only
-when storage matches the submitted payload. In that result, `blockHash` (and the
-receipt's `blockNumber`) identifies the block where storage was observed, **not
-necessarily the transaction's inclusion block**. A receipt's `txHash` identifies
-the attempted transaction; the matching receipt may have been submitted earlier.
-The certified-receipt orchestrator preserves `reconciled`.
+| Error | Code | Meaning | What to do |
+| --- | --- | --- | --- |
+| `MateriosSubmissionError` | `not-landed` | Nothing from this call was broadcast, or the node refused it: `1010` (invalid, e.g. cannot pay fees), `1011` (unknown validity) or `1014` (priority too low, e.g. another transaction holds the signer's nonce). `safeToResubmit === true`. | Resubmit with the **same** receipt or anchor id. |
+| `MateriosSubmissionError` | `inclusion-unknown` | The transaction may have reached a node and may still land. `safeToResubmit === false`. | Settle it with `resolveInclusion(provider, error)`. Never treat one absent read as "did not land". |
+| `MateriosSubmissionError` | `dispatch` | The runtime rejects the call (in the dry-run or in its block), or the id holds a different payload. `safeToResubmit === false`. | Fix the cause; resubmitting unchanged fails the same way. |
+| `MateriosCertificationError` | | `submitCertifiedReceipt` stored the receipt, then waiting for certification or its anchor failed. `result` carries the submission result, `stage` says which wait failed. | Never resubmit; wait again with `waitForCertification`. |
+| `MateriosConnectionError` | `connect-timeout` / `connect-failed` / `connect-aborted` / `read-timeout` | The connection did not open in time, failed (`cause` keeps the underlying error), was aborted by `disconnect()`, or a read stalled. Includes `timeoutMs`. | Retry the connection or the read. |
 
-SDK deadline timers and disconnect listeners are removed on every settled path.
-Watch handles are unsubscribed, including handles delivered after settlement;
-temporary recovery connections are closed. The caller still owns the original
-provider and should call `disconnect()` when finished.
+- A node refusal keeps the node's message verbatim (`1014: Priority is too low: ...`),
+  so `/^1014: Priority is too low/` matchers keep working; `cause` is the original
+  error. Every error built from an underlying failure keeps it as `cause`.
+- "Already exists" with the same stored payload is success, for receipts and anchors,
+  whoever stored it. Never retry with a fresh id: that can store the content twice.
+- Submission errors carry `id` and, once the extrinsic is signed, `txHash`, `signer`,
+  `nonce` and `mortalityEnd` (the last block number that can include it, or `null`
+  for an immortal extrinsic). `inclusion-unknown` adds `lastHead`, the last block whose
+  storage was read without finding the record, and `cause`, why the watch was lost.
+
+### Settling an unknown inclusion
+
+```ts
+import {
+  MateriosSubmissionError, resolveInclusion, submitReceipt, type ReceiptInput,
+} from "@fluxpointstudios/orynq-sdk-anchors-materios";
+
+/** The receipt id once `input` is on chain; rethrows what resubmitting cannot fix. */
+async function landReceipt(input: ReceiptInput, attempts = 5): Promise<string> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return (await submitReceipt(provider, input)).receiptId;
+    } catch (error) {
+      if (!(error instanceof MateriosSubmissionError) || error.code === "dispatch" || attempt === attempts) throw error;
+      if (error.code === "inclusion-unknown") {
+        const resolution = await resolveInclusion(provider, error); // waits on finalized storage
+        if (resolution.status === "landed") return resolution.id;
+      }
+      // not-landed: resubmit the same input, so the same receipt id, after a backoff
+      await new Promise(resolve => setTimeout(resolve, 1_500 * attempt));
+    }
+  }
+}
+```
+
+`resolveInclusion` polls finalized storage (`intervalMs` default `6000`, `timeoutMs`
+default `600000`). It resolves `landed` once a finalized block holds the matching
+record, and `not-landed` only once a finalized block without it is past the
+extrinsic's `mortalityEnd` (`reason: "expired"`) or shows the signer's nonce above the
+extrinsic's nonce (`reason: "nonce-consumed"`). A different stored payload rejects
+with `dispatch`; no settlement by `timeoutMs` rejects with `inclusion-unknown` again.
+
+### Results
+
+Normal successful results are unchanged. `reconciled: true` marks a result proved
+from storage rather than from the watch. Its `blockHash` (and a receipt's
+`blockNumber`) is the block where storage was observed, **not necessarily the
+transaction's inclusion block**. A receipt's `txHash` is the transaction this call
+broadcast; it is absent when the storage check found the receipt before
+broadcasting. The certified-receipt orchestrator preserves `reconciled`.
+
+`waitForCertification` waits for a dropped connection to reconnect and replaces one
+whose read stalls for 10 seconds, within its own budget; its timeout error keeps the
+last failed read as `cause`.
+
+SDK timers and listeners are removed on every settled path. Watch handles are
+unsubscribed, including handles delivered after settlement; temporary connections
+are closed. `disconnect()` aborts a `connect()` in flight, whose caller receives
+`connect-aborted`. The caller still owns the provider and should call `disconnect()`
+when finished.
 
 ## One-Function Orchestrator
 
@@ -241,7 +302,8 @@ Provide either `apiKey` or `signerKeypair` (not both).
 
 | Function                   | Description                                                        |
 |---------------------------|--------------------------------------------------------------------|
-| `submitReceipt(provider, input)` | Submit a receipt on-chain. Includes dry-run pre-flight check. |
+| `submitReceipt(provider, input, opts?)` | Submit a receipt on-chain. Includes storage and dry-run pre-flight checks. |
+| `resolveInclusion(provider, error, opts?)` | Settle an `inclusion-unknown` receipt or anchor from finalized storage. |
 | `waitForCertification(provider, receiptId, opts?)` | Poll until the cert daemon attests availability. |
 | `waitForAnchor(provider, certResult, opts?)` | Poll until the receipt is batched into an L1 anchor. |
 | `verifyReceipt(provider, receiptId, opts?)` | Run 5-step chain-of-custody verification. |
@@ -281,7 +343,7 @@ Provide either `apiKey` or `signerKeypair` (not both).
 
 | Function                           | Description                                          |
 |-----------------------------------|------------------------------------------------------|
-| `submitAnchor(provider, ...)`      | Submit an anchor (used by checkpoint workers).       |
+| `submitAnchor(provider, entry, opts?)` | Submit an anchor (used by checkpoint workers).   |
 | `getAnchor(provider, anchorId)`    | Query an anchor from on-chain storage.               |
 | `anchorExists(provider, anchorId)` | Check if an anchor exists on-chain.                  |
 

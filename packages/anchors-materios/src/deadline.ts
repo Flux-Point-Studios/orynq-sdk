@@ -18,3 +18,8 @@ export async function withinDeadline<T>(operation: () => Promise<T>, deadline: n
     clearTimeout(timer);
   }
 }
+
+/** Resolves after `ms`; at once when no time is left, since Node stretches a 0 ms timer to 1 ms. */
+export function sleep(ms: number): Promise<void> {
+  return ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve();
+}

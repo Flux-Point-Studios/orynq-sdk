@@ -1,83 +1,22 @@
-import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MateriosProvider } from "../src/provider.js";
 import { submitReceipt } from "../src/receipt.js";
 import { submitAnchor } from "../src/submitter.js";
+import {
+  blockHashOf, connected, entry, finalized, fixture, hash, inBlock, input, makeChain, mocks, never, observe, receiptRecord,
+  txHash,
+} from "./support/fake-chain.js";
 
-const mocks = vi.hoisted(() => ({ apis: [] as any[], sockets: [] as any[] }));
-vi.mock("@polkadot/api", async () => {
-  const { EventEmitter } = await import("node:events");
-  return {
-    WsProvider: class extends EventEmitter {
-      disconnect = vi.fn(async () => { this.removeAllListeners(); });
-      constructor() { super(); mocks.sockets.push(this); }
-    },
-    ApiPromise: class {
-      constructor() { return mocks.apis.shift(); }
-      static async create() { const api = mocks.apis.shift(); await api.isReadyOrError; return api; }
-    },
-    Keyring: class { addFromUri() { return { address: "fixture" }; } },
-  };
-});
+vi.mock("@polkadot/api", async () => (await import("./support/fake-chain.js")).polkadotApiMock());
 
-const hash = (byte: string) => `0x${byte.repeat(64)}`;
 const blockHash = hash("b");
-const txHash = hash("c");
-const input = { contentHash: hash("1"), rootHash: hash("2"), manifestHash: hash("3") };
-const entry = { type: "custom" as const, version: "1.0" as const, ...input, timestamp: "2026-10-27T00:00:00Z" };
-const never = () => new Promise<any>(() => {});
-const stored = () => ({ isEmpty: false, toJSON: () => ({ contentHash: input.contentHash, baseRootSha256: input.rootHash, baseManifestHash: input.manifestHash, schemaHash: hash("0") }) });
-
-function fixture() {
-  let callback: (result: any) => void = () => {};
-  const unsubscribe = vi.fn();
-  const signed = { hash: { toHex: () => txHash }, toHex: () => "0x00", send: vi.fn(async (cb: typeof callback) => { callback = cb; return unsubscribe; }) };
-  const tx = { signAsync: vi.fn(async () => signed), signAndSend: vi.fn(async (_key: unknown, cb: typeof callback) => { callback = cb; return unsubscribe; }) };
-  const api = Object.assign(new EventEmitter(), {
-    isConnected: true,
-    isReadyOrError: Promise.resolve(),
-    disconnect: vi.fn(async () => { api.isConnected = false; }),
-    genesisHash: { toHex: () => hash("f") },
-    tx: { orinqReceipts: { submitReceipt: vi.fn(() => tx), submitAnchor: vi.fn(() => tx) } },
-    rpc: {
-      system: { dryRun: vi.fn(async () => ({ isErr: false, asOk: { isErr: false } })) },
-      chain: {
-        getHeader: vi.fn(async () => ({ hash: { toHex: () => blockHash }, number: { toNumber: () => 42 } })),
-        getFinalizedHead: vi.fn(async () => ({ toHex: () => blockHash })),
-      },
-    },
-    query: { orinqReceipts: { receipts: vi.fn(async () => stored()), anchors: vi.fn(async () => ({ isEmpty: true })) } },
-    registry: { findMetaError: () => ({ section: "orinqReceipts", name: "Rejected", docs: ["fixture"] }) },
-    at: vi.fn(async () => ({ query: api.query })),
-  });
-  return { api, signed, tx, unsubscribe, emit: (result: any) => callback(result), drop: () => { api.isConnected = false; api.emit("disconnected", { code: 1006 }); } };
-}
-
-async function connected() {
-  const original = fixture();
-  const recovery = fixture();
-  mocks.apis.push(original.api, recovery.api);
-  const provider = new MateriosProvider({ rpcUrl: "ws://fixture.invalid", signerUri: "fixture", connectTimeoutMs: 40 });
-  await provider.connect();
-  return { ...original, recovery, provider };
-}
-
-async function observe(promise: Promise<unknown>, action?: () => void) {
-  let outcome: any = { pending: true };
-  promise.then(value => { outcome = { value }; }, error => { outcome = { error }; });
-  await vi.advanceTimersByTimeAsync(0);
-  action?.();
-  await vi.advanceTimersByTimeAsync(201);
-  expect(outcome, "caller still pending beyond its 100 ms budget (bounded observation: 201 ms)").not.toEqual({ pending: true });
-  return outcome;
-}
 
 beforeEach(() => { vi.useFakeTimers(); mocks.apis.length = 0; mocks.sockets.length = 0; });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("Materios RPC deadlines", () => {
   it("bounds a connection whose provider accepts but never answers", async () => {
-    const f = fixture();
+    const f = fixture(makeChain());
     f.api.isReadyOrError = never();
     mocks.apis.push(f.api);
     const provider = new MateriosProvider({ rpcUrl: "ws://fixture.invalid", signerUri: "fixture", connectTimeoutMs: 100 });
@@ -90,7 +29,7 @@ describe("Materios RPC deadlines", () => {
 
   it("reconciles a receipt that landed after the acknowledged watch drops with 1006", async () => {
     const f = await connected();
-    const { value } = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }), f.drop);
+    const { value } = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }), () => { f.chain.storeReceipt(); f.drop(); });
     expect(value).toMatchObject({ confirmed: true, status: "submitted", reconciled: true, txHash });
     expect(f.recovery.api.query.orinqReceipts.receipts).toHaveBeenCalledOnce();
     expect(f.unsubscribe).toHaveBeenCalledOnce();
@@ -101,7 +40,6 @@ describe("Materios RPC deadlines", () => {
 
   it("does not call an absent receipt safe to resubmit while the transaction may be pending", async () => {
     const f = await connected();
-    f.recovery.api.query.orinqReceipts.receipts.mockResolvedValue({ isEmpty: true } as any);
     const { error } = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }), f.drop);
     expect(error).toMatchObject({ name: "MateriosSubmissionError", code: "inclusion-unknown", safeToResubmit: false });
     expect(f.unsubscribe).toHaveBeenCalledOnce();
@@ -117,7 +55,7 @@ describe("Materios RPC deadlines", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("bounds signAndSend after an acknowledged watch drops", async () => {
+  it("bounds an anchor watch that drops after acknowledgement", async () => {
     const f = await connected();
     const { error } = await observe(submitAnchor(f.provider, entry, { timeoutMs: 100 }), f.drop);
     expect(error).toMatchObject({ name: "MateriosSubmissionError", code: "inclusion-unknown", safeToResubmit: false });
@@ -128,7 +66,7 @@ describe("Materios RPC deadlines", () => {
 
   it("reconciles a silent watch before the total deadline expires", async () => {
     const f = await connected();
-    const { value } = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }));
+    const { value } = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }), () => f.chain.storeReceipt());
     expect(value).toMatchObject({ confirmed: true, reconciled: true });
     expect(f.unsubscribe).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
@@ -144,20 +82,29 @@ describe("Materios RPC deadlines", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("rejects an unrelated receipt at a caller-supplied id even on the inBlock path", async () => {
+  it("refuses to broadcast over an unrelated receipt stored at a caller-supplied id", async () => {
     const f = await connected();
-    const unrelated = { isEmpty: false, toJSON: () => ({ ...stored().toJSON(), contentHash: hash("9") }) };
-    f.api.query.orinqReceipts.receipts.mockResolvedValue(unrelated);
-    f.recovery.api.query.orinqReceipts.receipts.mockResolvedValue(unrelated);
-    const { error } = await observe(submitReceipt(f.provider, { ...input, receiptId: hash("a") }, { timeoutMs: 100 }),
-      () => f.emit({ status: { isInBlock: true, asInBlock: { toHex: () => blockHash } } }));
+    f.chain.storeReceipt(receiptRecord({ contentHash: hash("9") }), { id: hash("a") });
+    const { error } = await observe(submitReceipt(f.provider, { ...input, receiptId: hash("a") }, { timeoutMs: 100 }));
+    expect(error).toMatchObject({ code: "dispatch", id: hash("a"), safeToResubmit: false });
+    expect(f.signed.send).not.toHaveBeenCalled();
+  });
+
+  it("does not accept an unrelated receipt that appears after the inBlock status", async () => {
+    const f = await connected();
+    const { error } = await observe(submitReceipt(f.provider, { ...input, receiptId: hash("a") }, { timeoutMs: 100 }), () => {
+      f.chain.storeReceipt(receiptRecord({ contentHash: hash("9") }), { id: hash("a") });
+      f.emit(inBlock(blockHash));
+    });
     expect(error).toMatchObject({ code: "inclusion-unknown", safeToResubmit: false });
   });
 
   it("keeps the successful receipt result shape and releases the watch", async () => {
     const f = await connected();
-    const { value } = await observe(submitReceipt(f.provider, { ...input, receiptId: hash("a") }, { timeoutMs: 100 }),
-      () => f.emit({ status: { isInBlock: true, asInBlock: { toHex: () => blockHash } } }));
+    const { value } = await observe(submitReceipt(f.provider, { ...input, receiptId: hash("a") }, { timeoutMs: 100 }), () => {
+      f.chain.storeReceipt(receiptRecord(), { id: hash("a") });
+      f.emit(inBlock(blockHash));
+    });
     expect(value).toEqual({ receiptId: hash("a"), blockHash, blockNumber: 42, txHash, confirmed: true, status: "submitted" });
     expect(f.unsubscribe).toHaveBeenCalledOnce();
     expect(f.api.listenerCount("disconnected")).toBe(0);
@@ -169,7 +116,7 @@ describe("Materios RPC deadlines", () => {
     const f = await connected();
     let release: (unsub: () => void) => void = () => {};
     f.signed.send.mockImplementation(cb => {
-      cb({ dispatchError: { isModule, asModule: {}, toString: () => "bad origin" } });
+      cb(inBlock(blockHash, { dispatchError: { isModule, asModule: {}, toString: () => "bad origin" } }));
       return new Promise(resolve => { release = resolve; });
     });
     const { error } = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }));
@@ -185,7 +132,7 @@ describe("Materios RPC deadlines", () => {
     const f = await connected();
     let release: (unsub: () => void) => void = () => {};
     f.signed.send.mockImplementation(() => new Promise(resolve => { release = resolve; }));
-    const { value } = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }), f.drop);
+    const { value } = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }), () => { f.chain.storeReceipt(); f.drop(); });
     expect(value.confirmed).toBe(true);
     release(f.unsubscribe);
     await vi.advanceTimersByTimeAsync(0);
@@ -195,21 +142,15 @@ describe("Materios RPC deadlines", () => {
 
   it("returns an anchor only after finalized storage confirms the payload", async () => {
     const f = await connected();
-    const { createHash } = await import("node:crypto");
-    f.recovery.api.query.orinqReceipts.anchors.mockResolvedValue({ isEmpty: false, toJSON: () => ({
-      contentHash: "0x" + createHash("sha256").update(Buffer.from(input.rootHash.slice(2), "hex")).digest("hex"),
-      rootHash: input.rootHash, manifestHash: input.manifestHash,
-    }) } as any);
-    const { value } = await observe(submitAnchor(f.provider, entry, { timeoutMs: 100 }), f.drop);
-    expect(value).toMatchObject({ reconciled: true, blockHash, rootHash: input.rootHash });
+    const { value } = await observe(submitAnchor(f.provider, entry, { timeoutMs: 100 }), () => { f.chain.storeAnchor(); f.drop(); });
+    expect(value).toMatchObject({ reconciled: true, blockHash: blockHashOf(42), rootHash: input.rootHash });
     expect(f.recovery.api.rpc.chain.getFinalizedHead).toHaveBeenCalledOnce();
     expect(f.recovery.api.disconnect).toHaveBeenCalledOnce();
   });
 
   it("keeps the happy finalized anchor result and ignores later disconnects", async () => {
     const f = await connected();
-    const { value } = await observe(submitAnchor(f.provider, entry, { timeoutMs: 100 }),
-      () => f.emit({ status: { isFinalized: true, asFinalized: { toHex: () => blockHash } } }));
+    const { value } = await observe(submitAnchor(f.provider, entry, { timeoutMs: 100 }), () => f.emit(finalized(blockHash)));
     expect(value).toMatchObject({ blockHash, rootHash: input.rootHash, manifestHash: input.manifestHash });
     expect(value).not.toHaveProperty("reconciled");
     f.drop();
@@ -232,7 +173,7 @@ describe("Materios RPC deadlines", () => {
 
   it("stops a late recovery header from launching new queries after the budget", async () => {
     const f = await connected();
-    let release: (header: any) => void = () => {};
+    let release: (header: { hash: { toHex(): string }; number: { toNumber(): number } }) => void = () => {};
     f.recovery.api.rpc.chain.getHeader.mockImplementation(() => new Promise(resolve => { release = resolve; }));
     const { error } = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }), f.drop);
     expect(error.code).toBe("inclusion-unknown");
@@ -259,7 +200,7 @@ describe("Materios RPC deadlines", () => {
   });
 
   it("honors the timeout of a concurrent connect caller", async () => {
-    const f = fixture();
+    const f = fixture(makeChain());
     f.api.isReadyOrError = never();
     mocks.apis.push(f.api);
     const provider = new MateriosProvider({ rpcUrl: "ws://fixture.invalid", signerUri: "fixture", connectTimeoutMs: 1000 });
@@ -274,11 +215,11 @@ describe("Materios RPC deadlines", () => {
   });
 
   it("uses the 30-second connect default without activating the legacy timeout field", async () => {
-    const f = fixture();
+    const f = fixture(makeChain());
     f.api.isReadyOrError = never();
     mocks.apis.push(f.api);
     const provider = new MateriosProvider({ rpcUrl: "ws://fixture.invalid", signerUri: "fixture", timeout: 1 });
-    let error: any;
+    let error: unknown;
     const pending = provider.connect().catch(value => { error = value; });
     await vi.advanceTimersByTimeAsync(29_999);
     expect(error).toBeUndefined();
@@ -290,8 +231,10 @@ describe("Materios RPC deadlines", () => {
 
   it("uses the default 120-second submission budget with 30 seconds reserved for recovery", async () => {
     const f = await connected();
-    let value: any;
+    let value: unknown;
     const pending = submitReceipt(f.provider, input).then(result => { value = result; });
+    await vi.advanceTimersByTimeAsync(0);
+    f.chain.storeReceipt();
     await vi.advanceTimersByTimeAsync(89_999);
     expect(value).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1);
@@ -302,7 +245,7 @@ describe("Materios RPC deadlines", () => {
 
   it("preserves dispatch failures detected by the dry-run", async () => {
     const f = await connected();
-    f.api.rpc.system.dryRun.mockResolvedValue({ isErr: false, asOk: { isErr: true, asErr: { isModule: true, asModule: {} } } } as any);
+    f.api.rpc.system.dryRun.mockResolvedValue({ isErr: false, asOk: { isErr: true, asErr: { isModule: true, asModule: {} } } });
     const { error } = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }));
     expect(error).toMatchObject({ code: "dispatch", safeToResubmit: false });
     expect(error.message).toContain("orinqReceipts.Rejected");
@@ -330,9 +273,11 @@ describe("Materios RPC deadlines", () => {
 
   it.each(["reject", "isInvalid", "isDropped", "isUsurped", "isFinalityTimeout"])("reconciles an interrupted %s watch", async mode => {
     const f = await connected();
-    if (mode === "reject") f.signed.send.mockRejectedValue(new Error("transport dropped"));
+    if (mode === "reject") {
+      f.signed.send.mockImplementation(async () => { f.chain.storeReceipt(); throw new Error("transport dropped"); });
+    }
     const { value } = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }),
-      mode === "reject" ? undefined : () => f.emit({ status: { [mode]: true } }));
+      mode === "reject" ? undefined : () => { f.chain.storeReceipt(); f.emit({ status: { [mode]: true, type: mode.slice(2) } }); });
     expect(value).toMatchObject({ confirmed: true, reconciled: true });
     expect(f.api.listenerCount("disconnected")).toBe(0);
     expect(vi.getTimerCount()).toBe(0);

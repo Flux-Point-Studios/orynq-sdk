@@ -139,6 +139,25 @@ export interface ReceiptSubmitResult {
   status?: "submitted" | "failed";
 }
 
+/** How finalized storage settled an `inclusion-unknown` submission. */
+export type InclusionResolution =
+  | {
+    /** A finalized block holds the matching record. */
+    status: "landed";
+    id: string;
+    blockHash: string;
+    blockNumber: number;
+  }
+  | {
+    /** The extrinsic can never land; resubmit with the same id. */
+    status: "not-landed";
+    /** `expired`: finalized past its mortality end; `nonce-consumed`: its nonce was used by another extrinsic. */
+    reason: "expired" | "nonce-consumed";
+    id: string;
+    blockHash: string;
+    blockNumber: number;
+  };
+
 /** On-chain receipt record. */
 export interface ReceiptRecord {
   receiptId: string;
