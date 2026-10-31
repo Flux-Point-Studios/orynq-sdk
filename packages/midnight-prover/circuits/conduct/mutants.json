@@ -1,0 +1,80 @@
+[
+  {
+    "id": "unconstrained_verdict",
+    "file": "predicate.compact",
+    "find": "  assert(guard_verdict(enforced_at, not_before, not_after, cap_asset, cap_amount, egress_mode, action_kind, action_timestamp,\n    action_asset, action_amount, counterparty_ok, prior_spent, egress_ok) == claimed, \"verdict mismatch\");\n",
+    "replace": ""
+  },
+  {
+    "id": "swap_counterparty_cap",
+    "file": "verdict_core.compact",
+    "find": "      if (!counterparty_ok) { return 5; }\n      if (prior_spent + action_amount > cap_amount) { return 4; }\n",
+    "replace": "      if (prior_spent + action_amount > cap_amount) { return 4; }\n      if (!counterparty_ok) { return 5; }\n"
+  },
+  {
+    "id": "not_after_inclusive",
+    "file": "verdict_core.compact",
+    "find": "if (action_timestamp >= not_after) { return 2; }",
+    "replace": "if (action_timestamp > not_after) { return 2; }"
+  },
+  {
+    "id": "not_before_exclusive",
+    "file": "verdict_core.compact",
+    "find": "if (action_timestamp < not_before) { return 1; }",
+    "replace": "if (action_timestamp <= not_before) { return 1; }"
+  },
+  {
+    "id": "cap_inclusive",
+    "file": "verdict_core.compact",
+    "find": "if (prior_spent + action_amount > cap_amount)",
+    "replace": "if (prior_spent + action_amount >= cap_amount)"
+  },
+  {
+    "id": "clock_rule_removed",
+    "file": "verdict_core.compact",
+    "find": "return enforced_at >= not_after ? 2 : verdict;",
+    "replace": "return verdict;"
+  },
+  {
+    "id": "mode_domain_assert_removed",
+    "file": "verdict_core.compact",
+    "find": "    assert(egress_mode <= 1, \"egress mode out of domain\");\n",
+    "replace": ""
+  },
+  {
+    "id": "egress_mode_inverted",
+    "file": "verdict_core.compact",
+    "find": "if (egress_mode == 0) { return 6; }",
+    "replace": "if (egress_mode == 1) { return 6; }"
+  },
+  {
+    "id": "counterparty_ignored",
+    "file": "verdict_core.compact",
+    "find": "      if (!counterparty_ok) { return 5; }\n",
+    "replace": ""
+  },
+  {
+    "id": "window_after_asset",
+    "file": "verdict_core.compact",
+    "find": "    if (action_timestamp < not_before) { return 1; }\n",
+    "replace": "    if (action_kind == 0 && !asset_ok) { return 3; }\n    if (action_timestamp < not_before) { return 1; }\n"
+  },
+  {
+    "id": "kind_domain_assert_removed",
+    "file": "verdict_core.compact",
+    "find": "    assert(action_kind <= 1, \"action kind out of domain\");\n",
+    "replace": ""
+  },
+  {
+    "id": "decide_uses_clock_time",
+    "file": "verdict_core.compact",
+    "find": "const verdict = evaluate(not_before, not_after, cap_amount, egress_mode, action_kind, action_timestamp, action_amount,",
+    "replace": "const verdict = evaluate(not_before, not_after, cap_amount, egress_mode, action_kind, enforced_at, action_amount,"
+  },
+  {
+    "id": "ledger_verdict_constant",
+    "file": "predicate.compact",
+    "find": "verdictOut = disclose(claimed);",
+    "replace": "verdictOut = disclose(0 as Uint<8>);"
+  }
+]

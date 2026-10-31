@@ -1,0 +1,57 @@
+pragma language_version 0.23;
+
+import CompactStandardLibrary;
+
+module VerdictCore {
+  import CompactStandardLibrary;
+
+  export circuit evaluate(
+    not_before: Uint<64>,
+    not_after: Uint<64>,
+    cap_asset: Field,
+    cap_amount: Uint<64>,
+    egress_mode: Uint<8>,
+    action_kind: Uint<8>,
+    action_timestamp: Uint<64>,
+    action_asset: Field,
+    action_amount: Uint<64>,
+    counterparty_ok: Boolean,
+    prior_spent: Uint<64>,
+    egress_ok: Boolean,
+  ): Uint<8> {
+    if (action_timestamp < not_before) {
+      return 1;
+    }
+    if (action_timestamp >= not_after) {
+      return 2;
+    }
+    if (action_kind == 0) {
+      if (!(action_asset == cap_asset)) {
+        return 3;
+      }
+      if (!counterparty_ok) {
+        return 5;
+      }
+      if (prior_spent + action_amount > cap_amount) {
+        return 4;
+      }
+      return 0;
+    }
+    if (egress_mode == 0) {
+      return 6;
+    }
+    if (!egress_ok) {
+      return 7;
+    }
+    return 0;
+  }
+}
+
+import VerdictCore prefix VerdictCore_;
+
+export pure circuit evaluate(not_before: Uint<64>, not_after: Uint<64>, cap_asset: Field, cap_amount: Uint<64>, egress_mode: Uint<8>,
+    action_kind: Uint<8>, action_timestamp: Uint<64>, action_asset: Field, action_amount: Uint<64>,
+    counterparty_ok: Boolean, prior_spent: Uint<64>, egress_ok: Boolean): Uint<8> {
+  return VerdictCore_evaluate(not_before, not_after, cap_asset, cap_amount, egress_mode, action_kind, action_timestamp,
+    action_asset, action_amount, counterparty_ok, prior_spent, egress_ok);
+}

@@ -1,0 +1,30 @@
+module ConductVerdict {
+  import CompactStandardLibrary;
+
+  export circuit evaluate(not_before: Uint<64>, not_after: Uint<64>, cap_amount: Uint<64>, egress_mode: Uint<8>,
+      action_kind: Uint<8>, action_timestamp: Uint<64>, action_amount: Uint<64>,
+      asset_ok: Boolean, counterparty_ok: Boolean, prior_spent: Uint<64>, egress_ok: Boolean): Uint<8> {
+    assert(action_kind <= 1, "action kind out of domain");
+    assert(egress_mode <= 1, "egress mode out of domain");
+    if (action_timestamp < not_before) { return 1; }
+    if (action_timestamp >= not_after) { return 2; }
+    if (action_kind == 0) {
+      if (!asset_ok) { return 3; }
+      if (!counterparty_ok) { return 5; }
+      if (prior_spent + action_amount > cap_amount) { return 4; }
+      return 0;
+    }
+    if (egress_mode == 0) { return 6; }
+    if (!egress_ok) { return 7; }
+    return 0;
+  }
+
+  export circuit decide(enforced_at: Uint<64>, not_before: Uint<64>, not_after: Uint<64>, cap_amount: Uint<64>, egress_mode: Uint<8>,
+      action_kind: Uint<8>, action_timestamp: Uint<64>, action_amount: Uint<64>,
+      asset_ok: Boolean, counterparty_ok: Boolean, prior_spent: Uint<64>, egress_ok: Boolean): Uint<8> {
+    assert(action_timestamp <= enforced_at, "action after guard clock");
+    const verdict = evaluate(not_before, not_after, cap_amount, egress_mode, action_kind, action_timestamp, action_amount,
+      asset_ok, counterparty_ok, prior_spent, egress_ok);
+    return enforced_at >= not_after ? 2 : verdict;
+  }
+}

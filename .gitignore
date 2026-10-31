@@ -70,4 +70,5 @@ out-mainnet-trace/
 .claude/settings.local.json
 
 packages/midnight-prover/managed/
+packages/midnight-prover/conduct-managed/
 packages/midnight-prover/native/target/

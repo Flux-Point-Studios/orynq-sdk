@@ -37,7 +37,7 @@
     "test": "vitest run",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
-    "build:circuits": "node scripts/compile-circuits.mjs && node scripts/compile-onchain.mjs --check",
+    "build:circuits": "node scripts/compile-circuits.mjs && node scripts/compile-onchain.mjs --check && node scripts/compile-conduct.mjs --check",
     "build:onchain": "node scripts/compile-onchain.mjs",
     "check:onchain": "node scripts/compile-onchain.mjs --check",
     "build:native": "cargo build --release --locked --manifest-path native/Cargo.toml",
@@ -57,7 +57,9 @@
     "@midnight-ntwrk/zkir-v2": "2.1.1"
   },
   "devDependencies": {
+    "@fluxpointstudios/orynq-sdk-conduct": "workspace:*",
     "@types/node": "^20.0.0",
+    "fast-check": "^4.9.0",
     "typescript": "^5.3.3",
     "vitest": "^4.1.11"
   },

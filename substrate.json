@@ -58,6 +58,20 @@
       "status": "live"
     },
     {
+      "id": "conduct-circuits",
+      "name": "Conduct circuits (prototype)",
+      "desc": "Compact 0.31.1 conduct verdict: pure evaluate over the slice-1 12-slot predicate ABI, pure guard_verdict with the guard clock, and a provable check_verdict that discloses the verdict on the ledger. It agrees with the runtime guard on the golden predicate and guard fixtures, clock, matrix, uint64 boundary, Unicode, invariance and out-of-domain sets in generated JS, and through check_verdict's ZKIR on all but generated histories; the 12-argument evaluate has no ZKIR. compile-conduct --check pins ZKIR hash, k, rows and op histogram, export invariance and source hashes, and every one-edit mutant is killed. Agreement holds only on inputs the runtime accepts: the circuit sees one step, so same-window clocks, clock monotonicity and the payment floor stay runtime or step obligations. Not deployed; ABI not frozen; every input is unauthenticated; no key or proof exists.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/midnight-prover/circuits/conduct",
+        "packages/midnight-prover/scripts/compile-conduct.mjs",
+        "packages/midnight-prover/tests/conduct",
+        "packages/midnight-prover/bench/conduct"
+      ],
+      "consumes": ["conduct-predicate-compiler", "conduct-guard", "compactc-toolchain", "midnight-prover"],
+      "status": "experimental"
+    },
+    {
       "id": "anchors-materios",
       "name": "Materios anchor client",
       "desc": "Blob upload through the gateway (body-bound, single-use upload signatures), receipt and anchor submission with bounded WebSocket waits, an exact retry contract (node refusals not-landed, per-block storage reconciliation, finalized-storage resolveInclusion, duplicate-free retries), connection replacement, certification polling, Merkle proofs and end-to-end receipt verification against Materios.",
