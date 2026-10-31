@@ -2,17 +2,17 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { CompactTypeField } from "@midnight-ntwrk/compact-runtime";
 import { describe, expect, it } from "vitest";
-import { allCases, guardVectorCases, predicateVectorCases, type VerdictCase } from "./cases.js";
+import { allCases, checkVerdictArgs as claim, CLAIMS, guardVectorCases, predicateVectorCases, VERDICT_CODES, type VerdictCase } from "./cases.js";
 import { generatedSource, prepareCheck, runCircuit, stripAsserts, zkCheck } from "./harness.js";
 
-const CODES = [0, 1, 2, 3, 4, 5, 6, 7];
-const GROUPS = ["predicate-vectors", "guard-vectors", "clock", "matrix", "boundary", "unicode", "invariance", "domain"];
+const GROUPS = ["predicate-vectors", "guard-vectors", "clock", "matrix", "boundary", "unicode", "invariance", "prior", "domain"];
 const cases = allCases();
 const honest = cases.filter((c): c is VerdictCase & { guard: number } => typeof c.guard === "number");
 const refused = cases.filter(c => typeof c.guard !== "number");
 const labelled = <T extends VerdictCase>(list: readonly T[]) => list.map(c => [`${c.group}: ${c.name}`, c] as const);
-const claim = (c: VerdictCase, claimed: number) => [c.enforcedAt, ...c.args, BigInt(claimed)];
-const forgeries = (c: VerdictCase & { guard: number }) => CODES.filter(code => code !== c.guard);
+const forgeries = (c: VerdictCase & { guard: number }, claims: readonly number[] = CLAIMS) => claims.filter(code => code !== c.guard);
+const UINT8 = Array.from({ length: 256 }, (_, value) => value);
+const onePerCode = VERDICT_CODES.map(code => honest.find(c => c.guard === code)!);
 
 describe("T-A12 the compiled check_verdict constraints accept every honest verdict and disclose it", () => {
   it("runs every case set at the ZKIR layer", () => {
@@ -25,7 +25,7 @@ describe("T-A12 the compiled check_verdict constraints accept every honest verdi
   });
 
   it.each(labelled(refused))("%s: no claimed verdict checks", async (_name, c) => {
-    for (const claimed of CODES) {
+    for (const claimed of CLAIMS) {
       await expect(zkCheck("predicate", "check_verdict", {}, claim(c, claimed))).rejects.toThrow(/Failed direct assertion/);
     }
   });
@@ -68,6 +68,12 @@ describe("T-A13 a forged verdict fails the generated JS", () => {
       await refusesForgery(runCircuit("predicate", "check_verdict", {}, claim(c, claimed)), /verdict mismatch/);
     }
   });
+
+  it.each(labelled(onePerCode))("%s: every other Uint<8> claim", async (_name, c) => {
+    for (const claimed of forgeries(c, UINT8)) {
+      await refusesForgery(runCircuit("predicate", "check_verdict", {}, claim(c, claimed)), /verdict mismatch/);
+    }
+  });
 });
 
 describe("T-A13 a forged verdict fails the compiled constraints", () => {
@@ -87,10 +93,16 @@ describe("T-A13 a forged verdict fails the compiled constraints", () => {
     }
   });
 
+  it.each(labelled(onePerCode))("%s: every other Uint<8> claim", async (_name, c) => {
+    for (const claimed of forgeries(c, UINT8)) {
+      await refusesForgery(zkCheck("predicate", "check_verdict", {}, claim(c, claimed)), /Failed direct assertion/);
+    }
+  });
+
   it.each(labelled([...predicateVectorCases(), ...guardVectorCases()] as (VerdictCase & { guard: number })[]))(
     "%s: the honest input under a forged claim's ledger write", async (_name, c) => {
       const prepared = await prepareCheck("predicate", "check_verdict", {}, claim(c, c.guard));
-      const forged = await prepareCheck("predicate", "check_verdict", {}, claim(c, (c.guard + 1) % CODES.length));
+      const forged = await prepareCheck("predicate", "check_verdict", {}, claim(c, forgeries(c)[0]!));
       prepared.data.publicTranscript = forged.data.publicTranscript;
       await refusesForgery(prepared.check(), /Public transcript input mismatch/);
     });

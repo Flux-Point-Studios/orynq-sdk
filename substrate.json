@@ -60,15 +60,14 @@
     {
       "id": "conduct-circuits",
       "name": "Conduct circuits (prototype)",
-      "desc": "Compact 0.31.1 conduct verdict: pure evaluate over the slice-1 12-slot predicate ABI, pure guard_verdict with the guard clock, and a provable check_verdict that discloses the verdict on the ledger. It agrees with the runtime guard on the golden predicate and guard fixtures, clock, matrix, uint64 boundary, Unicode, invariance and out-of-domain sets in generated JS, and through check_verdict's ZKIR on all but generated histories; the 12-argument evaluate has no ZKIR. compile-conduct --check pins ZKIR hash, k, rows and op histogram, export invariance and source hashes, and every one-edit mutant is killed. Agreement holds only on inputs the runtime accepts: the circuit sees one step, so same-window clocks, clock monotonicity and the payment floor stay runtime or step obligations. Not deployed; ABI not frozen; every input is unauthenticated; no key or proof exists.",
+      "desc": "Compact 0.31.1 conduct verdict: pure evaluate over the slice-1 12-slot predicate ABI, pure guard_verdict with the guard clock, and a provable check_verdict that discloses the verdict on the ledger. In generated JS it agrees with the runtime guard on the golden predicate and guard fixtures, clock, matrix, uint64 boundary and Unicode sets and generated histories, refusing every action later than the guard clock as the runtime does; invariance, over-cap prior and out-of-domain inputs, which the runtime cannot take, are judged by the unmodified action's decision, a fresh payment of the same total, and refusal. check_verdict's ZKIR accepts exactly the expected verdict on every case but the generated histories and refuses every other claim tried, out-of-table values included; the 12-argument evaluate has no ZKIR. compile-conduct --check pins ZKIR hash, k, rows and op histogram, the ZKIR hash of a recompile with the pure circuits unexported, and source hashes, and reads only files the package ships; every mutant in mutants.json is killed. Three runtime refusals with no predicate input (a clock in another spend window, a clock or action time that moves backward, a zero payment) await a ruling. Not deployed; ABI not frozen; every input is unauthenticated; no key or proof exists.",
       "kind": "toolkit",
       "paths": [
         "packages/midnight-prover/circuits/conduct",
         "packages/midnight-prover/scripts/compile-conduct.mjs",
-        "packages/midnight-prover/tests/conduct",
-        "packages/midnight-prover/bench/conduct"
+        "packages/midnight-prover/tests/conduct"
       ],
-      "consumes": ["conduct-predicate-compiler", "conduct-guard", "compactc-toolchain", "midnight-prover"],
+      "consumes": ["conduct-mandate", "conduct-predicate-compiler", "conduct-guard", "compactc-toolchain", "midnight-prover"],
       "status": "experimental"
     },
     {

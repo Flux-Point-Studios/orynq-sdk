@@ -5,11 +5,14 @@ import { loadUnit } from "./harness.js";
 
 const { pureCircuits } = await loadUnit("predicate");
 
-describe("T-A06 every feasible window, asset, counterparty, cap, mode and clock combination", () => {
+describe("T-A06 every window, asset, counterparty, cap, mode and clock combination", () => {
   const cases = matrixCases();
-  it("enumerates the 112 feasible combinations of 144", () => {
-    expect(cases).toHaveLength(112);
-    expect(new Set(cases.map(c => c.name)).size).toBe(112);
+  it("enumerates all 144 combinations, and the runtime refuses exactly the 32 late actions behind a clock inside validity", () => {
+    expect(cases).toHaveLength(144);
+    expect(new Set(cases.map(c => c.name)).size).toBe(144);
+    const refused = cases.filter(c => typeof c.guard !== "number");
+    expect(refused).toHaveLength(32);
+    expect(refused.every(c => c.args[6] > c.enforcedAt && c.enforcedAt < c.args[1])).toBe(true);
   });
   it.each(cases.map(c => [c.name, c] as const))("%s", (_name, c) => {
     expect(circuitOutcomes(pureCircuits, c), c.name).toEqual({ evaluate: c.evaluate, guard: c.guard });

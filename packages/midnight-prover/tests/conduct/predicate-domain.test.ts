@@ -21,7 +21,7 @@ describe("T-A10 kind and mode outside {0, 1} are refused, never interpreted", ()
     }
   });
 
-  it("declared precondition: a zero payment is refused before the circuit, and the circuit has no amount floor", () => {
+  it("pending ruling: a zero payment is refused before the circuit, and the circuit has no amount floor", () => {
     const p = policy({});
     const zero = payment(0n, 1500n);
     expect(() => compileMandatePredicate(p.mandate, allowlists(p)).buildArgs(zero, 0n)).toThrow("payment amount must be >= 1");

@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const circuits = join(root, "circuits/conduct");
-const reference = join(root, "bench/conduct/reference");
+const reference = join(circuits, "reference");
 const managed = join(root, "conduct-managed");
 const pinsFile = join(circuits, "pins.json");
 const UNITS = ["predicate", "mutants"];
@@ -20,7 +20,7 @@ const args = process.argv.slice(2);
 const check = args.includes("--check");
 if (check === args.includes("--write")) throw new Error("usage: compile-conduct.mjs --write|--check [--units predicate,mutants]");
 const unitsAt = args.indexOf("--units");
-const units = unitsAt < 0 ? UNITS : (args[unitsAt + 1] ?? "").split(",");
+const units = unitsAt < 0 ? UNITS : [...new Set((args[unitsAt + 1] ?? "").split(","))];
 for (const unit of units) if (!UNITS.includes(unit)) throw new Error(`unknown conduct unit: ${unit}`);
 const partial = units.length < UNITS.length;
 
@@ -31,10 +31,7 @@ for (const { id, file, find } of mutants) {
 }
 
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
-const sourcePaths = [];
-for (const [dir, pattern] of [["circuits/conduct", /^(?!pins\.json$).*\.(compact|json)$/], ["bench/conduct/reference", /\.compact$/]]) {
-  for (const name of await readdir(join(root, dir), { recursive: true })) if (pattern.test(name)) sourcePaths.push(`${dir}/${name}`);
-}
+const sourcePaths = (await readdir(circuits, { recursive: true })).filter(name => /^(?!pins\.json$).*\.(compact|json)$/.test(name)).map(name => `circuits/conduct/${name}`);
 const sources = {};
 for (const path of sourcePaths.sort()) sources[path] = sha256(await readFile(join(root, path)));
 
@@ -110,9 +107,11 @@ async function mockCompile(out) {
   return pins;
 }
 
-// The parity tests call the exported pure circuits; the proof statement must not depend on their being exported.
-async function assertPureExportInvariant(out) {
-  await withScratch("conduct-unexported-", async scratch => {
+// The parity tests call the exported pure circuits; the proof statement must not depend on their being exported. A
+// second compile with every pure circuit unexported must yield the same ZKIR, and its hashes are pinned beside the
+// exported ones.
+async function unexportedZkirHashes(out) {
+  return withScratch("conduct-unexported-", async scratch => {
     const unexported = join(scratch, "out");
     await compileEditedPredicate("predicate.compact", text => {
       const demoted = text.replace(/^export pure circuit /gm, "pure circuit ");
@@ -121,10 +120,13 @@ async function assertPureExportInvariant(out) {
     }, unexported);
     const names = await zkirFiles(out);
     if (!isDeepStrictEqual(await zkirFiles(unexported), names)) throw new Error("the provable circuits depend on which pure circuits are exported");
+    const hashes = {};
     for (const name of names) {
       const [exported, demoted] = await Promise.all([out, unexported].map(dir => readFile(join(dir, "zkir", name))));
       if (!exported.equals(demoted)) throw new Error(`${name} depends on which pure circuits are exported`);
+      hashes[name.slice(0, -".zkir".length)] = sha256(demoted);
     }
+    return hashes;
   });
 }
 
@@ -133,8 +135,11 @@ const build = {
     const out = join(managed, "predicate");
     await compile(circuits, "predicate.compact", out);
     const pins = await mockCompile(out);
-    await assertPureExportInvariant(out);
-    return { pureExportInvariant: true, circuits: pins };
+    const unexported = await unexportedZkirHashes(out);
+    const circuitPins = Object.fromEntries(Object.entries(pins).map(([name, { zkirSha256, ...size }]) =>
+      [name, { zkirSha256, demotedZkirSha256: unexported[name], ...size }]));
+    const pureExportInvariant = Object.values(circuitPins).every(pin => pin.demotedZkirSha256 === pin.zkirSha256);
+    return { pureExportInvariant, circuits: circuitPins };
   },
   async mutants() {
     await rm(join(managed, "mutants"), { recursive: true, force: true });

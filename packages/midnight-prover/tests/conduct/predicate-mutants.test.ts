@@ -2,18 +2,19 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { describe, expect, it } from "vitest";
-import { allCases, circuitOutcomes, type VerdictCase } from "./cases.js";
+import { allCases, checkVerdictArgs, circuitOutcomes, CLAIMS, type VerdictCase } from "./cases.js";
 import { loadUnit, outcome, zkCheck, type UnitModule } from "./harness.js";
 
 const VERDICT_CORE_MUTANTS = [
   "swap_counterparty_cap", "not_after_inclusive", "not_before_exclusive", "cap_inclusive", "clock_rule_removed",
   "mode_domain_assert_removed", "egress_mode_inverted", "counterparty_ignored", "window_after_asset", "kind_domain_assert_removed",
-  "decide_uses_clock_time",
+  "decide_uses_clock_time", "clock_assert_waived_when_expired", "clock_assert_waived_for_egress", "kind_domain_assert_waived_when_late",
+  "mode_domain_assert_waived_when_early", "cap_skipped_for_over_cap_prior", "deny_all_needs_off_list", "kind_branch_on_asset_ok",
+  "kind_branch_on_amount",
 ];
 // The clock rule returns 2 whenever the action is at or past notAfter, so this mutant changes only the 12-argument
 // evaluate, which is a pure circuit with no ZKIR.
 const EVALUATE_ONLY_MUTANTS = ["not_after_inclusive"];
-const CODES = [0, 1, 2, 3, 4, 5, 6, 7];
 
 const { pureCircuits } = await loadUnit("predicate");
 const mutants: { id: string; file: string }[] = JSON.parse(readFileSync(join(resolve(import.meta.dirname, "../.."), "circuits/conduct/mutants.json"), "utf8"));
@@ -60,8 +61,8 @@ describe("T-A14 every VerdictCore mutant is killed by a T-A03..T-A10 case", () =
 // A claimed verdict is accepted when `check` passes; the statement is the verdict the transcript writes to the ledger.
 async function checkedDifferently(unit: string, c: VerdictCase): Promise<boolean> {
   const honest = typeof c.guard === "number" ? c.guard : undefined;
-  for (const claimed of honest === undefined ? CODES : [honest, ...CODES.filter(code => code !== honest)]) {
-    const disclosed = await zkCheck(unit, "check_verdict", {}, [c.enforcedAt, ...c.args, BigInt(claimed)]).catch((error: Error) => {
+  for (const claimed of honest === undefined ? CLAIMS : [honest, ...CLAIMS.filter(code => code !== honest)]) {
+    const disclosed = await zkCheck(unit, "check_verdict", {}, checkVerdictArgs(c, claimed)).catch((error: Error) => {
       if (!/Failed direct assertion/.test(error.message)) throw error;
       return undefined;
     });

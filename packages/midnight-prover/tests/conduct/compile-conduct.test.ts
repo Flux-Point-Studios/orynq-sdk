@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
 const pkg = resolve(import.meta.dirname, "../..");
@@ -11,9 +12,13 @@ afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 const compile = (root: string, args: string[], env: NodeJS.ProcessEnv = {}) =>
   spawnSync(process.execPath, [join(root, "scripts/compile-conduct.mjs"), ...args], { encoding: "utf8", env: { ...process.env, ...env } });
 
+const shipped: string[] = JSON.parse(readFileSync(join(pkg, "package.json"), "utf8")).files;
+
+// The copy holds only paths the npm tarball ships, so the script reads nothing a published package lacks.
 function packageCopy(): string {
   const root = mkdtempSync(join(scratch, "pkg-"));
-  for (const path of ["scripts/compile-conduct.mjs", "circuits/conduct", "bench/conduct/reference"]) {
+  for (const path of ["scripts/compile-conduct.mjs", "circuits/conduct"]) {
+    expect(shipped.some(entry => path === entry || path.startsWith(`${entry}/`)), `${path} ships in the npm tarball`).toBe(true);
     cpSync(join(pkg, path), join(root, path), { recursive: true });
   }
   return root;
@@ -27,7 +32,7 @@ function editFile(root: string, path: string, edit: (text: string) => string): v
   writeFileSync(file, edited);
 }
 
-const editPins = (root: string, edit: (pins: { units: Record<string, { circuits: Record<string, { rows: number }> }> }) => void) =>
+const editPins = (root: string, edit: (pins: { sources: Record<string, string>; units: Record<string, { circuits: Record<string, { rows: number }> }> }) => void) =>
   editFile(root, "circuits/conduct/pins.json", text => {
     const pins = JSON.parse(text);
     edit(pins);
@@ -93,11 +98,65 @@ describe("compile-conduct --check verifies every pin it keeps", () => {
     expect(result.stderr).toContain("--check must rebuild every pinned unit: predicate is not selected");
   });
 
+  it("treats a repeated unit as one, so a partial --write keeps the pins of the units it skips", () => {
+    const root = packageCopy();
+    const noMutants = "[]\n";
+    writeFileSync(join(root, "circuits/conduct/mutants.json"), noMutants);
+    editPins(root, pins => { pins.sources["circuits/conduct/mutants.json"] = createHash("sha256").update(noMutants).digest("hex"); });
+    const pinsFile = join(root, "circuits/conduct/pins.json");
+    const before = readFileSync(pinsFile, "utf8");
+    const result = compile(root, ["--write", "--units", "mutants,mutants"]);
+    expect(result.stderr).toBe("");
+    expect(readFileSync(pinsFile, "utf8")).toBe(before);
+  });
+
   it("refuses a partial --write once the sources have changed, so skipped pins cannot go stale", () => {
     const root = packageCopy();
     editFile(root, "circuits/conduct/predicate.compact", text => text.replace("return CV_decide(enforced_at, not_before, not_after, cap_amount, egress_mode, action_kind, action_timestamp, action_amount,\n    cap_asset == action_asset", "return CV_decide(enforced_at, not_before, not_after, cap_amount, egress_mode, action_kind, action_timestamp, action_amount,\n    cap_asset != action_asset"));
     const result = compile(root, ["--write", "--units", "mutants"]);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("sources changed since pins.json was written; run --write without --units");
+  });
+});
+
+const compactc = process.env.COMPACTC ?? "compactc";
+const zkir = process.env.ZKIR ?? (process.env.COMPACTC ? join(dirname(process.env.COMPACTC), "zkir") : "zkir");
+// Runs the real compiler, then changes the output of any compile whose source exports no pure circuit: a stand-in for a
+// compiler whose provable circuits depend on which pure circuits are exported.
+const perturbingCompiler = join(scratch, "perturbing-compactc");
+writeFileSync(perturbingCompiler, [
+  "#!/bin/sh",
+  '"$REAL_COMPACTC" "$@" || exit $?',
+  '[ "$1" = --skip-zk ] && ! grep -q "^export pure circuit " "$2" || exit 0',
+  'case "$PERTURB" in extra) cp "$3/zkir/check_verdict.zkir" "$3/zkir/extra.zkir" ;; bytes) printf " " >> "$3/zkir/check_verdict.zkir" ;; esac',
+  "",
+].join("\n"));
+chmodSync(perturbingCompiler, 0o755);
+
+describe("compile-conduct --check measures export invariance with a second, unexported compile", () => {
+  it("refuses a predicate.compact that exports no pure circuit", () => {
+    const root = packageCopy();
+    editFile(root, "circuits/conduct/predicate.compact", text => text.replaceAll("export pure circuit ", "pure circuit "));
+    const result = compile(root, ["--check", "--units", "predicate"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("predicate.compact exports no pure circuit");
+  });
+
+  const perturbed = (perturb: string) =>
+    compile(packageCopy(), ["--check", "--units", "predicate"], { COMPACTC: perturbingCompiler, REAL_COMPACTC: compactc, ZKIR: zkir, PERTURB: perturb });
+
+  it("control: the wrapper with no perturbation reproduces the pins", () => {
+    const result = perturbed("none");
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Conduct circuits reproduce their pins");
+  });
+
+  it.each([
+    ["bytes", "check_verdict.zkir depends on which pure circuits are exported"],
+    ["extra", "the provable circuits depend on which pure circuits are exported"],
+  ])("refuses an unexported compile whose ZKIR differs (%s)", (perturb, message) => {
+    const result = perturbed(perturb);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(message);
   });
 });

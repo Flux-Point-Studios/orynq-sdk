@@ -4,7 +4,7 @@ import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { unitDir } from "./harness.js";
 
-interface CircuitPin { zkirSha256: string; k: number; rows: number; ops: Record<string, number> }
+interface CircuitPin { zkirSha256: string; demotedZkirSha256?: string; k: number; rows: number; ops: Record<string, number> }
 interface Pins {
   toolchain: Record<string, string>;
   sources: Record<string, string>;
@@ -14,8 +14,6 @@ interface Pins {
 const pkg = resolve(import.meta.dirname, "../..");
 const pins = (): Pins => JSON.parse(readFileSync(join(pkg, "circuits/conduct/pins.json"), "utf8"));
 const sha256 = (path: string) => createHash("sha256").update(readFileSync(join(pkg, path))).digest("hex");
-const filesUnder = (dir: string, pattern: RegExp) =>
-  readdirSync(join(pkg, dir), { recursive: true, encoding: "utf8" }).filter(name => pattern.test(name)).map(name => `${dir}/${name}`);
 
 describe("conduct circuit pins", () => {
   it("pin the compiler toolchain", () => {
@@ -23,10 +21,8 @@ describe("conduct circuit pins", () => {
   });
 
   it("pin the SHA-256 of every conduct circuit source", () => {
-    const sources = [
-      ...filesUnder("circuits/conduct", /^(?!pins\.json$).*\.(compact|json)$/),
-      ...filesUnder("bench/conduct/reference", /\.compact$/),
-    ].sort();
+    const sources = readdirSync(join(pkg, "circuits/conduct"), { recursive: true, encoding: "utf8" })
+      .filter(name => /^(?!pins\.json$).*\.(compact|json)$/.test(name)).map(name => `circuits/conduct/${name}`).sort();
     expect(sources.length).toBeGreaterThan(0);
     expect(Object.keys(pins().sources)).toEqual(sources);
     for (const path of sources) expect(pins().sources[path], path).toBe(sha256(path));
@@ -44,7 +40,12 @@ describe("conduct circuit pins", () => {
   });
 
   it("T-A15: pin that exporting the pure circuits leaves the provable circuit's ZKIR unchanged", () => {
-    expect(pins().units.predicate!.pureExportInvariant).toBe(true);
+    const { pureExportInvariant, circuits } = pins().units.predicate!;
+    expect(pureExportInvariant).toBe(true);
+    for (const [name, pin] of Object.entries(circuits)) {
+      expect(pin.demotedZkirSha256, `${name}: ZKIR hash of the compile with every pure circuit unexported`).toMatch(/^[0-9a-f]{64}$/);
+      expect(pin.demotedZkirSha256, name).toBe(pin.zkirSha256);
+    }
   });
 
   it("pin k, rows, an op histogram and the ZKIR hash of every circuit", () => {
