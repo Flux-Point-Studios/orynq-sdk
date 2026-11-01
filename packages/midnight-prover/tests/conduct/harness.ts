@@ -19,9 +19,14 @@ export interface ProofData {
   privateTranscriptOutputs: unknown[];
 }
 
+interface CircuitResult {
+  readonly proofData: ProofData;
+  readonly context: { currentQueryContext: { state: runtime.StateValue } };
+}
+
 interface CompiledContract {
   initialState(context: unknown): { currentContractState: { serialize(): Uint8Array } };
-  readonly circuits: Record<string, (context: unknown, ...args: unknown[]) => { proofData: ProofData }>;
+  readonly circuits: Record<string, (context: unknown, ...args: unknown[]) => CircuitResult>;
 }
 
 export interface UnitModule {
@@ -119,7 +124,7 @@ function callCircuit(module: UnitModule, name: string, witnesses: object, args: 
     initial.deployments.set(name, deployment);
   }
   const context = runtime.createCircuitContext(deployment.address, initial.coinKey, initial.state as never, undefined);
-  return { ...deployment, data: circuitOf(contract, name)(context, ...args).proofData };
+  return { ...deployment, result: circuitOf(contract, name)(context, ...args) };
 }
 
 function circuitOf(contract: CompiledContract, name: string) {
@@ -129,17 +134,13 @@ function circuitOf(contract: CompiledContract, name: string) {
 }
 
 export async function runCircuit(unit: string, name: string, witnesses: object, args: readonly unknown[]): Promise<ProofData> {
-  return callCircuit(await loadUnit(unit), name, witnesses, args).data;
+  return callCircuit(await loadUnit(unit), name, witnesses, args).result.proofData;
 }
 
 /** Runs a circuit in the generated JS and returns the ledger its call wrote: the disclosed statement. */
 export async function runLedger(unit: string, name: string, witnesses: object, args: readonly unknown[]): Promise<Record<string, unknown>> {
   const module = await loadUnit(unit);
-  const contract = new module.Contract(witnesses);
-  const initial = initialOf(module, contract);
-  const call = circuitOf(contract, name)(runtime.createCircuitContext(runtime.dummyContractAddress(), initial.coinKey, initial.state as never, undefined), ...args) as unknown as
-    { context: { currentQueryContext: { state: runtime.StateValue } } };
-  return module.ledger(call.context.currentQueryContext.state);
+  return module.ledger(callCircuit(module, name, witnesses, args).result.context.currentQueryContext.state);
 }
 
 // `check` reads only the IR; the provider insists on key fields, and empty ones show no key or parameter is consulted.
@@ -159,7 +160,7 @@ export interface PreparedCheck {
 
 export async function prepareCheck(unit: string, name: string, witnesses: object, args: readonly unknown[]): Promise<PreparedCheck> {
   const module = await loadStripped(unit);
-  const { state, address, data } = callCircuit(module, name, witnesses, args);
+  const { state, address, result: { proofData: data } } = callCircuit(module, name, witnesses, args);
   return {
     data,
     async check() {

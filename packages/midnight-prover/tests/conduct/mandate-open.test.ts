@@ -1,8 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import { decodeMandate, encodeMandate, hexToBytes, mandateCommitment, mandateCommitmentHex } from "@fluxpointstudios/orynq-sdk-conduct";
 import { describe, expect, it } from "vitest";
-import { classifyMandate, CLASSES, mandateOpening, mandateSegments } from "../../scripts/conduct/template.mjs";
-import { HONEST_MANDATES, MANDATE_VECTORS, mandateOpeningOf, mandateOutcome as outcome, maxMandate, runMandateOpening, sibling } from "./mandates.js";
+import { CLASSES, mandateOpening, mandateSegments } from "../../scripts/conduct/template.mjs";
+import { classifiedMandate, HONEST_MANDATES, MANDATE_VECTORS, mandateOpeningOf, mandateOutcome as outcome, maxMandate, runMandateOpening, sibling } from "./mandates.js";
 import { withByte } from "./openings.js";
 import { mandateAtoms } from "./statement-checker.js";
 
@@ -122,7 +122,7 @@ const SCHEMA_ONLY = [
 describe("T-B14 no compiled class opens an invalid mandate vector", () => {
   it.each(MANDATE_VECTORS.invalid)("$name: the classifier reports $code, and no class it fits opens it", async v => {
     const cbor = hexToBytes(v.cborHex);
-    expect(codeOf(() => classifyMandate(cbor, decodeMandate))).toBe(v.code);
+    expect(codeOf(() => classifiedMandate(cbor))).toBe(v.code);
     const fits = presentations(cbor);
     expect(fits.length > 0).toBe(SCHEMA_ONLY.includes(v.name));
     for (const { circuit, witnesses } of fits) {

@@ -5,13 +5,11 @@ import { CLASSES, classify, render, TEMPLATE } from "../../scripts/conduct/templ
 import { maxClassEvent, PROFILES, traceScene, traceSteps, type RealEvent } from "./guard-events.js";
 import {
   fieldVariants, hexLinkForgeries, honestEvents, latin1, lexicalForgeries, malformedStrings, misjudged, openingOf, openingOutcome as outcome, rederived, rollAfterOf,
-  runOpening, sha256, spliced, STRING_SEGMENTS, withByte, withWitness,
+  runOpening, sha256, spliced, STRING_SEGMENTS, withByte, withWitness, witnessWidth,
 } from "./openings.js";
 import { chain, type RollStatement } from "./statement-checker.js";
 
 const BINDING = /^failed assert: (hex opening|rolling root mismatch)$/;
-// Hex digests, the uuid, the ISO time and the event hash hex have fixed widths outside the class tuple.
-const FIXED_WITNESS_BYTES = 64 + 64 + 36 + 24 + 64;
 
 const events = await honestEvents();
 const halves = (hex: string) => [BigInt(`0x${hex.slice(0, 32)}`), BigInt(`0x${hex.slice(32)}`)] as const;
@@ -65,8 +63,7 @@ describe("T-B07 every witness byte moved by one is refused, and each segment is 
   it.each([...events])("%s", async (id, e) => {
     const opening = openingOf(e);
     expect(await outcome(opening), "honest control").toBe("accepted");
-    const lengths: Record<string, number> = CLASSES.openings.events[id].lengths;
-    const expectedTried = 2 * (Object.values(lengths).reduce((sum, n) => sum + n, 0) + FIXED_WITNESS_BYTES);
+    const expectedTried = 2 * witnessWidth(id);
     let tried = 0;
     const accepted: string[] = [];
     const reasons = new Map<string, Set<string>>();

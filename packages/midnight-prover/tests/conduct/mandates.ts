@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { buildAllowlistRoot, decodeMandate, encodeMandate, hexToBytes, type MandateV1 } from "@fluxpointstudios/orynq-sdk-conduct";
-import { classifyMandate, CLASSES, mandateClass, mandateOpening } from "../../scripts/conduct/template.mjs";
+import { CLASSES, mandateClass, mandateOpening, mandateSegments, uintOfBigEndian } from "../../scripts/conduct/template.mjs";
 import { MAX_U64 } from "./cases.js";
 import { runLedger } from "./harness.js";
 import { BASE58 } from "./lexical.js";
-import { endSpliced, OPENINGS_UNIT, settle, spliced, withByte, witnessFunctions, type Forgery } from "./openings.js";
+import { endSpliced, MANDATE_UINT_FIELDS, OPENINGS_UNIT, settle, spliced, withByte, witnessFunctions, type Forgery } from "./openings.js";
 
 interface MandateVector { readonly name: string; readonly cborHex: string; readonly commitmentHex?: string; readonly code?: string }
 export const MANDATE_VECTORS: { valid: MandateVector[]; invalid: MandateVector[] } =
@@ -80,8 +80,14 @@ export interface MandateOpening {
   readonly atoms: Readonly<Record<string, Uint8Array | bigint>>;
 }
 
+/** The class dimensions and segments of a mandate the strict codec accepts; the codec's refusal passes through. */
+export function classifiedMandate(cbor: Uint8Array) {
+  decodeMandate(cbor);
+  return mandateSegments(cbor);
+}
+
 export function mandateOpeningOf(cbor: Uint8Array): MandateOpening {
-  const classified = classifyMandate(cbor, decodeMandate);
+  const classified = classifiedMandate(cbor);
   const circuit = mandateClass(classified);
   return { circuit, segments: classified.segments, ...mandateOpening(circuit, classified.segments) };
 }
@@ -104,7 +110,7 @@ export function crafted(opening: MandateOpening, changes: Readonly<Record<string
   return { ...opening, segments, ...mandateOpening(opening.circuit, segments) };
 }
 
-export const bigEndian = (value: bigint, width: number) => Uint8Array.from({ length: width }, (_, i) => Number((value >> BigInt(8 * (width - 1 - i))) & 0xffn));
+export const bigEndianBytes = (value: bigint, width: number) => Uint8Array.from({ length: width }, (_, i) => Number((value >> BigInt(8 * (width - 1 - i))) & 0xffn));
 // The largest value each argument width encodes that a shorter encoding also holds.
 const BELOW_MINIMAL: Readonly<Record<number, bigint>> = { 1: 23n, 2: 255n, 4: 65535n, 8: (1n << 32n) - 1n };
 const COMMITTEE_MALFORMED: readonly (readonly [string, readonly number[]])[] = [
@@ -130,9 +136,9 @@ export function fieldForgeries(opening: MandateOpening): Forgery<MandateOpening>
     ...COMMITTEE_MALFORMED.filter(([, bytes]) => bytes.length <= committee.length)
       .map(([label, bytes]) => forgery(`${label} in the committee id`, "committeeId", spliced(committee, bytes), "well-formed UTF-8")),
     forgery("a truncated lead ending the committee id", "committeeId", withByte(committee, committee.length - 1, 0xe2), "well-formed UTF-8"),
-    ...["capAmount", "windowSeconds", "notBefore", "notAfter", "threshold", "committeeSize"].map(name => (widths[name] === 0
+    ...MANDATE_UINT_FIELDS.map(name => (widths[name] === 0
       ? forgery(`a head byte of 24 for the ${name}`, name, Uint8Array.of(24), "cbor head")
-      : forgery(`a ${widths[name]}-byte ${name} with a shorter encoding`, name, bigEndian(BELOW_MINIMAL[widths[name]!]!, widths[name]!), "cbor uint not minimal"))),
+      : forgery(`a ${widths[name]}-byte ${name} with a shorter encoding`, name, bigEndianBytes(BELOW_MINIMAL[widths[name]!]!, widths[name]!), "cbor uint not minimal"))),
   ];
 }
 
@@ -164,7 +170,7 @@ export function schemaBreaches(opening: MandateOpening): { forgeries: Forgery<Ma
   for (let at = 0; at < 32; at++) breach(`deny-all with root byte ${at} non-zero`, { egressMode: Uint8Array.of(0), egressRoot: withByte(zero, at, 1) }, "deny-all egress root");
   if (widths.threshold === widths.committeeSize) {
     const size = segments.committeeSize!;
-    const above = bigEndian(size.reduce((acc, b) => acc * 256n + BigInt(b), 0n) + 1n, size.length);
+    const above = bigEndianBytes(uintOfBigEndian(size) + 1n, size.length);
     breach("a threshold above the committee size", isDeepStrictEqual(segments.threshold, size) ? { threshold: above } : { threshold: size, committeeSize: segments.threshold! }, "mandate disclosure threshold");
   } else unencodable.push({ label: "a threshold above the committee size", reason: "the threshold has the narrower head, so every shortest encoding keeps it below the committee size" });
   if (widths.threshold === 0) breach("a threshold of 0", { threshold: Uint8Array.of(0) }, "mandate disclosure threshold");

@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -70,7 +70,8 @@ describe("compile-conduct output", () => {
     expect(missing).toEqual([]);
   });
 
-  // Only the predicate mutants are checked at ZKIR; the openings mutants are judged by their generated JS.
+  // Only the predicate mutants are checked at ZKIR; the openings mutants are judged by their generated JS and the
+  // private inputs of their compactc ZKIR.
   it("mock-compiles no openings mutant", () => {
     for (const id of OPENINGS_MUTANTS) expect(readdirSync(join(pkg, "conduct-managed/mutants", id, "zkir")).filter(name => name.endsWith(".bzkir")), id).toEqual([]);
   });
@@ -148,6 +149,17 @@ describe("compile-conduct regenerates the opening circuits from the template and
     const result = compile(root, ["--check"]);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("generated circuits differ from classes.json; run --write");
+  });
+
+  it("names a read error of the committed generated circuits instead of asking for --write", () => {
+    const root = packageCopy();
+    const generated = join(root, "circuits/conduct/openings.generated.compact");
+    rmSync(generated);
+    mkdirSync(generated);
+    const result = compile(root, ["--check"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("EISDIR");
+    expect(result.stderr).not.toContain("run --write");
   });
 });
 

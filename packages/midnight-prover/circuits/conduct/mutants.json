@@ -688,5 +688,23 @@
     "file": "openings.generated.compact",
     "find": "  asciiPrint<3>(asset);\n  assert(windowSecondsValue >= 1, \"mandate window\");\n  assert(egressMode[0] <= 1, \"egress mode\");\n  for (const b of egressRoot) {",
     "replace": "  asciiPrint<3>(asset);\n  assert(windowSecondsValue >= 1, \"mandate window\");\n  assert(egressMode[0] <= 1, \"egress mode\");\n  for (const b of slice<31>(egressRoot, 0)) {"
+  },
+  {
+    "id": "amount_reread",
+    "file": "openings.generated.compact",
+    "find": "  const eventHex = ev_pa_ascii_min_eventHex();\n  hexOfHash(eventHex, eventHash);\n  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>([\"poi-trace:roll:v1|\", s.prevRollHex, \"|\", eventHex]) == s.rollAfter, \"rolling root mismatch\");\n  assert(decU64<1>(amount) == s.amount, \"amount opening\");\n",
+    "replace": "  const eventHex = ev_pa_ascii_min_eventHex();\n  hexOfHash(eventHex, eventHash);\n  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>([\"poi-trace:roll:v1|\", s.prevRollHex, \"|\", eventHex]) == s.rollAfter, \"rolling root mismatch\");\n  assert(decU64<1>(ev_pa_ascii_min_amount()) == s.amount, \"amount opening\");\n"
+  },
+  {
+    "id": "event_hex_reread",
+    "file": "openings.generated.compact",
+    "find": "  const eventHex = ev_pa_ascii_min_eventHex();\n  hexOfHash(eventHex, eventHash);\n",
+    "replace": "  const eventHex = ev_pa_ascii_min_eventHex();\n  hexOfHash(ev_pa_ascii_min_eventHex(), eventHash);\n"
+  },
+  {
+    "id": "cap_reread",
+    "file": "openings.generated.compact",
+    "find": "  const capAmountValue = cborUint<8>(capAmount);\n  const windowSecondsValue = cborUint<4>(windowSeconds);\n",
+    "replace": "  const capAmountValue = cborUint<8>(m_field_maxima_capAmount());\n  const windowSecondsValue = cborUint<4>(windowSeconds);\n"
   }
 ]

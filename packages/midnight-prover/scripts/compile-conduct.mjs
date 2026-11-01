@@ -34,10 +34,16 @@ const units = unitList === undefined ? UNITS : [...new Set(unitList.split(","))]
 for (const unit of units) if (!UNITS.includes(unit)) throw new Error(`unknown conduct unit: ${unit}`);
 const partial = units.length < UNITS.length;
 
+// A committed file's text, or undefined where it does not exist yet; any other read error propagates.
+const readIfPresent = file => readFile(file, "utf8").catch(error => {
+  if (error.code !== "ENOENT") throw error;
+  return undefined;
+});
+
 const generatedFile = join(circuits, UNIT_SOURCES.openings[0]);
 const generated = emitOpenings();
 if (!check) await writeFile(generatedFile, generated);
-else if (await readFile(generatedFile, "utf8").catch(() => undefined) !== generated) throw new Error("generated circuits differ from classes.json; run --write");
+else if (await readIfPresent(generatedFile) !== generated) throw new Error("generated circuits differ from classes.json; run --write");
 
 const unitOf = file => Object.keys(UNIT_SOURCES).find(unit => UNIT_SOURCES[unit].includes(file));
 const mutants = JSON.parse(await readFile(join(circuits, "mutants.json"), "utf8"));
@@ -55,10 +61,7 @@ const sourcePaths = (await readdir(circuits, { recursive: true })).filter(name =
 const sources = {};
 for (const path of sourcePaths.sort()) sources[path] = sha256(await readFile(join(root, path)));
 
-const committed = await readFile(pinsFile, "utf8").catch(error => {
-  if (error.code !== "ENOENT") throw error;
-  return "";
-});
+const committed = (await readIfPresent(pinsFile)) ?? "";
 const committedPins = committed ? JSON.parse(committed) : { sources: {}, units: {} };
 for (const unit of Object.keys(committedPins.units)) if (!UNITS.includes(unit)) throw new Error(`pins.json names unknown conduct unit: ${unit}`);
 // A pin survives only by being rebuilt: --check never compares a unit against itself, and a partial --write keeps the
@@ -193,7 +196,8 @@ const build = {
   async mutants() {
     await rm(join(managed, "mutants"), { recursive: true, force: true });
     // A mutant keeps its edited sources in source/, which its source map names and the structure audit reads. Only the
-    // predicate mutants are checked at ZKIR; the openings mutants are judged by their generated JS.
+    // predicate mutants are checked at ZKIR; the openings mutants are judged by their generated JS and the private inputs
+    // of their compactc ZKIR.
     await settled(mutants.map(async mutant => {
       const out = join(managed, "mutants", mutant.id);
       const unit = unitOf(mutant.file);

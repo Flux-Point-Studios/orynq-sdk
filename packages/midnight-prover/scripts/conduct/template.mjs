@@ -53,6 +53,13 @@ export function expandKinds() {
 
 const KINDS = expandKinds();
 
+/**
+ * The value segments of a guard event kind, each once, keyed by value name.
+ * @param {string} kind
+ * @returns {Map<string, Segment>}
+ */
+export const valueSpecs = kind => new Map(KINDS[kind].filter(s => s.v !== undefined).map(s => [s.v, s]));
+
 const refuse = (code, message) => {
   throw new Error(`${code}: ${message}`);
 };
@@ -64,15 +71,20 @@ const EVENT_KEYS = ["data", "eventType", "id", "kind", "seq", "timestamp", "visi
 const DATA_KEYS = ["action", "actionDigest", "actionKind", "enforcedAt", "mandateCommitment", "seq", "timestamp", "type"];
 const ACTION_KEYS = { payment: ["amount", "asset", "counterparty", "kind", "timestamp"], egress: ["destination", "kind", "timestamp"] };
 const U64_LIMIT = 1n << 64n;
+const ISO_AFTER_YEAR = "-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$";
+const ISO24 = new RegExp(`^[0-9]{4}${ISO_AFTER_YEAR}`);
+// Date#toISOString writes a year outside 0000-9999 with a sign and six digits.
+const ISO_EXPANDED_YEAR = new RegExp(`^[+-][0-9]{6}${ISO_AFTER_YEAR}`);
 
-// Each lexical class as the opening circuits' gadgets enforce it, with the refusal code for a value outside it.
+// Each lexical class as the opening circuits' gadgets enforce it, with the refusal code for a value outside it. An
+// integer trace sequence of 2^53 or more and an ISO time of an expanded year have their own codes.
 const LEXICAL = {
   dec64: (v, s) => /^(0|[1-9][0-9]*)$/.test(v) && v.length <= s.max && BigInt(v) < U64_LIMIT && !(s.nonzero && v === "0") || "OUT_OF_CLASS",
-  dec53: v => /^(0|[1-9][0-9]{0,15})$/.test(v) && Number.isSafeInteger(Number(v)) || "TRACE_SEQ_UNSAFE",
+  dec53: v => /^(0|[1-9][0-9]{0,15})$/.test(v) && Number.isSafeInteger(Number(v)) || (Number.isInteger(Number(v)) && Number(v) >= 2 ** 53 ? "TRACE_SEQ_UNSAFE" : "OUT_OF_CLASS"),
   str: (v, s) => (JSON.stringify(v) !== `"${v}"` ? "ESCAPED_STRING" : v.length > 0 && Buffer.byteLength(v, "utf8") <= s.max || "OUT_OF_CLASS"),
   hex64: v => /^[0-9a-f]{64}$/.test(v) || "OUT_OF_CLASS",
   uuid: v => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v) || "OUT_OF_CLASS",
-  iso24: v => /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/.test(v) || "ISO_OUT_OF_RANGE",
+  iso24: v => ISO24.test(v) || (ISO_EXPANDED_YEAR.test(v) ? "ISO_OUT_OF_RANGE" : "OUT_OF_CLASS"),
   vis: v => ["public", "private", "secret"].includes(v) || "OUT_OF_CLASS",
 };
 const FIXED_WIDTHS = { hex64: 64, uuid: 36, iso24: 24 };
@@ -106,7 +118,7 @@ export function classify(event) {
   };
   /** @type {Record<string, number>} */
   const lengths = {};
-  for (const segment of KINDS[kind].filter(s => s.v !== undefined)) {
+  for (const segment of valueSpecs(kind).values()) {
     const value = values[segment.v];
     if (typeof value !== "string") refuse("UNKNOWN_SHAPE", `${segment.v} is not a string`);
     const verdict = LEXICAL[segment.lex](value, segment);
@@ -200,7 +212,7 @@ const STATEMENT = {
 };
 const ROLL_FIELDS = [["prevRollHex", "Bytes<64>"], ["rollAfter", "Bytes<32>"]];
 
-const valueNames = kind => [...new Set(KINDS[kind].filter(s => s.v !== undefined).map(s => s.v))];
+const valueNames = kind => [...valueSpecs(kind).keys()];
 const opened = kind => valueNames(kind).filter(name => Object.hasOwn(STATEMENT, name)).map(name => [name, OPENERS[STATEMENT[name][0]], STATEMENT[name][1]]);
 
 /**
@@ -305,17 +317,6 @@ export function mandateSegments(cbor) {
 }
 
 /**
- * The class of a mandate the codec accepts; `decode` is the strict codec, whose refusal codes pass through.
- * @param {Uint8Array} cbor
- * @param {(cbor: Uint8Array) => unknown} decode
- * @returns {ClassifiedMandate}
- */
-export function classifyMandate(cbor, decode) {
-  decode(cbor);
-  return mandateSegments(cbor);
-}
-
-/**
  * The compiled mandate opening circuit for a classified mandate.
  * @param {Pick<ClassifiedMandate, "lengths">} classified
  * @returns {string}
@@ -332,7 +333,11 @@ const mandateParts = lengths => MANDATE_LAYOUT.flatMap(field => {
   if (field.text !== undefined) return [{ c: [...textHead(lengths[field.v]), ...(field.text === "did" ? utf8(DID_PREFIX) : [])] }, { v: field.v }];
   return [{ c: uintHead(lengths[field.v]) }, { v: field.v }];
 });
-const bigEndian = bytes => bytes.reduce((acc, b) => acc * 256n + BigInt(b), 0n);
+/**
+ * The uint a big-endian byte string encodes.
+ * @type {(bytes: Uint8Array) => bigint}
+ */
+export const uintOfBigEndian = bytes => bytes.reduce((acc, b) => acc * 256n + BigInt(b), 0n);
 const le8 = value => Uint8Array.from({ length: 8 }, (_, i) => Number((value >> BigInt(8 * i)) & 0xffn));
 
 /**
@@ -346,7 +351,7 @@ export function mandateOpening(circuit, segments) {
   const lengths = CLASSES.openings.mandates[circuit];
   const cbor = concat(mandateParts(lengths).map(part => (part.c === undefined ? segments[part.v] : part.c)));
   const commitment = sha256(utf8(MANDATE_DOMAIN), cbor);
-  const uint = name => (lengths[name] === 0 ? BigInt(segments[name][0]) : bigEndian(segments[name]));
+  const uint = name => (lengths[name] === 0 ? BigInt(segments[name][0]) : uintOfBigEndian(segments[name]));
   const atoms = {
     notBefore: uint("notBefore"), notAfter: uint("notAfter"), asset: segments.asset, cap: uint("capAmount"), window: uint("windowSeconds"),
     egressMode: BigInt(segments.egressMode[0]), counterpartyRoot: segments.counterpartyRoot, egressRoot: segments.egressRoot,
@@ -373,7 +378,7 @@ const valueLength = (spec, lengths) => lengths[spec.v] ?? FIXED_WIDTHS[spec.lex]
 
 function eventCircuit(id, { kind, lengths }) {
   const action = actionOf(kind);
-  const specs = new Map(KINDS[kind].filter(s => s.v !== undefined).map(s => [s.v, s]));
+  const specs = valueSpecs(kind);
   const out = [];
   for (const [name, spec] of specs) out.push(`witness ${id}_${name}(): Vector<${valueLength(spec, lengths)}, Uint<8>>;`);
   out.push(`witness ${id}_eventHex(): Vector<64, Uint<8>>;`, "", `export circuit ${id}(s: ${statementType(action)}): [] {`);

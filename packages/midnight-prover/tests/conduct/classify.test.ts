@@ -65,9 +65,21 @@ describe("T-B04 classify refuses out-of-class events by name", () => {
     expect(classify((await traceScene("ascii-min", { ...scene, traceSeq: 2 ** 53 - 1 })).event).lengths.traceSeq).toBe(16);
   });
 
+  it("TRACE_SEQ_UNSAFE: an integer trace sequence JSON writes in exponent form", async () => {
+    expect(refusal({ ...await traced(payment({})), seq: 1e21 })).toBe("TRACE_SEQ_UNSAFE");
+  });
+
+  it.each([["negative", -1], ["fractional", 1.5], ["NaN", Number.NaN]])("OUT_OF_CLASS: a %s trace sequence", async (_label, seq) => {
+    expect(refusal({ ...await traced(payment({})), seq })).toBe("OUT_OF_CLASS");
+  });
+
   it.each([["year 10000", Date.UTC(10000, 0, 1)], ["year -1", Date.UTC(-1, 0, 1)]])("ISO_OUT_OF_RANGE: a trace timestamp in %s", async (_label, time) => {
     const event = await traced(payment({}));
     expect(refusal({ ...event, timestamp: new Date(time).toISOString() })).toBe("ISO_OUT_OF_RANGE");
+  });
+
+  it.each(["garbage", "2026-10-27", "2026-10-27T00:00:00Z", "+2026-10-27T00:00:00.000Z"])("OUT_OF_CLASS: a trace timestamp %j", async timestamp => {
+    expect(refusal({ ...await traced(payment({})), timestamp })).toBe("OUT_OF_CLASS");
   });
 
   it("UNKNOWN_SHAPE: an extra event key, a missing key, or a custom event that is not a guard event", async () => {

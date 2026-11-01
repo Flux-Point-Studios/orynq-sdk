@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { loadUnit } from "./harness.js";
 import { describeDisagreement, disagreements, GADGET_CLASSES, judge } from "./lexical.js";
 import { fieldForgeries, HONEST_MANDATES, mandateOpeningOf, mandateOutcome, schemaBreaches } from "./mandates.js";
-import { hexLinkForgeries, honestEvents, malformedStrings, misjudged, OPENINGS_MUTANTS, OPENINGS_UNIT, openingOf, openingOutcome } from "./openings.js";
+import {
+  hexLinkForgeries, honestEvents, malformedStrings, misjudged, OPENINGS_MUTANTS, OPENINGS_UNIT, openingOf, openingOutcome, privateInputs, witnessWidth,
+} from "./openings.js";
 
 const events = await honestEvents();
 const event = (id: string) => openingOf(events.get(id)!);
@@ -35,10 +37,24 @@ const GADGET_KILLS: Readonly<Record<string, string>> = {
   json_continuation_standalone: "json_str_w1",
   json_truncated_end: "json_str_w1",
 };
+// Mutants that read a witness a second time for a disclosed value or a hash input, each with its circuit and witness.
+const REREAD_KILLS: Readonly<Record<string, readonly [string, string]>> = {
+  amount_reread: ["ev_pa_ascii_min", "amount"],
+  event_hex_reread: ["ev_pa_ascii_min", "eventHex"],
+  cap_reread: ["m_field_maxima", "capAmount"],
+};
+const honestOutcome = (circuit: string, unit: string) => (circuit.startsWith("ev_") ? openingOutcome(event(circuit), unit) : mandateOutcome(mandate(circuit), unit));
 
 describe("the openings discrimination mutants are killed, with the compiled unit as the control in the same test", () => {
   it("names a kill for exactly the openings mutants in mutants.json", () => {
-    expect([...Object.keys(OPENING_KILLS), ...Object.keys(GADGET_KILLS)].sort()).toEqual([...OPENINGS_MUTANTS].sort());
+    expect([...Object.keys(OPENING_KILLS), ...Object.keys(GADGET_KILLS), ...Object.keys(REREAD_KILLS)].sort()).toEqual([...OPENINGS_MUTANTS].sort());
+  });
+
+  it.each(Object.entries(REREAD_KILLS))("%s: the mutant's honest opening reads a witness twice, and its ZKIR takes more private inputs than its class has witness bytes", async (id, [circuit, name]) => {
+    expect(await honestOutcome(circuit, OPENINGS_UNIT), "control").toBe("accepted");
+    expect(privateInputs(OPENINGS_UNIT, circuit), "control").toBe(witnessWidth(circuit));
+    expect(await honestOutcome(circuit, `mutants/${id}`), `mutant ${id} survived`).toBe(`witness ${circuit}_${name} read twice`);
+    expect(privateInputs(`mutants/${id}`, circuit), `mutant ${id} survived T-B19`).toBeGreaterThan(witnessWidth(circuit));
   });
 
   it.each(Object.entries(OPENING_KILLS))("%s: the mutant opens a forgery its test refuses", async (id, kill) => {

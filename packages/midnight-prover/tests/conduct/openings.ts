@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
-import { classify, CLASSES, eventClass, eventOpening, eventSegments, expandKinds } from "../../scripts/conduct/template.mjs";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { classify, CLASSES, eventClass, eventOpening, eventSegments, valueSpecs } from "../../scripts/conduct/template.mjs";
 import { maxClassEvent, realEvent, type RealEvent } from "./guard-events.js";
-import { runLedger } from "./harness.js";
+import { runLedger, unitDir } from "./harness.js";
 
 export interface Segment { readonly c?: string; readonly v?: string; readonly lex?: string; readonly max?: number; readonly nonzero?: boolean }
 
@@ -20,8 +22,36 @@ export const OPENINGS_MUTANTS = [
   "open_no_hash_link", "hex_link_skips_last_byte", "hex_digit_g", "decimal_digit_slash", "iso_digit_slash",
   "utf8_tail_continuation_low", "utf8_lead4_to_f7", "utf8_lead2_to_e0", "json_continuation_standalone", "json_truncated_end",
   "pd4_counterparty_unchecked", "unicode_counterparty_unchecked", "pa_max_counterparty_unchecked", "m_max_principal_unchecked",
-  "m_step_deny_all_skips_last_byte",
+  "m_step_deny_all_skips_last_byte", "amount_reread", "event_hex_reread", "cap_reread",
 ];
+
+/** The uint fields of a mandate, each read from its CBOR head byte or from the argument bytes after it. */
+export const MANDATE_UINT_FIELDS = ["capAmount", "windowSeconds", "notBefore", "notAfter", "threshold", "committeeSize"] as const;
+// Hex digests, the uuid, the ISO time and the event hash hex have fixed widths outside the class tuple.
+const FIXED_EVENT_WITNESS_BYTES = 64 + 64 + 36 + 24 + 64;
+// The mandate id, the counterparty, egress and measurement roots, and the egress mode byte.
+const FIXED_MANDATE_WITNESS_BYTES = 16 + 32 + 32 + 32 + 1;
+const DID_PREFIX = "did:key:z";
+const sum = (values: readonly number[]) => values.reduce((total, n) => total + n, 0);
+
+/**
+ * The witness bytes of a compiled opening class, from its classes.json entry alone: an event's value lengths and fixed
+ * widths, or a mandate's DID tails after `did:key:z`, asset, committee id, fixed fields and uint widths, where a uint in
+ * its head byte still takes one.
+ */
+export function witnessWidth(circuit: string): number {
+  const event: { lengths: Record<string, number> } | undefined = CLASSES.openings.events[circuit];
+  if (event !== undefined) return sum(Object.values(event.lengths)) + FIXED_EVENT_WITNESS_BYTES;
+  const m: Record<string, number> = CLASSES.openings.mandates[circuit];
+  return FIXED_MANDATE_WITNESS_BYTES + m.principalDid! + m.agentDid! - 2 * DID_PREFIX.length + m.asset! + m.committeeId!
+    + sum(MANDATE_UINT_FIELDS.map(field => Math.max(m[field]!, 1)));
+}
+
+/** The private inputs of a circuit's ZKIR as `unit` compiled it: one per witness byte each read of a witness takes. */
+export function privateInputs(unit: string, circuit: string): number {
+  const ir: { instructions: { op: string }[] } = JSON.parse(readFileSync(join(unitDir(unit), "zkir", `${circuit}.zkir`), "utf8"));
+  return ir.instructions.filter(instruction => instruction.op === "private_input").length;
+}
 
 /** One honest guard event for each compiled event class. */
 export async function honestEvents(): Promise<Map<string, RealEvent>> {
@@ -35,9 +65,17 @@ export async function honestEvents(): Promise<Map<string, RealEvent>> {
   return new Map(await Promise.all(makers.map(async ([id, make]) => [id, await make()] as const)));
 }
 
-// The contract asks for every witness of the unit at construction; a circuit that calls one outside its class fails.
+/**
+ * The witnesses of one circuit run. The contract asks for every witness of the unit at construction; a circuit that
+ * calls one outside its class fails, and so does a second call of any witness, whose answer the hashed bytes would not bind.
+ */
 export function witnessFunctions(witnesses: Readonly<Record<string, Uint8Array>>): object {
-  const own = Object.fromEntries(Object.entries(witnesses).map(([name, bytes]) => [name, (context: { privateState: unknown }) => [context.privateState, Array.from(bytes, BigInt)]]));
+  const read = new Set<string>();
+  const own = Object.fromEntries(Object.entries(witnesses).map(([name, bytes]) => [name, (context: { privateState: unknown }) => {
+    if (read.has(name)) throw new Error(`witness ${name} read twice`);
+    read.add(name);
+    return [context.privateState, Array.from(bytes, BigInt)];
+  }]));
   return new Proxy(own, {
     get: (target, name) => target[name as string] ?? (() => { throw new Error(`witness ${String(name)} is outside the opened class`); }),
   });
@@ -129,10 +167,8 @@ export function hexLinkForgeries(opening: Opening): Forgery[] {
   });
 }
 
-const KINDS: Record<string, Segment[]> = expandKinds();
 const EVENT_CLASSES: Readonly<Record<string, { kind: string }>> = CLASSES.openings.events;
-// The value segments of an event class, each once.
-const classSegments = (id: string) => [...new Map(KINDS[EVENT_CLASSES[id]!.kind]!.filter(s => s.v !== undefined).map(s => [s.v!, s])).values()];
+const classSegments = (id: string): Segment[] => [...valueSpecs(EVENT_CLASSES[id]!.kind).values()];
 /** Every string segment of every compiled event class. */
 export const STRING_SEGMENTS: readonly (readonly [string, string])[] = Object.keys(EVENT_CLASSES)
   .flatMap(id => classSegments(id).filter(s => s.lex === "str").map(s => [id, s.v!] as const));
