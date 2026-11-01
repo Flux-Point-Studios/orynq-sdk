@@ -191,6 +191,14 @@ describe("AM-1: the egress `mode != 1` returns 6 mutant is equivalent, so it is 
   });
 });
 
+describe("a mutant that moves messages between asserts compiles to the predicate's constraints, and T-A17 kills it", () => {
+  it.each(MESSAGE_ONLY_MUTANTS)("%s has the predicate's check_verdict ZKIR and raises the wrong refusal on a T-A17 cell", async id => {
+    expect(readFileSync(join(unitDir(`mutants/${id}`), "zkir/check_verdict.zkir")).equals(readFileSync(join(unitDir("predicate"), "zkir/check_verdict.zkir")))).toBe(true);
+    const killer = orderKill((await loadUnit(`mutants/${id}`)).pureCircuits, representatives);
+    expect(killer, `mutant ${id} raises the right refusal on every T-A17 cell`).toBeDefined();
+  });
+});
+
 describe("AM-6.3: a mutant that passes T-A16 only re-wires audited comparisons, and T-A17 kills it", () => {
   it("exactly the re-wiring mutants pass T-A16", () => {
     expect(mutants.filter(m => auditStructure(`mutants/${m.id}`).length === 0).map(m => m.id).sort()).toEqual([...REWIRING_MUTANTS].sort());
@@ -201,11 +209,6 @@ describe("AM-6.3: a mutant that passes T-A16 only re-wires audited comparisons, 
     expect(killer, `mutant ${id} passes T-A16 and survives T-A17: a HIGH finding under AM-6.3`).toBeDefined();
   });
 
-  it.each(MESSAGE_ONLY_MUTANTS)("T-A17 alone tells %s apart by the refusal it raises", async id => {
-    expect(readFileSync(join(unitDir(`mutants/${id}`), "zkir/check_verdict.zkir")).equals(readFileSync(join(unitDir("predicate"), "zkir/check_verdict.zkir")))).toBe(true);
-    const killer = orderKill((await loadUnit(`mutants/${id}`)).pureCircuits, representatives);
-    expect(killer, `mutant ${id} raises the wrong refusal on every T-A17 cell`).toBeDefined();
-  });
 
   it.each(GATED_MUTANTS)("%s (%s) fails T-A16, and T-A17 kills it", async id => {
     expect(auditStructure(`mutants/${id}`)).not.toEqual([]);

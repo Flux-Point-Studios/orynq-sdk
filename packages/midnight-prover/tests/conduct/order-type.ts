@@ -202,7 +202,9 @@ function judge(cell: OrderCell): Judgement {
   const destination = mode === 1n && v("egress_ok") ? LISTED : UNLISTED;
   const step: GuardAction = kind === 0n ? payment(cell.held || amount === 0n ? amount : prior + amount, ts, asset, counterparty)
     : kind === 1n ? egress(destination, ts) : { kind: `kind ${kind}`, timestamp: ts } as unknown as GuardAction;
-  const key = [nb, na, cap, mode, cell.window, prior, cell.held, cell.enforcedAt, kind, ts, ...(kind === 0n ? [amount, asset, counterparty] : kind === 1n ? [destination] : [])].join("|");
+  // The key holds every input the applicable asserts read, so a check made when a key is first judged covers each cell
+  // that shares it: an out-of-domain kind keeps whether its amount is zero, which the amount floor reads.
+  const key = [nb, na, cap, mode, cell.window, prior, cell.held, cell.enforcedAt, kind, ts, ...(kind === 0n ? [amount, asset, counterparty] : kind === 1n ? [destination] : [amount === 0n])].join("|");
   return judgements.get(key) ?? judgeAnew(cell, key, { nb, na, cap, mode, kind, ts, amount, prior, asset, counterparty, step });
 }
 
