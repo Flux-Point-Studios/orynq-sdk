@@ -1,7 +1,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { circuitOutcomes, egress, matrixCases, payment, policy, runPolicy, type Step, type VerdictCase } from "./cases.js";
-import { loadUnit } from "./harness.js";
+import { checkVerdictArgs, circuitOutcomes, CLAIMS, egress, MAX_U64, matrixCases, payment, policy, runPolicy, T0, VERDICT_CODES, type Step, type VerdictCase } from "./cases.js";
+import { loadUnit, zkCheck } from "./harness.js";
 
 const { pureCircuits } = await loadUnit("predicate");
 const HISTORIES = 1000;
@@ -74,5 +74,78 @@ describe("T-A06 generated guard histories", () => {
     ];
     const counts = shapes.map(([shape, holds]) => `${shape}: ${spent.filter(holds).length}`);
     expect(counts.filter(count => Number(count.split(": ")[1]) < MIN_GENERATED_SHAPE), counts.join("; ")).toEqual([]);
+  });
+});
+
+// Every numeric slot drawn across uint64: its edges, both sides of 2^32, realistic Unix times and small values, with the
+// validity window placed around the action times and the cap around the amounts. Every history is one the guard
+// accepts, except that the second action may fall after the guard clock, which the runtime refuses.
+const FULL_RANGE_HISTORIES = 2000;
+const ZKIR_SAMPLE_EVERY = 50;
+const U32 = 1n << 32n;
+const anywhere = fc.oneof(
+  fc.constantFrom(0n, 1n, 2n, U32 - 1n, U32, 1n << 53n, 1n << 63n, MAX_U64 - 2n, MAX_U64 - 1n, MAX_U64),
+  fc.bigInt(T0 - 100_000n, T0 + 100_000n), fc.bigInt(0n, 20n), fc.bigInt(0n, MAX_U64),
+);
+const offset = fc.oneof(fc.constantFrom(0n, 1n), fc.bigInt(0n, 10n), fc.bigInt(0n, 100_000n), anywhere);
+const bound = fc.record({ anchor: fc.constantFrom("ts0", "clock0", "ts1", "clock1", "anywhere"), shift: fc.constantFrom(-1n, 0n, 1n), value: anywhere });
+const fullRange = fc.record({
+  window: fc.oneof(fc.constantFrom(1n, 60n, 3600n, 86_400n, U32, 1n << 63n, MAX_U64), fc.bigInt(1n, MAX_U64)),
+  ts0: anywhere, ahead0: offset, gap: offset, ahead1: offset, late: fc.boolean(), notBefore: bound, notAfter: bound,
+  amounts: fc.tuple(anywhere, anywhere), cap: fc.record({ to: fc.constantFrom("anywhere", "first", "both", "both less one"), value: anywhere }),
+  allowlist: fc.boolean(), second: fc.record({ kind: fc.constantFrom("payment", "egress"), assetOk: fc.boolean(), listed: fc.boolean() }),
+});
+type FullRange = typeof fullRange extends fc.Arbitrary<infer T> ? T : never;
+const clamp = (value: bigint, low = 0n, high = MAX_U64) => (value < low ? low : value > high ? high : value);
+
+function fullRangeHistory(s: FullRange, i: number): VerdictCase[] {
+  const windowStart = (t: bigint) => t - (t % s.window);
+  const windowEnd = (t: bigint) => clamp(windowStart(t) + s.window - 1n);
+  const ts0 = s.ts0;
+  const clock0 = clamp(ts0 + s.ahead0, ts0, windowEnd(ts0));
+  const ts1 = clamp(ts0 + s.gap);
+  const clock1 = clamp(s.late ? ts1 - 1n : ts1 + s.ahead1, clock0 > windowStart(ts1) ? clock0 : windowStart(ts1), windowEnd(ts1));
+  const anchored = (b: FullRange["notBefore"]) => clamp({ ts0, clock0, ts1, clock1, anywhere: b.value }[b.anchor] + b.shift);
+  let [notBefore, notAfter] = [anchored(s.notBefore), anchored(s.notAfter)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)) as [bigint, bigint];
+  if (notBefore === notAfter) [notBefore, notAfter] = notAfter === MAX_U64 ? [MAX_U64 - 1n, MAX_U64] : [notBefore, notBefore + 1n];
+  const [amount0, amount1] = s.amounts.map(amount => clamp(amount, 1n)) as [bigint, bigint];
+  const cap = clamp({ anywhere: s.cap.value, first: amount0, both: amount0 + amount1, "both less one": amount0 + amount1 - 1n }[s.cap.to]);
+  const second = s.second.kind === "payment"
+    ? payment(amount1, ts1, s.second.assetOk ? "lovelace" : "dust", s.second.listed ? "alice" : "mallory")
+    : egress(s.second.listed ? "api.example.com" : "evil.example.com", ts1);
+  return runPolicy("full range", `history ${i}`, policy({ cap, window: s.window, notBefore, notAfter, ...(s.allowlist ? { egress: ["api.example.com"] } : {}) }),
+    [{ action: payment(amount0, ts0), clock: clock0 }, { action: second, clock: clock1 }]);
+}
+
+describe("T-A06 generated guard histories across the whole of uint64", () => {
+  const generated = fc.sample(fullRange, { seed: 20261031, numRuns: FULL_RANGE_HISTORIES }).flatMap(fullRangeHistory);
+
+  it(`circuit equals runtime on every step of ${FULL_RANGE_HISTORIES} generated two-step histories`, () => {
+    expect(generated).toHaveLength(2 * FULL_RANGE_HISTORIES);
+    for (const c of generated) expect(circuitOutcomes(pureCircuits, c), c.name).toEqual({ evaluate: c.evaluate, guard: c.guard });
+  });
+
+  it("reaches every verdict and the later-than-clock refusal, and every numeric slot on both sides of 2^32", () => {
+    const outcomes = new Set(generated.map(c => (typeof c.guard === "number" ? String(c.guard) : c.guard.throws)));
+    expect([...outcomes].sort()).toEqual([...VERDICT_CODES.map(String), "failed assert: action after guard clock"].sort());
+    const slots: [string, (c: VerdictCase) => bigint][] = [
+      ["enforced_at", c => c.enforcedAt], ...([["not_before", 0], ["not_after", 1], ["cap_amount", 3], ["action_timestamp", 6], ["action_amount", 8], ["prior_spent", 10]] as const)
+        .map(([name, index]): [string, (c: VerdictCase) => bigint] => [name, c => c.args[index] as bigint]),
+    ];
+    const missing = slots.flatMap(([name, value]) => [
+      ...(generated.some(c => value(c) >= U32) ? [] : [`${name} at or above 2^32`]),
+      ...(generated.some(c => value(c) > 0n && value(c) < U32) ? [] : [`${name} between 1 and 2^32-1`]),
+    ]);
+    expect(missing).toEqual([]);
+  });
+
+  it.each(generated.filter((_, i) => i % ZKIR_SAMPLE_EVERY === 0).map(c => [c.name, c] as const))("ZKIR: %s checks exactly the runtime verdict", async (_name, c) => {
+    for (const claimed of CLAIMS) {
+      const disclosed = await zkCheck("predicate", "check_verdict", {}, checkVerdictArgs(c, claimed)).then(ledger => ledger.verdictOut, (error: Error) => {
+        if (!/Failed direct assertion/.test(error.message)) throw error;
+        return undefined;
+      });
+      expect(disclosed, `claim ${claimed}`).toBe(claimed === c.guard ? BigInt(claimed) : undefined);
+    }
   });
 });

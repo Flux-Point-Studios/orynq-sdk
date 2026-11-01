@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import {
-  buildAllowlistRoot, compileMandatePredicate, MandateGuard, MemoryGuardLog, PREDICATE_LAYOUT, verdictOf,
+  assetTag, buildAllowlistRoot, compileMandatePredicate, MandateGuard, MemoryGuardLog, PREDICATE_LAYOUT, verdictOf,
   type GuardAction, type GuardDecision, type MandateV1, type PredicateArgs,
 } from "@fluxpointstudios/orynq-sdk-conduct";
 import { outcome, type Outcome, type UnitModule } from "./harness.js";
@@ -300,9 +300,118 @@ export function spentCases(): VerdictCase[] {
   ];
 }
 
+export const T0 = 1_700_000_000n;
+const HALF_U64 = 1n << 63n;
+const LISTED = "api.example.com";
+const UNLISTED = "evil.example.com";
+
+type Scale = "bottom" | "realistic" | "top";
+interface Timing { readonly nb: bigint; readonly na: bigint; readonly ts: bigint; readonly clock: bigint; readonly window?: bigint; readonly openAt?: bigint }
+
+const daily = (ts: bigint, clock: bigint, openAt?: bigint): Timing =>
+  ({ nb: T0, na: T0 + 3600n, ts, clock, window: 86_400n, ...(openAt === undefined ? {} : { openAt }) });
+
+// An action and clock position at the bottom of uint64, at Unix times in one day's spend window, and at the top. With
+// `openAt`, an allowed payment at that time opens the spend window, so the step carries a prior spend. A top position
+// whose clock shares a spend window with an earlier action only at 2^64-1 uses a window of 2^63.
+const POSITIONS: readonly (readonly [string, Record<Scale, Timing>])[] = [
+  ["before notBefore", {
+    bottom: { nb: 1n, na: 2n, ts: 0n, clock: 0n },
+    realistic: daily(T0 - 100n, T0 - 50n),
+    top: { nb: MAX_U64 - 1n, na: MAX_U64, ts: MAX_U64 - 2n, clock: MAX_U64 - 1n },
+  }],
+  ["at notAfter", {
+    bottom: { nb: 0n, na: 1n, ts: 1n, clock: 1n },
+    realistic: daily(T0 + 3600n, T0 + 3600n, T0 + 100n),
+    top: { nb: MAX_U64 - 3n, na: MAX_U64 - 1n, ts: MAX_U64 - 1n, clock: MAX_U64 - 1n, openAt: MAX_U64 - 3n },
+  }],
+  ["before notBefore, clock at or past notAfter", {
+    bottom: { nb: 1n, na: 2n, ts: 0n, clock: 2n },
+    realistic: daily(T0 - 100n, T0 + 3600n),
+    top: { nb: MAX_U64 - 1n, na: MAX_U64, ts: MAX_U64 - 2n, clock: MAX_U64, window: HALF_U64 },
+  }],
+  ["inside validity, clock at or past notAfter", {
+    bottom: { nb: 0n, na: 1n, ts: 0n, clock: 1n },
+    realistic: daily(T0 + 200n, T0 + 3700n, T0 + 100n),
+    top: { nb: MAX_U64 - 1n, na: MAX_U64, ts: MAX_U64 - 1n, clock: MAX_U64, window: HALF_U64, openAt: MAX_U64 - 1n },
+  }],
+  ["later than a clock before notBefore", {
+    bottom: { nb: 2n, na: 3n, ts: 1n, clock: 0n },
+    realistic: daily(T0 - 50n, T0 - 100n),
+    top: { nb: MAX_U64 - 1n, na: MAX_U64, ts: MAX_U64 - 2n, clock: MAX_U64 - 3n },
+  }],
+  ["later than a clock inside validity", {
+    bottom: { nb: 0n, na: 2n, ts: 1n, clock: 0n },
+    realistic: daily(T0 + 201n, T0 + 200n, T0 + 100n),
+    top: { nb: MAX_U64 - 2n, na: MAX_U64, ts: MAX_U64 - 1n, clock: MAX_U64 - 2n, openAt: MAX_U64 - 2n },
+  }],
+  ["at notAfter, later than a clock inside validity", {
+    bottom: { nb: 0n, na: 1n, ts: 1n, clock: 0n },
+    realistic: daily(T0 + 3600n, T0 + 3599n, T0 + 100n),
+    top: { nb: MAX_U64 - 2n, na: MAX_U64, ts: MAX_U64, clock: MAX_U64 - 1n, window: HALF_U64, openAt: MAX_U64 - 2n },
+  }],
+  ["later than a clock past notAfter", {
+    bottom: { nb: 0n, na: 1n, ts: 2n, clock: 1n },
+    realistic: daily(T0 + 3700n, T0 + 3650n, T0 + 100n),
+    top: { nb: MAX_U64 - 3n, na: MAX_U64 - 1n, ts: MAX_U64, clock: MAX_U64 - 1n, window: HALF_U64, openAt: MAX_U64 - 3n },
+  }],
+];
+
+const INSIDE_VALIDITY: Record<Scale, Timing> = {
+  bottom: { nb: 0n, na: 1n, ts: 0n, clock: 0n },
+  realistic: daily(T0 + 200n, T0 + 300n, T0 + 100n),
+  top: { nb: MAX_U64 - 1n, na: MAX_U64, ts: MAX_U64 - 1n, clock: MAX_U64 - 1n, openAt: MAX_U64 - 1n },
+};
+
+interface Mandate { readonly cap: bigint; readonly opening: bigint; readonly list: boolean }
+const SCALES: Record<Scale, Mandate & { readonly amount: bigint; readonly payment: (ts: bigint) => GuardAction; readonly egress: (ts: bigint) => GuardAction }> = {
+  bottom: { cap: 0n, opening: 0n, list: false, amount: 1n, payment: ts => payment(1n, ts), egress: ts => egress(LISTED, ts) },
+  realistic: { cap: 10_000_000n, opening: 4_000_000n, list: true, amount: 7_000_000n, payment: ts => payment(7_000_000n, ts, "dust", "mallory"), egress: ts => egress(UNLISTED, ts) },
+  top: { cap: MAX_U64, opening: MAX_U64, list: true, amount: MAX_U64, payment: ts => payment(MAX_U64, ts), egress: ts => egress(LISTED, ts) },
+};
+
+const insideValidity = (scale: Scale): readonly (readonly [string, (ts: bigint) => GuardAction, Partial<Mandate>])[] => {
+  const { amount } = SCALES[scale];
+  const allowed = { bottom: [1n, { cap: 1n }], realistic: [6_000_000n, {}], top: [1n, { opening: MAX_U64 - 1n }] } as const;
+  return [
+    ["asset mismatch", ts => payment(amount, ts, "dust"), {}],
+    ["counterparty off-list", ts => payment(amount, ts, "lovelace", "mallory"), {}],
+    ["payment over the cap", ts => payment(amount, ts), {}],
+    ["allowed payment", ts => payment(allowed[scale][0], ts), allowed[scale][1]],
+    ["deny-all egress", ts => egress(LISTED, ts), { list: false }],
+    ["off-list egress", ts => egress(UNLISTED, ts), { list: true }],
+    ["allowed egress", ts => egress(LISTED, ts), { list: true }],
+  ];
+};
+
+function scene(scale: Scale, name: string, timing: Timing, action: (ts: bigint) => GuardAction, overrides: Partial<Mandate> = {}): VerdictCase[] {
+  const { cap, opening, list } = { ...SCALES[scale], ...overrides };
+  const { nb: notBefore, na: notAfter, window } = timing;
+  const p = policy({ cap, notBefore, notAfter, ...(window === undefined ? {} : { window }), ...(list ? { egress: [LISTED] } : {}) });
+  const open = timing.openAt === undefined ? [] : [{ action: payment(opening, timing.openAt), clock: timing.openAt }];
+  const steps = runPolicy("range", `${name}, ${scale}`, p, [...open, { action: action(timing.ts), clock: timing.clock }]);
+  if (open.length > 0 && steps[0]!.guard !== 0) throw new Error(`${name}, ${scale}: the opening payment must be allowed`);
+  return steps;
+}
+
+// Every verdict and the later-than-clock refusal, for a payment and an egress at every validity and clock position, at
+// the bottom of uint64, at realistic Unix times and at the top. A verdict rule or refusal gated on a slot's size
+// survives every case that holds that slot on one side of the gate, so each outcome meets every slot at both ends.
+function rangeHistories(): { readonly scale: Scale; readonly steps: VerdictCase[] }[] {
+  return (["bottom", "realistic", "top"] as const).flatMap(scale => [
+    ...POSITIONS.flatMap(([position, timings]) => [
+      { scale, steps: scene(scale, `payment ${position}`, timings[scale], SCALES[scale].payment) },
+      { scale, steps: scene(scale, `egress ${position}`, timings[scale], SCALES[scale].egress) },
+    ]),
+    ...insideValidity(scale).map(([name, action, overrides]) => ({ scale, steps: scene(scale, name, INSIDE_VALIDITY[scale], action, overrides) })),
+  ]);
+}
+
+export const rangeCases = (): VerdictCase[] => rangeHistories().flatMap(h => h.steps);
+
 export const withArg = (args: PredicateArgs, index: number, value: bigint | boolean) => args.map((arg, i) => (i === index ? value : arg)) as PredicateArgs;
 
-function slot(name: string): number {
+export function slot(name: string): number {
   const index = PREDICATE_LAYOUT.findIndex(input => input.name === name);
   if (index < 0) throw new Error(`no predicate slot ${name}`);
   return index;
@@ -317,9 +426,38 @@ function vary(c: VerdictCase, changes: Readonly<Record<string, bigint | boolean>
   };
 }
 
+const DUST_TAG = assetTag("dust");
+const otherEnd = (value: bigint, low: bigint) => (value >= HALF_U64 ? low : MAX_U64);
+
+// Moves every slot that neither runtime decision reads to its other end, so the expected decisions stay the unmodified
+// action's. A payment never reads egress_ok; once the validity window decides it, nor the asset, membership, prior
+// spend or amount; once the asset decides it, nor the later three; once membership decides it, nor the last two. An
+// egress never reads the payment slots, and once the validity window or deny-all decides it, nor egress_ok.
+function flipIgnored(c: VerdictCase): VerdictCase {
+  const at = (name: string) => c.args[slot(name)]!;
+  const decided = c.evaluate as number;
+  const asset = at("action_asset") === at("cap_asset") ? DUST_TAG : at("cap_asset") as bigint;
+  const changes: Record<string, bigint | boolean> = at("action_kind") === 0n
+    ? {
+        egress_ok: !at("egress_ok"),
+        ...(decided === 1 || decided === 2 ? { action_asset: asset } : {}),
+        ...([1, 2, 3].includes(decided) ? { counterparty_ok: !at("counterparty_ok") } : {}),
+        ...([1, 2, 3, 5].includes(decided) ? { prior_spent: otherEnd(at("prior_spent") as bigint, 0n), action_amount: otherEnd(at("action_amount") as bigint, 1n) } : {}),
+      }
+    : {
+        action_asset: asset, counterparty_ok: !at("counterparty_ok"),
+        prior_spent: otherEnd(at("prior_spent") as bigint, 0n), action_amount: otherEnd(at("action_amount") as bigint, 0n),
+        ...([1, 2, 6].includes(decided) ? { egress_ok: !at("egress_ok") } : {}),
+      };
+  return { ...vary(c, changes), group: "invariance" };
+}
+
+const rangeBases = () => rangeHistories().map(({ scale, steps }) => ({ scale, base: steps.at(-1)! }));
+
 // Argument changes the runtime has no input for: the expected decisions stay those of the unchanged action. An egress
 // ignores prior_spent, counterparty_ok, action_asset and action_amount, and also egress_ok once deny-all or the
-// validity window decides; a payment ignores egress_ok.
+// validity window decides; a payment ignores egress_ok. Every range case also has each slot its decisions ignore moved
+// to the other end.
 export function invarianceCases(): VerdictCase[] {
   const egressBase = (name: string, p: Policy, destination: string, egressOkIgnored: boolean) =>
     ({ base: runPolicy("invariance", name, p, [{ action: egress(destination, 1500n) }])[0]!, egressOkIgnored });
@@ -346,6 +484,7 @@ export function invarianceCases(): VerdictCase[] {
       ].map(changes => vary(base, changes));
     }),
     ...paymentBases.flatMap(c => [false, true].map(egressOk => vary(c, { egress_ok: egressOk }))),
+    ...rangeBases().map(({ base }) => flipIgnored(base)),
   ];
 }
 
@@ -362,8 +501,8 @@ export function overCapPriorCases(): VerdictCase[] {
 }
 
 export const allCases = (): VerdictCase[] => [
-  ...predicateVectorCases(), ...guardVectorCases(), ...clockCases(), ...matrixCases(), ...boundaryCases(), ...unicodeCases(), ...invarianceCases(),
-  ...overCapPriorCases(), ...spentCases(), ...domainCases(),
+  ...predicateVectorCases(), ...guardVectorCases(), ...clockCases(), ...matrixCases(), ...boundaryCases(), ...unicodeCases(), ...rangeCases(),
+  ...invarianceCases(), ...overCapPriorCases(), ...spentCases(), ...domainCases(),
 ];
 
 const KIND_REFUSAL = { throws: "failed assert: action kind out of domain" } as const;
@@ -389,7 +528,7 @@ export function domainCases(): VerdictCase[] {
     afterSpend("domain", "payment after a spend", 100_000n, payment(4n, 7250n, "lovelace", "supplier"), 7300n),
     afterSpend("domain", "egress after a spend", 100_000n, egress("api.example.com", 7250n), 7300n),
   ];
-  const refuse = (c: VerdictCase, changes: Readonly<Record<string, bigint>>, refusal: Outcome) => ({ ...vary(c, changes), evaluate: refusal, guard: refusal });
+  const refuse = (c: VerdictCase, changes: Readonly<Record<string, bigint>>, refusal: Outcome) => ({ ...vary(c, changes), group: "domain", evaluate: refusal, guard: refusal });
   const refusals = (c: VerdictCase, values: readonly bigint[], zeroPayment: boolean) => [
     ...values.flatMap(value => [refuse(c, { action_kind: value }, KIND_REFUSAL), refuse(c, { egress_mode: value }, MODE_REFUSAL)]),
     ...(zeroPayment ? [refuse(c, { action_amount: 0n }, AMOUNT_REFUSAL)] : []),
@@ -398,10 +537,15 @@ export function domainCases(): VerdictCase[] {
   const edges = (c: VerdictCase) => [
     { prior_spent: 1n }, { prior_spent: c.args[slot("cap_amount")] as bigint }, { prior_spent: MAX_U64 }, { cap_amount: 0n }, { cap_amount: MAX_U64 },
   ];
+  // Every range base the runtime decides, and the top one with its ignored slots moved to the other end, which puts a
+  // prior spend of 2^64-1 before notBefore and a payment's egress_ok at true.
+  const decided = rangeBases().filter(({ base }) => typeof base.guard === "number");
+  const ranged = [...decided.map(({ base }) => base), ...decided.filter(({ scale }) => scale === "top").map(({ base }) => flipIgnored(base))];
   return [
     ...bases.flatMap(c => refusals(c, [2n, 255n], isPayment(c))),
     ...inValidity.flatMap(c => edges(c).flatMap(edge => refusals(vary(c, edge), [2n], isPayment(c)))),
     ...[1n, MAX_U64].flatMap(amount => refusals(vary(inValidity[0]!, { action_amount: amount }), [2n], false)),
+    ...ranged.flatMap(c => refusals(c, [2n], isPayment(c))),
   ];
 }
 

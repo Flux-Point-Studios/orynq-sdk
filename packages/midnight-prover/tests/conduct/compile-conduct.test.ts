@@ -111,6 +111,8 @@ describe("compile-conduct --check verifies every pin it keeps", () => {
     expect(result.stderr).toContain("--check must rebuild every pinned unit: predicate is not selected");
   });
 
+  // As many entries as there are units, but only two distinct: counted as entries, the list would not be partial and
+  // --write would drop the pins of the predicate unit it skips.
   it("treats a repeated unit as one, so a partial --write keeps the pins of the units it skips", () => {
     const root = packageCopy();
     const noMutants = "[]\n";
@@ -118,10 +120,10 @@ describe("compile-conduct --check verifies every pin it keeps", () => {
     editPins(root, pins => { pins.sources["circuits/conduct/mutants.json"] = createHash("sha256").update(noMutants).digest("hex"); });
     const pinsFile = join(root, "circuits/conduct/pins.json");
     const before = readFileSync(pinsFile, "utf8");
-    const result = compile(root, ["--write", "--units", "mutants,mutants"]);
+    const result = compile(root, ["--write", "--units", "mutants,mutants,reference"]);
     expect(result.stderr).toBe("");
     expect(readFileSync(pinsFile, "utf8")).toBe(before);
-    expect(existsSync(join(root, "conduct-managed/reference")), "the mutants unit builds no PoAC reference").toBe(false);
+    expect(existsSync(join(root, "conduct-managed/predicate")), "the skipped predicate unit is not rebuilt").toBe(false);
   });
 
   it("builds the PoAC reference contract as its own unit, which pins nothing", () => {
