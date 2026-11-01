@@ -11,6 +11,8 @@ This package generates local Compact proofs and supplies an immutable on-chain p
 
 The rolling relation preserves Orynq's existing algorithm: `SHA256(UTF8('poi-trace:roll:v1|' + previousHex + '|' + eventHex))`. Each proof covers one link; a bundle checks the continuity and shared context of 1–128 links. It proves linkage of digests. Event-body canonicalization, policy evaluation, inference correctness and chain inclusion require separate evidence. An anchor hash supplied as a public input does not prove that an anchor exists on Cardano. Intermediate roots remain visible, and commitments to guessable data permit guessing attacks.
 
+Prototype conduct verdict circuits, not deployed and with no frozen ABI, are described in [circuits/conduct/README.md](circuits/conduct/README.md).
+
 For broker authorization, a trusted issuer separately signs the commitment and exact task context. The broker still checks identity, scope, revocation and replay. Passing the broker's task deadline as `notAfter` binds it into the proof. The capability is a possession witness; it contains no password. Credential custody comes from a trusted executor consuming the password internally and returning a restricted receipt. A proof neither hides a remote AI prompt nor guarantees that a model stops requesting confirmation.
 
 ## Build

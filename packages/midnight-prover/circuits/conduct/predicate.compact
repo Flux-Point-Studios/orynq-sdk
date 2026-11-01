@@ -1,0 +1,28 @@
+pragma language_version 0.23;
+import CompactStandardLibrary;
+include "verdict_core";
+import ConductVerdict prefix CV_;
+
+export ledger verdictOut: Uint<8>;
+
+export pure circuit evaluate(not_before: Uint<64>, not_after: Uint<64>, cap_asset: Field, cap_amount: Uint<64>, egress_mode: Uint<8>,
+    action_kind: Uint<8>, action_timestamp: Uint<64>, action_asset: Field, action_amount: Uint<64>,
+    counterparty_ok: Boolean, prior_spent: Uint<64>, egress_ok: Boolean): Uint<8> {
+  return CV_evaluate(not_before, not_after, cap_amount, egress_mode, action_kind, action_timestamp, action_amount,
+    cap_asset == action_asset, counterparty_ok, prior_spent, egress_ok);
+}
+
+export pure circuit guard_verdict(enforced_at: Uint<64>, not_before: Uint<64>, not_after: Uint<64>, cap_asset: Field, cap_amount: Uint<64>,
+    egress_mode: Uint<8>, action_kind: Uint<8>, action_timestamp: Uint<64>, action_asset: Field, action_amount: Uint<64>,
+    counterparty_ok: Boolean, prior_spent: Uint<64>, egress_ok: Boolean): Uint<8> {
+  return CV_decide(enforced_at, not_before, not_after, cap_amount, egress_mode, action_kind, action_timestamp, action_amount,
+    cap_asset == action_asset, counterparty_ok, prior_spent, egress_ok);
+}
+
+export circuit check_verdict(enforced_at: Uint<64>, not_before: Uint<64>, not_after: Uint<64>, cap_asset: Field, cap_amount: Uint<64>,
+    egress_mode: Uint<8>, action_kind: Uint<8>, action_timestamp: Uint<64>, action_asset: Field, action_amount: Uint<64>,
+    counterparty_ok: Boolean, prior_spent: Uint<64>, egress_ok: Boolean, claimed: Uint<8>): [] {
+  assert(guard_verdict(enforced_at, not_before, not_after, cap_asset, cap_amount, egress_mode, action_kind, action_timestamp,
+    action_asset, action_amount, counterparty_ok, prior_spent, egress_ok) == claimed, "verdict mismatch");
+  verdictOut = disclose(claimed);
+}

@@ -17,6 +17,7 @@ export default defineConfig({
       '@fluxpointstudios/orynq-sdk-anchors-materios': resolve(root, 'packages/anchors-materios/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-anchors-midnight': resolve(root, 'packages/anchors-midnight/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-client': resolve(root, 'packages/client/src/index.ts'),
+      '@fluxpointstudios/orynq-sdk-conduct': resolve(root, 'packages/conduct/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-core': resolve(root, 'packages/core/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-flight-recorder': resolve(root, 'packages/flight-recorder/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-hydra-batcher': resolve(root, 'packages/hydra-batcher/src/index.ts'),
