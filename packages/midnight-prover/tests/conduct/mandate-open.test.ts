@@ -1,21 +1,9 @@
 import { decodeMandate, encodeMandate, hexToBytes, mandateCommitment, mandateCommitmentHex } from "@fluxpointstudios/orynq-sdk-conduct";
 import { describe, expect, it } from "vitest";
 import { classifyMandate, CLASSES, mandateOpening, mandateSegments } from "../../scripts/conduct/template.mjs";
-import { MANDATE_VECTORS, mandateOpeningOf, maxMandate, runMandateOpening, stepMandate, type MandateOpening } from "./mandates.js";
+import { HONEST_MANDATES, MANDATE_VECTORS, mandateOpeningOf, mandateOutcome as outcome, maxMandate, runMandateOpening } from "./mandates.js";
+import { withByte } from "./openings.js";
 import { mandateAtoms } from "./statement-checker.js";
-
-const VECTOR_CLASSES: Readonly<Record<string, string>> = {
-  "base allowlist-egress mandate": "m_base",
-  "deny-all egress with zero root": "m_base",
-  "zero spend cap (deny all spending)": "m_zero_cap",
-  "field maxima + unicode committee id + cardano unit asset": "m_field_maxima",
-  "one-second validity window, unanimous 2-of-2": "m_one_second",
-};
-const HONEST_MANDATES: readonly (readonly [string, Uint8Array, string])[] = [
-  ...MANDATE_VECTORS.valid.map(v => [v.name, hexToBytes(v.cborHex), VECTOR_CLASSES[v.name]!] as const),
-  ["the largest mandate", encodeMandate(maxMandate()), "m_max"],
-  ["the step mandate", encodeMandate(stepMandate()), "m_step"],
-];
 
 describe("T-B12 every mandate class opens the codec's own encoding", () => {
   it("the largest mandate is 998 bytes of CBOR, a 1,023-byte commitment preimage of 17 SHA-256 blocks", () => {
@@ -26,8 +14,9 @@ describe("T-B12 every mandate class opens the codec's own encoding", () => {
     expect(Math.ceil((preimage + 9) / 64)).toBe(17);
   });
 
-  it("names a class for every valid vector", () => {
-    expect(MANDATE_VECTORS.valid.map(v => VECTOR_CLASSES[v.name])).not.toContain(undefined);
+  it("names a class for every honest mandate, and an honest mandate for every class", () => {
+    expect(HONEST_MANDATES.map(([, , id]) => id)).not.toContain(undefined);
+    expect(new Set(HONEST_MANDATES.map(([, , id]) => id))).toEqual(new Set(Object.keys(CLASSES.openings.mandates)));
   });
 
   it.each(HONEST_MANDATES)("%s opens in its class with C, K and the atoms of the codec", async (_name, cbor, id) => {
@@ -47,9 +36,6 @@ describe("T-B12 every mandate class opens the codec's own encoding", () => {
   });
 });
 
-const outcome = (opening: Pick<MandateOpening, "circuit" | "witnesses" | "statement">) =>
-  runMandateOpening(opening).then(() => "accepted", (error: Error) => error.message);
-const withByte = (bytes: Uint8Array, at: number, value: number) => Uint8Array.from(bytes, (b, i) => (i === at ? value : b));
 const MANDATE_CLASSES = Object.keys(CLASSES.openings.mandates);
 
 // Every compiled class whose layout the bytes fit, with the witnesses that present them there.
@@ -57,7 +43,8 @@ function presentations(cbor: Uint8Array): { circuit: string; witnesses: Record<s
   let parsed: { lengths: Record<string, number>; segments: Record<string, Uint8Array> };
   try {
     parsed = mandateSegments(cbor);
-  } catch {
+  } catch (error) {
+    if (!(error as Error).message.startsWith("MANDATE_LAYOUT:")) throw error;
     return [];
   }
   return MANDATE_CLASSES.filter(id => JSON.stringify(CLASSES.openings.mandates[id]) === JSON.stringify(parsed.lengths))

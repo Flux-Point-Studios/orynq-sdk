@@ -623,18 +623,90 @@ export pure circuit cbor_uint_w0(head: Uint<8>): Uint<64> {
   return cborHeadValue(head);
 }
 
-export pure circuit cbor_uint_w1(body: Vector<1, Uint<8>>): Uint<64> {
-  return cborUint<1>(body);
+export pure circuit cbor_uint_w1(v: Vector<1, Uint<8>>): Uint<64> {
+  return cborUint<1>(v);
 }
 
-export pure circuit cbor_uint_w2(body: Vector<2, Uint<8>>): Uint<64> {
-  return cborUint<2>(body);
+export pure circuit cbor_uint_w2(v: Vector<2, Uint<8>>): Uint<64> {
+  return cborUint<2>(v);
 }
 
-export pure circuit cbor_uint_w4(body: Vector<4, Uint<8>>): Uint<64> {
-  return cborUint<4>(body);
+export pure circuit cbor_uint_w4(v: Vector<4, Uint<8>>): Uint<64> {
+  return cborUint<4>(v);
 }
 
-export pure circuit cbor_uint_w8(body: Vector<8, Uint<8>>): Uint<64> {
-  return cborUint<8>(body);
+export pure circuit cbor_uint_w8(v: Vector<8, Uint<8>>): Uint<64> {
+  return cborUint<8>(v);
+}
+
+export pure circuit json_str_w1(v: Vector<1, Uint<8>>): [] {
+  return jsonStr<1>(v);
+}
+
+export pure circuit utf8_any_w1(v: Vector<1, Uint<8>>): [] {
+  return utf8Any<1>(v);
+}
+
+export pure circuit json_str_w2(v: Vector<2, Uint<8>>): [] {
+  return jsonStr<2>(v);
+}
+
+export pure circuit utf8_any_w2(v: Vector<2, Uint<8>>): [] {
+  return utf8Any<2>(v);
+}
+
+export pure circuit json_str_w3(v: Vector<3, Uint<8>>): [] {
+  return jsonStr<3>(v);
+}
+
+export pure circuit utf8_any_w3(v: Vector<3, Uint<8>>): [] {
+  return utf8Any<3>(v);
+}
+
+export pure circuit json_str_w4(v: Vector<4, Uint<8>>): [] {
+  return jsonStr<4>(v);
+}
+
+export pure circuit utf8_any_w4(v: Vector<4, Uint<8>>): [] {
+  return utf8Any<4>(v);
+}
+
+export pure circuit dec_u64_w1(v: Vector<1, Uint<8>>): Uint<64> {
+  return decU64<1>(v);
+}
+
+export pure circuit dec_u64_w2(v: Vector<2, Uint<8>>): Uint<64> {
+  return decU64<2>(v);
+}
+
+export pure circuit hex_halves(v: Vector<64, Uint<8>>): [Field, Field] {
+  return hexHalves(v);
+}
+
+export pure circuit hex_of_hash(v: Vector<64, Uint<8>>, hash: Bytes<32>): [] {
+  return hexOfHash(v, hash);
+}
+
+export pure circuit uuid_shape(v: Vector<36, Uint<8>>): [] {
+  return uuid(v);
+}
+
+export pure circuit iso8601_shape(v: Vector<24, Uint<8>>): [] {
+  return iso8601(v);
+}
+
+export pure circuit vis6_shape(v: Vector<6, Uint<8>>): [] {
+  return vis6(v);
+}
+
+export pure circuit vis7_shape(v: Vector<7, Uint<8>>): [] {
+  return vis7(v);
+}
+
+export pure circuit base58_w1(v: Vector<1, Uint<8>>): [] {
+  return base58<1>(v);
+}
+
+export pure circuit ascii_print_w1(v: Vector<1, Uint<8>>): [] {
+  return asciiPrint<1>(v);
 }

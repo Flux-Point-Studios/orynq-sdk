@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cborDecode } from "@fluxpointstudios/orynq-sdk-conduct";
+import { cborDecode, MandateError } from "@fluxpointstudios/orynq-sdk-conduct";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { CLASSES } from "../../scripts/conduct/template.mjs";
@@ -29,8 +29,9 @@ function decoded(width: number, body: readonly number[]): bigint | undefined {
   try {
     const value = cborDecode(Uint8Array.from(width === 0 ? body : [HEADS[width]!, ...body]));
     return typeof value === "bigint" ? value : undefined;
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (error instanceof MandateError) return undefined;
+    throw error;
   }
 }
 

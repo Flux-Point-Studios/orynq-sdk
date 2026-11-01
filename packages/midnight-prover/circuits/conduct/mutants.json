@@ -604,5 +604,83 @@
     "file": "openings.generated.compact",
     "find": "  const eventHex = ev_pa_ascii_min_eventHex();\n  hexOfHash(eventHex, eventHash);\n",
     "replace": "  const eventHex = ev_pa_ascii_min_eventHex();\n"
+  },
+  {
+    "id": "hex_link_skips_last_byte",
+    "file": "gadgets.compact",
+    "find": "for (const i of 0..32) {\n      assert(nib(h[2 * i])",
+    "replace": "for (const i of 0..31) {\n      assert(nib(h[2 * i])"
+  },
+  {
+    "id": "hex_digit_g",
+    "file": "gadgets.compact",
+    "find": "return (c >= 48 && c <= 57) || (c >= 97 && c <= 102);",
+    "replace": "return (c >= 48 && c <= 57) || (c >= 97 && c <= 103);"
+  },
+  {
+    "id": "decimal_digit_slash",
+    "file": "gadgets.compact",
+    "find": "assert(c >= 48 && c <= 57, \"decimal digit\");",
+    "replace": "assert(c >= 47 && c <= 57, \"decimal digit\");"
+  },
+  {
+    "id": "iso_digit_slash",
+    "file": "gadgets.compact",
+    "find": "(v[i] >= 48 && v[i] <= 57))))), \"iso8601\");",
+    "replace": "(v[i] >= 47 && v[i] <= 57))))), \"iso8601\");"
+  },
+  {
+    "id": "utf8_tail_continuation_low",
+    "file": "gadgets.compact",
+    "find": "const lo: Uint<8> = due != 0 ? 128 :",
+    "replace": "const lo: Uint<8> = due != 0 ? 0 :"
+  },
+  {
+    "id": "utf8_lead4_to_f7",
+    "file": "gadgets.compact",
+    "find": "const lead4 = b >= 240 && b <= 244;",
+    "replace": "const lead4 = b >= 240 && b <= 247;"
+  },
+  {
+    "id": "utf8_lead2_to_e0",
+    "file": "gadgets.compact",
+    "find": "const lead2 = b >= 194 && b <= 223;",
+    "replace": "const lead2 = b >= 194 && b <= 224;"
+  },
+  {
+    "id": "json_continuation_standalone",
+    "file": "gadgets.compact",
+    "find": "return utf8Next(s, b, b >= 32 && b < 128 && b != 34 && b != 92);",
+    "replace": "return utf8Next(s, b, b >= 32 && b < 192 && b != 34 && b != 92);"
+  },
+  {
+    "id": "json_truncated_end",
+    "file": "gadgets.compact",
+    "find": "assert(end[3] && end[0] == 0, \"string outside escape-free well-formed UTF-8 class\");",
+    "replace": "assert(end[3], \"string outside escape-free well-formed UTF-8 class\");"
+  },
+  {
+    "id": "pd4_counterparty_unchecked",
+    "file": "openings.generated.compact",
+    "find": "  jsonStr<4>(counterparty);\n  uuid(id);\n  iso8601(iso);\n  vis7(vis);\n  paymentOpening = disclose(s);\n}\n\nwitness ev_ea_ascii_min",
+    "replace": "  uuid(id);\n  iso8601(iso);\n  vis7(vis);\n  paymentOpening = disclose(s);\n}\n\nwitness ev_ea_ascii_min"
+  },
+  {
+    "id": "unicode_counterparty_unchecked",
+    "file": "openings.generated.compact",
+    "find": "  jsonStr<11>(counterparty);\n",
+    "replace": ""
+  },
+  {
+    "id": "pa_max_counterparty_unchecked",
+    "file": "openings.generated.compact",
+    "find": "  jsonStr<256>(counterparty);\n",
+    "replace": ""
+  },
+  {
+    "id": "m_max_principal_unchecked",
+    "file": "openings.generated.compact",
+    "find": "  base58<256>(principalDid);\n",
+    "replace": ""
   }
 ]

@@ -4,6 +4,7 @@ import { chmodSync, cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { OPENINGS_MUTANTS } from "./openings.js";
 
 const pkg = resolve(import.meta.dirname, "../..");
 const scratch = mkdtempSync(join(tmpdir(), "conduct-compile-test-"));
@@ -68,6 +69,11 @@ describe("compile-conduct output", () => {
     });
     expect(missing).toEqual([]);
   });
+
+  // Only the predicate mutants are checked at ZKIR; the openings mutants are judged by their generated JS.
+  it("mock-compiles no openings mutant", () => {
+    for (const id of OPENINGS_MUTANTS) expect(readdirSync(join(pkg, "conduct-managed/mutants", id, "zkir")).filter(name => name.endsWith(".bzkir")), id).toEqual([]);
+  });
 });
 
 describe("compile-conduct refusals", () => {
@@ -99,7 +105,7 @@ describe("compile-conduct refusals", () => {
     expect(result.stderr).toContain("unknown conduct unit: nope");
   });
 
-  it("rejects a mutant that edits a file outside the predicate sources", () => {
+  it("rejects a mutant that edits a file outside the compiled units' sources", () => {
     const root = packageCopy();
     writeFileSync(join(root, "circuits/conduct/mutants.json"), JSON.stringify([{ id: "elsewhere", file: "reference/poac_verdict_core.compact", find: "return 6;", replace: "return 7;" }]));
     const result = compile(root, ["--check"]);
@@ -225,13 +231,17 @@ writeFileSync(perturbingCompiler, [
 chmodSync(perturbingCompiler, 0o755);
 
 describe("compile-conduct --check measures export invariance with a second, unexported compile", () => {
-  it("refuses a predicate.compact that exports no pure circuit", () => {
+  // The refusal comes while the unit's ZKIR is still being mock-compiled; the script lets that finish and removes its
+  // scratch before it exits.
+  it("refuses a predicate.compact that exports no pure circuit, and leaves no scratch directory behind", () => {
     const root = predicateCopy();
     withoutMutants(root);
     editFile(root, "circuits/conduct/predicate.compact", text => text.replaceAll("export pure circuit ", "pure circuit "));
-    const result = compile(root, ["--check", "--units", "predicate"]);
+    const tmp = mkdtempSync(join(scratch, "tmp-"));
+    const result = compile(root, ["--check", "--units", "predicate"], { TMPDIR: tmp });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("predicate.compact exports no pure circuit");
+    expect(readdirSync(tmp), "scratch left behind").toEqual([]);
   });
 
   const perturbed = (perturb: string) =>

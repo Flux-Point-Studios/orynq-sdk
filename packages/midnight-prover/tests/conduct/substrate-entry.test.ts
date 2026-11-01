@@ -7,17 +7,18 @@ const entry = primitives.find(p => p.id === "conduct-circuits");
 
 // The substrate registry cuts a desc at 2,000 characters in SUBSTRATE.md and at 500 in its JSON projection.
 describe("the conduct-circuits registry entry", () => {
-  it("fits the registry, with its scope and non-claims inside the JSON projection", () => {
+  it("fits the registry, with the scope and non-claims of the verdict and the openings inside the JSON projection", () => {
     expect(entry).toBeDefined();
     expect(entry!.desc.length).toBeLessThanOrEqual(2000);
-    const late = ["Prototype", "not deployed", "ABI not frozen", "unauthenticated", "no key or proof", "D12", "assetTag"]
-      .filter(phrase => !entry!.desc.slice(0, 500).includes(phrase));
+    const late = [
+      "Prototype", "not deployed", "ABI not frozen", "unauthenticated", "no key or proof", "D12", "assetTag",
+      "out-of-class bytes refused", "chain continuity and anchoring assumed", "K carries no authority",
+    ].filter(phrase => !entry!.desc.slice(0, 500).includes(phrase));
     expect(late).toEqual([]);
   });
 
-  it("names the opening sources, the process-trace hub they read, and the openings' non-claims", () => {
+  it("names the opening sources and the process-trace hub they read", () => {
     expect(entry!.paths).toContain("packages/midnight-prover/scripts/conduct");
     expect(entry!.consumes).toContain("process-trace");
-    expect(entry!.desc).toContain("chain continuity and anchoring are assumed, and K carries no authority");
   });
 });

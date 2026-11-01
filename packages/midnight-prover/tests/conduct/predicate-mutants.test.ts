@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { allCases, checkVerdictArgs, circuitOutcomes, CLAIMS, MAX_U64, slot, type VerdictCase } from "./cases.js";
 import { loadUnit, outcome, unitDir, zkCheck, type Outcome, type UnitModule } from "./harness.js";
 import { agrees, assertsApplying, atomTruths, orderCases, withoutStacks, type Judged, type Judgement, type OrderCell } from "./order-type.js";
+import { OPENINGS_MUTANTS } from "./openings.js";
 import { auditStructure } from "./structure.js";
 
 const BAND = "a rule skipped in a band between 2^32 and 2^53";
@@ -70,9 +71,7 @@ const REWIRING_MUTANTS = [
 ];
 
 const { pureCircuits } = await loadUnit("predicate");
-const PREDICATE_SOURCES = ["predicate.compact", "verdict_core.compact"];
-const mutants: { id: string; file: string }[] = JSON.parse(readFileSync(join(resolve(import.meta.dirname, "../.."), "circuits/conduct/mutants.json"), "utf8"))
-  .filter((m: { file: string }) => PREDICATE_SOURCES.includes(m.file));
+const mutants: { id: string; file: string }[] = JSON.parse(readFileSync(join(resolve(import.meta.dirname, "../.."), "circuits/conduct/mutants.json"), "utf8"));
 const cases = allCases();
 const disagreements = (pure: UnitModule["pureCircuits"]): VerdictCase[] =>
   cases.filter(c => !isDeepStrictEqual(circuitOutcomes(pure, c), { evaluate: c.evaluate, guard: c.guard }));
@@ -119,11 +118,11 @@ describe("T-A14 every VerdictCore mutant is killed by a T-A03..T-A10 case or a T
     expect(disagreements(pureCircuits).map(c => c.name)).toEqual([]);
   });
 
-  it("mutants.json lists exactly the VerdictCore, predicate and equivalent mutant sets", () => {
+  it("mutants.json lists exactly the VerdictCore, predicate and equivalent mutant sets, and the openings set", () => {
     const ids = (file: string) => mutants.filter(m => m.file === file).map(m => m.id).sort();
     expect(ids("verdict_core.compact")).toEqual([...VERDICT_CORE_MUTANTS, ...EQUIVALENT_MUTANTS].sort());
     expect(ids("predicate.compact")).toEqual([...PREDICATE_MUTANTS, ...HIDDEN_CODE_MUTANTS].sort());
-    expect(mutants).toHaveLength(VERDICT_CORE_MUTANTS.length + PREDICATE_MUTANTS.length + HIDDEN_CODE_MUTANTS.length + EQUIVALENT_MUTANTS.length);
+    expect(mutants.map(m => m.id).sort()).toEqual([...VERDICT_CORE_MUTANTS, ...EQUIVALENT_MUTANTS, ...PREDICATE_MUTANTS, ...HIDDEN_CODE_MUTANTS, ...OPENINGS_MUTANTS].sort());
   });
 
   it.each(VERDICT_CORE_MUTANTS)("kills %s", async id => {
@@ -202,8 +201,9 @@ describe("a mutant that moves messages between asserts compiles to the predicate
 });
 
 describe("AM-6.3: a mutant that passes T-A16 only re-wires audited comparisons, and T-A17 kills it", () => {
-  it("exactly the re-wiring mutants pass T-A16", () => {
-    expect(mutants.filter(m => auditStructure(`mutants/${m.id}`).length === 0).map(m => m.id).sort()).toEqual([...REWIRING_MUTANTS].sort());
+  it("exactly the re-wiring mutants of the predicate unit pass T-A16", () => {
+    const predicateMutants = mutants.filter(m => !OPENINGS_MUTANTS.includes(m.id));
+    expect(predicateMutants.filter(m => auditStructure(`mutants/${m.id}`).length === 0).map(m => m.id).sort()).toEqual([...REWIRING_MUTANTS].sort());
   });
 
   it.each(REWIRING_MUTANTS)("T-A17 kills %s", async id => {
@@ -241,7 +241,7 @@ describe("T-A14 ZKIR leg: every mutant that reaches check_verdict is killed by t
 
   // The cases whose guard_verdict the mutant gets wrong at JS come first; when no named case does, the first such T-A17
   // cell. A predicate.compact mutant leaves the pure circuits as they are, so no JS case can differ.
-  it.each(mutants.map(m => m.id).filter(id => ![...EVALUATE_ONLY_MUTANTS, ...EQUIVALENT_MUTANTS, ...HIDDEN_CODE_MUTANTS, ...MESSAGE_ONLY_MUTANTS].includes(id)))("kills %s", async id => {
+  it.each(mutants.map(m => m.id).filter(id => ![...EVALUATE_ONLY_MUTANTS, ...EQUIVALENT_MUTANTS, ...HIDDEN_CODE_MUTANTS, ...MESSAGE_ONLY_MUTANTS, ...OPENINGS_MUTANTS].includes(id)))("kills %s", async id => {
     const unit = `mutants/${id}`;
     const pure = (await loadUnit(unit)).pureCircuits;
     const jsKills = (c: VerdictCase) => !isDeepStrictEqual(circuitOutcomes(pure, c).guard, c.guard);

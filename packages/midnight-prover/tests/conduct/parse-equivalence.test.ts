@@ -2,8 +2,7 @@ import { canonicalize } from "@fluxpointstudios/orynq-sdk-core/utils";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { classify, expandKinds, render, TEMPLATE } from "../../scripts/conduct/template.mjs";
-
-interface Segment { readonly c?: string; readonly v?: string; readonly lex?: string; readonly max?: number; readonly nonzero?: boolean }
+import type { Segment } from "./openings.js";
 
 const kinds: Record<string, Segment[]> = expandKinds();
 const DOMAIN: string = TEMPLATE.domain;

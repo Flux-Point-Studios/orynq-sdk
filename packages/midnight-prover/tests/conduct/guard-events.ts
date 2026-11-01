@@ -13,6 +13,7 @@ import {
   type MandateV1,
   type PaymentAction,
 } from "@fluxpointstudios/orynq-sdk-conduct";
+import { MAX_U64 } from "./cases.js";
 
 export const KINDS = [
   "payment-action", "payment-denial-1", "payment-denial-2", "payment-denial-3", "payment-denial-4", "payment-denial-5",
@@ -21,7 +22,7 @@ export const KINDS = [
 export type Kind = (typeof KINDS)[number];
 
 export const SHAPES = ["ascii-min", "unicode-max", "max-in-class"] as const;
-export type Shape = (typeof SHAPES)[number];
+type Shape = (typeof SHAPES)[number];
 
 export interface RealEvent {
   readonly kind: Kind;
@@ -32,7 +33,7 @@ export interface RealEvent {
   readonly rollAfter: string;
 }
 
-export interface Profile {
+interface Profile {
   readonly visibility: Visibility;
   readonly asset: string;
   readonly otherAsset: string;
@@ -52,7 +53,6 @@ export interface Profile {
   readonly traceSeq: number;
 }
 
-const MAX_U64 = (1n << 64n) - 1n;
 // Printable ASCII without the two characters JSON escapes, so a 128-character mandate asset stays escape-free.
 const PRINTABLE = Array.from({ length: 94 }, (_, i) => String.fromCharCode(0x21 + i)).filter(c => c !== '"' && c !== "\\").join("");
 
@@ -74,7 +74,7 @@ export const PROFILES: Readonly<Record<Shape, Profile>> = {
   },
 };
 
-export function mandateFor(p: Profile, egressMode: 0n | 1n): MandateV1 {
+function mandateFor(p: Profile, egressMode: 0n | 1n): MandateV1 {
   return {
     schemaVersion: 1n,
     mandateId: new Uint8Array(16).fill(0x5a),
@@ -90,14 +90,14 @@ export function mandateFor(p: Profile, egressMode: 0n | 1n): MandateV1 {
   };
 }
 
-export interface Scene {
+interface Scene {
   readonly egressMode: 0n | 1n;
   readonly before: readonly GuardAction[];
   readonly action: GuardAction;
   readonly traceSeq?: number;
 }
 
-export interface Traced {
+interface Traced {
   readonly decision: GuardDecision;
   readonly guardEvent: GuardEvent;
   readonly event: TraceEvent;
@@ -123,7 +123,7 @@ function scenario(kind: Kind, p: Profile): Scene {
   }
 }
 
-export const kindOf = (action: GuardAction, decision: GuardDecision): string =>
+const kindOf = (action: GuardAction, decision: GuardDecision): string =>
   decision.allowed ? `${action.kind}-action` : `${action.kind}-denial-${verdictOf(decision.reason)}`;
 
 async function traceRun(nextSeq: number): Promise<{ run: TraceRun; spanId: string }> {

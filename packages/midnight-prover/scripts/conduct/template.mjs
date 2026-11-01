@@ -433,8 +433,26 @@ function mandateCircuit(id, lengths) {
   ];
 }
 
+const vector = n => `v: Vector<${n}, Uint<8>>`;
+// Pure probes of the gadgets, as [name, parameters, return type, call], so the tests can run each over its input class.
+const PROBES = [
+  ["cbor_uint_w0", "head: Uint<8>", "Uint<64>", "cborHeadValue(head)"],
+  ...Object.values(UINT_WIDTHS).map(width => [`cbor_uint_w${width}`, vector(width), "Uint<64>", `cborUint<${width}>(v)`]),
+  ...[1, 2, 3, 4].flatMap(n => [[`json_str_w${n}`, vector(n), "[]", `jsonStr<${n}>(v)`], [`utf8_any_w${n}`, vector(n), "[]", `utf8Any<${n}>(v)`]]),
+  ["dec_u64_w1", vector(1), "Uint<64>", "decU64<1>(v)"],
+  ["dec_u64_w2", vector(2), "Uint<64>", "decU64<2>(v)"],
+  ["hex_halves", vector(64), "[Field, Field]", "hexHalves(v)"],
+  ["hex_of_hash", `${vector(64)}, hash: Bytes<32>`, "[]", "hexOfHash(v, hash)"],
+  ["uuid_shape", vector(36), "[]", "uuid(v)"],
+  ["iso8601_shape", vector(24), "[]", "iso8601(v)"],
+  ["vis6_shape", vector(6), "[]", "vis6(v)"],
+  ["vis7_shape", vector(7), "[]", "vis7(v)"],
+  ["base58_w1", vector(1), "[]", "base58<1>(v)"],
+  ["ascii_print_w1", vector(1), "[]", "asciiPrint<1>(v)"],
+];
+
 /**
- * The Compact source of the opening circuits of every class in classes.json, and a pure probe of each CBOR uint width.
+ * The Compact source of the opening circuits of every class in classes.json, and the pure probes of the gadgets.
  * @returns {string}
  */
 export function emitOpenings() {
@@ -453,9 +471,6 @@ export function emitOpenings() {
   out.push("export struct MandateOpening {", "  commitment: Bytes<32>,", "  atoms: Bytes<32>", "}", "export ledger mandateOpening: MandateOpening;", "");
   for (const [id, eventClass] of Object.entries(CLASSES.openings.events)) out.push(...eventCircuit(id, eventClass));
   for (const [id, lengths] of Object.entries(CLASSES.openings.mandates)) out.push(...mandateCircuit(id, lengths));
-  out.push("export pure circuit cbor_uint_w0(head: Uint<8>): Uint<64> {", "  return cborHeadValue(head);", "}", "");
-  for (const width of Object.values(UINT_WIDTHS)) {
-    out.push(`export pure circuit cbor_uint_w${width}(body: Vector<${width}, Uint<8>>): Uint<64> {`, `  return cborUint<${width}>(body);`, "}", "");
-  }
+  for (const [name, parameters, returns, call] of PROBES) out.push(`export pure circuit ${name}(${parameters}): ${returns} {`, `  return ${call};`, "}", "");
   return out.join("\n");
 }

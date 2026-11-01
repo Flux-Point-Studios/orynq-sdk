@@ -95,9 +95,13 @@ function callCircuit(module: UnitModule, name: string, witnesses: object, args: 
   state.setOperation(name, new ledger.ContractOperation());
   const address = new ledger.ContractDeploy(state).address;
   const context = runtime.createCircuitContext(address, coinKey, initial.currentContractState as never, undefined);
+  return { state, address, data: circuitOf(contract, name)(context, ...args).proofData };
+}
+
+function circuitOf(contract: CompiledContract, name: string) {
   const circuit = contract.circuits[name];
   if (typeof circuit !== "function") throw new TypeError(`contract.circuits.${name} is not a function`);
-  return { state, address, data: circuit(context, ...args).proofData };
+  return circuit;
 }
 
 export async function runCircuit(unit: string, name: string, witnesses: object, args: readonly unknown[]): Promise<ProofData> {
@@ -117,9 +121,7 @@ export async function runLedger(unit: string, name: string, witnesses: object, a
     initial = { coinKey, state: contract.initialState(runtime.createConstructorContext(undefined, coinKey)).currentContractState };
     initialStates.set(module, initial);
   }
-  const circuit = contract.circuits[name];
-  if (typeof circuit !== "function") throw new TypeError(`contract.circuits.${name} is not a function`);
-  const call = circuit(runtime.createCircuitContext(runtime.dummyContractAddress(), initial.coinKey, initial.state as never, undefined), ...args) as unknown as
+  const call = circuitOf(contract, name)(runtime.createCircuitContext(runtime.dummyContractAddress(), initial.coinKey, initial.state as never, undefined), ...args) as unknown as
     { context: { currentQueryContext: { state: runtime.StateValue } } };
   return module.ledger(call.context.currentQueryContext.state);
 }

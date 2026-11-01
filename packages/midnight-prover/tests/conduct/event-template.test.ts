@@ -5,8 +5,7 @@ import { canonicalize } from "@fluxpointstudios/orynq-sdk-core/utils";
 import { computeEventHash } from "@fluxpointstudios/orynq-sdk-process-trace";
 import { describe, expect, it } from "vitest";
 import { KINDS, realEvents } from "./guard-events.js";
-
-interface Segment { readonly c?: string; readonly v?: string; readonly lex?: string; readonly max?: number }
+import type { Segment } from "./openings.js";
 
 const template = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../circuits/conduct/templates/guard-event-v1.json"), "utf8"));
 const { classify, expandKinds, render } = await import("../../scripts/conduct/template.mjs");
