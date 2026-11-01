@@ -1,22 +1,31 @@
+import { createHash } from "node:crypto";
 import {
   ALLOWLIST_LEAF_DOMAIN, cborEncode, compareBytes, encodeMandate, MANDATE_COMMITMENT_DOMAIN, mandateToCborMap, type CborValue, type MandateV1,
 } from "@fluxpointstudios/orynq-sdk-conduct";
+import { canonicalize } from "@fluxpointstudios/orynq-sdk-core/utils";
 import { HASH_DOMAIN_PREFIXES } from "@fluxpointstudios/orynq-sdk-process-trace";
-import { CLASSES, render, TEMPLATE } from "../../scripts/conduct/template.mjs";
+import { CLASSES, TEMPLATE } from "../../scripts/conduct/template.mjs";
+import { KINDS, realEvent } from "./guard-events.js";
 import { MANDATE_UINT_FIELDS } from "./openings.js";
 import { MANDATE_ATOMS_DOMAIN } from "./statement-checker.js";
 
 // The Compact text every compiled opening class must hold, written from the statements the README declares and the
-// producers' own bytes, and never from template.mjs's emitter. The structure audit parses this text and the generated
-// circuits alike and compares what they read, so its layout need not match the generated file's.
+// producers' own bytes, and never from template.mjs's emitter or renderer. The structure audit parses this text and the
+// generated circuits alike and compares what they read, so its layout need not match the generated file's.
 
 interface Segment { readonly v: string; readonly lex: string; readonly nonzero: boolean }
 
+/** A hash input: constant bytes, or an expression with the type the hash lists for it. */
+type Input = Uint8Array | readonly [expression: string, type: string];
+
 const utf8 = (text: string) => new TextEncoder().encode(text);
-const bytes = (b: Uint8Array) => `[${[...b].join(", ")}]`;
-const hashOf = (parts: readonly (Uint8Array | string)[]) =>
-  `persistentHash([${parts.filter(p => typeof p === "string" || p.length > 0).map(p => (typeof p === "string" ? p : bytes(p))).join(", ")}])`;
-const witnessDeclaration = (name: string, width: number) => `witness ${name}(): Vector<${width}, Uint<8>>;`;
+const vector = (width: number) => `Vector<${width}, Uint<8>>`;
+const hashOf = (inputs: readonly Input[]) => {
+  const typed = inputs.filter(input => !(input instanceof Uint8Array) || input.length > 0)
+    .map(input => (input instanceof Uint8Array ? [`[${input.join(", ")}]`, vector(input.length)] as const : input));
+  return `persistentHash<[${typed.map(([, type]) => type).join(", ")}]>([${typed.map(([expression]) => expression).join(", ")}])`;
+};
+const witnessDeclaration = (name: string, width: number) => `witness ${name}(): ${vector(width)};`;
 
 // S-EVENT-OPEN: each value a guard event discloses, with the statement field it is disclosed as and how it is read.
 const OPENED: Readonly<Record<string, readonly ["decimal" | "hex" | "digest" | "leaf", string]>> = {
@@ -44,8 +53,11 @@ function actionValues(action: string): Segment[] {
 
 const statementType = (action: string) => `${action[0]!.toUpperCase()}${action.slice(1)}Opening`;
 
+// The rolling-hash fields of every event statement.
+const ROLL_FIELDS = { prevRollHex: "Bytes<64>", rollAfter: "Bytes<32>" };
+
 function statementStruct(action: string): string[] {
-  const fields = [["prevRollHex", "Bytes<64>"], ["rollAfter", "Bytes<32>"]];
+  const fields = Object.entries(ROLL_FIELDS);
   for (const { v } of actionValues(action)) {
     const opened = OPENED[v];
     if (opened === undefined) continue;
@@ -58,24 +70,66 @@ function statementStruct(action: string): string[] {
   return [`export struct ${type} {`, fields.map(([name, t]) => `  ${name}: ${t}`).join(",\n"), "}", `export ledger ${action}Opening: ${type};`];
 }
 
-// The preimage process-trace hashes for an event of `kind`, as constants and value names, from the template's renderer,
-// which T-B01 holds to the producer's bytes.
-function eventPreimage(kind: string, names: readonly string[]): (Uint8Array | string)[] {
-  const mark = "\u0000";
-  const text: string = render({ kind, values: Object.fromEntries(names.map(name => [name, `${mark}${name}${mark}`])) });
-  return text.split(mark).map((part, i) => (i % 2 === 0 ? utf8(part) : part));
+// Where a guard event's trace event holds each value the template names.
+const VALUE_PATHS: Readonly<Record<string, readonly string[]>> = {
+  amount: ["data.action.amount"], asset: ["data.action.asset"], counterparty: ["data.action.counterparty"], destination: ["data.action.destination"],
+  ts: ["data.action.timestamp", "data.timestamp"], actionDigest: ["data.actionDigest"], enforcedAt: ["data.enforcedAt"],
+  mandateCommitment: ["data.mandateCommitment"], dataSeq: ["data.seq"], id: ["id"], traceSeq: ["seq"], iso: ["timestamp"], vis: ["visibility"],
+};
+const MARK = "@@";
+
+/**
+ * The preimage process-trace hashes for a guard event of each kind, as constants and value names: a real event of the
+ * kind with each value replaced by a marker, canonicalized as computeEventHash canonicalizes it and split at the markers.
+ * A marker for a number, which canonicalize writes bare, loses the quotes it is written in.
+ */
+async function eventPreimages(): Promise<ReadonlyMap<string, (Uint8Array | string)[]>> {
+  const preimages = new Map<string, (Uint8Array | string)[]>();
+  for (const kind of KINDS) {
+    const { event } = await realEvent(kind, "ascii-min");
+    const { hash, ...body } = event;
+    const preimage = `${HASH_DOMAIN_PREFIXES.event}${canonicalize(body)}`;
+    if (createHash("sha256").update(preimage, "utf8").digest("hex") !== hash) throw new Error(`the ${kind} event's hash is not the hash of its canonical preimage`);
+    const marked = structuredClone(body) as Record<string, unknown>;
+    const values = new Map<string, string>();
+    const bare: string[] = [];
+    for (const [name, paths] of Object.entries(VALUE_PATHS)) {
+      for (const path of paths) {
+        const keys = path.split(".");
+        const holder = keys.slice(0, -1).reduce<Record<string, unknown> | undefined>((at, key) => at?.[key] as Record<string, unknown> | undefined, marked);
+        const key = keys.at(-1)!;
+        if (holder === undefined || !Object.hasOwn(holder, key)) continue;
+        values.set(name, String(holder[key]));
+        if (typeof holder[key] === "number") bare.push(name);
+        holder[key] = `${MARK}${name}${MARK}`;
+      }
+    }
+    const text = bare.reduce((at, name) => at.replace(JSON.stringify(`${MARK}${name}${MARK}`), `${MARK}${name}${MARK}`), `${HASH_DOMAIN_PREFIXES.event}${canonicalize(marked)}`);
+    const parts = text.split(MARK);
+    if (parts.map((part, i) => (i % 2 === 0 ? part : values.get(part))).join("") !== preimage) throw new Error(`the markers do not split the ${kind} preimage`);
+    preimages.set(kind, parts.map((part, i) => (i % 2 === 0 ? utf8(part) : part)));
+  }
+  return preimages;
 }
+
+const EVENT_PREIMAGES = await eventPreimages();
 
 function eventCircuit(id: string, kind: string, lengths: Readonly<Record<string, number>>): string[] {
   const action = kind.slice(0, kind.indexOf("-"));
   const values = actionValues(action);
   const width = ({ v, lex }: Segment) => lengths[v] ?? FIXED_WIDTHS[lex]!;
+  const widths = new Map(values.map(segment => [segment.v, width(segment)]));
+  const preimage = EVENT_PREIMAGES.get(kind)!.map((part): Input => {
+    if (typeof part !== "string") return part;
+    if (!widths.has(part)) throw new Error(`the ${kind} preimage holds ${part}, which no ${action} value of the template names`);
+    return [part, vector(widths.get(part)!)];
+  });
   const body: string[] = [
     ...values.map(({ v }) => `const ${v} = ${id}_${v}();`),
-    `const eventHash = ${hashOf(eventPreimage(kind, values.map(({ v }) => v)))};`,
+    `const eventHash = ${hashOf(preimage)};`,
     `const eventHex = ${id}_eventHex();`,
     "hexOfHash(eventHex, eventHash);",
-    `assert(${hashOf([utf8(HASH_DOMAIN_PREFIXES.roll), "s.prevRollHex", utf8("|"), "eventHex"])} == s.rollAfter, "rolling root mismatch");`,
+    `assert(${hashOf([utf8(HASH_DOMAIN_PREFIXES.roll), ["s.prevRollHex", ROLL_FIELDS.prevRollHex], utf8("|"), ["eventHex", vector(FIXED_WIDTHS.hex64!)]])} == s.rollAfter, "rolling root mismatch");`,
   ];
   for (const segment of values) {
     const opened = OPENED[segment.v];
@@ -89,10 +143,10 @@ function eventCircuit(id: string, kind: string, lengths: Readonly<Record<string,
       body.push(`const ${v}Halves = hexHalves(${v});`,
         `assert(${v}Halves[0] == (s.${field}Hi as Field) && ${v}Halves[1] == (s.${field}Lo as Field), "${field} opening");`);
     } else if (as === "digest") {
-      body.push(`assert(${hashOf([v])} == s.${field}, "${field} opening");`);
+      body.push(`assert(${hashOf([[v, vector(width(segment))]])} == s.${field}, "${field} opening");`);
     } else {
       const head = cborEncode("x".repeat(width(segment))).subarray(0, -width(segment));
-      body.push(`assert(${hashOf([Uint8Array.from([...utf8(ALLOWLIST_LEAF_DOMAIN), ...head]), v])} == s.${field}, "${field} opening");`);
+      body.push(`assert(${hashOf([Uint8Array.from([...utf8(ALLOWLIST_LEAF_DOMAIN), ...head]), [v, vector(width(segment))]])} == s.${field}, "${field} opening");`);
     }
   }
   for (const segment of values) {
@@ -102,7 +156,7 @@ function eventCircuit(id: string, kind: string, lengths: Readonly<Record<string,
   body.push(`${action}Opening = disclose(s);`);
   return [
     ...values.map(segment => witnessDeclaration(`${id}_${segment.v}`, width(segment))),
-    witnessDeclaration(`${id}_eventHex`, 64),
+    witnessDeclaration(`${id}_eventHex`, FIXED_WIDTHS.hex64!),
     `export circuit ${id}(s: ${statementType(action)}): [] {`,
     ...body.map(line => `  ${line}`),
     "}",
@@ -168,11 +222,14 @@ function mandateCircuit(id: string, dimensions: Readonly<Record<string, number>>
   if (compareBytes(rebuilt, encodeMandate(m)) !== 0) throw new Error(`the reference layout of ${id} differs from the codec's encoding`);
   const fields = parts.filter((part): part is Extract<Part, { v: string }> => "v" in part);
   const width = (field: string) => fields.find(f => f.v === field)!.bytes.length;
-  const preimage = [utf8(MANDATE_COMMITMENT_DOMAIN), ...parts.map(part => ("c" in part ? part.c : part.v))];
+  const preimage = [utf8(MANDATE_COMMITMENT_DOMAIN), ...parts.map((part): Input => ("c" in part ? part.c : [part.v, vector(part.bytes.length)]))];
   const value = (field: string) => (dimensions[field] === 0 ? `cborHeadValue(${field}[0])` : `cborUint<${dimensions[field]}>(${field})`);
-  const atoms = [
-    `pad(32, ${JSON.stringify(MANDATE_ATOMS_DOMAIN)})`, "commitment", "notBeforeValue", "notAfterValue", hashOf(["asset"]), "capAmountValue",
-    "windowSecondsValue", "egressMode[0]", "counterpartyRoot", "egressRoot",
+  // K's inputs as mandateAtoms lays them out: the padded domain and C, each uint at 64 bits, the asset's hash, the mode
+  // byte and the two roots.
+  const atoms: Input[] = [
+    [`pad(32, ${JSON.stringify(MANDATE_ATOMS_DOMAIN)})`, "Bytes<32>"], ["commitment", "Bytes<32>"], ["notBeforeValue", "Uint<64>"], ["notAfterValue", "Uint<64>"],
+    [hashOf([["asset", vector(width("asset"))]]), "Bytes<32>"], ["capAmountValue", "Uint<64>"], ["windowSecondsValue", "Uint<64>"], ["egressMode[0]", "Uint<8>"],
+    ["counterpartyRoot", vector(width("counterpartyRoot"))], ["egressRoot", vector(width("egressRoot"))],
   ];
   const body = [
     ...fields.map(({ v }) => `const ${v} = ${id}_${v}();`),

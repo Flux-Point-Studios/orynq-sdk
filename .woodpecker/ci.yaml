@@ -104,13 +104,14 @@ steps:
           nice -n 19 pnpm test:slow
         '
 
-  # The conduct circuits compile with build-test's Compact install and must reproduce their pins. Their suite runs only
-  # here, through its own vitest config.
+  # The conduct circuits compile with build-test's Compact install and must reproduce their
+  # pins. Their suite runs only here, through its own vitest config.
   - name: conduct-circuits
     image: node:24-bookworm@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
     depends_on: [build-test]
     environment:
       COMPACTC: /woodpecker/orynq-midnight-tools/compactc/compactc
+      MIDNIGHT_PP: /woodpecker/orynq-midnight-tools/zk-params
     commands:
       - corepack enable
       - |

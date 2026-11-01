@@ -11,5 +11,6 @@ Their tests ship under `tests/conduct` and run inside the workspace, which
 holds the conduct fixtures they read, through `vitest.conduct.config.mts`. The
 package entry does not export the circuits. They are undeployed and their ABI
 is unfrozen. The new `build:conduct` script compiles them and requires the
-committed generated circuits and pins to reproduce. `circuits/conduct/reference` holds PoAC's archived verdict core,
-which ships only as the tests' explicit-time oracle and is never deployed.
+committed generated circuits and pins to reproduce.
+`circuits/conduct/reference` holds PoAC's archived verdict core, which ships
+only as the tests' explicit-time oracle and is never deployed.

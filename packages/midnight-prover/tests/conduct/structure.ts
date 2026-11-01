@@ -98,44 +98,57 @@ const GADGET_OUTLINE: readonly string[] = [
 ];
 
 interface AuditedGadget {
-  readonly header: string;
   /** Every numeric and Boolean literal of the body, its types' included. */
   readonly literals: readonly string[];
   readonly comparisons: readonly string[];
   readonly calls: readonly string[];
+  /** The signature, then every statement in order. */
+  readonly statements: readonly string[];
 }
 
 const UTF8_STATE = "[Uint<0..4>, Uint<8>, Uint<8>, Boolean]";
 const STRING_FOLD = (step: string) => [`fold(${step}, [0, 128, 191, true], s)`];
+const HEX_FOLD = (from: number) => `fold((acc, c) => (acc * 16) + nib(c), 0 as Field, slice<32>(h, ${from}))`;
 
-/** Each gadget's signature, literals, comparisons with their operands, and calls with their arguments. */
+/** Each gadget's literals, comparisons with their operands, calls with their arguments, signature and statements. */
 export const AUDITED_GADGETS: Readonly<Record<string, AuditedGadget>> = {
   "ConductGadgets.decU64": {
-    header: "export circuit decU64<#N>(ds: Vector<N, Uint<8>>): Uint<64>",
     literals: ["0", "0", "1", "10", "48", "48", "48", "57", "64"],
     comparisons: ["c >= 48", "c <= 57", "N == 1", "ds[0] != 48"],
     calls: ["fold((acc, c) => ((acc * 10) + (c as Field)) - 48, 0 as Field, ds)"],
+    statements: [
+      "export circuit decU64<#N>(ds: Vector<N, Uint<8>>): Uint<64>", "for (const c of ds) {", 'assert ((c >= 48) && (c <= 57)), "decimal digit"', "}",
+      'assert ((N == 1) || (ds[0] != 48)), "decimal leading zero"',
+      "return fold((acc, c) => ((acc * 10) + (c as Field)) - 48, 0 as Field, ds) as Uint<64>",
+    ],
   },
   "ConductGadgets.dec53": {
-    header: "export circuit dec53<#N>(ds: Vector<N, Uint<8>>): Uint<64>",
     literals: ["9007199254740992"],
     comparisons: ["value < 9007199254740992"],
     calls: ["decU64<N>(ds)"],
+    statements: [
+      "export circuit dec53<#N>(ds: Vector<N, Uint<8>>): Uint<64>", "const value = decU64<N>(ds)", 'assert (value < 9007199254740992), "trace seq unsafe"', "return value",
+    ],
   },
   "ConductGadgets.cborHeadValue": {
-    header: "export circuit cborHeadValue(head: Uint<8>): Uint<64>",
     literals: ["23", "64"],
     comparisons: ["head <= 23"],
     calls: [],
+    statements: ["export circuit cborHeadValue(head: Uint<8>): Uint<64>", 'assert (head <= 23), "cbor head"', "return head as Uint<64>"],
   },
   "ConductGadgets.cborUint": {
-    header: "export circuit cborUint<#W>(body: Vector<W, Uint<8>>): Uint<64>",
     literals: ["0", "1", "1", "2", "2", "4", "4", "8", "24", "64", "256", "256", "65536", "4294967296"],
     comparisons: ["W == 1", "W == 2", "W == 4", "W == 8", "value >= ((W == 1) ? 24 : ((W == 2) ? 256 : ((W == 4) ? 65536 : 4294967296)))", "W == 1", "W == 2", "W == 4"],
     calls: ["fold((acc, b) => (acc * 256) + (b as Field), 0 as Field, body)"],
+    statements: [
+      "export circuit cborUint<#W>(body: Vector<W, Uint<8>>): Uint<64>",
+      'assert ((((W == 1) || (W == 2)) || (W == 4)) || (W == 8)), "cbor uint width"',
+      "const value = fold((acc, b) => (acc * 256) + (b as Field), 0 as Field, body) as Uint<64>",
+      'assert (value >= ((W == 1) ? 24 : ((W == 2) ? 256 : ((W == 4) ? 65536 : 4294967296)))), "cbor uint not minimal"',
+      "return value",
+    ],
   },
   "ConductGadgets.utf8Next": {
-    header: `circuit utf8Next(s: ${UTF8_STATE}, b: Uint<8>, ascii: Boolean): ${UTF8_STATE}`,
     literals: [
       "0", "0", "0", "0", "0", "0", "0", "0", "1", "1", "1", "2", "2", "2", "2", "3", "3", "3", "4", "8", "8",
       "128", "128", "143", "144", "159", "160", "191", "191", "194", "223", "224", "224", "237", "239", "240", "240", "244", "244",
@@ -145,96 +158,107 @@ export const AUDITED_GADGETS: Readonly<Record<string, AuditedGadget>> = {
       "due != 0", "b == 224", "b == 240", "due != 0", "b == 237", "b == 244", "due != 0", "b >= s[1]", "b <= s[2]",
     ],
     calls: [],
+    statements: [
+      `circuit utf8Next(s: ${UTF8_STATE}, b: Uint<8>, ascii: Boolean): ${UTF8_STATE}`,
+      "const due = s[0]",
+      "const lead2 = (b >= 194) && (b <= 223)",
+      "const lead3 = (b >= 224) && (b <= 239)",
+      "const lead4 = (b >= 240) && (b <= 244)",
+      "const next: Uint<0..4> = (due != 0) ? ((due == 3) ? 2 : ((due == 2) ? 1 : 0)) : (lead2 ? 1 : (lead3 ? 2 : (lead4 ? 3 : 0)))",
+      "const lo: Uint<8> = (due != 0) ? 128 : ((b == 224) ? 160 : ((b == 240) ? 144 : 128))",
+      "const hi: Uint<8> = (due != 0) ? 191 : ((b == 237) ? 159 : ((b == 244) ? 143 : 191))",
+      "return [next, lo, hi, s[3] && ((due != 0) ? ((b >= s[1]) && (b <= s[2])) : (((ascii || lead2) || lead3) || lead4))]",
+    ],
   },
   "ConductGadgets.jsonStep": {
-    header: `circuit jsonStep(s: ${UTF8_STATE}, b: Uint<8>): ${UTF8_STATE}`,
     literals: ["32", "34", "92", "128"],
     comparisons: ["b >= 32", "b < 128", "b != 34", "b != 92"],
     calls: ["utf8Next(s, b, (((b >= 32) && (b < 128)) && (b != 34)) && (b != 92))"],
+    statements: [`circuit jsonStep(s: ${UTF8_STATE}, b: Uint<8>): ${UTF8_STATE}`, "return utf8Next(s, b, (((b >= 32) && (b < 128)) && (b != 34)) && (b != 92))"],
   },
   "ConductGadgets.anyStep": {
-    header: `circuit anyStep(s: ${UTF8_STATE}, b: Uint<8>): ${UTF8_STATE}`,
     literals: ["128"],
     comparisons: ["b < 128"],
     calls: ["utf8Next(s, b, b < 128)"],
+    statements: [`circuit anyStep(s: ${UTF8_STATE}, b: Uint<8>): ${UTF8_STATE}`, "return utf8Next(s, b, b < 128)"],
   },
   "ConductGadgets.jsonStr": {
-    header: "export circuit jsonStr<#N>(s: Vector<N, Uint<8>>): []",
     literals: ["0", "0", "0", "3", "128", "191", "true"],
     comparisons: ["end[0] == 0"],
     calls: STRING_FOLD("jsonStep"),
+    statements: ["export circuit jsonStr<#N>(s: Vector<N, Uint<8>>): []", "const end = fold(jsonStep, [0, 128, 191, true], s)", 'assert (end[3] && (end[0] == 0)), "string outside escape-free well-formed UTF-8 class"'],
   },
   "ConductGadgets.utf8Any": {
-    header: "export circuit utf8Any<#N>(s: Vector<N, Uint<8>>): []",
     literals: ["0", "0", "0", "3", "128", "191", "true"],
     comparisons: ["end[0] == 0"],
     calls: STRING_FOLD("anyStep"),
+    statements: ["export circuit utf8Any<#N>(s: Vector<N, Uint<8>>): []", "const end = fold(anyStep, [0, 128, 191, true], s)", 'assert (end[3] && (end[0] == 0)), "well-formed UTF-8"'],
   },
   "ConductGadgets.base58": {
-    header: "export circuit base58<#N>(s: Vector<N, Uint<8>>): []",
     literals: ["49", "57", "65", "72", "74", "78", "80", "90", "97", "107", "109", "122"],
     comparisons: ["c >= 49", "c <= 57", "c >= 65", "c <= 72", "c >= 74", "c <= 78", "c >= 80", "c <= 90", "c >= 97", "c <= 107", "c >= 109", "c <= 122"],
     calls: [],
+    statements: ["export circuit base58<#N>(s: Vector<N, Uint<8>>): []", "for (const c of s) {", 'assert (((((((c >= 49) && (c <= 57)) || ((c >= 65) && (c <= 72))) || ((c >= 74) && (c <= 78))) || ((c >= 80) && (c <= 90))) || ((c >= 97) && (c <= 107))) || ((c >= 109) && (c <= 122))), "base58"', "}"],
   },
   "ConductGadgets.asciiPrint": {
-    header: "export circuit asciiPrint<#N>(s: Vector<N, Uint<8>>): []",
     literals: ["33", "126"],
     comparisons: ["c >= 33", "c <= 126"],
     calls: [],
+    statements: ["export circuit asciiPrint<#N>(s: Vector<N, Uint<8>>): []", "for (const c of s) {", 'assert ((c >= 33) && (c <= 126)), "printable ASCII"', "}"],
   },
   "ConductGadgets.isHex": {
-    header: "circuit isHex(c: Uint<8>): Boolean",
     literals: ["48", "57", "97", "102"],
     comparisons: ["c >= 48", "c <= 57", "c >= 97", "c <= 102"],
     calls: [],
+    statements: ["circuit isHex(c: Uint<8>): Boolean", "return ((c >= 48) && (c <= 57)) || ((c >= 97) && (c <= 102))"],
   },
   "ConductGadgets.nib": {
-    header: "circuit nib(c: Uint<8>): Field",
     literals: ["0", "39", "48", "97"],
     comparisons: ["c >= 97"],
     calls: ["isHex(c)"],
+    statements: ["circuit nib(c: Uint<8>): Field", 'assert (isHex(c)), "noncanonical hex"', "return ((c as Field) - 48) - ((c >= 97) ? 39 : 0)"],
   },
   "ConductGadgets.hexHalves": {
-    header: "export circuit hexHalves(h: Vector<64, Uint<8>>): [Field, Field]",
     literals: ["0", "0", "0", "16", "16", "32", "32", "32"],
     comparisons: [],
-    calls: [
-      "fold((acc, c) => (acc * 16) + nib(c), 0 as Field, slice<32>(h, 0))", "nib(c)", "slice<32>(h, 0)",
-      "fold((acc, c) => (acc * 16) + nib(c), 0 as Field, slice<32>(h, 32))", "nib(c)", "slice<32>(h, 32)",
-    ],
+    calls: [HEX_FOLD(0), "nib(c)", "slice<32>(h, 0)", HEX_FOLD(32), "nib(c)", "slice<32>(h, 32)"],
+    statements: ["export circuit hexHalves(h: Vector<64, Uint<8>>): [Field, Field]", `return [${HEX_FOLD(0)}, ${HEX_FOLD(32)}]`],
   },
   "ConductGadgets.hexOfHash": {
-    header: "export circuit hexOfHash(h: Vector<64, Uint<8>>, b: Bytes<32>): []",
     literals: ["0", "1", "2", "2", "8", "16", "32", "32"],
     comparisons: ["((nib(h[2 * i]) * 16) + nib(h[(2 * i) + 1])) == (bv[i] as Field)"],
     calls: ["nib(h[2 * i])", "nib(h[(2 * i) + 1])"],
+    statements: [
+      "export circuit hexOfHash(h: Vector<64, Uint<8>>, b: Bytes<32>): []", "const bv = b as Vector<32, Uint<8>>", "for (const i of 0..32) {",
+      'assert (((nib(h[2 * i]) * 16) + nib(h[(2 * i) + 1])) == (bv[i] as Field)), "hex opening"', "}",
+    ],
   },
   "ConductGadgets.uuid": {
-    header: "export circuit uuid(v: Vector<36, Uint<8>>): []",
     literals: ["0", "8", "13", "18", "23", "36", "45"],
     comparisons: ["i == 8", "i == 13", "i == 18", "i == 23", "v[i] == 45"],
     calls: ["isHex(v[i])"],
+    statements: ["export circuit uuid(v: Vector<36, Uint<8>>): []", "for (const i of 0..36) {", 'assert (((((i == 8) || (i == 13)) || (i == 18)) || (i == 23)) ? (v[i] == 45) : isHex(v[i])), "uuid"', "}"],
   },
   "ConductGadgets.iso8601": {
-    header: "export circuit iso8601(v: Vector<24, Uint<8>>): []",
     literals: ["0", "4", "7", "10", "13", "16", "19", "23", "24", "45", "46", "48", "57", "58", "84", "90"],
     comparisons: [
       "i == 4", "i == 7", "v[i] == 45", "i == 10", "v[i] == 84", "i == 13", "i == 16", "v[i] == 58", "i == 19", "v[i] == 46", "i == 23", "v[i] == 90",
       "v[i] >= 48", "v[i] <= 57",
     ],
     calls: [],
+    statements: ["export circuit iso8601(v: Vector<24, Uint<8>>): []", "for (const i of 0..24) {", 'assert (((i == 4) || (i == 7)) ? (v[i] == 45) : ((i == 10) ? (v[i] == 84) : (((i == 13) || (i == 16)) ? (v[i] == 58) : ((i == 19) ? (v[i] == 46) : ((i == 23) ? (v[i] == 90) : ((v[i] >= 48) && (v[i] <= 57))))))), "iso8601"', "}"],
   },
   "ConductGadgets.vis6": {
-    header: "export circuit vis6(v: Vector<6, Uint<8>>): []",
     literals: ["6", "6"],
     comparisons: ['(v as Bytes<6>) == "public"', '(v as Bytes<6>) == "secret"'],
     calls: [],
+    statements: ["export circuit vis6(v: Vector<6, Uint<8>>): []", 'assert (((v as Bytes<6>) == "public") || ((v as Bytes<6>) == "secret")), "visibility"'],
   },
   "ConductGadgets.vis7": {
-    header: "export circuit vis7(v: Vector<7, Uint<8>>): []",
     literals: ["7"],
     comparisons: ['(v as Bytes<7>) == "private"'],
     calls: [],
+    statements: ["export circuit vis7(v: Vector<7, Uint<8>>): []", 'assert ((v as Bytes<7>) == "private"), "visibility"'],
   },
 };
 
@@ -494,11 +518,11 @@ class Parser {
     }
     if (this.accept("const")) {
       const target = this.next().text;
-      if (this.accept(":")) this.type();
+      const declared = this.accept(":") ? `: ${this.type()}` : "";
       this.expect("=");
       const value = this.expr();
       this.expect(";");
-      return { type: "bind", target: `const ${target}`, value };
+      return { type: "bind", target: `const ${target}${declared}`, value };
     }
     const value = this.expr();
     if (this.accept("=")) {
@@ -519,24 +543,21 @@ class Parser {
     return { type: "ternary", test, then, otherwise: this.expr() };
   }
 
-  // Loosest first: ||, &&, comparison, additive, multiplicative.
-  private static readonly LEVELS: readonly (readonly string[])[] = [["||"], ["&&"], COMPARISONS, ["+", "-"], ["*"]];
+  // compactc's binary levels, loosest first: `a + b as T` casts the sum, and `a == b < c` compares a with b < c.
+  private static readonly LEVELS: readonly (readonly string[])[] = [["||"], ["&&"], ["==", "!="], ["<", "<=", ">", ">="], ["as"], ["+", "-"], ["*"]];
 
   private binary(level: number): Expr {
     if (level === Parser.LEVELS.length) return this.unary();
     let left = this.binary(level + 1);
     while (Parser.LEVELS[level]!.includes(this.peek() ?? "")) {
       const op = this.next().text;
-      left = { type: "binary", op, left, right: this.binary(level + 1) };
+      left = op === "as" ? { type: "cast", value: left, to: this.type() } : { type: "binary", op, left, right: this.binary(level + 1) };
     }
     return left;
   }
 
   private unary(): Expr {
-    if (this.accept("!")) return { type: "not", operand: this.unary() };
-    let value = this.postfix();
-    while (this.accept("as")) value = { type: "cast", value, to: this.type() };
-    return value;
+    return this.accept("!") ? { type: "not", operand: this.unary() } : this.postfix();
   }
 
   private postfix(): Expr {
@@ -623,17 +644,20 @@ class Parser {
 
 const ELIDED = "(...)";
 
-// A string literal of plain characters and JSON escapes, which JSON.parse reads; any other is not a constant.
-const JSON_STRING = /^"(?:[^"\\]|\\["\\/bfnrt]|\\[u][0-9a-fA-F]{4})*"$/;
+// A string literal whose only escapes are \" and \\. The tokenizer admits printable ASCII alone, so each character is
+// the one byte compactc's UTF-8 encoding gives it; an escape such as \u00ab, which compactc writes as C2 AB, is never a
+// constant.
+const PLAIN_STRING = /^"(?:[^"\\\n]|\\["\\])*"$/;
 
-// The bytes of a constant persistentHash input: a string literal of Latin-1 characters, or a vector of byte literals.
-function constantBytes(e: Expr): number[] | undefined {
-  if (e.type === "atom" && JSON_STRING.test(e.text)) {
-    const text = JSON.parse(e.text) as string;
-    if ([...text].every(c => c.charCodeAt(0) < 0x100)) return [...Buffer.from(text, "latin1")];
+// The bytes of a constant persistentHash input and the type compactc gives the literal: a plain string literal, or a
+// vector of byte literals.
+function constantBytes(e: Expr): { readonly bytes: number[]; readonly type: string } | undefined {
+  if (e.type === "atom" && PLAIN_STRING.test(e.text)) {
+    const bytes = [...Buffer.from(e.text.slice(1, -1).replace(/\\(["\\])/g, "$1"), "utf8")];
+    return { bytes, type: `Bytes<${bytes.length}>` };
   }
   if (e.type === "tuple" && e.items.length > 0 && e.items.every(item => item.type === "atom" && /^\d+$/.test(item.text) && Number(item.text) < 256)) {
-    return e.items.map(item => Number((item as { text: string }).text));
+    return { bytes: e.items.map(item => Number((item as { text: string }).text)), type: `Vector<${e.items.length}, Uint<8>>` };
   }
   return undefined;
 }
@@ -641,20 +665,38 @@ function constantBytes(e: Expr): number[] | undefined {
 const constantText = (bytes: readonly number[]) =>
   `"${bytes.map(b => (b >= 0x20 && b <= 0x7e && b !== 0x22 && b !== 0x5c ? String.fromCharCode(b) : `\\x${b.toString(16).padStart(2, "0")}`)).join("")}"`;
 
-// A persistentHash call by its preimage, adjacent constants merged into one run of bytes; compactc checks its type list
-// against the inputs.
-function hashText(e: Extract<Expr, { type: "call" }>, elide: boolean): string {
+// The members of a rendered tuple type, or undefined for any other type.
+function tupleMembers(type: string): string[] | undefined {
+  if (!type.startsWith("[") || !type.endsWith("]")) return undefined;
+  const members: string[] = [];
+  let [depth, start] = [0, 1];
+  for (let i = 1; i < type.length - 1; i++) {
+    if (type[i] === "<" || type[i] === "[") depth++;
+    else if (type[i] === ">" || type[i] === "]") depth--;
+    else if (type[i] === "," && depth === 0) {
+      members.push(type.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  return type.length > 2 ? [...members, type.slice(start, -1).trim()] : members;
+}
+
+// A persistentHash call by the bytes it hashes, or undefined unless it lists one type per input. compactc encodes each
+// input at its listed type, widening an input to a wider type, so each input is shown with that type; a constant under
+// the type compactc gives the literal joins its neighbours in one run of bytes.
+function hashText(e: Extract<Expr, { type: "call" }>, elide: boolean): string | undefined {
   const [only] = e.args;
-  if (e.args.length !== 1 || only!.type !== "tuple") return `${HASH}(${e.args.map(arg => render(arg, elide)).join(", ")})`;
+  const types = e.generics.length === 1 ? tupleMembers(e.generics[0]!) : undefined;
+  if (e.args.length !== 1 || only!.type !== "tuple" || types?.length !== only.items.length) return undefined;
   const parts: string[] = [];
   let run: number[] = [];
-  for (const item of only.items) {
+  for (const [i, item] of only.items.entries()) {
     const constant = constantBytes(item);
-    if (constant !== undefined) run.push(...constant);
+    if (constant?.type === types[i]) run.push(...constant.bytes);
     else {
       if (run.length > 0) parts.push(constantText(run));
       run = [];
-      parts.push(render(item, elide));
+      parts.push(`${render(item, elide)}: ${types[i]}`);
     }
   }
   if (run.length > 0) parts.push(constantText(run));
@@ -666,7 +708,7 @@ function render(e: Expr, elide = false): string {
   const nested = (inner: Expr) => (["binary", "ternary", "cast", "lambda", "range"].includes(inner.type) ? `(${render(inner, elide)})` : render(inner, elide));
   switch (e.type) {
     case "atom": return e.text;
-    case "call": return e.callee === HASH ? hashText(e, elide) : `${e.callee}${e.generics.length > 0 ? `<${e.generics.join(", ")}>` : ""}(${e.args.map(arg => render(arg, elide)).join(", ")})`;
+    case "call": return (e.callee === HASH ? hashText(e, elide) : undefined) ?? `${e.callee}${e.generics.length > 0 ? `<${e.generics.join(", ")}>` : ""}(${e.args.map(arg => render(arg, elide)).join(", ")})`;
     case "not": return `!${nested(e.operand)}`;
     case "binary": return `${nested(e.left)} ${e.op} ${nested(e.right)}`;
     case "ternary": return `${elide ? ELIDED : nested(e.test)} ? ${nested(e.then)} : ${nested(e.otherwise)}`;
@@ -872,10 +914,10 @@ function gadgetFindings(gadgets: Outline): string[] {
     if (audited === undefined) continue;
     const found = viewOf(c, new Set());
     findings.push(
-      ...firstDifference(`${c.name} differs from its audited signature`, [c.header], [audited.header]),
       ...multisetDifference(`${c.name} literals`, found.literals, audited.literals, byLiteral),
       ...multisetDifference(`${c.name} comparisons`, found.comparisons, audited.comparisons),
       ...multisetDifference(`${c.name} calls`, found.calls, audited.calls),
+      ...firstDifference(`${c.name} differs from its audited statement list`, found.statements, audited.statements),
     );
   }
   return findings;
