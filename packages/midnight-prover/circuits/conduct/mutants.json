@@ -130,5 +130,65 @@
     "file": "predicate.compact",
     "find": "action_asset, action_amount, counterparty_ok, prior_spent, egress_ok) == claimed, \"verdict mismatch\");",
     "replace": "action_asset, action_amount, counterparty_ok, prior_spent, egress_ok) == claimed || claimed > 7, \"verdict mismatch\");"
+  },
+  {
+    "id": "clock_rule_needs_zero_prior",
+    "file": "verdict_core.compact",
+    "find": "return enforced_at >= not_after ? 2 : verdict;",
+    "replace": "return enforced_at >= not_after && prior_spent == 0 ? 2 : verdict;"
+  },
+  {
+    "id": "expiry_needs_zero_prior",
+    "file": "verdict_core.compact",
+    "find": "if (action_timestamp >= not_after) { return 2; }",
+    "replace": "if (action_timestamp >= not_after && prior_spent == 0) { return 2; }"
+  },
+  {
+    "id": "early_clock_drops_prior",
+    "file": "verdict_core.compact",
+    "find": "asset_ok, counterparty_ok, prior_spent, egress_ok);",
+    "replace": "asset_ok, counterparty_ok, action_timestamp < enforced_at ? 0 : prior_spent, egress_ok);"
+  },
+  {
+    "id": "clock_assert_waived_with_prior",
+    "file": "verdict_core.compact",
+    "find": "assert(action_timestamp <= enforced_at, \"action after guard clock\");",
+    "replace": "assert(action_timestamp <= enforced_at || prior_spent != 0, \"action after guard clock\");"
+  },
+  {
+    "id": "kind_domain_assert_waived_with_prior",
+    "file": "verdict_core.compact",
+    "find": "assert(action_kind <= 1, \"action kind out of domain\");",
+    "replace": "assert(action_kind <= 1 || prior_spent != 0, \"action kind out of domain\");"
+  },
+  {
+    "id": "mode_domain_assert_waived_with_prior",
+    "file": "verdict_core.compact",
+    "find": "assert(egress_mode <= 1, \"egress mode out of domain\");",
+    "replace": "assert(egress_mode <= 1 || prior_spent != 0, \"egress mode out of domain\");"
+  },
+  {
+    "id": "kind_domain_assert_waived_for_amount",
+    "file": "verdict_core.compact",
+    "find": "assert(action_kind <= 1, \"action kind out of domain\");",
+    "replace": "assert(action_kind <= 1 || action_amount > 5, \"action kind out of domain\");"
+  },
+  {
+    "id": "clock_assert_waived_for_cap",
+    "file": "verdict_core.compact",
+    "find": "assert(action_timestamp <= enforced_at, \"action after guard clock\");",
+    "replace": "assert(action_timestamp <= enforced_at || cap_amount > 10, \"action after guard clock\");"
+  },
+  {
+    "id": "amount_floor_removed",
+    "file": "verdict_core.compact",
+    "find": "    assert(action_kind == 1 || action_amount >= 1, \"payment amount out of domain\");\n",
+    "replace": ""
+  },
+  {
+    "id": "amount_floor_waived_with_prior",
+    "file": "verdict_core.compact",
+    "find": "assert(action_kind == 1 || action_amount >= 1, \"payment amount out of domain\");",
+    "replace": "assert(action_kind == 1 || action_amount >= 1 || prior_spent != 0, \"payment amount out of domain\");"
   }
 ]

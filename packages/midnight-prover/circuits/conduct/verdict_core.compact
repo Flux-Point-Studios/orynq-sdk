@@ -6,6 +6,7 @@ module ConductVerdict {
       asset_ok: Boolean, counterparty_ok: Boolean, prior_spent: Uint<64>, egress_ok: Boolean): Uint<8> {
     assert(action_kind <= 1, "action kind out of domain");
     assert(egress_mode <= 1, "egress mode out of domain");
+    assert(action_kind == 1 || action_amount >= 1, "payment amount out of domain");
     if (action_timestamp < not_before) { return 1; }
     if (action_timestamp >= not_after) { return 2; }
     if (action_kind == 0) {

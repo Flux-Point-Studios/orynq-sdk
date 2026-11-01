@@ -2,10 +2,10 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { CompactTypeField } from "@midnight-ntwrk/compact-runtime";
 import { describe, expect, it } from "vitest";
-import { allCases, checkVerdictArgs as claim, CLAIMS, guardVectorCases, predicateVectorCases, VERDICT_CODES, type VerdictCase } from "./cases.js";
+import { allCases, checkVerdictArgs as claim, CLAIMS, guardVectorCases, MAX_U64, predicateVectorCases, VERDICT_CODES, type VerdictCase } from "./cases.js";
 import { generatedSource, prepareCheck, runCircuit, stripAsserts, zkCheck } from "./harness.js";
 
-const GROUPS = ["predicate-vectors", "guard-vectors", "clock", "matrix", "boundary", "unicode", "invariance", "prior", "domain"];
+const GROUPS = ["predicate-vectors", "guard-vectors", "clock", "matrix", "boundary", "unicode", "invariance", "prior", "spent", "domain"];
 const cases = allCases();
 const honest = cases.filter((c): c is VerdictCase & { guard: number } => typeof c.guard === "number");
 const refused = cases.filter(c => typeof c.guard !== "number");
@@ -17,6 +17,48 @@ const onePerCode = VERDICT_CODES.map(code => honest.find(c => c.guard === code)!
 describe("T-A12 the compiled check_verdict constraints accept every honest verdict and disclose it", () => {
   it("runs every case set at the ZKIR layer", () => {
     expect([...new Set(cases.map(c => c.group))].sort()).toEqual([...GROUPS].sort());
+  });
+
+  // AM-4: a verdict rule or refusal gated on prior_spent, cap_amount or action_amount survives every case that holds
+  // those slots at one value, so every expiry, the early clock and every refusal meet a prior spend above 0.
+  it("AM-4: prior spend above 0 meets every clock and action-time expiry, the prior-sensitive early clock and every refusal", () => {
+    const [notBefore, notAfter, cap, kind, ts, amount, prior] = [0, 1, 3, 5, 6, 8, 10];
+    const at = (c: VerdictCase, slot: number) => c.args[slot] as bigint;
+    const isPayment = (c: VerdictCase) => at(c, kind) === 0n;
+    const spent = (c: VerdictCase) => at(c, prior) > 0n;
+    const refusal = (c: VerdictCase) => typeof c.guard === "number" ? undefined : c.guard.throws.replace(/^failed assert: /, "");
+    const clockExpiry = (c: VerdictCase) => c.guard === 2 && c.enforcedAt >= at(c, notAfter) && at(c, ts) < at(c, notAfter);
+    const shapes: [string, (c: VerdictCase) => boolean][] = [];
+    for (const [clock, position] of [["at", (c: VerdictCase) => c.enforcedAt === at(c, notAfter)], ["past", (c: VerdictCase) => c.enforcedAt > at(c, notAfter)]] as const) {
+      for (const [action, payment, evaluate] of [["a payment", true, 0], ["a payment", true, 4], ["an egress", false, 0], ["an egress", false, 7]] as const) {
+        shapes.push([`clock ${clock} notAfter decides ${action} the action time judges ${evaluate}`,
+          c => spent(c) && clockExpiry(c) && position(c) && isPayment(c) === payment && c.evaluate === evaluate]);
+      }
+    }
+    for (const payment of [true, false]) {
+      shapes.push([`action-time expiry of a${payment ? " payment" : "n egress"}`,
+        c => spent(c) && c.guard === 2 && c.evaluate === 2 && at(c, ts) >= at(c, notAfter) && isPayment(c) === payment]);
+    }
+    for (const verdict of [0, 4]) {
+      shapes.push([`a clock ahead inside validity where the prior decides ${verdict}`,
+        c => spent(c) && isPayment(c) && c.guard === verdict && at(c, notBefore) <= at(c, ts) && at(c, ts) < c.enforcedAt && c.enforcedAt < at(c, notAfter)]);
+    }
+    const refusals = ["action kind out of domain", "egress mode out of domain", "payment amount out of domain", "action after guard clock"];
+    for (const message of refusals) {
+      const refused = (c: VerdictCase) => refusal(c) === message;
+      shapes.push(
+        [`${message} with a prior spend above 0`, c => refused(c) && spent(c)],
+        [`${message} with a prior spend of 2^64-1`, c => refused(c) && at(c, prior) === MAX_U64],
+        [`${message} under a cap of 0`, c => refused(c) && at(c, cap) === 0n],
+        [`${message} under a cap of 2^64-1`, c => refused(c) && at(c, cap) === MAX_U64],
+      );
+      if (message === "payment amount out of domain") continue;
+      shapes.push(
+        [`${message} with an action amount of 1`, c => refused(c) && at(c, amount) === 1n],
+        [`${message} with an action amount of 2^64-1`, c => refused(c) && at(c, amount) === MAX_U64],
+      );
+    }
+    expect(shapes.filter(([, holds]) => !cases.some(holds)).map(([shape]) => shape)).toEqual([]);
   });
 
   it.each(labelled(honest))("%s", async (_name, c) => {

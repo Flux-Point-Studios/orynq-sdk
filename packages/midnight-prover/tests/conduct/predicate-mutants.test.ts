@@ -10,11 +10,15 @@ const VERDICT_CORE_MUTANTS = [
   "mode_domain_assert_removed", "egress_mode_inverted", "counterparty_ignored", "window_after_asset", "kind_domain_assert_removed",
   "decide_uses_clock_time", "clock_assert_waived_when_expired", "clock_assert_waived_for_egress", "kind_domain_assert_waived_when_late",
   "mode_domain_assert_waived_when_early", "cap_skipped_for_over_cap_prior", "deny_all_needs_off_list", "kind_branch_on_asset_ok",
-  "kind_branch_on_amount",
+  "kind_branch_on_amount", "clock_rule_needs_zero_prior", "expiry_needs_zero_prior", "early_clock_drops_prior",
+  "clock_assert_waived_with_prior", "kind_domain_assert_waived_with_prior", "mode_domain_assert_waived_with_prior",
+  "kind_domain_assert_waived_for_amount", "clock_assert_waived_for_cap", "amount_floor_removed", "amount_floor_waived_with_prior",
 ];
-// The clock rule returns 2 whenever the action is at or past notAfter, so this mutant changes only the 12-argument
+// The clock rule returns 2 whenever the action is at or past notAfter, so these mutants change only the 12-argument
 // evaluate, which is a pure circuit with no ZKIR.
-const EVALUATE_ONLY_MUTANTS = ["not_after_inclusive"];
+const EVALUATE_ONLY_MUTANTS = ["not_after_inclusive", "expiry_needs_zero_prior"];
+// The decision owner's rulings name T-A10 as the killer of these refusal mutants.
+const DOMAIN_KILLED_MUTANTS = ["kind_domain_assert_removed", "mode_domain_assert_removed", "amount_floor_removed"];
 
 const { pureCircuits } = await loadUnit("predicate");
 const mutants: { id: string; file: string }[] = JSON.parse(readFileSync(join(resolve(import.meta.dirname, "../.."), "circuits/conduct/mutants.json"), "utf8"));
@@ -35,6 +39,7 @@ describe("T-A14 every VerdictCore mutant is killed by a T-A03..T-A10 case", () =
   it.each(VERDICT_CORE_MUTANTS)("kills %s", async id => {
     const killers = disagreements((await loadUnit(`mutants/${id}`)).pureCircuits);
     expect(killers.length, `mutant ${id} survived every case`).toBeGreaterThan(0);
+    if (DOMAIN_KILLED_MUTANTS.includes(id)) expect(killers.some(c => c.group === "domain"), `mutant ${id} survived T-A10`).toBe(true);
   });
 
   it("the PoAC reference has explicit-time semantics: it differs from the guard exactly where the guard clock decides", async () => {

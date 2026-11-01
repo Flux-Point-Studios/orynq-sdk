@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -47,6 +47,19 @@ describe("compile-conduct refusals", () => {
     const result = compile(pkg, ["--check"], { COMPACTC: fake });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Compact compiler 0.31.1 is required");
+  });
+
+  it.each([
+    ["a misspelled --units", ["--check", "--unit", "predicate"]],
+    ["the unbuilt --keys", ["--check", "--keys"]],
+    ["a second --units", ["--check", "--units", "predicate", "--units", "mutants"]],
+    ["--units without a list", ["--check", "--units"]],
+    ["both --check and --write", ["--check", "--write"]],
+    ["neither --check nor --write", ["--units", "predicate"]],
+  ])("rejects %s with the usage text", (_label, args) => {
+    const result = compile(packageCopy(), args);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("usage: compile-conduct.mjs --write|--check [--units predicate,mutants,reference]");
   });
 
   it("rejects an unknown unit", () => {
@@ -107,6 +120,18 @@ describe("compile-conduct --check verifies every pin it keeps", () => {
     const before = readFileSync(pinsFile, "utf8");
     const result = compile(root, ["--write", "--units", "mutants,mutants"]);
     expect(result.stderr).toBe("");
+    expect(readFileSync(pinsFile, "utf8")).toBe(before);
+    expect(existsSync(join(root, "conduct-managed/reference")), "the mutants unit builds no PoAC reference").toBe(false);
+  });
+
+  it("builds the PoAC reference contract as its own unit, which pins nothing", () => {
+    const root = packageCopy();
+    const pinsFile = join(root, "circuits/conduct/pins.json");
+    const before = readFileSync(pinsFile, "utf8");
+    const result = compile(root, ["--write", "--units", "reference"]);
+    expect(result.stderr).toBe("");
+    expect(existsSync(join(root, "conduct-managed/reference/poac/contract/index.js"))).toBe(true);
+    expect(existsSync(join(root, "conduct-managed/mutants"))).toBe(false);
     expect(readFileSync(pinsFile, "utf8")).toBe(before);
   });
 

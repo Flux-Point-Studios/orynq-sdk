@@ -1,7 +1,8 @@
 import { compileMandatePredicate, type GuardAction } from "@fluxpointstudios/orynq-sdk-conduct";
 import { describe, expect, it } from "vitest";
 import {
-  allowlists, circuitOutcomes, clockCases, clockPayment, clockPolicy, decisionCode, guardFor, guardVectorCases, predicateVectorCases, type VerdictCase,
+  allowlists, circuitOutcomes, clockCases, clockPayment, clockPolicy, decisionCode, guardFor, guardVectorCases, predicateVectorCases, spentCases,
+  type VerdictCase,
 } from "./cases.js";
 import { loadUnit } from "./harness.js";
 
@@ -81,9 +82,22 @@ describe("T-A05 the guard clock: guard_verdict follows the runtime, the 12-argum
   });
 });
 
-// Runtime refusals with no predicate input, outside the plan's two declared divergences and awaiting a ruling: these
-// tests pin that guard_verdict returns a verdict where the runtime refuses.
-describe("pending ruling: runtime refusals guard_verdict has no input for", () => {
+describe("AM-4 a spend earlier in the window meets every expiry, the early clock and the later-than-clock refusal", () => {
+  const cases = spentCases();
+  it("carries a prior spend above 0 into every case but the cap-0 refusals", () => {
+    expect(cases.filter(c => c.prior === 0n).map(c => c.name)).toEqual([
+      "a payment of 1 under a cap of 0, one second after the clock", "a listed egress under a cap of 0, one second after the clock",
+    ]);
+  });
+  it.each(cases.map(c => [c.name, c] as const))("%s", (_name, c) => {
+    expect(circuitOutcomes(pureCircuits, c), c.name).toEqual({ evaluate: c.evaluate, guard: c.guard });
+  });
+});
+
+// D12 (AM-3): preconditions on guard state. One pure step cannot see prior calls or the window
+// width, so guard_verdict's statement is conditional on them; these tests pin that it returns a verdict where the
+// runtime refuses. The 2c step circuit takes on the same-window check and slice 3 the monotonicity.
+describe("D12: runtime refusals on guard state that guard_verdict has no input for", () => {
   const p = clockPolicy(0n, 100_000n);
   const args = (action: GuardAction, prior: bigint) => compileMandatePredicate(p.mandate, allowlists(p)).buildArgs(action, prior);
 

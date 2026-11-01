@@ -4,7 +4,7 @@ import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { unitDir } from "./harness.js";
 
-interface CircuitPin { zkirSha256: string; demotedZkirSha256?: string; k: number; rows: number; ops: Record<string, number> }
+interface CircuitPin { zkirSha256: string; k: number; rows: number; ops: Record<string, number> }
 interface Pins {
   toolchain: Record<string, string>;
   sources: Record<string, string>;
@@ -39,19 +39,17 @@ describe("conduct circuit pins", () => {
     expect(sha256(ir)).toBe(pins().units.predicate!.circuits.check_verdict!.zkirSha256);
   });
 
+  // compile-conduct writes this only after an unexported recompile yielded identical ZKIR; it refuses otherwise, which
+  // compile-conduct.test.ts exercises with a perturbing compiler.
   it("T-A15: pin that exporting the pure circuits leaves the provable circuit's ZKIR unchanged", () => {
-    const { pureExportInvariant, circuits } = pins().units.predicate!;
-    expect(pureExportInvariant).toBe(true);
-    for (const [name, pin] of Object.entries(circuits)) {
-      expect(pin.demotedZkirSha256, `${name}: ZKIR hash of the compile with every pure circuit unexported`).toMatch(/^[0-9a-f]{64}$/);
-      expect(pin.demotedZkirSha256, name).toBe(pin.zkirSha256);
-    }
+    expect(pins().units.predicate!.pureExportInvariant).toBe(true);
   });
 
   it("pin k, rows, an op histogram and the ZKIR hash of every circuit", () => {
     for (const [unit, { circuits }] of Object.entries(pins().units)) {
       for (const [name, pin] of Object.entries(circuits)) {
         const label = `${unit}/${name}`;
+        expect(Object.keys(pin), label).toEqual(["zkirSha256", "k", "rows", "ops"]);
         expect(Number.isInteger(pin.k), label).toBe(true);
         expect(Number.isInteger(pin.rows), label).toBe(true);
         expect(Number.isInteger(pin.ops.total), label).toBe(true);

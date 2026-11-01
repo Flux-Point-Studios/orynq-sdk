@@ -1,11 +1,11 @@
 import { compileMandatePredicate } from "@fluxpointstudios/orynq-sdk-conduct";
 import { describe, expect, it } from "vitest";
-import { allowlists, domainCases, fixturePolicy, guardFor, payment, policy, runPolicy, withArg } from "./cases.js";
+import { allowlists, circuitOutcomes, domainCases, egress, fixturePolicy, guardFor, payment, policy, runPolicy, withArg } from "./cases.js";
 import { loadUnit } from "./harness.js";
 
 const { pureCircuits } = await loadUnit("predicate");
 
-describe("T-A10 kind and mode outside {0, 1} are refused, never interpreted", () => {
+describe("T-A10 kind and mode outside {0, 1} and a zero payment are refused, never interpreted", () => {
   it.each(domainCases().map(c => [c.name, c] as const))("%s", (_name, c) => {
     const message = (c.guard as { throws: string }).throws.replace(/^failed assert: /, "");
     expect(() => pureCircuits.evaluate!(...c.args)).toThrow(message);
@@ -21,12 +21,16 @@ describe("T-A10 kind and mode outside {0, 1} are refused, never interpreted", ()
     }
   });
 
-  it("pending ruling: a zero payment is refused before the circuit, and the circuit has no amount floor", () => {
-    const p = policy({});
+  it("AM-2: the runtime schema and both circuits refuse a zero payment; an egress, whose amount slot is 0, evaluates", () => {
+    const p = policy({ egress: ["api.example.com"] });
     const zero = payment(0n, 1500n);
     expect(() => compileMandatePredicate(p.mandate, allowlists(p)).buildArgs(zero, 0n)).toThrow("payment amount must be >= 1");
     expect(() => guardFor(p, () => 1500n).enforce(zero)).toThrow("payment amount must be >= 1");
     const [one] = runPolicy("domain", "payment of 1", p, [{ action: payment(1n, 1500n) }]);
-    expect(Number(pureCircuits.evaluate!(...withArg(one!.args, 8, 0n)))).toBe(0);
+    expect(() => pureCircuits.evaluate!(...withArg(one!.args, 8, 0n))).toThrow("payment amount out of domain");
+    expect(() => pureCircuits.guard_verdict!(one!.enforcedAt, ...withArg(one!.args, 8, 0n))).toThrow("payment amount out of domain");
+    const [out] = runPolicy("domain", "egress", p, [{ action: egress("api.example.com", 1500n) }]);
+    expect(out!.args[8]).toBe(0n);
+    expect(circuitOutcomes(pureCircuits, out!)).toEqual({ evaluate: 0, guard: 0 });
   });
 });

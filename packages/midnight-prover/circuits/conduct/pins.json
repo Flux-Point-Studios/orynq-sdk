@@ -7,33 +7,32 @@
     "zkir": "midnight-zkir 2.1.0"
   },
   "sources": {
-    "circuits/conduct/mutants.json": "ec6e10af90e35e3c5173e77ff524967d57d60272685f28e6abefc4cf7093d775",
+    "circuits/conduct/mutants.json": "49219ba804f7670bb054d0d10ace2c4c2a5566eaada153e12ecbaca6d1be6654",
     "circuits/conduct/predicate.compact": "b83ec16fbb500bfa9537c7b6930c44489826c772284f7953a922d1abd7e9b2c0",
     "circuits/conduct/reference/poac_verdict_core.compact": "189fc0ac6f6d36f85591d82e1b470478ee5df6be6a580cd97462673a12b29605",
-    "circuits/conduct/verdict_core.compact": "8fead21f0d24676a9721b577dee02cd3acff39797519ebe95f87b778fca52f80"
+    "circuits/conduct/verdict_core.compact": "e1d144121850392575049b85308e9fe580223f0815120c864c3dc8e0fcdcaa36"
   },
   "units": {
     "predicate": {
       "pureExportInvariant": true,
       "circuits": {
         "check_verdict": {
-          "zkirSha256": "777afd45b9516fdf44d28ebd333b88ced356a5ff3fc95cc63978eb7b30691825",
-          "demotedZkirSha256": "777afd45b9516fdf44d28ebd333b88ced356a5ff3fc95cc63978eb7b30691825",
+          "zkirSha256": "8de909f53852f101f0d45abd5904bcad0d7abffa0da587f7a3e415416a4fa562",
           "k": 10,
-          "rows": 851,
+          "rows": 880,
           "ops": {
-            "total": 71,
+            "total": 76,
             "persistent_hash": 0,
             "add": 1,
-            "assert": 4,
-            "cond_select": 18,
+            "assert": 5,
+            "cond_select": 20,
             "constrain_bits": 10,
             "constrain_to_boolean": 2,
             "declare_pub_input": 11,
-            "less_than": 7,
+            "less_than": 8,
             "load_imm": 11,
             "pi_skip": 3,
-            "test_eq": 4
+            "test_eq": 5
           }
         }
       }

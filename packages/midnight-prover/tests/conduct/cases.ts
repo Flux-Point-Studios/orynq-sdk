@@ -222,8 +222,8 @@ export function unicodeCases(): VerdictCase[] {
   ];
 }
 
-export const clockPolicy = (notBefore: bigint, notAfter: bigint) =>
-  policy({ cap: 10n, window: 3600n, notBefore, notAfter, counterparties: ["supplier"], egress: ["api.example.com"] });
+export const clockPolicy = (notBefore: bigint, notAfter: bigint, cap = 10n) =>
+  policy({ cap, window: 3600n, notBefore, notAfter, counterparties: ["supplier"], egress: ["api.example.com"] });
 export const clockPayment = (timestamp: bigint) => payment(6n, timestamp, "lovelace", "supplier");
 
 // The guard-state and attack fixtures' clock cases: a guard clock at or after notAfter denies whatever the action time,
@@ -255,7 +255,52 @@ export function clockCases(): VerdictCase[] {
   ];
 }
 
-export const withArg = (args: PredicateArgs, index: number, value: bigint | boolean) => args.with(index, value) as PredicateArgs;
+// An allowed payment of `first` at 7200 opens the spend window [7200, 10800) of a clockPolicy, and `then` follows under
+// `clock` with that payment as its prior spend.
+function afterSpend(group: string, name: string, notAfter: bigint, then: GuardAction, clock: bigint, cap = 10n, first = 6n): VerdictCase {
+  const [opening, step] = runPolicy(group, name, clockPolicy(0n, notAfter, cap), [{ action: payment(first, 7200n, "lovelace", "supplier") }, { action: then, clock }]);
+  if (opening!.guard !== 0 || step!.prior !== first) throw new Error(`${name}: the opening payment must be allowed and carried as the prior spend`);
+  return { ...step!, name };
+}
+
+// AM-4: after a spend in the window, every clock-decided and action-time expiry, a clock ahead inside validity where the
+// prior decides 0 or 4, and an action one second later than the clock, which both refuse. The later-than-clock refusal
+// also meets a prior of 1, the whole cap and 2^64-1, caps of 0 and 2^64-1, and payments of 1 and 2^64-1.
+export function spentCases(): VerdictCase[] {
+  const kinds = [
+    ["a payment within the cap", (ts: bigint) => payment(4n, ts, "lovelace", "supplier")],
+    ["a payment over the cap", (ts: bigint) => payment(5n, ts, "lovelace", "supplier")],
+    ["a listed egress", (ts: bigint) => egress("api.example.com", ts)],
+    ["an unlisted egress", (ts: bigint) => egress("evil.example.com", ts)],
+  ] as const;
+  const shapes = [
+    ["clock at notAfter, action before it", 7300n, 7250n, 7300n],
+    ["clock past notAfter, action before it", 7300n, 7250n, 8000n],
+    ["action at notAfter", 7300n, 7300n, 7300n],
+    ["action past notAfter", 7300n, 7400n, 7400n],
+    ["clock ahead of the action inside validity", 100_000n, 7250n, 7300n],
+    ["action one second after a clock inside validity", 100_000n, 7251n, 7250n],
+    ["action one second after a clock at notAfter", 7300n, 7301n, 7300n],
+    ["action one second after a clock past notAfter", 7300n, 8001n, 8000n],
+  ] as const;
+  const late = (name: string, then: GuardAction, cap: bigint, first?: bigint) => first === undefined
+    ? runPolicy("spent", name, clockPolicy(0n, 100_000n, cap), [{ action: then, clock: 7250n }])[0]!
+    : afterSpend("spent", name, 100_000n, then, 7250n, cap, first);
+  const lateBy = (ts: bigint) => [["a payment of 1", payment(1n, ts, "lovelace", "supplier")], ["a listed egress", egress("api.example.com", ts)]] as const;
+  return [
+    ...shapes.flatMap(([shape, notAfter, ts, clock]) => kinds.map(([kind, action]) => afterSpend("spent", `${kind} after a spend, ${shape}`, notAfter, action(ts), clock))),
+    ...lateBy(7251n).flatMap(([kind, action]) => [
+      late(`${kind} after a spend of 1, one second after the clock`, action, 10n, 1n),
+      late(`${kind} after a spend of the whole cap, one second after the clock`, action, 10n, 10n),
+      late(`${kind} after a spend of 2^64-1 under a cap of 2^64-1, one second after the clock`, action, MAX_U64, MAX_U64),
+      late(`${kind} under a cap of 0, one second after the clock`, action, 0n),
+      late(`${kind} after a spend under a cap of 2^64-1, one second after the clock`, action, MAX_U64, 6n),
+    ]),
+    late("a payment of 2^64-1 after a spend, one second after the clock", payment(MAX_U64, 7251n, "lovelace", "supplier"), 10n, 6n),
+  ];
+}
+
+export const withArg = (args: PredicateArgs, index: number, value: bigint | boolean) => args.map((arg, i) => (i === index ? value : arg)) as PredicateArgs;
 
 function slot(name: string): number {
   const index = PREDICATE_LAYOUT.findIndex(input => input.name === name);
@@ -318,29 +363,46 @@ export function overCapPriorCases(): VerdictCase[] {
 
 export const allCases = (): VerdictCase[] => [
   ...predicateVectorCases(), ...guardVectorCases(), ...clockCases(), ...matrixCases(), ...boundaryCases(), ...unicodeCases(), ...invarianceCases(),
-  ...overCapPriorCases(), ...domainCases(),
+  ...overCapPriorCases(), ...spentCases(), ...domainCases(),
 ];
 
 const KIND_REFUSAL = { throws: "failed assert: action kind out of domain" } as const;
 const MODE_REFUSAL = { throws: "failed assert: egress mode out of domain" } as const;
+const AMOUNT_REFUSAL = { throws: "failed assert: payment amount out of domain" } as const;
 
-// The schema admits only kind and mode 0 or 1, so the runtime has no input here and no decision to compare: both
-// circuits must refuse, whichever validity check would otherwise decide.
+// The schema admits only kind and mode 0 or 1 and a payment of at least 1, so the runtime has no input here and no
+// decision to compare: both circuits must refuse, whichever validity check would otherwise decide. Refusal never depends
+// on the prior spend, the cap or the amount, so the refusals inside validity also meet their edges.
 export function domainCases(): VerdictCase[] {
-  const bases = [
+  const inValidity = [
     ...runPolicy("domain", "payment", policy({ egress: EGRESS_LIST }), [{ action: payment(5n, 1500n) }]),
+    ...runPolicy("domain", "egress", policy({ egress: EGRESS_LIST }), [{ action: egress("api.example.com", 1500n) }]),
+  ];
+  const bases = [
+    ...inValidity,
     ...runPolicy("domain", "payment, clock expired", policy({ notAfter: 2000n, egress: EGRESS_LIST }), [{ action: payment(5n, 1500n), clock: 2000n }]),
     ...runPolicy("domain", "payment before notBefore", policy({ notBefore: 1000n, egress: EGRESS_LIST }), [{ action: payment(5n, 500n) }]),
     ...runPolicy("domain", "payment at notAfter", policy({ notAfter: 2000n, egress: EGRESS_LIST }), [{ action: payment(5n, 2000n) }]),
-    ...runPolicy("domain", "egress", policy({ egress: EGRESS_LIST }), [{ action: egress("api.example.com", 1500n) }]),
     ...runPolicy("domain", "egress, clock expired", policy({ notAfter: 2000n }), [{ action: egress("api.example.com", 1500n), clock: 2000n }]),
     ...runPolicy("domain", "egress before notBefore", policy({ notBefore: 1000n, egress: EGRESS_LIST }), [{ action: egress("api.example.com", 500n) }]),
     ...runPolicy("domain", "egress at notAfter", policy({ notAfter: 2000n, egress: EGRESS_LIST }), [{ action: egress("api.example.com", 2000n) }]),
+    afterSpend("domain", "payment after a spend", 100_000n, payment(4n, 7250n, "lovelace", "supplier"), 7300n),
+    afterSpend("domain", "egress after a spend", 100_000n, egress("api.example.com", 7250n), 7300n),
   ];
-  return bases.flatMap(c => [2n, 255n].flatMap(value => [
-    { ...c, name: `${c.name} action_kind=${value}`, args: withArg(c.args, slot("action_kind"), value), evaluate: KIND_REFUSAL, guard: KIND_REFUSAL },
-    { ...c, name: `${c.name} egress_mode=${value}`, args: withArg(c.args, slot("egress_mode"), value), evaluate: MODE_REFUSAL, guard: MODE_REFUSAL },
-  ]));
+  const refuse = (c: VerdictCase, changes: Readonly<Record<string, bigint>>, refusal: Outcome) => ({ ...vary(c, changes), evaluate: refusal, guard: refusal });
+  const refusals = (c: VerdictCase, values: readonly bigint[], zeroPayment: boolean) => [
+    ...values.flatMap(value => [refuse(c, { action_kind: value }, KIND_REFUSAL), refuse(c, { egress_mode: value }, MODE_REFUSAL)]),
+    ...(zeroPayment ? [refuse(c, { action_amount: 0n }, AMOUNT_REFUSAL)] : []),
+  ];
+  const isPayment = (c: VerdictCase) => c.args[slot("action_kind")] === 0n;
+  const edges = (c: VerdictCase) => [
+    { prior_spent: 1n }, { prior_spent: c.args[slot("cap_amount")] as bigint }, { prior_spent: MAX_U64 }, { cap_amount: 0n }, { cap_amount: MAX_U64 },
+  ];
+  return [
+    ...bases.flatMap(c => refusals(c, [2n, 255n], isPayment(c))),
+    ...inValidity.flatMap(c => edges(c).flatMap(edge => refusals(vary(c, edge), [2n], isPayment(c)))),
+    ...[1n, MAX_U64].flatMap(amount => refusals(vary(inValidity[0]!, { action_amount: amount }), [2n], false)),
+  ];
 }
 
 /** The arguments of `check_verdict`: the guard clock, the 12 predicate slots and a claimed verdict. */

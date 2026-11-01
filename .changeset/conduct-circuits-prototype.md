@@ -8,4 +8,6 @@ the published files and checks their pins. Their tests ship under
 `tests/conduct` and run inside the workspace, which holds the conduct fixtures
 they read. The package entry does not export the circuits. They are undeployed
 and their ABI is unfrozen. `build:circuits` now also compiles them and requires
-their committed pins to reproduce.
+their committed pins to reproduce. `circuits/conduct/reference` holds PoAC's
+archived verdict core, which ships only as the tests' explicit-time oracle and
+is never deployed.

@@ -1,5 +1,5 @@
 // Compiles the conduct circuits into the gitignored conduct-managed/ and pins their deterministic outputs.
-//   node scripts/compile-conduct.mjs --write|--check [--units predicate,mutants]
+//   node scripts/compile-conduct.mjs --write|--check [--units predicate,mutants,reference]
 // Build-order rule: node builtins only, because build:circuits runs before the workspace is built.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -14,13 +14,20 @@ const circuits = join(root, "circuits/conduct");
 const reference = join(circuits, "reference");
 const managed = join(root, "conduct-managed");
 const pinsFile = join(circuits, "pins.json");
-const UNITS = ["predicate", "mutants"];
+const UNITS = ["predicate", "mutants", "reference"];
 
-const args = process.argv.slice(2);
-const check = args.includes("--check");
-if (check === args.includes("--write")) throw new Error("usage: compile-conduct.mjs --write|--check [--units predicate,mutants]");
-const unitsAt = args.indexOf("--units");
-const units = unitsAt < 0 ? UNITS : [...new Set((args[unitsAt + 1] ?? "").split(","))];
+const usage = `usage: compile-conduct.mjs --write|--check [--units ${UNITS.join(",")}]`;
+let mode;
+let unitList;
+for (const args = process.argv.slice(2); args.length > 0;) {
+  const arg = args.shift();
+  if ((arg === "--check" || arg === "--write") && mode === undefined) mode = arg;
+  else if (arg === "--units" && unitList === undefined && args.length > 0) unitList = args.shift();
+  else throw new Error(usage);
+}
+if (mode === undefined) throw new Error(usage);
+const check = mode === "--check";
+const units = unitList === undefined ? UNITS : [...new Set(unitList.split(","))];
 for (const unit of units) if (!UNITS.includes(unit)) throw new Error(`unknown conduct unit: ${unit}`);
 const partial = units.length < UNITS.length;
 
@@ -108,10 +115,9 @@ async function mockCompile(out) {
 }
 
 // The parity tests call the exported pure circuits; the proof statement must not depend on their being exported. A
-// second compile with every pure circuit unexported must yield the same ZKIR, and its hashes are pinned beside the
-// exported ones.
-async function unexportedZkirHashes(out) {
-  return withScratch("conduct-unexported-", async scratch => {
+// second compile with every pure circuit unexported must yield the same ZKIR.
+async function requireExportInvariance(out) {
+  await withScratch("conduct-unexported-", async scratch => {
     const unexported = join(scratch, "out");
     await compileEditedPredicate("predicate.compact", text => {
       const demoted = text.replace(/^export pure circuit /gm, "pure circuit ");
@@ -120,13 +126,10 @@ async function unexportedZkirHashes(out) {
     }, unexported);
     const names = await zkirFiles(out);
     if (!isDeepStrictEqual(await zkirFiles(unexported), names)) throw new Error("the provable circuits depend on which pure circuits are exported");
-    const hashes = {};
     for (const name of names) {
       const [exported, demoted] = await Promise.all([out, unexported].map(dir => readFile(join(dir, "zkir", name))));
       if (!exported.equals(demoted)) throw new Error(`${name} depends on which pure circuits are exported`);
-      hashes[name.slice(0, -".zkir".length)] = sha256(demoted);
     }
-    return hashes;
   });
 }
 
@@ -134,12 +137,9 @@ const build = {
   async predicate() {
     const out = join(managed, "predicate");
     await compile(circuits, "predicate.compact", out);
-    const pins = await mockCompile(out);
-    const unexported = await unexportedZkirHashes(out);
-    const circuitPins = Object.fromEntries(Object.entries(pins).map(([name, { zkirSha256, ...size }]) =>
-      [name, { zkirSha256, demotedZkirSha256: unexported[name], ...size }]));
-    const pureExportInvariant = Object.values(circuitPins).every(pin => pin.demotedZkirSha256 === pin.zkirSha256);
-    return { pureExportInvariant, circuits: circuitPins };
+    const circuitPins = await mockCompile(out);
+    await requireExportInvariance(out);
+    return { pureExportInvariant: true, circuits: circuitPins };
   },
   async mutants() {
     await rm(join(managed, "mutants"), { recursive: true, force: true });
@@ -148,6 +148,8 @@ const build = {
       await compileEditedPredicate(mutant.file, text => text.replace(mutant.find, () => mutant.replace), out);
       await mockCompile(out);
     }
+  },
+  async reference() {
     await compile(reference, "poac_verdict_core.compact", join(managed, "reference/poac"));
   },
 };
