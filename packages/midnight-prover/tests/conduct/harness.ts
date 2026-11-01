@@ -9,6 +9,7 @@ import { provingProvider } from "@midnight-ntwrk/zkir-v2";
 import { withFixtureProof } from "../fixture-prover.js";
 
 const managed = resolve(import.meta.dirname, "../../conduct-managed");
+const circuits = resolve(import.meta.dirname, "../../circuits/conduct");
 const ASSERT_CALL = "__compactRuntime.assert(";
 
 export interface ProofData {
@@ -54,14 +55,22 @@ export function generatedSource(unit: string): string {
   return readFileSync(contractFile(unit), "utf8");
 }
 
+/** A Compact source file of a predicate unit: the committed file, or the edited copy a mutant was compiled from. */
+export function unitSource(unit: string, file: string): string {
+  const dir = unitDir(unit);
+  contractFile(unit);
+  return readFileSync(join(dir === join(managed, "predicate") ? circuits : join(dir, "source"), file), "utf8");
+}
+
 export function stripAsserts(source: string): { source: string; removed: number } {
   return { source: source.replaceAll(ASSERT_CALL, "((_c, _m) => {})("), removed: source.split(ASSERT_CALL).length - 1 };
 }
 
-// The copy keeps every ZKIR constraint but none of the generated JS checks, so only `check` can refuse a forgery.
+// The copy keeps every ZKIR constraint but none of the generated JS checks, so only `check` can refuse a forgery. Its
+// columns no longer match the compiled source map, so it names none.
 async function loadStripped(unit: string): Promise<UnitModule> {
   const file = contractFile(unit);
-  const { source, removed } = stripAsserts(generatedSource(unit));
+  const { source, removed } = stripAsserts(generatedSource(unit).replace(/^\/\/# sourceMappingURL=.*$/m, ""));
   if (removed === 0) throw new Error(`no generated assertions to strip in ${unit}`);
   const stripped = join(file, "../index.stripped.js");
   const temp = `${stripped}.${randomUUID()}`;

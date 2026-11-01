@@ -411,9 +411,13 @@ export const rangeCases = (): VerdictCase[] => rangeHistories().flatMap(h => h.s
 
 export const withArg = (args: PredicateArgs, index: number, value: bigint | boolean) => args.map((arg, i) => (i === index ? value : arg)) as PredicateArgs;
 
+const SLOTS = new Map(PREDICATE_LAYOUT.map((input, index) => [input.name, index]));
+/** The width of each Uint input type of the predicate layout. */
+export const UINT_BITS: Readonly<Record<string, number>> = { uint64: 64, uint8: 8 };
+
 export function slot(name: string): number {
-  const index = PREDICATE_LAYOUT.findIndex(input => input.name === name);
-  if (index < 0) throw new Error(`no predicate slot ${name}`);
+  const index = SLOTS.get(name);
+  if (index === undefined) throw new Error(`no predicate slot ${name}`);
   return index;
 }
 
@@ -505,13 +509,15 @@ export const allCases = (): VerdictCase[] => [
   ...invarianceCases(), ...overCapPriorCases(), ...spentCases(), ...domainCases(),
 ];
 
+const VALIDITY_REFUSAL = { throws: "failed assert: validity window out of domain" } as const;
 const KIND_REFUSAL = { throws: "failed assert: action kind out of domain" } as const;
 const MODE_REFUSAL = { throws: "failed assert: egress mode out of domain" } as const;
 const AMOUNT_REFUSAL = { throws: "failed assert: payment amount out of domain" } as const;
 
-// The schema admits only kind and mode 0 or 1 and a payment of at least 1, so the runtime has no input here and no
-// decision to compare: both circuits must refuse, whichever validity check would otherwise decide. Refusal never depends
-// on the prior spend, the cap or the amount, so the refusals inside validity also meet their edges.
+// The schema admits only kind and mode 0 or 1, a payment of at least 1 and a validity window with notBefore before
+// notAfter, so the runtime has no input here and no decision to compare: both circuits must refuse, whichever validity
+// check would otherwise decide. Refusal never depends on the prior spend, the cap or the amount, so the refusals inside
+// validity also meet their edges.
 export function domainCases(): VerdictCase[] {
   const inValidity = [
     ...runPolicy("domain", "payment", policy({ egress: EGRESS_LIST }), [{ action: payment(5n, 1500n) }]),
@@ -541,7 +547,9 @@ export function domainCases(): VerdictCase[] {
   // prior spend of 2^64-1 before notBefore and a payment's egress_ok at true.
   const decided = rangeBases().filter(({ base }) => typeof base.guard === "number");
   const ranged = [...decided.map(({ base }) => base), ...decided.filter(({ scale }) => scale === "top").map(({ base }) => flipIgnored(base))];
+  const emptyWindows = (c: VerdictCase) => [{ not_before: c.args[slot("not_after")] as bigint }, { not_before: c.args[slot("not_after")] as bigint, not_after: c.args[slot("not_before")] as bigint }];
   return [
+    ...bases.flatMap(c => emptyWindows(c).map(changes => refuse(c, changes, VALIDITY_REFUSAL))),
     ...bases.flatMap(c => refusals(c, [2n, 255n], isPayment(c))),
     ...inValidity.flatMap(c => edges(c).flatMap(edge => refusals(vary(c, edge), [2n], isPayment(c)))),
     ...[1n, MAX_U64].flatMap(amount => refusals(vary(inValidity[0]!, { action_amount: amount }), [2n], false)),
@@ -550,9 +558,9 @@ export function domainCases(): VerdictCase[] {
 }
 
 /** The arguments of `check_verdict`: the guard clock, the 12 predicate slots and a claimed verdict. */
-export const checkVerdictArgs = (c: VerdictCase, claimed: number) => [c.enforcedAt, ...c.args, BigInt(claimed)];
+export const checkVerdictArgs = (c: Pick<VerdictCase, "enforcedAt" | "args">, claimed: number) => [c.enforcedAt, ...c.args, BigInt(claimed)];
 
-export function circuitOutcomes(pure: UnitModule["pureCircuits"], c: VerdictCase): { evaluate: Outcome; guard: Outcome } {
+export function circuitOutcomes(pure: UnitModule["pureCircuits"], c: Pick<VerdictCase, "enforcedAt" | "args">): { evaluate: Outcome; guard: Outcome } {
   return {
     evaluate: outcome(() => pure.evaluate!(...c.args)),
     guard: outcome(() => pure.guard_verdict!(c.enforcedAt, ...c.args)),

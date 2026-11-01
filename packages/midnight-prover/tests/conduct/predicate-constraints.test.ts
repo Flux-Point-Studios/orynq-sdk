@@ -1,20 +1,18 @@
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { CompactTypeField } from "@midnight-ntwrk/compact-runtime";
 import { describe, expect, it } from "vitest";
-import { allCases, checkVerdictArgs as claim, CLAIMS, guardVectorCases, MAX_U64, predicateVectorCases, slot as slotIndex, VERDICT_CODES, type VerdictCase } from "./cases.js";
-import { generatedSource, prepareCheck, runCircuit, stripAsserts, zkCheck } from "./harness.js";
+import { allCases, checkVerdictArgs as claim, CLAIMS, guardVectorCases, MAX_U64, predicateVectorCases, slot, VERDICT_CODES, type VerdictCase } from "./cases.js";
+import { generatedSource, prepareCheck, runCircuit, stripAsserts, unitDir, zkCheck } from "./harness.js";
 
 const GROUPS = ["predicate-vectors", "guard-vectors", "clock", "matrix", "boundary", "unicode", "range", "invariance", "prior", "spent", "domain"];
 const cases = allCases();
 const honest = cases.filter((c): c is VerdictCase & { guard: number } => typeof c.guard === "number");
-const refused = cases.filter(c => typeof c.guard !== "number");
 const labelled = <T extends VerdictCase>(list: readonly T[]) => list.map(c => [`${c.group}: ${c.name}`, c] as const);
 const forgeries = (c: VerdictCase & { guard: number }, claims: readonly number[] = CLAIMS) => claims.filter(code => code !== c.guard);
 const UINT8 = Array.from({ length: 256 }, (_, value) => value);
 const onePerCode = VERDICT_CODES.map(code => honest.find(c => c.guard === code)!);
 
-describe("T-A12 the compiled check_verdict constraints accept every honest verdict and disclose it", () => {
+describe("T-A12 every case set reaches the ZKIR layer, and the cases meet every slot at its edges", () => {
   it("runs every case set at the ZKIR layer", () => {
     expect([...new Set(cases.map(c => c.group))].sort()).toEqual([...GROUPS].sort());
   });
@@ -22,8 +20,8 @@ describe("T-A12 the compiled check_verdict constraints accept every honest verdi
   // AM-4: a verdict rule or refusal gated on prior_spent, cap_amount or action_amount survives every case that holds
   // those slots at one value, so every expiry, the early clock and every refusal meet a prior spend above 0.
   it("AM-4: prior spend above 0 meets every clock and action-time expiry, the prior-sensitive early clock and every refusal", () => {
-    const [notBefore, notAfter, cap, kind, ts, amount, prior] = [0, 1, 3, 5, 6, 8, 10];
-    const at = (c: VerdictCase, index: number) => c.args[index] as bigint;
+    const [notBefore, notAfter, cap, kind, ts, amount, prior] = ["not_before", "not_after", "cap_amount", "action_kind", "action_timestamp", "action_amount", "prior_spent"] as const;
+    const at = (c: VerdictCase, name: string) => c.args[slot(name)] as bigint;
     const isPayment = (c: VerdictCase) => at(c, kind) === 0n;
     const spent = (c: VerdictCase) => at(c, prior) > 0n;
     const refusal = (c: VerdictCase) => typeof c.guard === "number" ? undefined : c.guard.throws.replace(/^failed assert: /, "");
@@ -65,7 +63,7 @@ describe("T-A12 the compiled check_verdict constraints accept every honest verdi
   // that slot on one side of the gate. So every outcome, at every action and clock position it reaches, meets each
   // numeric slot within 3 of both ends of uint64 and each Boolean slot the outcome leaves free at both values.
   it("every outcome at every position meets each numeric slot at both ends of uint64 and each free Boolean at both values", () => {
-    const at = (c: VerdictCase, name: string) => c.args[slotIndex(name)]!;
+    const at = (c: VerdictCase, name: string) => c.args[slot(name)]!;
     const region = (c: VerdictCase, t: bigint) => t < (at(c, "not_before") as bigint) ? "before notBefore" : t < (at(c, "not_after") as bigint) ? "inside validity" : "at or past notAfter";
     const outcomeOf = (c: VerdictCase) => {
       const decision = typeof c.guard === "number" ? `verdict ${c.guard}` : c.guard.throws.replace(/^failed assert: /, "");
@@ -118,40 +116,6 @@ describe("T-A12 the compiled check_verdict constraints accept every honest verdi
     expect(missing).toEqual([]);
   });
 
-  it.each(labelled(honest))("%s", async (_name, c) => {
-    const disclosed = await zkCheck("predicate", "check_verdict", {}, claim(c, c.guard));
-    expect(disclosed.verdictOut).toBe(BigInt(c.guard));
-  });
-
-  it.each(labelled(refused))("%s: no claimed verdict checks", async (_name, c) => {
-    for (const claimed of CLAIMS) {
-      await expect(zkCheck("predicate", "check_verdict", {}, claim(c, claimed))).rejects.toThrow(/Failed direct assertion/);
-    }
-  });
-
-  // The ledger refuses an out-of-range value in an aligned slot before `check`, so the slot is re-aligned as a
-  // Field to reach the IR's own range and Boolean constraints.
-  const realign = async (slot: number, value: bigint) => {
-    const prepared = await prepareCheck("predicate", "check_verdict", {}, claim(honest[0]!, honest[0]!.guard));
-    const values = [...prepared.data.input.value];
-    const alignment = [...prepared.data.input.alignment];
-    values[slot] = CompactTypeField.toValue(value)[0]!;
-    alignment[slot] = CompactTypeField.alignment()[0];
-    prepared.data.input = { value: values, alignment };
-    return prepared.check();
-  };
-  const honestSlot = (slot: number) => BigInt(claim(honest[0]!, honest[0]!.guard)[slot] as bigint | boolean);
-  const uintSlots = [[0, 64], [1, 64], [2, 64], [4, 64], [5, 8], [6, 8], [7, 64], [9, 64], [11, 64], [13, 8]] as const;
-  it.each(uintSlots)("U12: public Uint slot %i holding 2^%i fails the IR range constraint", async (slot, bits) => {
-    await expect(realign(slot, 1n << BigInt(bits))).rejects.toThrow(new RegExp(`Bit bound failed: [0-9a-f]+ is not ${bits}-bit`));
-  });
-  const booleanSlots = [10, 12] as const;
-  it.each(booleanSlots)("public Boolean slot %i holding 2 fails the IR Boolean constraint", async slot => {
-    await expect(realign(slot, 2n)).rejects.toThrow(/Expected boolean/);
-  });
-  it.each([...uintSlots.map(([slot]) => slot), ...booleanSlots])("control: public slot %i re-aligned with its own value checks", async slot => {
-    await expect(realign(slot, honestSlot(slot))).resolves.toBeDefined();
-  });
 });
 
 // vitest drops a custom message on `rejects`, so an accepted forgery is reported explicitly.
@@ -175,7 +139,9 @@ describe("T-A13 a forged verdict fails the generated JS", () => {
   });
 });
 
-describe("T-A13 a forged verdict fails the compiled constraints", () => {
+// Each honest case is T-A12's acceptance leg: check passes and discloses its verdict, in the same run that refuses every
+// forged claim for it. predicate-refusals.test.ts holds T-A12's refusal leg.
+describe("T-A12 and T-A13 the compiled constraints accept and disclose every honest verdict and refuse every forged one", () => {
   it("the strip transform removes every generated assertion, one per Compact assert", () => {
     const circuits = resolve(import.meta.dirname, "../../circuits/conduct");
     const compactAsserts = ["verdict_core.compact", "predicate.compact"]
@@ -183,6 +149,11 @@ describe("T-A13 a forged verdict fails the compiled constraints", () => {
     const { source, removed } = stripAsserts(generatedSource("predicate"));
     expect(source).not.toContain("__compactRuntime.assert(");
     expect(removed).toBe(compactAsserts);
+  });
+
+  it("the stripped copy names no source map", async () => {
+    await prepareCheck("predicate", "check_verdict", {}, claim(honest[0]!, honest[0]!.guard));
+    expect(readFileSync(join(unitDir("predicate"), "contract/index.stripped.js"), "utf8")).not.toContain("sourceMappingURL");
   });
 
   it.each(labelled(honest))("%s", async (_name, c) => {

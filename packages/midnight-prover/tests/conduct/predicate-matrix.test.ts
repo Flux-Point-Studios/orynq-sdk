@@ -1,9 +1,10 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { checkVerdictArgs, circuitOutcomes, CLAIMS, egress, MAX_U64, matrixCases, payment, policy, runPolicy, T0, VERDICT_CODES, type Step, type VerdictCase } from "./cases.js";
+import { checkVerdictArgs, circuitOutcomes, CLAIMS, egress, MAX_U64, matrixCases, payment, policy, runPolicy, slot, T0, VERDICT_CODES, type Step, type VerdictCase } from "./cases.js";
 import { loadUnit, zkCheck } from "./harness.js";
 
 const { pureCircuits } = await loadUnit("predicate");
+const at = (c: VerdictCase, name: string) => c.args[slot(name)] as bigint;
 const HISTORIES = 1000;
 const MIN_GENERATED_SHAPE = 10;
 
@@ -14,7 +15,7 @@ describe("T-A06 every window, asset, counterparty, cap, mode and clock combinati
     expect(new Set(cases.map(c => c.name)).size).toBe(144);
     const refused = cases.filter(c => typeof c.guard !== "number");
     expect(refused).toHaveLength(32);
-    expect(refused.every(c => c.args[6] > c.enforcedAt && c.enforcedAt < c.args[1])).toBe(true);
+    expect(refused.every(c => at(c, "action_timestamp") > c.enforcedAt && c.enforcedAt < at(c, "not_after"))).toBe(true);
   });
   it.each(cases.map(c => [c.name, c] as const))("%s", (_name, c) => {
     expect(circuitOutcomes(pureCircuits, c), c.name).toEqual({ evaluate: c.evaluate, guard: c.guard });
@@ -67,10 +68,10 @@ describe("T-A06 generated guard histories", () => {
   it("a prior spend above 0 meets a clock-decided expiry, an action-time expiry, the cap and an allowed payment", () => {
     const spent = generated.filter(c => c.prior > 0n);
     const shapes: [string, (c: VerdictCase) => boolean][] = [
-      ["a clock at or past notAfter after an earlier action", c => c.guard === 2 && c.enforcedAt >= c.args[1] && c.args[6] < c.args[1]],
-      ["an action at or past notAfter", c => c.guard === 2 && c.args[6] >= c.args[1]],
+      ["a clock at or past notAfter after an earlier action", c => c.guard === 2 && c.enforcedAt >= at(c, "not_after") && at(c, "action_timestamp") < at(c, "not_after")],
+      ["an action at or past notAfter", c => c.guard === 2 && at(c, "action_timestamp") >= at(c, "not_after")],
       ["a payment over the cap", c => c.guard === 4],
-      ["an allowed payment", c => c.guard === 0 && c.args[5] === 0n],
+      ["an allowed payment", c => c.guard === 0 && at(c, "action_kind") === 0n],
     ];
     const counts = shapes.map(([shape, holds]) => `${shape}: ${spent.filter(holds).length}`);
     expect(counts.filter(count => Number(count.split(": ")[1]) < MIN_GENERATED_SHAPE), counts.join("; ")).toEqual([]);
@@ -129,8 +130,8 @@ describe("T-A06 generated guard histories across the whole of uint64", () => {
     const outcomes = new Set(generated.map(c => (typeof c.guard === "number" ? String(c.guard) : c.guard.throws)));
     expect([...outcomes].sort()).toEqual([...VERDICT_CODES.map(String), "failed assert: action after guard clock"].sort());
     const slots: [string, (c: VerdictCase) => bigint][] = [
-      ["enforced_at", c => c.enforcedAt], ...([["not_before", 0], ["not_after", 1], ["cap_amount", 3], ["action_timestamp", 6], ["action_amount", 8], ["prior_spent", 10]] as const)
-        .map(([name, index]): [string, (c: VerdictCase) => bigint] => [name, c => c.args[index] as bigint]),
+      ["enforced_at", c => c.enforcedAt],
+      ...["not_before", "not_after", "cap_amount", "action_timestamp", "action_amount", "prior_spent"].map((name): [string, (c: VerdictCase) => bigint] => [name, c => at(c, name)]),
     ];
     const missing = slots.flatMap(([name, value]) => [
       ...(generated.some(c => value(c) >= U32) ? [] : [`${name} at or above 2^32`]),

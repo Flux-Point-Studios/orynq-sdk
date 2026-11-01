@@ -424,5 +424,143 @@
     "file": "verdict_core.compact",
     "find": "if (egress_mode == 0) { return 6; }",
     "replace": "if (egress_mode != 1) { return 6; }"
+  },
+  {
+    "id": "validity_window_assert_removed",
+    "file": "verdict_core.compact",
+    "find": "    assert(not_before < not_after, \"validity window out of domain\");\n",
+    "replace": ""
+  },
+  {
+    "id": "cap_rule_skipped_in_amount_band",
+    "file": "verdict_core.compact",
+    "find": "if (prior_spent + action_amount > cap_amount) { return 4; }",
+    "replace": "if (prior_spent + action_amount > cap_amount && (action_amount <= 4294967296 || action_amount >= 9007199254740992)) { return 4; }"
+  },
+  {
+    "id": "cap_rule_skipped_in_cap_band",
+    "file": "verdict_core.compact",
+    "find": "if (prior_spent + action_amount > cap_amount) { return 4; }",
+    "replace": "if (prior_spent + action_amount > cap_amount && (cap_amount <= 4294967296 || cap_amount >= 9007199254740992)) { return 4; }"
+  },
+  {
+    "id": "counterparty_rule_skipped_in_amount_band",
+    "file": "verdict_core.compact",
+    "find": "if (!counterparty_ok) { return 5; }",
+    "replace": "if (!counterparty_ok && (action_amount <= 4294967296 || action_amount >= 9007199254740992)) { return 5; }"
+  },
+  {
+    "id": "asset_rule_skipped_in_prior_band",
+    "file": "verdict_core.compact",
+    "find": "if (!asset_ok) { return 3; }",
+    "replace": "if (!asset_ok && (prior_spent < 4294967296 || prior_spent >= 9007199254740992)) { return 3; }"
+  },
+  {
+    "id": "clock_rule_skipped_in_amount_band",
+    "file": "verdict_core.compact",
+    "find": "return enforced_at >= not_after ? 2 : verdict;",
+    "replace": "return enforced_at >= not_after && (action_amount <= 4294967296 || action_amount >= 9007199254740992) ? 2 : verdict;"
+  },
+  {
+    "id": "kind_domain_assert_waived_past_not_after",
+    "file": "verdict_core.compact",
+    "find": "assert(action_kind <= 1, \"action kind out of domain\");",
+    "replace": "assert(action_kind <= 1 || action_timestamp > not_after, \"action kind out of domain\");"
+  },
+  {
+    "id": "mode_domain_assert_waived_past_not_after",
+    "file": "verdict_core.compact",
+    "find": "assert(egress_mode <= 1, \"egress mode out of domain\");",
+    "replace": "assert(egress_mode <= 1 || action_timestamp > not_after, \"egress mode out of domain\");"
+  },
+  {
+    "id": "amount_floor_waived_past_not_after",
+    "file": "verdict_core.compact",
+    "find": "assert(action_kind == 1 || action_amount >= 1, \"payment amount out of domain\");",
+    "replace": "assert(action_kind == 1 || action_amount >= 1 || action_timestamp > not_after, \"payment amount out of domain\");"
+  },
+  {
+    "id": "amount_floor_waived_under_deny_all_above_cap_3",
+    "file": "verdict_core.compact",
+    "find": "assert(action_kind == 1 || action_amount >= 1, \"payment amount out of domain\");",
+    "replace": "assert(action_kind == 1 || action_amount >= 1 || (egress_mode == 0 && cap_amount > 3), \"payment amount out of domain\");"
+  },
+  {
+    "id": "kind_domain_assert_waived_in_cap_band",
+    "file": "verdict_core.compact",
+    "find": "assert(action_kind <= 1, \"action kind out of domain\");",
+    "replace": "assert(action_kind <= 1 || (cap_amount >= 1000000000 && cap_amount < 9223372036854775808), \"action kind out of domain\");"
+  },
+  {
+    "id": "clock_assert_waived_in_prior_band",
+    "file": "verdict_core.compact",
+    "find": "assert(action_timestamp <= enforced_at, \"action after guard clock\");",
+    "replace": "assert(action_timestamp <= enforced_at || (prior_spent >= 4294967296 && prior_spent < 9007199254740992), \"action after guard clock\");"
+  },
+  {
+    "id": "clock_assert_waived_far_past_clock",
+    "file": "verdict_core.compact",
+    "find": "assert(action_timestamp <= enforced_at, \"action after guard clock\");",
+    "replace": "assert(action_timestamp <= enforced_at || action_timestamp > enforced_at + 100000, \"action after guard clock\");"
+  },
+  {
+    "id": "amount_floor_waived_under_deny_all_after_spend",
+    "file": "verdict_core.compact",
+    "find": "assert(action_kind == 1 || action_amount >= 1, \"payment amount out of domain\");",
+    "replace": "assert(action_kind == 1 || action_amount >= 1 || (prior_spent != 0 && egress_mode == 0), \"payment amount out of domain\");"
+  },
+  {
+    "id": "clock_rule_needs_zero_prior_unless_off_list",
+    "file": "verdict_core.compact",
+    "find": "return enforced_at >= not_after ? 2 : verdict;",
+    "replace": "return enforced_at >= not_after && (prior_spent == 0 || counterparty_ok || !asset_ok) ? 2 : verdict;"
+  },
+  {
+    "id": "clock_assert_waived_off_list_after_spend",
+    "file": "verdict_core.compact",
+    "find": "assert(action_timestamp <= enforced_at, \"action after guard clock\");",
+    "replace": "assert(action_timestamp <= enforced_at || (prior_spent != 0 && !counterparty_ok && asset_ok), \"action after guard clock\");"
+  },
+  {
+    "id": "clock_rule_needs_zero_prior_for_deny_all_payment",
+    "file": "verdict_core.compact",
+    "find": "return enforced_at >= not_after ? 2 : verdict;",
+    "replace": "return enforced_at >= not_after && (prior_spent == 0 || egress_mode == 1 || action_kind == 1 || !counterparty_ok) ? 2 : verdict;"
+  },
+  {
+    "id": "kind_domain_assert_waived_past_cap",
+    "file": "verdict_core.compact",
+    "find": "assert(action_kind <= 1, \"action kind out of domain\");",
+    "replace": "assert(action_kind <= 1 || action_timestamp > cap_amount, \"action kind out of domain\");"
+  },
+  {
+    "id": "rewire_window_conditions",
+    "file": "verdict_core.compact",
+    "find": "    if (action_timestamp < not_before) { return 1; }\n    if (action_timestamp >= not_after) { return 2; }\n",
+    "replace": "    if (action_timestamp >= not_after) { return 1; }\n    if (action_timestamp < not_before) { return 2; }\n"
+  },
+  {
+    "id": "rewire_counterparty_cap_conditions",
+    "file": "verdict_core.compact",
+    "find": "      if (!counterparty_ok) { return 5; }\n      if (prior_spent + action_amount > cap_amount) { return 4; }\n",
+    "replace": "      if (prior_spent + action_amount > cap_amount) { return 5; }\n      if (!counterparty_ok) { return 4; }\n"
+  },
+  {
+    "id": "rewire_asset_rule_negated",
+    "file": "verdict_core.compact",
+    "find": "if (!asset_ok) { return 3; }",
+    "replace": "if (asset_ok) { return 3; }"
+  },
+  {
+    "id": "rewire_amount_floor_conjunction",
+    "file": "verdict_core.compact",
+    "find": "assert(action_kind == 1 || action_amount >= 1, \"payment amount out of domain\");",
+    "replace": "assert(action_kind == 1 && action_amount >= 1, \"payment amount out of domain\");"
+  },
+  {
+    "id": "rewire_clock_assert_and_rule",
+    "file": "verdict_core.compact",
+    "find": "assert(action_timestamp <= enforced_at, \"action after guard clock\");\n    const verdict = evaluate(not_before, not_after, cap_amount, egress_mode, action_kind, action_timestamp, action_amount,\n      asset_ok, counterparty_ok, prior_spent, egress_ok);\n    return enforced_at >= not_after ? 2 : verdict;",
+    "replace": "assert(enforced_at >= not_after, \"action after guard clock\");\n    const verdict = evaluate(not_before, not_after, cap_amount, egress_mode, action_kind, action_timestamp, action_amount,\n      asset_ok, counterparty_ok, prior_spent, egress_ok);\n    return action_timestamp <= enforced_at ? 2 : verdict;"
   }
 ]

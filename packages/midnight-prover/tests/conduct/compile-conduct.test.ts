@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -39,6 +39,21 @@ const editPins = (root: string, edit: (pins: { sources: Record<string, string>; 
     return `${JSON.stringify(pins, null, 2)}\n`;
   });
 
+// vitest reads the source map of every compiled unit it loads and warns once per map whose sources do not resolve.
+describe("compile-conduct output", () => {
+  it("every compiled unit's source map names source files that exist", () => {
+    const managed = join(pkg, "conduct-managed");
+    const maps = readdirSync(managed, { recursive: true, encoding: "utf8" }).filter(name => name.endsWith("/contract/index.js.map"));
+    expect(maps.length).toBeGreaterThan(0);
+    const missing = maps.flatMap(name => {
+      const file = join(managed, name);
+      const map: { sourceRoot?: string; sources: string[] } = JSON.parse(readFileSync(file, "utf8"));
+      return map.sources.map(source => resolve(dirname(file), map.sourceRoot ?? "", source)).filter(path => !existsSync(path)).map(path => `${name}: ${path}`);
+    });
+    expect(missing).toEqual([]);
+  });
+});
+
 describe("compile-conduct refusals", () => {
   it("requires Compact compiler 0.31.1", () => {
     const fake = join(scratch, "compactc");
@@ -66,6 +81,14 @@ describe("compile-conduct refusals", () => {
     const result = compile(pkg, ["--check", "--units", "nope"]);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("unknown conduct unit: nope");
+  });
+
+  it("rejects a mutant that edits a file outside the predicate sources", () => {
+    const root = packageCopy();
+    writeFileSync(join(root, "circuits/conduct/mutants.json"), JSON.stringify([{ id: "elsewhere", file: "reference/poac_verdict_core.compact", find: "return 6;", replace: "return 7;" }]));
+    const result = compile(root, ["--check"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("mutant elsewhere must edit one of predicate.compact, verdict_core.compact");
   });
 
   it.each([

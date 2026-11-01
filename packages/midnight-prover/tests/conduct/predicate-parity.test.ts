@@ -1,7 +1,7 @@
 import { compileMandatePredicate, type GuardAction } from "@fluxpointstudios/orynq-sdk-conduct";
 import { describe, expect, it } from "vitest";
 import {
-  allowlists, circuitOutcomes, clockCases, clockPayment, clockPolicy, decisionCode, guardFor, guardVectorCases, predicateVectorCases, spentCases,
+  allowlists, circuitOutcomes, clockCases, clockPayment, clockPolicy, decisionCode, guardFor, guardVectorCases, predicateVectorCases, slot, spentCases,
   type VerdictCase,
 } from "./cases.js";
 import { loadUnit } from "./harness.js";
@@ -65,13 +65,14 @@ describe("T-A05 the guard clock: guard_verdict follows the runtime, the 12-argum
     const inside = "action in validity, clock ahead and still in validity";
     expect([cases[inside]!.evaluate, cases[inside]!.guard, clocked(inside)]).toEqual([0, 0, 0]);
   });
-  const later = clockCases().filter(c => c.args[6] > c.enforcedAt);
+  const at = (c: VerdictCase, name: string) => c.args[slot(name)] as bigint;
+  const later = clockCases().filter(c => at(c, "action_timestamp") > c.enforcedAt);
   const position = (c: VerdictCase) =>
-    c.enforcedAt < c.args[0] ? "before notBefore" : c.enforcedAt < c.args[1] ? "inside validity" : c.enforcedAt === c.args[1] ? "at notAfter" : "past notAfter";
+    c.enforcedAt < at(c, "not_before") ? "before notBefore" : c.enforcedAt < at(c, "not_after") ? "inside validity" : c.enforcedAt === at(c, "not_after") ? "at notAfter" : "past notAfter";
   it("tries a payment and a listed and an unlisted egress one second after the clock, at four clock positions", () => {
-    expect(later.every(c => c.args[6] === c.enforcedAt + 1n)).toBe(true);
+    expect(later.every(c => at(c, "action_timestamp") === c.enforcedAt + 1n)).toBe(true);
     const kinds = ["payment", "listed egress", "unlisted egress"];
-    const kind = (c: VerdictCase) => c.args[5] === 0n ? kinds[0] : c.args[11] ? kinds[1] : kinds[2];
+    const kind = (c: VerdictCase) => at(c, "action_kind") === 0n ? kinds[0] : c.args[slot("egress_ok")] ? kinds[1] : kinds[2];
     expect(later.map(c => `${kind(c)} ${position(c)}`).sort())
       .toEqual(kinds.flatMap(k => ["before notBefore", "inside validity", "at notAfter", "past notAfter"].map(p => `${k} ${p}`)).sort());
   });

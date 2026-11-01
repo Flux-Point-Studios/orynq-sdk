@@ -3,9 +3,9 @@
 // Build-order rule: node builtins only, because build:circuits runs before the workspace is built.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, cp, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 
@@ -31,9 +31,11 @@ const units = unitList === undefined ? UNITS : [...new Set(unitList.split(","))]
 for (const unit of units) if (!UNITS.includes(unit)) throw new Error(`unknown conduct unit: ${unit}`);
 const partial = units.length < UNITS.length;
 
+const PREDICATE_SOURCES = ["predicate.compact", "verdict_core.compact"];
 const mutants = JSON.parse(await readFile(join(circuits, "mutants.json"), "utf8"));
 for (const { id, file, find } of mutants) {
   if (!/^[a-z0-9_]+$/.test(id)) throw new Error(`mutant id ${JSON.stringify(id)} must be lowercase letters, digits and underscores`);
+  if (!PREDICATE_SOURCES.includes(file)) throw new Error(`mutant ${id} must edit one of ${PREDICATE_SOURCES.join(", ")}`);
   if ((await readFile(join(circuits, file), "utf8")).split(find).length !== 2) throw new Error(`mutant ${id} does not apply exactly once`);
 }
 
@@ -63,10 +65,13 @@ const zkir = process.env.ZKIR ?? (process.env.COMPACTC ? join(dirname(compiler),
 const toolchain = { compactc: "0.31.1", language: tool(compiler, ["--language-version"]), runtime: tool(compiler, ["--runtime-version"]), zkir: tool(zkir, ["--version"]) };
 if (toolchain.zkir !== "midnight-zkir 2.1.0") throw new Error("midnight-zkir 2.1.0 is required");
 
-// Source maps record paths relative to the working directory, so every compile runs beside its sources.
+// The source map names its sources relative to the compile's working directory; rooting it there lets a loader that
+// reads the map, such as vitest, find them.
 async function compile(sourceDir, entry, out) {
-  await rm(out, { recursive: true, force: true });
   execFileSync(compiler, ["--skip-zk", entry, out], { cwd: sourceDir, encoding: "utf8", maxBuffer: 65536 });
+  const mapFile = join(out, "contract/index.js.map");
+  const map = JSON.parse(await readFile(mapFile, "utf8"));
+  await writeFile(mapFile, JSON.stringify({ ...map, sourceRoot: `${relative(dirname(mapFile), sourceDir)}/` }));
 }
 
 async function withScratch(prefix, body) {
@@ -78,12 +83,14 @@ async function withScratch(prefix, body) {
   }
 }
 
-async function compileEditedPredicate(file, edit, out) {
-  await withScratch("conduct-src-", async copy => {
-    await cp(circuits, copy, { recursive: true });
-    await writeFile(join(copy, file), edit(await readFile(join(copy, file), "utf8")));
-    await compile(copy, "predicate.compact", out);
-  });
+// Writes the predicate sources with one file edited into `sourceDir`, then compiles them from there.
+async function compileEditedPredicate(file, edit, sourceDir, out) {
+  await mkdir(sourceDir, { recursive: true });
+  for (const name of PREDICATE_SOURCES) {
+    const text = await readFile(join(circuits, name), "utf8");
+    await writeFile(join(sourceDir, name), name === file ? edit(text) : text);
+  }
+  await compile(sourceDir, "predicate.compact", out);
 }
 
 const zkirFiles = async dir => (await readdir(join(dir, "zkir"))).filter(name => name.endsWith(".zkir")).sort();
@@ -123,7 +130,7 @@ async function requireExportInvariance(out) {
       const demoted = text.replace(/^export pure circuit /gm, "pure circuit ");
       if (demoted === text) throw new Error("predicate.compact exports no pure circuit");
       return demoted;
-    }, unexported);
+    }, join(scratch, "source"), unexported);
     const names = await zkirFiles(out);
     if (!isDeepStrictEqual(await zkirFiles(unexported), names)) throw new Error("the provable circuits depend on which pure circuits are exported");
     for (const name of names) {
@@ -136,6 +143,7 @@ async function requireExportInvariance(out) {
 const build = {
   async predicate() {
     const out = join(managed, "predicate");
+    await rm(out, { recursive: true, force: true });
     await compile(circuits, "predicate.compact", out);
     const circuitPins = await mockCompile(out);
     await requireExportInvariance(out);
@@ -143,14 +151,17 @@ const build = {
   },
   async mutants() {
     await rm(join(managed, "mutants"), { recursive: true, force: true });
+    // A mutant keeps its edited sources in source/, which its source map names and the structure audit reads.
     for (const mutant of mutants) {
       const out = join(managed, "mutants", mutant.id);
-      await compileEditedPredicate(mutant.file, text => text.replace(mutant.find, () => mutant.replace), out);
+      await compileEditedPredicate(mutant.file, text => text.replace(mutant.find, () => mutant.replace), join(out, "source"), out);
       await mockCompile(out);
     }
   },
   async reference() {
-    await compile(reference, "poac_verdict_core.compact", join(managed, "reference/poac"));
+    const out = join(managed, "reference/poac");
+    await rm(out, { recursive: true, force: true });
+    await compile(reference, "poac_verdict_core.compact", out);
   },
 };
 

@@ -4,6 +4,7 @@ module ConductVerdict {
   export circuit evaluate(not_before: Uint<64>, not_after: Uint<64>, cap_amount: Uint<64>, egress_mode: Uint<8>,
       action_kind: Uint<8>, action_timestamp: Uint<64>, action_amount: Uint<64>,
       asset_ok: Boolean, counterparty_ok: Boolean, prior_spent: Uint<64>, egress_ok: Boolean): Uint<8> {
+    assert(not_before < not_after, "validity window out of domain");
     assert(action_kind <= 1, "action kind out of domain");
     assert(egress_mode <= 1, "egress mode out of domain");
     assert(action_kind == 1 || action_amount >= 1, "payment amount out of domain");

@@ -7,29 +7,29 @@
     "zkir": "midnight-zkir 2.1.0"
   },
   "sources": {
-    "circuits/conduct/mutants.json": "d4d7445faaf73d49a0f5ef0ecf4abb5ec171ff9f095a579fdad0d808b6cf1ee5",
+    "circuits/conduct/mutants.json": "d1a50e90d586ad1da1ca3cfbd72ef184f4c34d13b0cfd94bbaaa206bb4b32926",
     "circuits/conduct/predicate.compact": "b83ec16fbb500bfa9537c7b6930c44489826c772284f7953a922d1abd7e9b2c0",
     "circuits/conduct/reference/poac_verdict_core.compact": "189fc0ac6f6d36f85591d82e1b470478ee5df6be6a580cd97462673a12b29605",
-    "circuits/conduct/verdict_core.compact": "e1d144121850392575049b85308e9fe580223f0815120c864c3dc8e0fcdcaa36"
+    "circuits/conduct/verdict_core.compact": "bb063e92994397f84757161f4c36c94a1088945b60f40d97bf163e10b76593d1"
   },
   "units": {
     "predicate": {
       "pureExportInvariant": true,
       "circuits": {
         "check_verdict": {
-          "zkirSha256": "8de909f53852f101f0d45abd5904bcad0d7abffa0da587f7a3e415416a4fa562",
+          "zkirSha256": "17f62b094f3f5c7b84463e604a8cedb2f69653ed63b4ec6003e8ea423559d499",
           "k": 10,
-          "rows": 880,
+          "rows": 894,
           "ops": {
-            "total": 76,
+            "total": 78,
             "persistent_hash": 0,
             "add": 1,
-            "assert": 5,
+            "assert": 6,
             "cond_select": 20,
             "constrain_bits": 10,
             "constrain_to_boolean": 2,
             "declare_pub_input": 11,
-            "less_than": 8,
+            "less_than": 9,
             "load_imm": 11,
             "pi_skip": 3,
             "test_eq": 5
