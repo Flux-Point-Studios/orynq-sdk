@@ -1,6 +1,6 @@
 // The byte templates of the conduct opening circuits. compile-conduct emits Compact from them, and the tests render,
 // classify and open real producer output with them.
-// Build-order rule: node builtins only, because build:circuits runs before the workspace is built.
+// Build-order rule: node builtins only, so compile-conduct runs from the files the npm package ships, with no workspace build.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
@@ -439,13 +439,17 @@ function mandateCircuit(id, lengths) {
 }
 
 const vector = n => `v: Vector<${n}, Uint<8>>`;
+// The widths the event classes read decimals of the given lexical classes at.
+const decimalWidths = (...lexes) => [...new Set(Object.values(CLASSES.openings.events)
+  .flatMap(({ kind, lengths }) => [...valueSpecs(kind).values()].filter(s => lexes.includes(s.lex)).map(s => lengths[s.v])))].sort((a, b) => a - b);
 // Pure probes of the gadgets, as [name, parameters, return type, call], so the tests can run each over its input class.
+// dec53 reads through decU64 at its own width, so decU64 has a probe at every width either is read at.
 const PROBES = [
   ["cbor_uint_w0", "head: Uint<8>", "Uint<64>", "cborHeadValue(head)"],
   ...Object.values(UINT_WIDTHS).map(width => [`cbor_uint_w${width}`, vector(width), "Uint<64>", `cborUint<${width}>(v)`]),
   ...[1, 2, 3, 4].flatMap(n => [[`json_str_w${n}`, vector(n), "[]", `jsonStr<${n}>(v)`], [`utf8_any_w${n}`, vector(n), "[]", `utf8Any<${n}>(v)`]]),
-  ["dec_u64_w1", vector(1), "Uint<64>", "decU64<1>(v)"],
-  ["dec_u64_w2", vector(2), "Uint<64>", "decU64<2>(v)"],
+  ...decimalWidths("dec64", "dec53").map(n => [`dec_u64_w${n}`, vector(n), "Uint<64>", `decU64<${n}>(v)`]),
+  ...decimalWidths("dec53").map(n => [`dec53_w${n}`, vector(n), "Uint<64>", `dec53<${n}>(v)`]),
   ["hex_halves", vector(64), "[Field, Field]", "hexHalves(v)"],
   ["hex_of_hash", `${vector(64)}, hash: Bytes<32>`, "[]", "hexOfHash(v, hash)"],
   ["uuid_shape", vector(36), "[]", "uuid(v)"],

@@ -37,9 +37,9 @@ const witness = fc.constantFrom(...KIND_NAMES).chain(kind => {
 // The scalars the README names as covered, each tested on the string values of a witness.
 const COVERED: Readonly<Record<string, (value: string) => boolean>> = {
   "4-byte UTF-8": value => [...value].some(c => c.codePointAt(0)! > 0xffff),
-  "U+2028": value => value.includes(" "),
+  "U+2028": value => value.includes("\u2028"),
   DEL: value => value.includes("\u007f"),
-  "a leading BOM": value => value.startsWith("﻿"),
+  "a leading BOM": value => value.startsWith("\ufeff"),
 };
 
 describe("T-B05 every in-class preimage is canonical JSON whose fields are the classified atoms", () => {

@@ -38,7 +38,7 @@ describe("conduct circuit pins", () => {
   it.each(["predicate", "openings"])("the compiled %s unit under test carries the pinned ZKIR", unit => {
     for (const [name, pin] of Object.entries(pins().units[unit]!.circuits)) {
       const ir = relative(pkg, join(unitDir(unit), `zkir/${name}.zkir`));
-      expect(existsSync(join(pkg, ir)), "conduct circuits not compiled: run pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:circuits").toBe(true);
+      expect(existsSync(join(pkg, ir)), "conduct circuits not compiled: run pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:conduct").toBe(true);
       expect(sha256(ir), `${unit}/${name}`).toBe(pin.zkirSha256);
     }
   });

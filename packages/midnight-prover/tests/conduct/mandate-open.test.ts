@@ -1,9 +1,9 @@
 import { isDeepStrictEqual } from "node:util";
 import { decodeMandate, encodeMandate, hexToBytes, mandateCommitment, mandateCommitmentHex } from "@fluxpointstudios/orynq-sdk-conduct";
 import { describe, expect, it } from "vitest";
-import { CLASSES, mandateOpening, mandateSegments } from "../../scripts/conduct/template.mjs";
-import { classifiedMandate, HONEST_MANDATES, MANDATE_VECTORS, mandateOpeningOf, mandateOutcome as outcome, maxMandate, runMandateOpening, sibling } from "./mandates.js";
-import { withByte } from "./openings.js";
+import { CLASSES, mandateClass, mandateOpening, mandateSegments } from "../../scripts/conduct/template.mjs";
+import { classifiedMandate, HONEST_MANDATES, MANDATE_VECTORS, mandateOpeningOf, maxMandate, sibling } from "./mandates.js";
+import { openingOutcome as outcome, runOpening, withByte } from "./openings.js";
 import { mandateAtoms } from "./statement-checker.js";
 
 describe("T-B12 every mandate class opens the codec's own encoding", () => {
@@ -24,7 +24,7 @@ describe("T-B12 every mandate class opens the codec's own encoding", () => {
     const m = decodeMandate(cbor);
     const opening = mandateOpeningOf(cbor);
     expect(opening.circuit).toBe(id);
-    expect(await runMandateOpening(opening)).toEqual({ commitment: mandateCommitment(cbor), atoms: mandateAtoms(m) });
+    expect(await runOpening(opening)).toEqual({ commitment: mandateCommitment(cbor), atoms: mandateAtoms(m) });
     expect(opening.atoms).toEqual({
       notBefore: m.validityWindow.notBefore, notAfter: m.validityWindow.notAfter, asset: new TextEncoder().encode(m.spendCap.asset),
       cap: m.spendCap.amount, window: m.spendCap.windowSeconds, egressMode: m.egressPolicy.mode,
@@ -38,7 +38,7 @@ describe("T-B12 every mandate class opens the codec's own encoding", () => {
     const [opening, original] = [mandateOpeningOf(other), mandateOpeningOf(cbor)];
     expect(opening.circuit).toBe(id);
     expect(Object.keys(original.atoms).filter(atom => isDeepStrictEqual(opening.atoms[atom], original.atoms[atom]))).toEqual([]);
-    expect(await runMandateOpening(opening)).toEqual({ commitment: mandateCommitment(other), atoms: mandateAtoms(decodeMandate(other)) });
+    expect(await runOpening(opening)).toEqual({ commitment: mandateCommitment(other), atoms: mandateAtoms(decodeMandate(other)) });
   });
 
   it.each(MANDATE_VECTORS.valid)("$name: the vector's own commitment", v => {
@@ -114,20 +114,32 @@ const codeOf = (run: () => unknown) => {
   }
   return "accepted";
 };
-// The invalid vectors whose bytes still fit a compiled layout: only the circuit's own schema rules can refuse them.
-const SCHEMA_ONLY = [
-  "validity window empty (notAfter == notBefore)", "disclosure threshold 0", "threshold exceeds committee size (6-of-5)", "deny-all egress with nonzero allowlist root",
-];
+// The compiled class the layout reader and mandateClass place a mandate in, or the code they refuse it with.
+function layoutClass(cbor: Uint8Array): string {
+  try {
+    return mandateClass(mandateSegments(cbor));
+  } catch (error) {
+    return (error as Error).message.slice(0, (error as Error).message.indexOf(":"));
+  }
+}
+// The invalid vectors whose bytes still fit a compiled layout, each with the schema rule of the circuit that refuses it.
+const SCHEMA_ONLY: Readonly<Record<string, string>> = {
+  "validity window empty (notAfter == notBefore)": "failed assert: mandate validity window",
+  "disclosure threshold 0": "failed assert: mandate disclosure threshold",
+  "threshold exceeds committee size (6-of-5)": "failed assert: mandate disclosure threshold",
+  "deny-all egress with nonzero allowlist root": "failed assert: deny-all egress root",
+};
 
 describe("T-B14 no compiled class opens an invalid mandate vector", () => {
-  it.each(MANDATE_VECTORS.invalid)("$name: the classifier reports $code, and no class it fits opens it", async v => {
+  it.each(MANDATE_VECTORS.invalid)("$name: decodeMandate refuses it with $code, and the circuit of every class it fits refuses it by the rule it breaks", async v => {
     const cbor = hexToBytes(v.cborHex);
     expect(codeOf(() => classifiedMandate(cbor))).toBe(v.code);
+    expect(layoutClass(cbor)).toBe(Object.hasOwn(SCHEMA_ONLY, v.name) ? "m_base" : "MANDATE_LAYOUT");
     const fits = presentations(cbor);
-    expect(fits.length > 0).toBe(SCHEMA_ONLY.includes(v.name));
+    expect(fits.map(({ circuit }) => circuit)).toEqual(Object.hasOwn(SCHEMA_ONLY, v.name) ? ["m_base"] : []);
     for (const { circuit, witnesses } of fits) {
       const { statement } = mandateOpening(circuit, mandateSegments(cbor).segments);
-      expect(await outcome({ circuit, witnesses, statement }), "invalid mandate opened").not.toBe("accepted");
+      expect(await outcome({ circuit, witnesses, statement }), "invalid mandate opened").toBe(SCHEMA_ONLY[v.name]);
     }
   });
 });

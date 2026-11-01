@@ -104,6 +104,22 @@ steps:
           nice -n 19 pnpm test:slow
         '
 
+  # The conduct circuits compile with build-test's Compact install and must reproduce their pins. Their suite runs only
+  # here, through its own vitest config.
+  - name: conduct-circuits
+    image: node:24-bookworm@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
+    depends_on: [build-test]
+    environment:
+      COMPACTC: /woodpecker/orynq-midnight-tools/compactc/compactc
+    commands:
+      - corepack enable
+      - |
+        su node -s /bin/bash -c '
+          set -e
+          pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:conduct
+          pnpm exec vitest run --config packages/midnight-prover/vitest.conduct.config.mts --maxWorkers=2
+        '
+
   # The submitter proves with the installer's pinned DUST spend keys and parameters. pnpm test
   # also runs the preprod rehearsal's offline suite (the evidence gate, verify-all, compose and
   # finish.sh over a synthetic rehearsal), which runs git as the workspace's owner; nothing in

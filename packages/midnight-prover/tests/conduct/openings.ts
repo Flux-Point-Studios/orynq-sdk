@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { classify, CLASSES, eventClass, eventOpening, eventSegments, valueSpecs } from "../../scripts/conduct/template.mjs";
 import { maxClassEvent, realEvent, type RealEvent } from "./guard-events.js";
-import { runLedger, unitDir } from "./harness.js";
+import { runLedger, unitDir, zkCheck } from "./harness.js";
 
 export interface Segment { readonly c?: string; readonly v?: string; readonly lex?: string; readonly max?: number; readonly nonzero?: boolean }
 
@@ -22,7 +22,8 @@ export const OPENINGS_MUTANTS = [
   "open_no_hash_link", "hex_link_skips_last_byte", "hex_digit_g", "decimal_digit_slash", "iso_digit_slash",
   "utf8_tail_continuation_low", "utf8_lead4_to_f7", "utf8_lead2_to_e0", "json_continuation_standalone", "json_truncated_end",
   "pd4_counterparty_unchecked", "unicode_counterparty_unchecked", "pa_max_counterparty_unchecked", "m_max_principal_unchecked",
-  "m_step_deny_all_skips_last_byte", "amount_reread", "event_hex_reread", "cap_reread",
+  "m_step_deny_all_skips_last_byte", "amount_reread", "event_hex_reread", "cap_reread", "decimal_leading_zero_waived_for_nines",
+  "cbor_uint_minimal_waived_at_1000",
 ];
 
 /** The uint fields of a mandate, each read from its CBOR head byte or from the argument bytes after it. */
@@ -81,18 +82,28 @@ export function witnessFunctions(witnesses: Readonly<Record<string, Uint8Array>>
   });
 }
 
-export const ledgerCell = (kind: string) => (kind.startsWith("payment-") ? "paymentOpening" : "egressOpening");
+/** An event or mandate opening as a prover presents it: the class circuit, the witnesses it reads and the statement it claims. */
+export type Presented = Readonly<Pick<Opening, "circuit" | "witnesses" | "statement">>;
 
-/** Opens an event in its class through the generated JS of `unit` and returns the statement its ledger write disclosed. */
-export async function runOpening({ circuit, kind, witnesses, statement }: Opening, unit = OPENINGS_UNIT): Promise<unknown> {
-  return (await runLedger(unit, circuit, witnessFunctions(witnesses), [statement]))[ledgerCell(kind)];
+/** The ledger cell an opening class writes its statement to. */
+export function ledgerCell(circuit: string): string {
+  const event: { kind: string } | undefined = CLASSES.openings.events[circuit];
+  return event === undefined ? "mandateOpening" : event.kind.startsWith("payment-") ? "paymentOpening" : "egressOpening";
 }
+
+/** Opens an event or a mandate in its class through the generated JS of `unit` and returns the statement its ledger write disclosed. */
+export async function runOpening({ circuit, witnesses, statement }: Presented, unit = OPENINGS_UNIT): Promise<unknown> {
+  return (await runLedger(unit, circuit, witnessFunctions(witnesses), [statement]))[ledgerCell(circuit)];
+}
+
+/** Checks an opening at ZKIR on the assert-stripped copy of `unit` and returns the ledger its transcript wrote. */
+export const checkOpening = ({ circuit, witnesses, statement }: Presented, unit = OPENINGS_UNIT) => zkCheck(unit, circuit, witnessFunctions(witnesses), [statement]);
 
 /** "accepted", or the message `run` was refused with. */
 export const settle = (run: Promise<unknown>) => run.then(() => "accepted", (error: Error) => error.message);
 
 /** "accepted", or the message the generated JS of `unit` refused the opening with. */
-export const openingOutcome = (opening: Opening, unit = OPENINGS_UNIT) => settle(runOpening(opening, unit));
+export const openingOutcome = (opening: Presented, unit = OPENINGS_UNIT) => settle(runOpening(opening, unit));
 
 export function openingOf(e: RealEvent): Opening {
   const classified = classify(e.event);

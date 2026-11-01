@@ -1,5 +1,6 @@
 import { PREDICATE_LAYOUT, type PredicateInput } from "@fluxpointstudios/orynq-sdk-conduct";
 import { generatedSource, unitSource } from "./harness.js";
+import { referenceOpenings } from "./opening-reference.js";
 
 const AUDITED_FILES = ["verdict_core.compact", "predicate.compact"] as const;
 type AuditedFile = (typeof AUDITED_FILES)[number];
@@ -88,6 +89,159 @@ const COMPILED_METHODS: readonly string[] = [
   "constructor", "initialState", ...Object.keys(AUDITED_DECISIONS).map(name => name.split(".").at(-1)!), "equal", "equal", "equal", "equal",
 ];
 
+/** gadgets.compact's declarations in order. */
+const GADGET_OUTLINE: readonly string[] = [
+  "module ConductGadgets {", "import CompactStandardLibrary;",
+  ...["decU64", "dec53", "cborHeadValue", "cborUint", "utf8Next", "jsonStep", "anyStep", "jsonStr", "utf8Any", "base58", "asciiPrint", "isHex", "nib",
+    "hexHalves", "hexOfHash", "uuid", "iso8601", "vis6", "vis7"].map(name => `circuit ConductGadgets.${name}`),
+  "}",
+];
+
+interface AuditedGadget {
+  readonly header: string;
+  /** Every numeric and Boolean literal of the body, its types' included. */
+  readonly literals: readonly string[];
+  readonly comparisons: readonly string[];
+  readonly calls: readonly string[];
+}
+
+const UTF8_STATE = "[Uint<0..4>, Uint<8>, Uint<8>, Boolean]";
+const STRING_FOLD = (step: string) => [`fold(${step}, [0, 128, 191, true], s)`];
+
+/** Each gadget's signature, literals, comparisons with their operands, and calls with their arguments. */
+export const AUDITED_GADGETS: Readonly<Record<string, AuditedGadget>> = {
+  "ConductGadgets.decU64": {
+    header: "export circuit decU64<#N>(ds: Vector<N, Uint<8>>): Uint<64>",
+    literals: ["0", "0", "1", "10", "48", "48", "48", "57", "64"],
+    comparisons: ["c >= 48", "c <= 57", "N == 1", "ds[0] != 48"],
+    calls: ["fold((acc, c) => ((acc * 10) + (c as Field)) - 48, 0 as Field, ds)"],
+  },
+  "ConductGadgets.dec53": {
+    header: "export circuit dec53<#N>(ds: Vector<N, Uint<8>>): Uint<64>",
+    literals: ["9007199254740992"],
+    comparisons: ["value < 9007199254740992"],
+    calls: ["decU64<N>(ds)"],
+  },
+  "ConductGadgets.cborHeadValue": {
+    header: "export circuit cborHeadValue(head: Uint<8>): Uint<64>",
+    literals: ["23", "64"],
+    comparisons: ["head <= 23"],
+    calls: [],
+  },
+  "ConductGadgets.cborUint": {
+    header: "export circuit cborUint<#W>(body: Vector<W, Uint<8>>): Uint<64>",
+    literals: ["0", "1", "1", "2", "2", "4", "4", "8", "24", "64", "256", "256", "65536", "4294967296"],
+    comparisons: ["W == 1", "W == 2", "W == 4", "W == 8", "value >= ((W == 1) ? 24 : ((W == 2) ? 256 : ((W == 4) ? 65536 : 4294967296)))", "W == 1", "W == 2", "W == 4"],
+    calls: ["fold((acc, b) => (acc * 256) + (b as Field), 0 as Field, body)"],
+  },
+  "ConductGadgets.utf8Next": {
+    header: `circuit utf8Next(s: ${UTF8_STATE}, b: Uint<8>, ascii: Boolean): ${UTF8_STATE}`,
+    literals: [
+      "0", "0", "0", "0", "0", "0", "0", "0", "1", "1", "1", "2", "2", "2", "2", "3", "3", "3", "4", "8", "8",
+      "128", "128", "143", "144", "159", "160", "191", "191", "194", "223", "224", "224", "237", "239", "240", "240", "244", "244",
+    ],
+    comparisons: [
+      "b >= 194", "b <= 223", "b >= 224", "b <= 239", "b >= 240", "b <= 244", "due != 0", "due == 3", "due == 2",
+      "due != 0", "b == 224", "b == 240", "due != 0", "b == 237", "b == 244", "due != 0", "b >= s[1]", "b <= s[2]",
+    ],
+    calls: [],
+  },
+  "ConductGadgets.jsonStep": {
+    header: `circuit jsonStep(s: ${UTF8_STATE}, b: Uint<8>): ${UTF8_STATE}`,
+    literals: ["32", "34", "92", "128"],
+    comparisons: ["b >= 32", "b < 128", "b != 34", "b != 92"],
+    calls: ["utf8Next(s, b, (((b >= 32) && (b < 128)) && (b != 34)) && (b != 92))"],
+  },
+  "ConductGadgets.anyStep": {
+    header: `circuit anyStep(s: ${UTF8_STATE}, b: Uint<8>): ${UTF8_STATE}`,
+    literals: ["128"],
+    comparisons: ["b < 128"],
+    calls: ["utf8Next(s, b, b < 128)"],
+  },
+  "ConductGadgets.jsonStr": {
+    header: "export circuit jsonStr<#N>(s: Vector<N, Uint<8>>): []",
+    literals: ["0", "0", "0", "3", "128", "191", "true"],
+    comparisons: ["end[0] == 0"],
+    calls: STRING_FOLD("jsonStep"),
+  },
+  "ConductGadgets.utf8Any": {
+    header: "export circuit utf8Any<#N>(s: Vector<N, Uint<8>>): []",
+    literals: ["0", "0", "0", "3", "128", "191", "true"],
+    comparisons: ["end[0] == 0"],
+    calls: STRING_FOLD("anyStep"),
+  },
+  "ConductGadgets.base58": {
+    header: "export circuit base58<#N>(s: Vector<N, Uint<8>>): []",
+    literals: ["49", "57", "65", "72", "74", "78", "80", "90", "97", "107", "109", "122"],
+    comparisons: ["c >= 49", "c <= 57", "c >= 65", "c <= 72", "c >= 74", "c <= 78", "c >= 80", "c <= 90", "c >= 97", "c <= 107", "c >= 109", "c <= 122"],
+    calls: [],
+  },
+  "ConductGadgets.asciiPrint": {
+    header: "export circuit asciiPrint<#N>(s: Vector<N, Uint<8>>): []",
+    literals: ["33", "126"],
+    comparisons: ["c >= 33", "c <= 126"],
+    calls: [],
+  },
+  "ConductGadgets.isHex": {
+    header: "circuit isHex(c: Uint<8>): Boolean",
+    literals: ["48", "57", "97", "102"],
+    comparisons: ["c >= 48", "c <= 57", "c >= 97", "c <= 102"],
+    calls: [],
+  },
+  "ConductGadgets.nib": {
+    header: "circuit nib(c: Uint<8>): Field",
+    literals: ["0", "39", "48", "97"],
+    comparisons: ["c >= 97"],
+    calls: ["isHex(c)"],
+  },
+  "ConductGadgets.hexHalves": {
+    header: "export circuit hexHalves(h: Vector<64, Uint<8>>): [Field, Field]",
+    literals: ["0", "0", "0", "16", "16", "32", "32", "32"],
+    comparisons: [],
+    calls: [
+      "fold((acc, c) => (acc * 16) + nib(c), 0 as Field, slice<32>(h, 0))", "nib(c)", "slice<32>(h, 0)",
+      "fold((acc, c) => (acc * 16) + nib(c), 0 as Field, slice<32>(h, 32))", "nib(c)", "slice<32>(h, 32)",
+    ],
+  },
+  "ConductGadgets.hexOfHash": {
+    header: "export circuit hexOfHash(h: Vector<64, Uint<8>>, b: Bytes<32>): []",
+    literals: ["0", "1", "2", "2", "8", "16", "32", "32"],
+    comparisons: ["((nib(h[2 * i]) * 16) + nib(h[(2 * i) + 1])) == (bv[i] as Field)"],
+    calls: ["nib(h[2 * i])", "nib(h[(2 * i) + 1])"],
+  },
+  "ConductGadgets.uuid": {
+    header: "export circuit uuid(v: Vector<36, Uint<8>>): []",
+    literals: ["0", "8", "13", "18", "23", "36", "45"],
+    comparisons: ["i == 8", "i == 13", "i == 18", "i == 23", "v[i] == 45"],
+    calls: ["isHex(v[i])"],
+  },
+  "ConductGadgets.iso8601": {
+    header: "export circuit iso8601(v: Vector<24, Uint<8>>): []",
+    literals: ["0", "4", "7", "10", "13", "16", "19", "23", "24", "45", "46", "48", "57", "58", "84", "90"],
+    comparisons: [
+      "i == 4", "i == 7", "v[i] == 45", "i == 10", "v[i] == 84", "i == 13", "i == 16", "v[i] == 58", "i == 19", "v[i] == 46", "i == 23", "v[i] == 90",
+      "v[i] >= 48", "v[i] <= 57",
+    ],
+    calls: [],
+  },
+  "ConductGadgets.vis6": {
+    header: "export circuit vis6(v: Vector<6, Uint<8>>): []",
+    literals: ["6", "6"],
+    comparisons: ['(v as Bytes<6>) == "public"', '(v as Bytes<6>) == "secret"'],
+    calls: [],
+  },
+  "ConductGadgets.vis7": {
+    header: "export circuit vis7(v: Vector<7, Uint<8>>): []",
+    literals: ["7"],
+    comparisons: ['(v as Bytes<7>) == "private"'],
+    calls: [],
+  },
+};
+
+// compactc's generated helpers beside the audited circuits and witnesses: the constructor, the initial state, the
+// equality and fold helpers, and the hash.
+const COMPILED_HELPERS: readonly string[] = ["constructor", "initialState", "equal", "folder", "persistentHash"];
+
 interface Token {
   readonly kind: "number" | "name" | "string" | "punct";
   readonly text: string;
@@ -100,7 +254,7 @@ interface Token {
 function tokenize(source: string): Token[] {
   const stray = /[^\x20-\x7e\n]/.exec(source);
   if (stray) throw new Error(`character U+${stray[0].codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")} at offset ${stray.index} is outside printable ASCII`);
-  const pattern = /(\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:[^"\\]|\\.)*")|(\d+)|([A-Za-z_]\w*)|(&&|\|\||[<>=!]=|[-+*<>=!?:(){}[\],;.#])/y;
+  const pattern = /(\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:[^"\\]|\\.)*")|(\d+)|([A-Za-z_]\w*)|(=>|\.\.|&&|\|\||[<>=!]=|[-+*<>=!?:(){}[\],;.#])/y;
   const tokens: Token[] = [];
   let spaced = false;
   while (pattern.lastIndex < source.length) {
@@ -121,35 +275,51 @@ function tokenize(source: string): Token[] {
 
 type Expr =
   | { readonly type: "atom"; readonly text: string }
-  | { readonly type: "call"; readonly callee: string; readonly args: readonly Expr[] }
+  | { readonly type: "call"; readonly callee: string; readonly generics: readonly string[]; readonly args: readonly Expr[] }
   | { readonly type: "not"; readonly operand: Expr }
   | { readonly type: "binary"; readonly op: string; readonly left: Expr; readonly right: Expr }
   | { readonly type: "ternary"; readonly test: Expr; readonly then: Expr; readonly otherwise: Expr }
-  | { readonly type: "cast"; readonly value: Expr; readonly to: string };
+  | { readonly type: "cast"; readonly value: Expr; readonly to: string }
+  | { readonly type: "index"; readonly target: Expr; readonly index: Expr }
+  | { readonly type: "member"; readonly target: Expr; readonly name: string }
+  | { readonly type: "tuple"; readonly items: readonly Expr[] }
+  | { readonly type: "lambda"; readonly params: readonly string[]; readonly body: Expr }
+  | { readonly type: "range"; readonly from: Expr; readonly to: Expr };
 
 type Statement =
   | { readonly type: "assert"; readonly test: Expr; readonly message: string }
   | { readonly type: "if"; readonly test: Expr; readonly then: readonly Statement[]; readonly otherwise?: readonly Statement[] }
   | { readonly type: "return"; readonly value?: Expr }
-  | { readonly type: "bind"; readonly target: string; readonly value: Expr };
+  | { readonly type: "bind"; readonly target: string; readonly value: Expr }
+  | { readonly type: "for"; readonly binding: string; readonly iterable: Expr; readonly body: readonly Statement[] }
+  | { readonly type: "expr"; readonly value: Expr };
 
 interface Circuit {
   readonly name: string;
+  readonly modifiers: readonly string[];
   readonly header: string;
+  readonly params: readonly string[];
   readonly booleans: ReadonlySet<string>;
   readonly body: readonly Statement[];
+  /** Every numeric literal of the body. */
   readonly literals: readonly string[];
+  /** Every numeric and Boolean literal of the body outside a persistentHash call, whose preimage is audited whole. */
+  readonly constants: readonly string[];
 }
 
 interface Outline {
   readonly lines: string[];
   readonly circuits: Circuit[];
+  readonly witnesses: string[];
 }
 
 const COMPARISONS = ["==", "!=", "<", "<=", ">", ">="];
+const HASH = "persistentHash";
 
 class Parser {
   private at = 0;
+  /** The token ranges of persistentHash calls. */
+  private readonly hashes: (readonly [number, number])[] = [];
   constructor(private readonly tokens: readonly Token[]) {}
 
   private peek(): string | undefined {
@@ -180,7 +350,7 @@ class Parser {
 
   /** The whole file: an unread token is an error, so nothing in it escapes the audit. */
   file(): Outline {
-    const outline: Outline = { lines: [], circuits: [] };
+    const outline: Outline = { lines: [], circuits: [], witnesses: [] };
     this.declarations("", outline);
     if (this.peek() !== undefined) throw new Error(`unexpected "${this.peek()}" outside any module`);
     return outline;
@@ -202,7 +372,10 @@ class Parser {
         this.declarations(`${module}${name}.`, outline);
         this.expect("}");
         outline.lines.push("}");
-      } else outline.lines.push(this.declaration(start));
+      } else {
+        if (this.peek() === "witness") outline.witnesses.push(this.tokens[this.at + 1]?.text ?? "");
+        outline.lines.push(this.declaration(start));
+      }
     }
   }
 
@@ -218,6 +391,14 @@ class Parser {
 
   private circuit(module: string, modifiers: readonly string[]): Circuit {
     const name = this.next().text;
+    const sizes: string[] = [];
+    if (this.accept("<")) {
+      while (!this.accept(">")) {
+        this.expect("#");
+        sizes.push(`#${this.next().text}`);
+        this.accept(",");
+      }
+    }
     this.expect("(");
     const params: [string, string][] = [];
     while (!this.accept(")")) {
@@ -230,12 +411,17 @@ class Parser {
     const returns = this.type();
     const start = this.at;
     const body = this.block();
+    const inHash = (i: number) => this.hashes.some(([from, to]) => i >= from && i < to);
+    const tokens = this.tokens.slice(start, this.at).map((token, i) => ({ token, at: start + i }));
     return {
       name: `${module}${name}`,
-      header: `${[...modifiers, "circuit"].join(" ")} ${name}(${params.map(([param, type]) => `${param}: ${type}`).join(", ")}): ${returns}`,
+      modifiers,
+      header: `${[...modifiers, "circuit"].join(" ")} ${name}${sizes.length > 0 ? `<${sizes.join(", ")}>` : ""}(${params.map(([param, type]) => `${param}: ${type}`).join(", ")}): ${returns}`,
+      params: params.map(([param]) => param),
       booleans: new Set(params.filter(([, type]) => type === "Boolean").map(([param]) => param)),
       body,
-      literals: this.tokens.slice(start, this.at).filter(token => token.kind === "number").map(token => token.text),
+      literals: tokens.filter(({ token }) => token.kind === "number").map(({ token }) => token.text),
+      constants: tokens.filter(({ token, at }) => (token.kind === "number" || token.text === "true" || token.text === "false") && !inHash(at)).map(({ token }) => token.text),
     };
   }
 
@@ -248,14 +434,22 @@ class Parser {
       }
       return `[${members.join(", ")}]`;
     }
-    const name = this.next().text;
-    if (!this.accept("<")) return name;
+    const token = this.next();
+    if (token.kind !== "name") throw new Error(`expected a type in the Compact source, found "${token.text}"`);
+    if (!this.accept("<")) return token.text;
     const args: string[] = [];
     while (!this.accept(">")) {
-      args.push(this.tokens[this.at]?.kind === "number" ? this.next().text : this.type());
+      args.push(this.typeArgument());
       this.accept(",");
     }
-    return `${name}<${args.join(", ")}>`;
+    return `${token.text}<${args.join(", ")}>`;
+  }
+
+  // A size, a size range or a type.
+  private typeArgument(): string {
+    if (this.tokens[this.at]?.kind !== "number") return this.type();
+    const from = this.next().text;
+    return this.accept("..") ? `${from}..${this.next().text}` : from;
   }
 
   private block(): Statement[] {
@@ -283,18 +477,38 @@ class Parser {
       if (!this.accept("else")) return { type: "if", test, then };
       return { type: "if", test, then, otherwise: this.peek() === "if" ? [this.statement()] : this.block() };
     }
+    if (this.accept("for")) {
+      this.expect("(");
+      this.expect("const");
+      const binding = this.next().text;
+      this.expect("of");
+      const from = this.expr();
+      const iterable: Expr = this.accept("..") ? { type: "range", from, to: this.expr() } : from;
+      this.expect(")");
+      return { type: "for", binding, iterable, body: this.block() };
+    }
     if (this.accept("return")) {
       const value = this.peek() === ";" ? undefined : this.expr();
       this.expect(";");
       return value === undefined ? { type: "return" } : { type: "return", value };
     }
-    const declared = this.accept("const");
-    const target = this.next().text;
-    if (declared && this.accept(":")) this.type();
-    this.expect("=");
+    if (this.accept("const")) {
+      const target = this.next().text;
+      if (this.accept(":")) this.type();
+      this.expect("=");
+      const value = this.expr();
+      this.expect(";");
+      return { type: "bind", target: `const ${target}`, value };
+    }
     const value = this.expr();
+    if (this.accept("=")) {
+      if (value.type !== "atom") throw new Error(`cannot assign to ${render(value)}`);
+      const assigned = this.expr();
+      this.expect(";");
+      return { type: "bind", target: value.text, value: assigned };
+    }
     this.expect(";");
-    return { type: "bind", target: declared ? `const ${target}` : target, value };
+    return { type: "expr", value };
   }
 
   private expr(): Expr {
@@ -320,41 +534,148 @@ class Parser {
 
   private unary(): Expr {
     if (this.accept("!")) return { type: "not", operand: this.unary() };
-    let value = this.primary();
+    let value = this.postfix();
     while (this.accept("as")) value = { type: "cast", value, to: this.type() };
     return value;
   }
 
+  private postfix(): Expr {
+    let value = this.primary();
+    for (;;) {
+      if (this.accept("[")) {
+        value = { type: "index", target: value, index: this.expr() };
+        this.expect("]");
+      } else if (this.peek() === "." && this.tokens[this.at + 1]?.kind === "name") {
+        this.at++;
+        value = { type: "member", target: value, name: this.next().text };
+      } else return value;
+    }
+  }
+
   private primary(): Expr {
     if (this.accept("(")) {
+      const lambda = this.lambda();
+      if (lambda !== undefined) return lambda;
       const inner = this.expr();
       this.expect(")");
       return inner;
     }
+    if (this.accept("[")) {
+      const items: Expr[] = [];
+      while (!this.accept("]")) {
+        items.push(this.expr());
+        this.accept(",");
+      }
+      return { type: "tuple", items };
+    }
+    const start = this.at;
     const token = this.next();
-    if (token.kind !== "number" && token.kind !== "name") throw new Error(`unexpected "${token.text}" in a Compact expression`);
-    if (token.kind === "number" || !this.accept("(")) return { type: "atom", text: token.text };
+    if (token.kind === "punct") throw new Error(`unexpected "${token.text}" in a Compact expression`);
+    if (token.kind !== "name") return { type: "atom", text: token.text };
+    const generics = this.generics();
+    if (!this.accept("(")) return { type: "atom", text: token.text };
     const args: Expr[] = [];
     while (!this.accept(")")) {
       args.push(this.expr());
       this.accept(",");
     }
-    return { type: "call", callee: token.text, args };
+    if (token.text === HASH) this.hashes.push([start, this.at]);
+    return { type: "call", callee: token.text, generics, args };
+  }
+
+  // A call's sizes and types: `<...>` of names, sizes, ranges and tuples directly before its arguments. Anything else
+  // leaves `<` to the comparison.
+  private generics(): string[] {
+    if (this.peek() !== "<") return [];
+    let end = this.at;
+    for (let depth = 0; ; end++) {
+      const token = this.tokens[end];
+      if (token === undefined) return [];
+      if (token.text === "<") depth++;
+      else if (token.text === ">") {
+        if (--depth === 0) break;
+      }
+      else if (token.kind !== "name" && token.kind !== "number" && ![",", "[", "]", ".."].includes(token.text)) return [];
+    }
+    if (this.tokens[end + 1]?.text !== "(") return [];
+    this.expect("<");
+    const args: string[] = [];
+    while (!this.accept(">")) {
+      args.push(this.typeArgument());
+      this.accept(",");
+    }
+    return args;
+  }
+
+  // `(a, b) => body`, or undefined with nothing read when the parenthesis opens anything else.
+  private lambda(): Expr | undefined {
+    const start = this.at;
+    const params: string[] = [];
+    while (this.tokens[this.at]?.kind === "name") {
+      params.push(this.next().text);
+      if (!this.accept(",")) break;
+    }
+    if (this.accept(")") && this.accept("=>")) return { type: "lambda", params, body: this.expr() };
+    this.at = start;
+    return undefined;
   }
 }
 
 const ELIDED = "(...)";
 
+// A string literal of plain characters and JSON escapes, which JSON.parse reads; any other is not a constant.
+const JSON_STRING = /^"(?:[^"\\]|\\["\\/bfnrt]|\\[u][0-9a-fA-F]{4})*"$/;
+
+// The bytes of a constant persistentHash input: a string literal of Latin-1 characters, or a vector of byte literals.
+function constantBytes(e: Expr): number[] | undefined {
+  if (e.type === "atom" && JSON_STRING.test(e.text)) {
+    const text = JSON.parse(e.text) as string;
+    if ([...text].every(c => c.charCodeAt(0) < 0x100)) return [...Buffer.from(text, "latin1")];
+  }
+  if (e.type === "tuple" && e.items.length > 0 && e.items.every(item => item.type === "atom" && /^\d+$/.test(item.text) && Number(item.text) < 256)) {
+    return e.items.map(item => Number((item as { text: string }).text));
+  }
+  return undefined;
+}
+
+const constantText = (bytes: readonly number[]) =>
+  `"${bytes.map(b => (b >= 0x20 && b <= 0x7e && b !== 0x22 && b !== 0x5c ? String.fromCharCode(b) : `\\x${b.toString(16).padStart(2, "0")}`)).join("")}"`;
+
+// A persistentHash call by its preimage, adjacent constants merged into one run of bytes; compactc checks its type list
+// against the inputs.
+function hashText(e: Extract<Expr, { type: "call" }>, elide: boolean): string {
+  const [only] = e.args;
+  if (e.args.length !== 1 || only!.type !== "tuple") return `${HASH}(${e.args.map(arg => render(arg, elide)).join(", ")})`;
+  const parts: string[] = [];
+  let run: number[] = [];
+  for (const item of only.items) {
+    const constant = constantBytes(item);
+    if (constant !== undefined) run.push(...constant);
+    else {
+      if (run.length > 0) parts.push(constantText(run));
+      run = [];
+      parts.push(render(item, elide));
+    }
+  }
+  if (run.length > 0) parts.push(constantText(run));
+  return `${HASH}(${parts.join(", ")})`;
+}
+
 // Renders an expression; `elide` replaces the test of every ternary, which is a condition.
 function render(e: Expr, elide = false): string {
-  const nested = (inner: Expr) => (inner.type === "binary" || inner.type === "ternary" || inner.type === "cast" ? `(${render(inner, elide)})` : render(inner, elide));
+  const nested = (inner: Expr) => (["binary", "ternary", "cast", "lambda", "range"].includes(inner.type) ? `(${render(inner, elide)})` : render(inner, elide));
   switch (e.type) {
     case "atom": return e.text;
-    case "call": return `${e.callee}(${e.args.map(arg => render(arg, elide)).join(", ")})`;
+    case "call": return e.callee === HASH ? hashText(e, elide) : `${e.callee}${e.generics.length > 0 ? `<${e.generics.join(", ")}>` : ""}(${e.args.map(arg => render(arg, elide)).join(", ")})`;
     case "not": return `!${nested(e.operand)}`;
     case "binary": return `${nested(e.left)} ${e.op} ${nested(e.right)}`;
     case "ternary": return `${elide ? ELIDED : nested(e.test)} ? ${nested(e.then)} : ${nested(e.otherwise)}`;
     case "cast": return `${nested(e.value)} as ${e.to}`;
+    case "index": return `${nested(e.target)}[${render(e.index, elide)}]`;
+    case "member": return `${nested(e.target)}.${e.name}`;
+    case "tuple": return `[${e.items.map(item => render(item, elide)).join(", ")}]`;
+    case "lambda": return `(${e.params.join(", ")}) => ${render(e.body, elide)}`;
+    case "range": return `${render(e.from, elide)}..${render(e.to, elide)}`;
   }
 }
 
@@ -365,6 +686,8 @@ function decisions(statements: readonly Statement[], elide: boolean): string[] {
       case "assert": return [`assert ${condition(s.test)}, ${s.message}`];
       case "return": return [s.value === undefined ? "return" : `return ${render(s.value, elide)}`];
       case "bind": return [`${s.target} = ${render(s.value, elide)}`];
+      case "expr": return [render(s.value, elide)];
+      case "for": return [`for (const ${s.binding} of ${render(s.iterable, elide)}) {`, ...decisions(s.body, elide), "}"];
       case "if": {
         const [only] = s.then;
         const then = s.then.length === 1 && only!.type !== "if"
@@ -376,24 +699,37 @@ function decisions(statements: readonly Statement[], elide: boolean): string[] {
   });
 }
 
-function* expressions(statements: readonly Statement[]): Generator<{ readonly expr: Expr; readonly condition: boolean }> {
+function* nestedStatements(statements: readonly Statement[]): Generator<Statement> {
   for (const s of statements) {
+    yield s;
+    if (s.type === "if") yield* nestedStatements([...s.then, ...(s.otherwise ?? [])]);
+    if (s.type === "for") yield* nestedStatements(s.body);
+  }
+}
+
+function* expressions(statements: readonly Statement[]): Generator<{ readonly expr: Expr; readonly condition: boolean }> {
+  for (const s of nestedStatements(statements)) {
     if (s.type === "assert" || s.type === "if") yield { expr: s.test, condition: true };
-    if ((s.type === "return" && s.value !== undefined) || s.type === "bind") yield { expr: s.value!, condition: false };
-    if (s.type === "if") {
-      yield* expressions(s.then);
-      if (s.otherwise !== undefined) yield* expressions(s.otherwise);
-    }
+    if (s.type === "for") yield { expr: s.iterable, condition: false };
+    if ((s.type === "return" && s.value !== undefined) || s.type === "bind" || s.type === "expr") yield { expr: s.value!, condition: false };
   }
 }
 
 function* subexpressions(e: Expr): Generator<Expr> {
   yield e;
-  if (e.type === "call") for (const arg of e.args) yield* subexpressions(arg);
-  if (e.type === "not") yield* subexpressions(e.operand);
-  if (e.type === "binary") yield* [...subexpressions(e.left), ...subexpressions(e.right)];
-  if (e.type === "ternary") yield* [...subexpressions(e.test), ...subexpressions(e.then), ...subexpressions(e.otherwise)];
-  if (e.type === "cast") yield* subexpressions(e.value);
+  switch (e.type) {
+    case "call": for (const arg of e.args) yield* subexpressions(arg); break;
+    case "not": yield* subexpressions(e.operand); break;
+    case "binary": yield* subexpressions(e.left); yield* subexpressions(e.right); break;
+    case "ternary": yield* subexpressions(e.test); yield* subexpressions(e.then); yield* subexpressions(e.otherwise); break;
+    case "cast": yield* subexpressions(e.value); break;
+    case "index": yield* subexpressions(e.target); yield* subexpressions(e.index); break;
+    case "member": yield* subexpressions(e.target); break;
+    case "tuple": for (const item of e.items) yield* subexpressions(item); break;
+    case "lambda": yield* subexpressions(e.body); break;
+    case "range": yield* subexpressions(e.from); yield* subexpressions(e.to); break;
+    case "atom": break;
+  }
 }
 
 // A condition may combine comparisons and Boolean inputs with !, && and ||, and nothing else, so its truth value is a
@@ -407,7 +743,13 @@ function unauditedReads(test: Expr, booleans: ReadonlySet<string>): Expr[] {
   return [test];
 }
 
-const byValue = (a: string, b: string) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0);
+// Numbers by value, then the Boolean literals.
+function byLiteral(a: string, b: string): number {
+  const [x, y] = [a, b].map(text => (/^\d+$/.test(text) ? BigInt(text) : undefined));
+  if (x !== undefined && y !== undefined) return x < y ? -1 : x > y ? 1 : 0;
+  if (x !== undefined || y !== undefined) return x !== undefined ? -1 : 1;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
 
 function multisetDifference(view: string, found: readonly string[], audited: readonly string[], order?: (a: string, b: string) => number): string[] {
   const removed = [...audited];
@@ -426,23 +768,29 @@ function firstDifference(subject: string, found: readonly string[], audited: rea
   return at < 0 ? [] : [`${subject} at line ${at + 1}: found ${JSON.stringify(found[at] ?? "the end")}, audited ${JSON.stringify(audited[at] ?? "the end")}`];
 }
 
+function parse(file: string, source: string): Outline | string {
+  try {
+    return new Parser(tokenize(source)).file();
+  } catch (error) {
+    return `${file} cannot be audited: ${(error as Error).message}`;
+  }
+}
+
 /** The ways the sources differ from the audited structure; empty when they hold exactly the audited structure. */
 export function auditSources(sources: Sources): string[] {
   const outlines: [AuditedFile, Outline][] = [];
   const unreadable: string[] = [];
   for (const file of AUDITED_FILES) {
-    try {
-      outlines.push([file, new Parser(tokenize(sources[file])).file()]);
-    } catch (error) {
-      unreadable.push(`${file} cannot be audited: ${(error as Error).message}`);
-    }
+    const outline = parse(file, sources[file]);
+    if (typeof outline === "string") unreadable.push(outline);
+    else outlines.push([file, outline]);
   }
   if (unreadable.length > 0) return unreadable;
   const circuits = outlines.flatMap(([, outline]) => outline.circuits);
   const all = circuits.flatMap(c => [...expressions(c.body)].flatMap(({ expr }) => [...subexpressions(expr)]));
   const findings = [
     ...outlines.flatMap(([file, { lines }]) => firstDifference(`${file} differs from its audited outline`, lines, AUDITED_OUTLINES[file])),
-    ...multisetDifference("numeric literals", circuits.flatMap(c => c.literals), AUDITED_LITERALS, byValue),
+    ...multisetDifference("numeric literals", circuits.flatMap(c => c.literals), AUDITED_LITERALS, byLiteral),
     ...multisetDifference("comparisons", all.flatMap(e => (e.type === "binary" && COMPARISONS.includes(e.op) ? [`${render(e.left)} ${e.op} ${render(e.right)}`] : [])), AUDITED_COMPARISONS),
   ];
   for (const c of circuits) {
@@ -459,15 +807,145 @@ export function auditSources(sources: Sources): string[] {
   return findings;
 }
 
-/** How the compiled unit's contract methods differ from the audited circuits'. compactc parses the sources on its own, so a circuit the source audit never reached still shows here. */
-export function compiledFindings(unit: string): string[] {
-  const source = generatedSource(unit);
+// The compiled contract class's method names, each instance helper `_name_N` by its name.
+function compiledMethods(source: string): string[] | undefined {
   const start = source.indexOf("\nexport class Contract {\n");
   const end = source.indexOf("\n}\n", start);
-  if (start < 0 || end < 0) return [`the compiled ${unit} has no contract class`];
-  const methods = [...source.slice(start, end).matchAll(/^ {2}([A-Za-z_$][\w$]*)\(/gm)].map(([, name]) => name!.replace(/^_(\w+)_\d+$/, "$1"));
+  if (start < 0 || end < 0) return undefined;
+  return [...source.slice(start, end).matchAll(/^ {2}([A-Za-z_$][\w$]*)\(/gm)].map(([, name]) => name!.replace(/^_(\w+)_\d+$/, "$1"));
+}
+
+/** How the compiled unit's contract methods differ from the audited circuits'. compactc parses the sources on its own, so a circuit the source audit never reached still shows here. */
+export function compiledFindings(unit: string): string[] {
+  const methods = compiledMethods(generatedSource(unit));
+  if (methods === undefined) return [`the compiled ${unit} has no contract class`];
   return multisetDifference("compiled contract methods", methods, COMPILED_METHODS);
 }
 
 /** T-A16 on a compiled predicate unit: its sources and its generated contract. */
 export const auditStructure = (unit: string): string[] => [...auditSources(predicateSources(unit)), ...compiledFindings(unit)];
+
+const OPENING_FILES = ["gadgets.compact", "openings.generated.compact"] as const;
+type OpeningSources = Readonly<Record<(typeof OPENING_FILES)[number], string>>;
+
+export const openingSources = (unit = "openings"): OpeningSources =>
+  Object.fromEntries(OPENING_FILES.map(file => [file, unitSource(unit, file)])) as OpeningSources;
+
+/** A circuit as the audit compares it: its literals, comparisons, calls, witness reads, ledger writes, and statements in order. */
+interface View {
+  readonly literals: readonly string[];
+  readonly comparisons: readonly string[];
+  readonly calls: readonly string[];
+  readonly reads: readonly string[];
+  readonly writes: readonly string[];
+  readonly statements: readonly string[];
+}
+
+function viewOf(c: Circuit, witnesses: ReadonlySet<string>): View {
+  const all = [...expressions(c.body)].flatMap(({ expr }) => [...subexpressions(expr)]);
+  const calls = all.filter((e): e is Extract<Expr, { type: "call" }> => e.type === "call");
+  return {
+    literals: c.constants,
+    comparisons: all.filter(e => e.type === "binary" && COMPARISONS.includes(e.op)).map(e => render(e)),
+    calls: calls.filter(e => !witnesses.has(e.callee)).map(e => render(e)),
+    reads: calls.filter(e => witnesses.has(e.callee)).map(e => render(e)),
+    writes: [...nestedStatements(c.body)].flatMap(s => (s.type === "bind" && !s.target.startsWith("const ") ? [`${s.target} = ${render(s.value)}`] : [])),
+    statements: [c.header, ...decisions(c.body, false)],
+  };
+}
+
+function viewFindings(subject: string, found: View, audited: View): string[] {
+  return [
+    ...multisetDifference(`${subject} literals`, found.literals, audited.literals, byLiteral),
+    ...multisetDifference(`${subject} comparisons`, found.comparisons, audited.comparisons),
+    ...multisetDifference(`${subject} calls`, found.calls, audited.calls),
+    ...multisetDifference(`${subject} witness reads`, found.reads, audited.reads),
+    ...multisetDifference(`${subject} ledger writes`, found.writes, audited.writes),
+    ...firstDifference(`${subject} differs from its audited statement list`, found.statements, audited.statements),
+  ];
+}
+
+function gadgetFindings(gadgets: Outline): string[] {
+  const findings = firstDifference("gadgets.compact differs from its audited outline", gadgets.lines, GADGET_OUTLINE);
+  for (const c of gadgets.circuits) {
+    const audited = AUDITED_GADGETS[c.name];
+    if (audited === undefined) continue;
+    const found = viewOf(c, new Set());
+    findings.push(
+      ...firstDifference(`${c.name} differs from its audited signature`, [c.header], [audited.header]),
+      ...multisetDifference(`${c.name} literals`, found.literals, audited.literals, byLiteral),
+      ...multisetDifference(`${c.name} comparisons`, found.comparisons, audited.comparisons),
+      ...multisetDifference(`${c.name} calls`, found.calls, audited.calls),
+    );
+  }
+  return findings;
+}
+
+// A pure circuit of the openings unit is a probe: it returns one gadget call on its own parameters, in order.
+function isProbe(c: Circuit, gadgets: ReadonlySet<string>): boolean {
+  const [only, ...rest] = c.body;
+  const call = only?.type === "return" ? only.value : undefined;
+  return rest.length === 0 && call?.type === "call" && gadgets.has(call.callee) && call.args.length === c.params.length
+    && call.args.every((arg, i) => arg.type === "atom" && arg.text === c.params[i]);
+}
+
+interface OpeningsAudit {
+  readonly findings: string[];
+  /** The audited names the compiled unit must implement, where the sources could be read. */
+  readonly names?: { readonly classes: string[]; readonly witnesses: string[]; readonly probes: string[]; readonly gadgets: string[] };
+}
+
+function openingsAudit(sources: OpeningSources): OpeningsAudit {
+  const gadgets = parse("gadgets.compact", sources["gadgets.compact"]);
+  const generated = parse("openings.generated.compact", sources["openings.generated.compact"]);
+  const reference = parse("the reference openings", referenceOpenings());
+  if (typeof reference === "string") throw new Error(reference);
+  const unreadable = [gadgets, generated].filter((outline): outline is string => typeof outline === "string");
+  if (typeof gadgets === "string" || typeof generated === "string") return { findings: unreadable };
+  const gadgetNames = new Set(gadgets.circuits.filter(c => c.modifiers.includes("export")).map(c => c.name.slice(c.name.indexOf(".") + 1)));
+  const pure = generated.circuits.filter(c => c.modifiers.includes("pure"));
+  const findings = [
+    ...gadgetFindings(gadgets),
+    ...multisetDifference("openings.generated.compact declarations", generated.lines.filter(line => !pure.some(c => line === `circuit ${c.name}`)), reference.lines),
+    ...pure.filter(c => !isProbe(c, gadgetNames)).map(c => `the pure circuit ${c.name} does not return one gadget call on its own parameters`),
+  ];
+  const [found, audited] = [new Set(generated.witnesses), new Set(reference.witnesses)];
+  for (const expected of reference.circuits) {
+    const circuit = generated.circuits.find(c => c.name === expected.name && !c.modifiers.includes("pure"));
+    if (circuit !== undefined) findings.push(...viewFindings(expected.name, viewOf(circuit, found), viewOf(expected, audited)));
+  }
+  return {
+    findings,
+    names: {
+      classes: reference.circuits.map(c => c.name), witnesses: reference.witnesses, probes: pure.map(c => c.name),
+      gadgets: gadgets.circuits.map(c => c.name.slice(c.name.indexOf(".") + 1)),
+    },
+  };
+}
+
+/** The ways the gadgets and the generated openings differ from the audited structure; empty when they hold exactly it. */
+export const auditOpenings = (sources: OpeningSources): string[] => openingsAudit(sources).findings;
+
+// The names `line` captures between `from` and the next `to` in the generated contract.
+function listed(source: string, from: string, to: string, line: RegExp): string[] {
+  const start = source.indexOf(from);
+  return start < 0 ? [] : [...source.slice(start, source.indexOf(to, start + from.length)).matchAll(line)].map(([, name]) => name!);
+}
+
+/** AM-8 on a compiled openings unit: its sources against the audit and the reference, and its generated contract against both. */
+export function auditOpeningsStructure(unit: string): string[] {
+  const { findings, names } = openingsAudit(openingSources(unit));
+  if (names === undefined) return findings;
+  const source = generatedSource(unit);
+  const methods = compiledMethods(source);
+  if (methods === undefined) return [...findings, `the compiled ${unit} has no contract class`];
+  const allowed = new Set([...names.classes, ...names.witnesses, ...names.probes, ...names.gadgets, ...COMPILED_HELPERS]);
+  const outside = [...new Set(methods.filter(name => !allowed.has(name)))].sort();
+  return [
+    ...findings,
+    ...multisetDifference("compiled opening circuits", listed(source, "this.impureCircuits = {", "}", /^ +(\w+): this\.circuits\.\w+,?$/gm), names.classes),
+    ...multisetDifference("compiled probes", listed(source, "\nexport const pureCircuits = {", "\n};", /^ {2}(\w+): \(\.\.\.args_0\) => \{$/gm), names.probes),
+    ...multisetDifference("compiled witnesses", [...source.matchAll(/does not contain a function-valued field named (\w+)'/g)].map(([, name]) => name!), names.witnesses),
+    ...(outside.length === 0 ? [] : [`the compiled ${unit} has contract methods outside the audited circuits: [${outside.join(", ")}]`]),
+  ];
+}

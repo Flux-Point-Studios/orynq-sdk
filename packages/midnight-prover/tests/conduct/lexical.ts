@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { UnitModule } from "./harness.js";
 import { latin1, sha256 } from "./openings.js";
@@ -24,11 +26,17 @@ const ascii = (text: string) => [...latin1(text)];
 
 // Lead bytes first, so a scan for the first disagreement of a gadget mutant ends early.
 const BYTES = Array.from({ length: 256 }, (_, i) => 255 - i);
-// The edges of the UTF-8 and JSON byte classes: control, quote, backslash, DEL, the continuation range, and leads.
-const EDGES = [0xff, 0xc0, 0xbf, 0x80, 0x7f, 0x5c, 0x22, 0x00];
-// With the edges of the second-byte ranges after E0, ED, F0 and F4.
-const SECOND_EDGES = [...EDGES, 0xa0, 0x9f, 0x90, 0x8f];
-const CONTINUATION_EDGES = [0xbf, 0x80];
+
+/**
+ * Every byte that utf8Next, jsonStep or anyStep compares a byte with, directly or as a range bound the state carries:
+ * their audited literals above the state values and sizes 0-8.
+ */
+export const UTF8_EDGES = [32, 34, 92, 128, 143, 144, 159, 160, 191, 194, 223, 224, 237, 239, 240, 244];
+/** The bytes 0-255 in classes: each edge alone, and each run between two edges. Every comparison the automaton makes is constant on a class. */
+export const UTF8_CLASSES: readonly (readonly number[])[] = [0, ...UTF8_EDGES.flatMap(edge => [edge, edge + 1])]
+  .map((start, i, starts) => Array.from({ length: (starts[i + 1] ?? 256) - start }, (_, k) => start + k)).filter(c => c.length > 0);
+const LOWEST = UTF8_CLASSES.map(c => c[0]!);
+const ENDS = UTF8_CLASSES.flatMap(c => (c.length === 1 ? [c[0]!] : [c[0]!, c.at(-1)!]));
 
 /** Every tuple with its i-th byte from `sets[i]`. */
 function* product(sets: readonly (readonly number[])[]): Generator<number[]> {
@@ -59,17 +67,47 @@ function decoded(bytes: readonly number[]): string | undefined {
 }
 
 /**
- * One- and two-byte strings in full, and three-byte strings with every first and second byte and an edge byte after.
- * Four-byte strings take every first and second byte completed by continuation edges, and every first byte with a
- * second-byte edge followed by edge bytes.
+ * Every sequence of byte classes: one- and two-byte strings in full, three-byte strings of the lowest and highest byte
+ * of each class, and four-byte strings of the lowest byte of each class.
  */
-function* utf8Inputs(width: number): Generator<number[]> {
-  if (width < 4) yield* product([BYTES, BYTES, EDGES].slice(0, width));
-  else {
-    yield* product([BYTES, BYTES, CONTINUATION_EDGES, CONTINUATION_EDGES]);
-    yield* product([BYTES, SECOND_EDGES, EDGES, EDGES]);
-  }
+export function utf8Inputs(width: number): Iterable<number[]> {
+  return product(Array.from({ length: width }, () => (width <= 2 ? BYTES : width === 3 ? ENDS : LOWEST)));
 }
+
+const U64_LIMIT = 1n << 64n;
+const SAFE_LIMIT = 1n << 53n;
+
+/**
+ * The decimal gadget at one width: every byte value at every position of the smallest and the largest value of the
+ * width, of a value with a leading zero and of the largest value below the gadget's bound, and every input of up to two
+ * bytes. dec53 reads through decU64 and then bounds the value below 2^53.
+ */
+function decimalClass(width: number, safe: boolean): GadgetClass {
+  const largest = String((safe ? SAFE_LIMIT : U64_LIMIT) - 1n);
+  const bases = new Set([`1${"0".repeat(width - 1)}`, "9".repeat(width), `0${"9".repeat(width - 1)}`, ...(largest.length === width ? [largest] : [])]);
+  return {
+    probe: safe ? `dec53_w${width}` : `dec_u64_w${width}`,
+    *inputs() {
+      if (width <= 2) yield* product(Array.from({ length: width }, () => BYTES));
+      else for (const base of bases) yield* deviations(ascii(base));
+    },
+    expected: bytes => {
+      const text = asText(bytes);
+      if (!/^[0-9]+$/.test(text)) return refused("decimal digit");
+      if (width > 1 && text.startsWith("0")) return refused("decimal leading zero");
+      const value = BigInt(text);
+      if (value >= U64_LIMIT) return refused("cast to a smaller Uint");
+      return safe && value >= SAFE_LIMIT ? refused("trace seq unsafe") : accepted(value);
+    },
+  };
+}
+
+const GENERATED = readFileSync(resolve(import.meta.dirname, "../../circuits/conduct/openings.generated.compact"), "utf8");
+const widthsOf = (gadget: string) => [...GENERATED.matchAll(new RegExp(`\\b${gadget}<(\\d+)>\\(`, "g"))].map(([, n]) => Number(n));
+const sortedSet = (values: readonly number[]) => [...new Set(values)].sort((a, b) => a - b);
+/** The widths each decimal gadget is instantiated at in the generated openings; dec53 reads through decU64 at its own width. */
+export const DECIMAL_WIDTHS = { decU64: sortedSet([...widthsOf("decU64"), ...widthsOf("dec53")]), dec53: sortedSet(widthsOf("dec53")) };
+
 const HEX = /^[0-9a-f]*$/;
 const HASH = sha256("hex link");
 const HASH_HEX = ascii(Buffer.from(HASH).toString("hex"));
@@ -100,15 +138,8 @@ export const GADGET_CLASSES: readonly GadgetClass[] = [
     inputs: () => utf8Inputs(width),
     expected: bytes => (decoded(bytes) === undefined ? refused("well-formed UTF-8") : accepted()),
   })),
-  { probe: "dec_u64_w1", inputs: () => product([BYTES]), expected: ([c]) => (c! >= 0x30 && c! <= 0x39 ? accepted(BigInt(c! - 0x30)) : refused("decimal digit")) },
-  {
-    probe: "dec_u64_w2",
-    inputs: () => product([BYTES, BYTES]),
-    expected: bytes => {
-      const text = asText(bytes);
-      return !/^[0-9]{2}$/.test(text) ? refused("decimal digit") : text.startsWith("0") ? refused("decimal leading zero") : accepted(BigInt(text));
-    },
-  },
+  ...DECIMAL_WIDTHS.decU64.map(width => decimalClass(width, false)),
+  ...DECIMAL_WIDTHS.dec53.map(width => decimalClass(width, true)),
   {
     probe: "hex_halves",
     inputs: () => deviations(ascii("0123456789abcdef".repeat(4))),

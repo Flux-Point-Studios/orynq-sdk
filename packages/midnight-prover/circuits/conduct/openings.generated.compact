@@ -679,6 +679,26 @@ export pure circuit dec_u64_w2(v: Vector<2, Uint<8>>): Uint<64> {
   return decU64<2>(v);
 }
 
+export pure circuit dec_u64_w10(v: Vector<10, Uint<8>>): Uint<64> {
+  return decU64<10>(v);
+}
+
+export pure circuit dec_u64_w16(v: Vector<16, Uint<8>>): Uint<64> {
+  return decU64<16>(v);
+}
+
+export pure circuit dec_u64_w20(v: Vector<20, Uint<8>>): Uint<64> {
+  return decU64<20>(v);
+}
+
+export pure circuit dec53_w1(v: Vector<1, Uint<8>>): Uint<64> {
+  return dec53<1>(v);
+}
+
+export pure circuit dec53_w16(v: Vector<16, Uint<8>>): Uint<64> {
+  return dec53<16>(v);
+}
+
 export pure circuit hex_halves(v: Vector<64, Uint<8>>): [Field, Field] {
   return hexHalves(v);
 }

@@ -706,5 +706,17 @@
     "file": "openings.generated.compact",
     "find": "  const capAmountValue = cborUint<8>(capAmount);\n  const windowSecondsValue = cborUint<4>(windowSeconds);\n",
     "replace": "  const capAmountValue = cborUint<8>(m_field_maxima_capAmount());\n  const windowSecondsValue = cborUint<4>(windowSeconds);\n"
+  },
+  {
+    "id": "decimal_leading_zero_waived_for_nines",
+    "file": "gadgets.compact",
+    "find": "assert(N == 1 || ds[0] != 48, \"decimal leading zero\");",
+    "replace": "assert(N == 1 || ds[0] != 48 || (N > 2 && ds[N - 1] == 57), \"decimal leading zero\");"
+  },
+  {
+    "id": "cbor_uint_minimal_waived_at_1000",
+    "file": "gadgets.compact",
+    "find": "(W == 4 ? 65536 : 4294967296))), \"cbor uint not minimal\");",
+    "replace": "(W == 4 ? 65536 : 4294967296))) || value == 1000, \"cbor uint not minimal\");"
   }
 ]

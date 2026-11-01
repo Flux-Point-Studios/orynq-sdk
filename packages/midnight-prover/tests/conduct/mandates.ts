@@ -4,9 +4,8 @@ import { isDeepStrictEqual } from "node:util";
 import { buildAllowlistRoot, decodeMandate, encodeMandate, hexToBytes, type MandateV1 } from "@fluxpointstudios/orynq-sdk-conduct";
 import { CLASSES, mandateClass, mandateOpening, mandateSegments, uintOfBigEndian } from "../../scripts/conduct/template.mjs";
 import { MAX_U64 } from "./cases.js";
-import { runLedger } from "./harness.js";
 import { BASE58 } from "./lexical.js";
-import { endSpliced, MANDATE_UINT_FIELDS, OPENINGS_UNIT, settle, spliced, withByte, witnessFunctions, type Forgery } from "./openings.js";
+import { endSpliced, MANDATE_UINT_FIELDS, spliced, withByte, type Forgery } from "./openings.js";
 
 interface MandateVector { readonly name: string; readonly cborHex: string; readonly commitmentHex?: string; readonly code?: string }
 export const MANDATE_VECTORS: { valid: MandateVector[]; invalid: MandateVector[] } =
@@ -91,15 +90,6 @@ export function mandateOpeningOf(cbor: Uint8Array): MandateOpening {
   const circuit = mandateClass(classified);
   return { circuit, segments: classified.segments, ...mandateOpening(circuit, classified.segments) };
 }
-
-type Presented = Pick<MandateOpening, "circuit" | "witnesses" | "statement">;
-
-export async function runMandateOpening({ circuit, witnesses, statement }: Presented, unit = OPENINGS_UNIT): Promise<unknown> {
-  return (await runLedger(unit, circuit, witnessFunctions(witnesses), [statement])).mandateOpening;
-}
-
-/** "accepted", or the message the generated JS of `unit` refused the mandate opening with. */
-export const mandateOutcome = (opening: Presented, unit = OPENINGS_UNIT) => settle(runMandateOpening(opening, unit));
 
 /**
  * Segments changed past the codec, with C and K re-derived from them, so the commitment and atoms bindings hold and only

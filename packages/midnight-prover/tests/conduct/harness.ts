@@ -48,7 +48,7 @@ export function unitDir(unit: string): string {
 
 function contractFile(unit: string): string {
   const file = join(unitDir(unit), "contract/index.js");
-  if (!existsSync(file)) throw new Error("conduct circuits not compiled: run pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:circuits");
+  if (!existsSync(file)) throw new Error("conduct circuits not compiled: run pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:conduct");
   return file;
 }
 
@@ -60,11 +60,11 @@ export function generatedSource(unit: string): string {
   return readFileSync(contractFile(unit), "utf8");
 }
 
-/** A Compact source file of a predicate unit: the committed file, or the edited copy a mutant was compiled from. */
+/** A Compact source file of a unit: the committed file, or the edited copy a mutant was compiled from. */
 export function unitSource(unit: string, file: string): string {
   const dir = unitDir(unit);
   contractFile(unit);
-  return readFileSync(join(dir === join(managed, "predicate") ? circuits : join(dir, "source"), file), "utf8");
+  return readFileSync(join(dir.startsWith(join(managed, "mutants") + sep) ? join(dir, "source") : circuits, file), "utf8");
 }
 
 export function stripAsserts(source: string): { source: string; removed: number } {
@@ -100,22 +100,20 @@ export function outcome(run: () => unknown): Outcome {
 
 // A unit's initial state reads no witness, so every call of a unit shares one, and every call of a circuit one deployment
 // of it: the state with the circuit's operation and its address.
-interface Initial { readonly coinKey: string; readonly state: { serialize(): Uint8Array }; readonly deployments: Map<string, { state: ledger.ContractState; address: string }> }
-const initials = new WeakMap<UnitModule, Initial>();
+const initials = new WeakMap<UnitModule, {
+  readonly coinKey: string;
+  readonly state: { serialize(): Uint8Array };
+  readonly deployments: Map<string, { state: ledger.ContractState; address: string }>;
+}>();
 
-function initialOf(module: UnitModule, contract: CompiledContract): Initial {
+function callCircuit(module: UnitModule, name: string, witnesses: object, args: readonly unknown[]) {
+  const contract = new module.Contract(witnesses);
   let initial = initials.get(module);
   if (initial === undefined) {
     const coinKey = ledger.sampleCoinPublicKey();
     initial = { coinKey, state: contract.initialState(runtime.createConstructorContext(undefined, coinKey)).currentContractState, deployments: new Map() };
     initials.set(module, initial);
   }
-  return initial;
-}
-
-function callCircuit(module: UnitModule, name: string, witnesses: object, args: readonly unknown[]) {
-  const contract = new module.Contract(witnesses);
-  const initial = initialOf(module, contract);
   let deployment = initial.deployments.get(name);
   if (deployment === undefined) {
     const state = ledger.ContractState.deserialize(initial.state.serialize());
@@ -123,14 +121,10 @@ function callCircuit(module: UnitModule, name: string, witnesses: object, args: 
     deployment = { state, address: new ledger.ContractDeploy(state).address };
     initial.deployments.set(name, deployment);
   }
-  const context = runtime.createCircuitContext(deployment.address, initial.coinKey, initial.state as never, undefined);
-  return { ...deployment, result: circuitOf(contract, name)(context, ...args) };
-}
-
-function circuitOf(contract: CompiledContract, name: string) {
   const circuit = contract.circuits[name];
   if (typeof circuit !== "function") throw new TypeError(`contract.circuits.${name} is not a function`);
-  return circuit;
+  const context = runtime.createCircuitContext(deployment.address, initial.coinKey, initial.state as never, undefined);
+  return { ...deployment, result: circuit(context, ...args) };
 }
 
 export async function runCircuit(unit: string, name: string, witnesses: object, args: readonly unknown[]): Promise<ProofData> {

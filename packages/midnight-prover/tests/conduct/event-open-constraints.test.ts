@@ -1,15 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { generatedSource, prepareCheck, stripAsserts, zkCheck } from "./harness.js";
+import { generatedSource, stripAsserts } from "./harness.js";
 import {
-  fieldVariants, hexLinkForgeries, honestEvents, ledgerCell, lexicalForgeries, malformedStrings, OPENINGS_UNIT, openingOf, rederived, settle, spliced, withByte,
-  witnessFunctions, type Forgery, type Opening,
+  checkOpening as check, fieldVariants, hexLinkForgeries, honestEvents, ledgerCell, lexicalForgeries, malformedStrings, OPENINGS_UNIT, openingOf, rederived, settle,
+  spliced, withByte, type Forgery, type Opening,
 } from "./openings.js";
 
 const events = await honestEvents();
 const openings = new Map([...events].map(([id, e]) => [id, openingOf(e)] as const));
 const party = (o: Opening): readonly [string, string] => (o.kind.startsWith("payment-") ? ["counterparty", "counterpartyLeaf"] : ["destination", "destinationLeaf"]);
 
-const check = (o: Opening) => zkCheck(OPENINGS_UNIT, o.circuit, witnessFunctions(o.witnesses), [o.statement]);
 const REFUSED = /Failed direct assertion/;
 
 // Each forgery would pass the stripped JS, which runs no assert, so only the compiled constraints can refuse it.
@@ -34,8 +33,7 @@ const FORGERIES: readonly (readonly [string, (o: Opening) => Opening])[] = [
 const constraintsAccepting = async (forgeries: readonly Pick<Forgery, "label" | "opening">[]) => {
   const out: string[] = [];
   for (const { label, opening } of forgeries) {
-    const prepared = await prepareCheck(OPENINGS_UNIT, opening.circuit, witnessFunctions(opening.witnesses), [opening.statement]);
-    const result = await settle(prepared.check());
+    const result = await settle(check(opening));
     if (!REFUSED.test(result)) out.push(`${label}: ${result}`);
   }
   return out;
@@ -47,7 +45,7 @@ describe("T-B11 the compiled opening constraints refuse forgeries the stripped J
   });
 
   it.each([...openings])("%s: the honest opening checks and discloses its statement", async (_id, o) => {
-    expect((await check(o))[ledgerCell(o.kind)]).toEqual(o.statement);
+    expect((await check(o))[ledgerCell(o.circuit)]).toEqual(o.statement);
   });
 
   it.each([...openings])("%s: every statement field moved by one", async (_id, o) => {

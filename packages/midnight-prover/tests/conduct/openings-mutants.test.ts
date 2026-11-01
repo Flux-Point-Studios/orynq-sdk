@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { loadUnit } from "./harness.js";
 import { describeDisagreement, disagreements, GADGET_CLASSES, judge } from "./lexical.js";
-import { fieldForgeries, HONEST_MANDATES, mandateOpeningOf, mandateOutcome, schemaBreaches } from "./mandates.js";
+import { crafted, fieldForgeries, HONEST_MANDATES, mandateOpeningOf, schemaBreaches } from "./mandates.js";
 import {
   hexLinkForgeries, honestEvents, malformedStrings, misjudged, OPENINGS_MUTANTS, OPENINGS_UNIT, openingOf, openingOutcome, privateInputs, witnessWidth,
 } from "./openings.js";
+import { auditOpeningsStructure } from "./structure.js";
 
 const events = await honestEvents();
 const event = (id: string) => openingOf(events.get(id)!);
@@ -13,8 +14,8 @@ const mandate = (id: string) => mandateOpeningOf(HONEST_MANDATES.find(([, , c]) 
 // The forgeries an opening test must see refused that `unit` judges otherwise.
 const hexLink = (id: string) => (unit: string) => misjudged(hexLinkForgeries(event(id)), o => openingOutcome(o, unit));
 const strings = (id: string, name: string) => (unit: string) => misjudged(malformedStrings(event(id), name), o => openingOutcome(o, unit));
-const mandateFields = (id: string) => (unit: string) => misjudged(fieldForgeries(mandate(id)), o => mandateOutcome(o, unit));
-const mandateSchema = (id: string) => (unit: string) => misjudged(schemaBreaches(mandate(id)).forgeries, o => mandateOutcome(o, unit));
+const mandateFields = (id: string) => (unit: string) => misjudged(fieldForgeries(mandate(id)), o => openingOutcome(o, unit));
+const mandateSchema = (id: string) => (unit: string) => misjudged(schemaBreaches(mandate(id)).forgeries, o => openingOutcome(o, unit));
 
 // Mutants that drop or narrow a binding of the opening circuits, each with the opening test that must kill it.
 const OPENING_KILLS: Readonly<Record<string, (unit: string) => Promise<string[]>>> = {
@@ -36,6 +37,7 @@ const GADGET_KILLS: Readonly<Record<string, string>> = {
   utf8_lead2_to_e0: "utf8_any_w2",
   json_continuation_standalone: "json_str_w1",
   json_truncated_end: "json_str_w1",
+  decimal_leading_zero_waived_for_nines: "dec_u64_w10",
 };
 // Mutants that read a witness a second time for a disclosed value or a hash input, each with its circuit and witness.
 const REREAD_KILLS: Readonly<Record<string, readonly [string, string]>> = {
@@ -43,11 +45,17 @@ const REREAD_KILLS: Readonly<Record<string, readonly [string, string]>> = {
   event_hex_reread: ["ev_pa_ascii_min", "eventHex"],
   cap_reread: ["m_field_maxima", "capAmount"],
 };
-const honestOutcome = (circuit: string, unit: string) => (circuit.startsWith("ev_") ? openingOutcome(event(circuit), unit) : mandateOutcome(mandate(circuit), unit));
+// Mutants that add a literal and a comparison, so the extended structure audit refuses them (openings-structure.test.ts),
+// each with a forgery it opens that the unit refuses: a cap of 1000 in four argument bytes, which the codec refuses as
+// non-minimal.
+const AUDIT_KILLS: Readonly<Record<string, (unit: string) => Promise<string>>> = {
+  cbor_uint_minimal_waived_at_1000: unit => openingOutcome(crafted(mandate("m_base"), { capAmount: Uint8Array.of(0, 0, 3, 0xe8) }), unit),
+};
+const honestOutcome = (circuit: string, unit: string) => openingOutcome(circuit.startsWith("ev_") ? event(circuit) : mandate(circuit), unit);
 
 describe("the openings discrimination mutants are killed, with the compiled unit as the control in the same test", () => {
   it("names a kill for exactly the openings mutants in mutants.json", () => {
-    expect([...Object.keys(OPENING_KILLS), ...Object.keys(GADGET_KILLS), ...Object.keys(REREAD_KILLS)].sort()).toEqual([...OPENINGS_MUTANTS].sort());
+    expect([...Object.keys(OPENING_KILLS), ...Object.keys(GADGET_KILLS), ...Object.keys(REREAD_KILLS), ...Object.keys(AUDIT_KILLS)].sort()).toEqual([...OPENINGS_MUTANTS].sort());
   });
 
   it.each(Object.entries(REREAD_KILLS))("%s: the mutant's honest opening reads a witness twice, and its ZKIR takes more private inputs than its class has witness bytes", async (id, [circuit, name]) => {
@@ -67,5 +75,11 @@ describe("the openings discrimination mutants are killed, with the compiled unit
     const [found] = disagreements((await loadUnit(`mutants/${id}`)).pureCircuits, c, 1);
     expect(found, `mutant ${id} survived ${probe}`).toBeDefined();
     expect(judge((await loadUnit(OPENINGS_UNIT)).pureCircuits, c, found!.bytes), describeDisagreement(c, found!)).toEqual(c.expected(found!.bytes));
+  });
+
+  it.each(Object.entries(AUDIT_KILLS))("%s: the extended structure audit refuses the mutant, which opens a forgery the unit refuses", async (id, forge) => {
+    expect(await forge(OPENINGS_UNIT), "control").toBe("failed assert: cbor uint not minimal");
+    expect(await forge(`mutants/${id}`)).toBe("accepted");
+    expect(auditOpeningsStructure(`mutants/${id}`), `mutant ${id} survived the audit`).not.toEqual([]);
   });
 });

@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import { resolve } from 'path';
 
 const root = import.meta.dirname;
@@ -49,6 +49,8 @@ export default defineConfig({
       'tests/**/*.test.ts',
       'tools/**/*.test.ts',
     ],
+    // The conduct suite needs the compiled conduct circuits; vitest.conduct.config.mts runs it in its own CI step.
+    exclude: [...configDefaults.exclude, 'packages/midnight-prover/tests/conduct/**'],
     // Integration tests have longer timeouts
     testTimeout: 120_000,
     hookTimeout: 60_000,

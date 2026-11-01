@@ -28,13 +28,15 @@ const le8 = (value: bigint) => {
   return bytes;
 };
 
+export const MANDATE_ATOMS_DOMAIN = "orynq:conduct:mandate-atoms:v1";
+
 /**
  * The reference for K, the mandate-atoms commitment: SHA-256 over the zero-padded domain, the mandate commitment C and
  * the atoms a step uses, each uint as 8 little-endian bytes and the asset as its SHA-256.
  */
 export function mandateAtoms(m: MandateV1): Uint8Array {
   const domain = Buffer.alloc(32);
-  domain.write("orynq:conduct:mandate-atoms:v1", "ascii");
+  domain.write(MANDATE_ATOMS_DOMAIN, "ascii");
   return new Uint8Array(createHash("sha256").update(Buffer.concat([
     domain, mandateCommitment(m), le8(m.validityWindow.notBefore), le8(m.validityWindow.notAfter),
     createHash("sha256").update(m.spendCap.asset, "utf8").digest(), le8(m.spendCap.amount), le8(m.spendCap.windowSeconds),

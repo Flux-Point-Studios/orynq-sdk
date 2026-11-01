@@ -1,6 +1,7 @@
 // Compiles the conduct circuits into the gitignored conduct-managed/ and pins their deterministic outputs.
 //   node scripts/compile-conduct.mjs --write|--check [--units predicate,openings,mutants,reference]
-// Build-order rule: node builtins and scripts/conduct only, because build:circuits runs before the workspace is built.
+// Build-order rule: node builtins and scripts/conduct only, so the script runs from the files the npm package ships,
+// with no workspace build.
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
