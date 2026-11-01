@@ -67,16 +67,22 @@ export function stripAsserts(source: string): { source: string; removed: number 
 }
 
 // The copy keeps every ZKIR constraint but none of the generated JS checks, so only `check` can refuse a forgery. Its
-// columns no longer match the compiled source map, so it names none.
-async function loadStripped(unit: string): Promise<UnitModule> {
+// columns no longer match the compiled source map, so it names none. Each compiled unit is stripped once per process.
+const strippedUnits = new Map<string, Promise<UnitModule>>();
+function loadStripped(unit: string): Promise<UnitModule> {
   const file = contractFile(unit);
-  const { source, removed } = stripAsserts(generatedSource(unit).replace(/^\/\/# sourceMappingURL=.*$/m, ""));
-  if (removed === 0) throw new Error(`no generated assertions to strip in ${unit}`);
-  const stripped = join(file, "../index.stripped.js");
-  const temp = `${stripped}.${randomUUID()}`;
-  writeFileSync(temp, source);
-  renameSync(temp, stripped);
-  return import(pathToFileURL(stripped).href);
+  let module = strippedUnits.get(file);
+  if (module === undefined) {
+    const { source, removed } = stripAsserts(generatedSource(unit).replace(/^\/\/# sourceMappingURL=.*$/m, ""));
+    if (removed === 0) throw new Error(`no generated assertions to strip in ${unit}`);
+    const stripped = join(file, "../index.stripped.js");
+    const temp = `${stripped}.${randomUUID()}`;
+    writeFileSync(temp, source);
+    renameSync(temp, stripped);
+    module = import(pathToFileURL(stripped).href);
+    strippedUnits.set(file, module);
+  }
+  return module;
 }
 
 export function outcome(run: () => unknown): Outcome {
@@ -87,15 +93,33 @@ export function outcome(run: () => unknown): Outcome {
   }
 }
 
+// A unit's initial state reads no witness, so every call of a unit shares one, and every call of a circuit one deployment
+// of it: the state with the circuit's operation and its address.
+interface Initial { readonly coinKey: string; readonly state: { serialize(): Uint8Array }; readonly deployments: Map<string, { state: ledger.ContractState; address: string }> }
+const initials = new WeakMap<UnitModule, Initial>();
+
+function initialOf(module: UnitModule, contract: CompiledContract): Initial {
+  let initial = initials.get(module);
+  if (initial === undefined) {
+    const coinKey = ledger.sampleCoinPublicKey();
+    initial = { coinKey, state: contract.initialState(runtime.createConstructorContext(undefined, coinKey)).currentContractState, deployments: new Map() };
+    initials.set(module, initial);
+  }
+  return initial;
+}
+
 function callCircuit(module: UnitModule, name: string, witnesses: object, args: readonly unknown[]) {
   const contract = new module.Contract(witnesses);
-  const coinKey = ledger.sampleCoinPublicKey();
-  const initial = contract.initialState(runtime.createConstructorContext(undefined, coinKey));
-  const state = ledger.ContractState.deserialize(initial.currentContractState.serialize());
-  state.setOperation(name, new ledger.ContractOperation());
-  const address = new ledger.ContractDeploy(state).address;
-  const context = runtime.createCircuitContext(address, coinKey, initial.currentContractState as never, undefined);
-  return { state, address, data: circuitOf(contract, name)(context, ...args).proofData };
+  const initial = initialOf(module, contract);
+  let deployment = initial.deployments.get(name);
+  if (deployment === undefined) {
+    const state = ledger.ContractState.deserialize(initial.state.serialize());
+    state.setOperation(name, new ledger.ContractOperation());
+    deployment = { state, address: new ledger.ContractDeploy(state).address };
+    initial.deployments.set(name, deployment);
+  }
+  const context = runtime.createCircuitContext(deployment.address, initial.coinKey, initial.state as never, undefined);
+  return { ...deployment, data: circuitOf(contract, name)(context, ...args).proofData };
 }
 
 function circuitOf(contract: CompiledContract, name: string) {
@@ -108,19 +132,11 @@ export async function runCircuit(unit: string, name: string, witnesses: object, 
   return callCircuit(await loadUnit(unit), name, witnesses, args).data;
 }
 
-// A unit's initial state reads no witness, so the JS runs that need no transaction share one per unit.
-const initialStates = new WeakMap<UnitModule, { coinKey: string; state: unknown }>();
-
 /** Runs a circuit in the generated JS and returns the ledger its call wrote: the disclosed statement. */
 export async function runLedger(unit: string, name: string, witnesses: object, args: readonly unknown[]): Promise<Record<string, unknown>> {
   const module = await loadUnit(unit);
   const contract = new module.Contract(witnesses);
-  let initial = initialStates.get(module);
-  if (initial === undefined) {
-    const coinKey = ledger.sampleCoinPublicKey();
-    initial = { coinKey, state: contract.initialState(runtime.createConstructorContext(undefined, coinKey)).currentContractState };
-    initialStates.set(module, initial);
-  }
+  const initial = initialOf(module, contract);
   const call = circuitOf(contract, name)(runtime.createCircuitContext(runtime.dummyContractAddress(), initial.coinKey, initial.state as never, undefined), ...args) as unknown as
     { context: { currentQueryContext: { state: runtime.StateValue } } };
   return module.ledger(call.context.currentQueryContext.state);

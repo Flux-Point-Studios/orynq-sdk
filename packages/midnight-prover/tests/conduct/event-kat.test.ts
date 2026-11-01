@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { canonicalize } from "@fluxpointstudios/orynq-sdk-core/utils";
@@ -6,6 +5,7 @@ import { toProcessTraceEvent } from "@fluxpointstudios/orynq-sdk-conduct";
 import { computeEventHash, getGenesisHash, updateRollingHash } from "@fluxpointstudios/orynq-sdk-process-trace";
 import { describe, expect, it } from "vitest";
 import { realEvent, type Kind } from "./guard-events.js";
+import { sha256 } from "./openings.js";
 
 // Characterization of existing code: each expected digest was computed by Python hashlib over the hex of the bytes, not
 // by the code under test. The canonical bodies and their SHA-256 are the cross-language hash vectors.
@@ -15,20 +15,20 @@ const { vectors }: { vectors: { name: string; canonical: string; sha256: string 
 const vector = (name: string) => vectors.find(v => v.name === name)!;
 
 const KNOWN_EVENTS: readonly { kind: Kind; vector: string; eventHash: string; preimageBytes: number }[] = [
-  { kind: "payment-action", vector: "conduct_guard_payment_action_event", eventHash: "80a61d3af6702016d3597d66cad2fb2b59588534ffb03d7dc44d5fd1e086e156", preimageBytes: 563 },
-  { kind: "payment-denial-4", vector: "conduct_guard_payment_denial_event", eventHash: "5e1123d9e980c32b5b15275cd8100576626fe41135dbd6952da9e90af22af4d9", preimageBytes: 649 },
-  { kind: "egress-action", vector: "conduct_guard_egress_action_event", eventHash: "7c5a53bf53a1eab002825dca1107894d53d9549f9be756170d05bce4e84ca952", preimageBytes: 533 },
+  { kind: "payment-action", vector: "conduct_guard_payment_action_event", eventHash: "709f085696c95052bad4c61d33d2e6488799ec1623c2e837b65a6e21a68903e7", preimageBytes: 563 },
+  { kind: "payment-denial-4", vector: "conduct_guard_payment_denial_event", eventHash: "64821de51e579e64dea92eec2449439d22d43988e8619a1a7a2fc7b055c683ea", preimageBytes: 649 },
+  { kind: "egress-action", vector: "conduct_guard_egress_action_event", eventHash: "0b6267b041a08142dacdfa8e56dabadce005ae4b5541885974d90b0fc61d2807", preimageBytes: 533 },
 ];
 
 const GENESIS = "0a39030ff99fb578718bf7a15460aa1f2c1300c612e4813246a33970854712a4";
-const ROLL_AFTER_PAYMENT = "cea4db92ca6783c8274f318e83be8e02cf379ed481dfb35a9b1f1ff73124fb01";
+const ROLL_AFTER_PAYMENT = "2e046373144e9c91a25e2c700bcabc157d5a880bf699d8d0fbad4fdc2bba04ce";
 
 describe("T-B03 known answers for guard events in process-trace", () => {
   it.each(KNOWN_EVENTS)("$kind: canonical body, body SHA-256 and domain-prefixed event hash", async known => {
     const event = toProcessTraceEvent((await realEvent(known.kind, "ascii-min")).guardEvent, CONTEXT);
     const canonical = canonicalize(event);
     expect(canonical).toBe(vector(known.vector).canonical);
-    expect(createHash("sha256").update(canonical).digest("hex")).toBe(vector(known.vector).sha256);
+    expect(Buffer.from(sha256(canonical)).toString("hex")).toBe(vector(known.vector).sha256);
     expect(Buffer.byteLength(`poi-trace:event:v1|${canonical}`)).toBe(known.preimageBytes);
     expect(await computeEventHash(event)).toBe(known.eventHash);
   });

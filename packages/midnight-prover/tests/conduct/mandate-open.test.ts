@@ -1,7 +1,8 @@
+import { isDeepStrictEqual } from "node:util";
 import { decodeMandate, encodeMandate, hexToBytes, mandateCommitment, mandateCommitmentHex } from "@fluxpointstudios/orynq-sdk-conduct";
 import { describe, expect, it } from "vitest";
 import { classifyMandate, CLASSES, mandateOpening, mandateSegments } from "../../scripts/conduct/template.mjs";
-import { HONEST_MANDATES, MANDATE_VECTORS, mandateOpeningOf, mandateOutcome as outcome, maxMandate, runMandateOpening } from "./mandates.js";
+import { HONEST_MANDATES, MANDATE_VECTORS, mandateOpeningOf, mandateOutcome as outcome, maxMandate, runMandateOpening, sibling } from "./mandates.js";
 import { withByte } from "./openings.js";
 import { mandateAtoms } from "./statement-checker.js";
 
@@ -29,6 +30,15 @@ describe("T-B12 every mandate class opens the codec's own encoding", () => {
       cap: m.spendCap.amount, window: m.spendCap.windowSeconds, egressMode: m.egressPolicy.mode,
       counterpartyRoot: m.counterpartyAllowlistRoot, egressRoot: m.egressPolicy.allowlistRoot,
     });
+  });
+
+  // K hashes every atom of the mandate, so a K that read any atom from elsewhere differs from the codec's here.
+  it.each(HONEST_MANDATES)("%s: a mandate of its class with the other egress mode and every other atom of K changed opens with C and K of the codec", async (_name, cbor, id) => {
+    const other = sibling(cbor);
+    const [opening, original] = [mandateOpeningOf(other), mandateOpeningOf(cbor)];
+    expect(opening.circuit).toBe(id);
+    expect(Object.keys(original.atoms).filter(atom => isDeepStrictEqual(opening.atoms[atom], original.atoms[atom]))).toEqual([]);
+    expect(await runMandateOpening(opening)).toEqual({ commitment: mandateCommitment(other), atoms: mandateAtoms(decodeMandate(other)) });
   });
 
   it.each(MANDATE_VECTORS.valid)("$name: the vector's own commitment", v => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { generatedSource, prepareCheck, stripAsserts, zkCheck } from "./harness.js";
 import {
-  fieldVariants, hexLinkForgeries, honestEvents, LEXICAL_FORGERIES, ledgerCell, malformedStrings, OPENINGS_UNIT, openingOf, rederived, spliced, withByte,
+  fieldVariants, hexLinkForgeries, honestEvents, ledgerCell, lexicalForgeries, malformedStrings, OPENINGS_UNIT, openingOf, rederived, settle, spliced, withByte,
   witnessFunctions, type Forgery, type Opening,
 } from "./openings.js";
 
@@ -10,7 +10,6 @@ const openings = new Map([...events].map(([id, e]) => [id, openingOf(e)] as cons
 const party = (o: Opening): readonly [string, string] => (o.kind.startsWith("payment-") ? ["counterparty", "counterpartyLeaf"] : ["destination", "destinationLeaf"]);
 
 const check = (o: Opening) => zkCheck(OPENINGS_UNIT, o.circuit, witnessFunctions(o.witnesses), [o.statement]);
-const refusal = (o: Opening) => check(o).then(() => "forged opening accepted", (error: Error) => error.message);
 const REFUSED = /Failed direct assertion/;
 
 // Each forgery would pass the stripped JS, which runs no assert, so only the compiled constraints can refuse it.
@@ -36,7 +35,7 @@ const constraintsAccepting = async (forgeries: readonly Pick<Forgery, "label" | 
   const out: string[] = [];
   for (const { label, opening } of forgeries) {
     const prepared = await prepareCheck(OPENINGS_UNIT, opening.circuit, witnessFunctions(opening.witnesses), [opening.statement]);
-    const result = await prepared.check().then(() => "accepted", (error: Error) => error.message);
+    const result = await settle(prepared.check());
     if (!REFUSED.test(result)) out.push(`${label}: ${result}`);
   }
   return out;
@@ -55,7 +54,7 @@ describe("T-B11 the compiled opening constraints refuse forgeries the stripped J
     const accepted: string[] = [];
     for (const [field, value] of Object.entries(o.statement)) {
       for (const variant of fieldVariants(field, value)) {
-        if (!REFUSED.test(await refusal({ ...o, statement: { ...o.statement, [field]: variant } }))) accepted.push(`${field} = ${String(variant)}`);
+        if (!REFUSED.test(await settle(check({ ...o, statement: { ...o.statement, [field]: variant } })))) accepted.push(`${field} = ${String(variant)}`);
       }
     }
     expect(accepted, "forged opening accepted").toEqual([]);
@@ -69,10 +68,14 @@ describe("T-B11 the compiled opening constraints refuse forgeries the stripped J
     expect(await constraintsAccepting(hexLinkForgeries(openings.get(id)!)), "forged opening accepted").toEqual([]);
   });
 
+  // Each lexical forgery in the first class in classes.json that holds it, unless a cast refuses it.
   it("every lexical forgery of a decimal, hex, uuid, ISO or visibility segment that no cast refuses", async () => {
-    const forgeries = LEXICAL_FORGERIES.filter(f => f.castRefused === undefined).map(f => f.forge(openings.get(f.circuit)!));
-    expect(forgeries.length).toBe(LEXICAL_FORGERIES.length - 1);
-    expect(await constraintsAccepting(forgeries), "forged opening accepted").toEqual([]);
+    const firstHeld = new Map<string, Forgery>();
+    for (const o of openings.values()) {
+      for (const f of lexicalForgeries(o).forgeries) if (f.castRefused === undefined && !firstHeld.has(f.label)) firstHeld.set(f.label, f);
+    }
+    expect(firstHeld.size).toBe(40);
+    expect(await constraintsAccepting([...firstHeld.values()]), "forged opening accepted").toEqual([]);
   });
 
   it("malformed UTF-8 and every JSON-escaped byte in a counterparty", async () => {

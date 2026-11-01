@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { loadUnit } from "./harness.js";
 import { describeDisagreement, disagreements, GADGET_CLASSES, judge } from "./lexical.js";
-import { fieldForgeries, HONEST_MANDATES, mandateOpeningOf, mandateOutcome } from "./mandates.js";
+import { fieldForgeries, HONEST_MANDATES, mandateOpeningOf, mandateOutcome, schemaBreaches } from "./mandates.js";
 import { hexLinkForgeries, honestEvents, malformedStrings, misjudged, OPENINGS_MUTANTS, OPENINGS_UNIT, openingOf, openingOutcome } from "./openings.js";
 
 const events = await honestEvents();
@@ -12,6 +12,7 @@ const mandate = (id: string) => mandateOpeningOf(HONEST_MANDATES.find(([, , c]) 
 const hexLink = (id: string) => (unit: string) => misjudged(hexLinkForgeries(event(id)), o => openingOutcome(o, unit));
 const strings = (id: string, name: string) => (unit: string) => misjudged(malformedStrings(event(id), name), o => openingOutcome(o, unit));
 const mandateFields = (id: string) => (unit: string) => misjudged(fieldForgeries(mandate(id)), o => mandateOutcome(o, unit));
+const mandateSchema = (id: string) => (unit: string) => misjudged(schemaBreaches(mandate(id)).forgeries, o => mandateOutcome(o, unit));
 
 // Mutants that drop or narrow a binding of the opening circuits, each with the opening test that must kill it.
 const OPENING_KILLS: Readonly<Record<string, (unit: string) => Promise<string[]>>> = {
@@ -21,6 +22,7 @@ const OPENING_KILLS: Readonly<Record<string, (unit: string) => Promise<string[]>
   unicode_counterparty_unchecked: strings("ev_pa_unicode_max", "counterparty"),
   pa_max_counterparty_unchecked: strings("ev_pa_max", "counterparty"),
   m_max_principal_unchecked: mandateFields("m_max"),
+  m_step_deny_all_skips_last_byte: mandateSchema("m_step"),
 };
 // Mutants of a lexical gadget, each with the probe whose T-B18 class must kill it.
 const GADGET_KILLS: Readonly<Record<string, string>> = {

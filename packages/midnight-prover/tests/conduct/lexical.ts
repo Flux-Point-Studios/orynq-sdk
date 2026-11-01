@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { UnitModule } from "./harness.js";
+import { latin1, sha256 } from "./openings.js";
 import { withoutStacks } from "./order-type.js";
 
 /** A gadget's judgement of some bytes: the value it reads, or the message of the assert that refuses them. */
@@ -19,8 +19,8 @@ const refused = (message: string): Judgement => ({ refused: message });
 const ASSERT = "failed assert: ";
 // A cast to a narrower Uint is a constraint too: decU64 refuses 2^64 and above with it.
 const CAST = /^[^:]+ line \d+ char \d+: cast from Field or Uint value to smaller Uint value failed/;
-const latin1 = (bytes: readonly number[]) => Buffer.from(bytes).toString("latin1");
-const ascii = (text: string) => Array.from(Buffer.from(text, "latin1"));
+const asText = (bytes: readonly number[]) => Buffer.from(bytes).toString("latin1");
+const ascii = (text: string) => [...latin1(text)];
 
 // Lead bytes first, so a scan for the first disagreement of a gadget mutant ends early.
 const BYTES = Array.from({ length: 256 }, (_, i) => 255 - i);
@@ -71,9 +71,9 @@ function* utf8Inputs(width: number): Generator<number[]> {
   }
 }
 const HEX = /^[0-9a-f]*$/;
-const HASH = new Uint8Array(createHash("sha256").update("hex link").digest());
+const HASH = sha256("hex link");
 const HASH_HEX = ascii(Buffer.from(HASH).toString("hex"));
-const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+export const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const ISO = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/;
 const single = (probe: string, member: (c: number) => boolean, message: string): GadgetClass =>
@@ -83,7 +83,7 @@ const shape = (probe: string, bases: readonly string[], member: (text: string) =
   *inputs() {
     for (const base of bases) yield* deviations(ascii(base));
   },
-  expected: bytes => (member(latin1(bytes)) ? accepted() : refused(message)),
+  expected: bytes => (member(asText(bytes)) ? accepted() : refused(message)),
 });
 
 export const GADGET_CLASSES: readonly GadgetClass[] = [
@@ -105,7 +105,7 @@ export const GADGET_CLASSES: readonly GadgetClass[] = [
     probe: "dec_u64_w2",
     inputs: () => product([BYTES, BYTES]),
     expected: bytes => {
-      const text = latin1(bytes);
+      const text = asText(bytes);
       return !/^[0-9]{2}$/.test(text) ? refused("decimal digit") : text.startsWith("0") ? refused("decimal leading zero") : accepted(BigInt(text));
     },
   },
@@ -113,7 +113,7 @@ export const GADGET_CLASSES: readonly GadgetClass[] = [
     probe: "hex_halves",
     inputs: () => deviations(ascii("0123456789abcdef".repeat(4))),
     expected: bytes => {
-      const text = latin1(bytes);
+      const text = asText(bytes);
       return HEX.test(text) ? accepted([BigInt(`0x${text.slice(0, 32)}`), BigInt(`0x${text.slice(32)}`)]) : refused("noncanonical hex");
     },
   },
@@ -121,7 +121,7 @@ export const GADGET_CLASSES: readonly GadgetClass[] = [
     probe: "hex_of_hash",
     inputs: () => deviations(HASH_HEX),
     args: bytes => [bytes.map(BigInt), HASH],
-    expected: bytes => (isDeepStrictEqual(bytes, HASH_HEX) ? accepted() : HEX.test(latin1(bytes)) ? refused("hex opening") : refused("noncanonical hex")),
+    expected: bytes => (isDeepStrictEqual(bytes, HASH_HEX) ? accepted() : HEX.test(asText(bytes)) ? refused("hex opening") : refused("noncanonical hex")),
   },
   shape("uuid_shape", ["550e8400-e29b-41d4-a716-446655440000"], text => UUID.test(text), "uuid"),
   shape("iso8601_shape", ["2026-10-27T00:00:00.000Z"], text => ISO.test(text), "iso8601"),

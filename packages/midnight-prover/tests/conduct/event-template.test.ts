@@ -1,11 +1,10 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { canonicalize } from "@fluxpointstudios/orynq-sdk-core/utils";
 import { computeEventHash } from "@fluxpointstudios/orynq-sdk-process-trace";
 import { describe, expect, it } from "vitest";
 import { KINDS, realEvents } from "./guard-events.js";
-import type { Segment } from "./openings.js";
+import { sha256, type Segment } from "./openings.js";
 
 const template = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../circuits/conduct/templates/guard-event-v1.json"), "utf8"));
 const { classify, expandKinds, render } = await import("../../scripts/conduct/template.mjs");
@@ -69,7 +68,7 @@ describe("T-B02 render(classify(e)) is the preimage process-trace hashes, for re
     expect(classified.kind).toBe(kind);
     const preimage = Buffer.from(render(classified), "utf8");
     expect(preimage.equals(Buffer.from(`${template.domain}${canonicalize(body)}`, "utf8"))).toBe(true);
-    const digest = createHash("sha256").update(preimage).digest("hex");
+    const digest = Buffer.from(sha256(preimage)).toString("hex");
     expect(digest).toBe(await computeEventHash(event));
     expect(digest).toBe(hash);
   });

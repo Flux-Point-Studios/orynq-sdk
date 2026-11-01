@@ -56,10 +56,12 @@ interface Profile {
 // Printable ASCII without the two characters JSON escapes, so a 128-character mandate asset stays escape-free.
 const PRINTABLE = Array.from({ length: 94 }, (_, i) => String.fromCharCode(0x21 + i)).filter(c => c !== '"' && c !== "\\").join("");
 
+// Each profile's guard clock runs ahead of its action times and its trace sequence apart from its guard log positions,
+// so no two statement fields of an opening of its events hold one value.
 export const PROFILES: Readonly<Record<Shape, Profile>> = {
   "ascii-min": {
     visibility: "private", asset: "USD", otherAsset: "EUR", counterparty: "acme", stranger: "zzzz", destination: "api1", outsider: "evil",
-    amount: 5n, windowSeconds: 3600n, notBefore: 2n, notAfter: 8n, at: 3n, early: 1n, late: 8n, clockLag: 0n, loggedBefore: 0, traceSeq: 0,
+    amount: 5n, windowSeconds: 3600n, notBefore: 2n, notAfter: 8n, at: 3n, early: 1n, late: 8n, clockLag: 1n, loggedBefore: 0, traceSeq: 2,
   },
   "unicode-max": {
     visibility: "public", asset: "ADAEUR", otherAsset: "€uro", counterparty: "商户-🚀", stranger: "🚀-商户", destination: "端点-🚀", outsider: "坏人-🚀",
@@ -69,7 +71,7 @@ export const PROFILES: Readonly<Record<Shape, Profile>> = {
   "max-in-class": {
     visibility: "private", asset: PRINTABLE.repeat(2).slice(0, 128), otherAsset: `${"€".repeat(42)}ab`, counterparty: "🚀".repeat(64),
     stranger: "🛸".repeat(64), destination: `${"🚀".repeat(63)}abcd`, outsider: "🛸".repeat(64), amount: MAX_U64, windowSeconds: MAX_U64,
-    notBefore: 10n ** 19n + 1n, notAfter: MAX_U64 - 1n, at: MAX_U64 - 2n, early: 10n ** 19n, late: MAX_U64 - 1n, clockLag: 0n,
+    notBefore: 10n ** 19n + 1n, notAfter: MAX_U64 - 2n, at: MAX_U64 - 4n, early: 10n ** 19n, late: MAX_U64 - 2n, clockLag: 1n,
     loggedBefore: 0, traceSeq: Number.MAX_SAFE_INTEGER,
   },
 };
@@ -189,13 +191,15 @@ export async function realEvents(): Promise<RealEvent[]> {
   return events;
 }
 
-// No guard log reaches a 20-digit position, so the event of the largest class is built by hand. The trace sink still
-// validates it with the producer's own snapshot before process-trace hashes it.
-export async function maxClassEvent(): Promise<RealEvent> {
+// No guard log reaches a 20-digit position, so the event of the largest class is built by hand, `offset` below its
+// amount and time and above its log position. The trace sink still validates it with the producer's own snapshot
+// before process-trace hashes it.
+export async function maxClassEvent(offset = 0n): Promise<RealEvent> {
   const p = PROFILES["max-in-class"];
-  const action: PaymentAction = { kind: "payment", asset: p.asset, amount: p.amount, counterparty: p.counterparty, timestamp: p.at };
+  const timestamp = p.at - offset;
+  const action: PaymentAction = { kind: "payment", asset: p.asset, amount: p.amount - offset, counterparty: p.counterparty, timestamp };
   const guardEvent: GuardEvent = {
-    type: "orynq.conduct.guard.action.v1", seq: 10n ** 19n + 7n, timestamp: p.at, enforcedAt: p.at,
+    type: "orynq.conduct.guard.action.v1", seq: 10n ** 19n + 7n + offset, timestamp, enforcedAt: timestamp + p.clockLag,
     mandateCommitment: mandateCommitmentHex(mandateFor(p, 1n)), actionDigest: actionDigestHex(action), actionKind: "payment", action,
   };
   const { run, spanId } = await traceRun(p.traceSeq);

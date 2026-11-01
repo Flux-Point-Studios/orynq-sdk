@@ -20,6 +20,7 @@ export const OPENINGS_MUTANTS = [
   "open_no_hash_link", "hex_link_skips_last_byte", "hex_digit_g", "decimal_digit_slash", "iso_digit_slash",
   "utf8_tail_continuation_low", "utf8_lead4_to_f7", "utf8_lead2_to_e0", "json_continuation_standalone", "json_truncated_end",
   "pd4_counterparty_unchecked", "unicode_counterparty_unchecked", "pa_max_counterparty_unchecked", "m_max_principal_unchecked",
+  "m_step_deny_all_skips_last_byte",
 ];
 
 /** One honest guard event for each compiled event class. */
@@ -49,8 +50,11 @@ export async function runOpening({ circuit, kind, witnesses, statement }: Openin
   return (await runLedger(unit, circuit, witnessFunctions(witnesses), [statement]))[ledgerCell(kind)];
 }
 
+/** "accepted", or the message `run` was refused with. */
+export const settle = (run: Promise<unknown>) => run.then(() => "accepted", (error: Error) => error.message);
+
 /** "accepted", or the message the generated JS of `unit` refused the opening with. */
-export const openingOutcome = (opening: Opening, unit = OPENINGS_UNIT) => runOpening(opening, unit).then(() => "accepted", (error: Error) => error.message);
+export const openingOutcome = (opening: Opening, unit = OPENINGS_UNIT) => settle(runOpening(opening, unit));
 
 export function openingOf(e: RealEvent): Opening {
   const classified = classify(e.event);
@@ -63,6 +67,7 @@ export const sha256 = (...parts: (Uint8Array | string)[]) => new Uint8Array(part
 export const latin1 = (text: string) => new Uint8Array(Buffer.from(text, "latin1"));
 export const withByte = (bytes: Uint8Array, at: number, value: number) => Uint8Array.from(bytes, (b, i) => (i === at ? value : b));
 export const spliced = (bytes: Uint8Array, head: readonly number[]) => Uint8Array.from(bytes, (b, i) => head[i] ?? b);
+export const endSpliced = (bytes: Uint8Array, tail: readonly number[]) => Uint8Array.from(bytes, (b, i) => tail[i - bytes.length + tail.length] ?? b);
 export const withWitness = (opening: Opening, name: string, bytes: Uint8Array): Opening => ({ ...opening, witnesses: { ...opening.witnesses, [name]: bytes } });
 
 /** The rolling step over an event hash's hex, as process-trace computes it. */
@@ -125,9 +130,12 @@ export function hexLinkForgeries(opening: Opening): Forgery[] {
 }
 
 const KINDS: Record<string, Segment[]> = expandKinds();
+const EVENT_CLASSES: Readonly<Record<string, { kind: string }>> = CLASSES.openings.events;
+// The value segments of an event class, each once.
+const classSegments = (id: string) => [...new Map(KINDS[EVENT_CLASSES[id]!.kind]!.filter(s => s.v !== undefined).map(s => [s.v!, s])).values()];
 /** Every string segment of every compiled event class. */
-export const STRING_SEGMENTS: readonly (readonly [string, string])[] = Object.entries(CLASSES.openings.events as Record<string, { kind: string }>)
-  .flatMap(([id, { kind }]) => [...new Set(KINDS[kind]!.filter(s => s.lex === "str").map(s => s.v!))].map(name => [id, name] as const));
+export const STRING_SEGMENTS: readonly (readonly [string, string])[] = Object.keys(EVENT_CLASSES)
+  .flatMap(id => classSegments(id).filter(s => s.lex === "str").map(s => [id, s.v!] as const));
 
 const STRING_CLASS = "failed assert: string outside escape-free well-formed UTF-8 class";
 // Each placed at the head of the segment, or at its end where its flag is set.
@@ -144,46 +152,80 @@ const MALFORMED_UTF8: readonly (readonly [string, readonly number[], boolean?])[
 export function malformedStrings(opening: Opening, name: string): Forgery[] {
   const segment = opening.segments[name]!;
   return MALFORMED_UTF8.filter(([, bytes]) => bytes.length <= segment.length).map(([label, bytes, atEnd]) => {
-    const placed = atEnd ? Uint8Array.from(segment, (b, i) => bytes[i - segment.length + bytes.length] ?? b) : spliced(segment, bytes);
+    const placed = atEnd ? endSpliced(segment, bytes) : spliced(segment, bytes);
     return { label, opening: rederived(opening, name, placed), refusal: STRING_CLASS };
   });
 }
 
 /**
- * A lexical forgery of one class's honest opening. A cast's range check runs in the generated JS even with its asserts
- * stripped, so a forgery a cast refuses (`castRefused`) yields no transcript for the constraints to check.
+ * A lexical forgery. Where the arithmetic of its bytes leaves a statement field's type, the field keeps its honest
+ * value and a cast refuses the forgery in the generated JS, before any transcript exists for the constraints to check.
  */
-export interface ClassForgery { readonly circuit: string; readonly castRefused?: true; forge(opening: Opening): Forgery }
+export interface LexicalForgery extends Forgery { readonly castRefused?: true }
+/** A lexical forgery that a segment of its class's width cannot hold, and why. */
+export interface Unheld { readonly label: string; readonly reason: string }
 
-const segmentForgery = (label: string, circuit: string, name: string, bytes: (segment: Uint8Array) => Uint8Array, refusal: string | RegExp, claim = {}): ClassForgery =>
-  ({ circuit, forge: o => ({ label, opening: rederived(o, name, bytes(o.segments[name]!), claim), refusal }) });
-const firstLetter = (segment: Uint8Array) => segment.findIndex(b => b >= 0x61 && b <= 0x66);
-const uppercased = (segment: Uint8Array) => withByte(segment, firstLetter(segment), segment[firstLetter(segment)]! - 0x20);
-// The bytes on either side of the digits and the lowercase hex letters. Each goes in a segment's last digit, where the
-// value its arithmetic reads stays inside the statement field's type.
+const fits = (field: string, value: bigint) => value >= 0n && value < 1n << (/(Hi|Lo)$/.test(field) ? 128n : 64n);
+function lexical(o: Opening, label: string, name: string, bytes: Uint8Array, refusal: string | RegExp): LexicalForgery {
+  const forged = rederived(o, name, bytes);
+  const outside = Object.keys(forged.statement).filter(field => typeof forged.statement[field] === "bigint" && !fits(field, forged.statement[field] as bigint));
+  if (outside.length === 0) return { label, opening: forged, refusal };
+  return { label, opening: { ...forged, statement: { ...forged.statement, ...Object.fromEntries(outside.map(field => [field, o.statement[field]!])) } }, refusal, castRefused: true };
+}
+
+const CAST = /cast from Field or Uint value to smaller Uint value failed/;
+// The bytes just outside the digits, and just outside the digits and the lowercase hex letters.
+const DIGIT_EDGES = [0x2f, 0x3a];
 const HEX_EDGES = [0x2f, 0x3a, 0x60, 0x67];
-const lastByte = (c: number) => (segment: Uint8Array) => withByte(segment, segment.length - 1, c);
+const char = (c: number) => String.fromCharCode(c);
+function uppercased(segment: Uint8Array): Uint8Array {
+  const at = segment.findIndex(b => b >= 0x61 && b <= 0x66);
+  if (at < 0) throw new Error("the segment holds no hex letter to uppercase");
+  return withByte(segment, at, segment[at]! - 0x20);
+}
 
-/** Bytes outside each non-string segment's lexical class, with the hash chain and statement re-derived. */
-export const LEXICAL_FORGERIES: readonly ClassForgery[] = [
-  segmentForgery("a leading zero", "ev_pa_unicode_max", "dataSeq", () => latin1("01"), "failed assert: decimal leading zero"),
-  ...[0x2f, 0x3a].map(c => segmentForgery(`${String.fromCharCode(c)} as a dataSeq digit`, "ev_pa_unicode_max", "dataSeq", lastByte(c), "failed assert: decimal digit")),
-  segmentForgery("a zero amount", "ev_pa_ascii_min", "amount", () => latin1("0"), "failed assert: decimal nonzero"),
-  {
-    ...segmentForgery("the 20 digits of 2^64", "ev_pa_unicode_max", "amount", () => latin1("18446744073709551616"), /cast from Field or Uint value to smaller Uint value failed/, { amount: 0n }),
-    castRefused: true,
-  },
-  segmentForgery("the 16 digits of 2^53 as trace seq", "ev_pa_max", "traceSeq", () => latin1("9007199254740992"), "failed assert: trace seq unsafe"),
-  segmentForgery("1e3 as trace seq", "ev_pa_max", "traceSeq", () => latin1("1e30000000000000"), "failed assert: decimal digit"),
-  ...["actionDigest", "mandateCommitment"].flatMap(name => [
-    segmentForgery(`uppercase hex in ${name}`, "ev_pa_ascii_min", name, uppercased, "failed assert: noncanonical hex"),
-    ...HEX_EDGES.map(c => segmentForgery(`${String.fromCharCode(c)} in ${name}`, "ev_pa_ascii_min", name, lastByte(c), "failed assert: noncanonical hex")),
-  ]),
-  segmentForgery("uppercase hex in the id", "ev_pa_ascii_min", "id", uppercased, "failed assert: uuid"),
-  ...HEX_EDGES.map(c => segmentForgery(`${String.fromCharCode(c)} in the id`, "ev_pa_ascii_min", "id", s => withByte(s, 0, c), "failed assert: uuid")),
-  segmentForgery("a uuid without its hyphen", "ev_pa_ascii_min", "id", s => withByte(s, 8, 0x30), "failed assert: uuid"),
-  segmentForgery("an ISO time without its T", "ev_pa_ascii_min", "iso", s => withByte(s, 10, 0x20), "failed assert: iso8601"),
-  ...[0x41, 0x2f, 0x3a].map(c => segmentForgery(`${String.fromCharCode(c)} for an ISO digit`, "ev_pa_ascii_min", "iso", s => withByte(s, 0, c), "failed assert: iso8601")),
-  segmentForgery("a visibility outside its class", "ev_pa_ascii_min", "vis", s => withByte(s, 0, 0x50), "failed assert: visibility"),
-  segmentForgery("Public for public", "ev_pa_unicode_max", "vis", () => latin1("Public"), "failed assert: visibility"),
-];
+// Bytes outside the lexical class of one non-string segment, with the hash chain and statement re-derived.
+function segmentForgeries(o: Opening, { v: name, lex, nonzero }: Segment): (LexicalForgery | Unheld)[] {
+  const segment = o.segments[name!]!;
+  const n = segment.length;
+  const forge = (label: string, bytes: Uint8Array, refusal: string | RegExp) => lexical(o, `${name} ${label}`, name!, bytes, refusal);
+  const unheld = (label: string, reason: string): Unheld => ({ label: `${name} ${label}`, reason });
+  const last = (c: number) => withByte(segment, n - 1, c);
+  const first = (c: number) => withByte(segment, 0, c);
+  switch (lex) {
+    case "dec64":
+    case "dec53":
+      return [
+        n > 1 ? forge("with a leading zero", first(0x30), "failed assert: decimal leading zero") : unheld("with a leading zero", "one digit has no leading zero"),
+        ...DIGIT_EDGES.map(c => forge(`with ${char(c)} as its last digit`, last(c), "failed assert: decimal digit")),
+        ...(nonzero ? [n === 1 ? forge("of zero", latin1("0"), "failed assert: decimal nonzero") : unheld("of zero", "a zero of more than one digit has a leading zero, which is refused first")] : []),
+        ...(lex === "dec64"
+          ? [n === 20 ? forge("of the 20 digits of 2^64", latin1("18446744073709551616"), CAST) : unheld("of the 20 digits of 2^64", "fewer than 20 digits stay below 2^64")]
+          : [
+            forge("with an exponent e", withByte(segment, Math.min(1, n - 1), 0x65), "failed assert: decimal digit"),
+            n === 16 ? forge("of the 16 digits of 2^53", latin1("9007199254740992"), "failed assert: trace seq unsafe") : unheld("of the 16 digits of 2^53", "fewer than 16 digits stay below 2^53"),
+          ]),
+      ];
+    case "hex64":
+      return [forge("with an uppercase hex letter", uppercased(segment), "failed assert: noncanonical hex"), ...HEX_EDGES.map(c => forge(`with ${char(c)} as its last digit`, last(c), "failed assert: noncanonical hex"))];
+    case "uuid":
+      return [
+        forge("with an uppercase hex letter", uppercased(segment), "failed assert: uuid"), ...HEX_EDGES.map(c => forge(`with ${char(c)} as its first digit`, first(c), "failed assert: uuid")),
+        forge("without its first hyphen", withByte(segment, 8, 0x30), "failed assert: uuid"),
+      ];
+    case "iso24":
+      return [forge("without its T", withByte(segment, 10, 0x20), "failed assert: iso8601"), ...[0x41, 0x2f, 0x3a].map(c => forge(`with ${char(c)} as its first digit`, first(c), "failed assert: iso8601"))];
+    case "vis":
+      return [forge("with an uppercase first letter", first(segment[0]! - 0x20), "failed assert: visibility"), forge("with a digit for its first letter", first(0x30), "failed assert: visibility")];
+    case "str":
+      return [];
+    default:
+      throw new Error(`no lexical forgeries for the ${lex} class`);
+  }
+}
+
+/** The lexical forgeries of every non-string segment of an honest opening, and those its class's widths cannot hold. */
+export function lexicalForgeries(o: Opening): { forgeries: LexicalForgery[]; unheld: Unheld[] } {
+  const all = classSegments(o.circuit).flatMap(spec => segmentForgeries(o, spec));
+  return { forgeries: all.filter((f): f is LexicalForgery => "opening" in f), unheld: all.filter((f): f is Unheld => "reason" in f) };
+}

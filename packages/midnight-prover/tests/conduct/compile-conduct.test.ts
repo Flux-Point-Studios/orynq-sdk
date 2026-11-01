@@ -225,36 +225,59 @@ writeFileSync(perturbingCompiler, [
   "#!/bin/sh",
   '"$REAL_COMPACTC" "$@" || exit $?',
   '[ "$1" = --skip-zk ] && ! grep -q "^export pure circuit " "$2" || exit 0',
-  'case "$PERTURB" in extra) cp "$3/zkir/check_verdict.zkir" "$3/zkir/extra.zkir" ;; bytes) printf " " >> "$3/zkir/check_verdict.zkir" ;; esac',
+  'case "$PERTURB" in extra) cp "$3/zkir/$PERTURB_ZKIR.zkir" "$3/zkir/extra.zkir" ;; bytes) printf " " >> "$3/zkir/$PERTURB_ZKIR.zkir" ;; esac',
   "",
 ].join("\n"));
 chmodSync(perturbingCompiler, 0o755);
 
-describe("compile-conduct --check measures export invariance with a second, unexported compile", () => {
+// A copy whose openings unit compiles the one step mandate class and pins nothing, so its --write stays short.
+function openingsCopy(): string {
+  const root = packageCopy();
+  const classes = join(root, "circuits/conduct/classes.json");
+  const { openings } = JSON.parse(readFileSync(classes, "utf8"));
+  writeFileSync(classes, JSON.stringify({ openings: { events: {}, mandates: { m_step: openings.mandates.m_step } } }));
+  writeFileSync(join(root, "circuits/conduct/mutants.json"), "[]\n");
+  rmSync(join(root, "circuits/conduct/pins.json"));
+  return root;
+}
+
+const EXPORTING_UNITS = [
+  {
+    unit: "predicate", entry: "predicate.compact", circuit: "check_verdict", args: ["--check", "--units", "predicate"], done: "Conduct circuits reproduce their pins", copy: predicateCopy,
+    demote: (root: string) => {
+      withoutMutants(root);
+      editFile(root, "circuits/conduct/predicate.compact", text => text.replaceAll("export pure circuit ", "pure circuit "));
+    },
+  },
+  {
+    unit: "openings", entry: "openings.generated.compact", circuit: "m_step", args: ["--write", "--units", "openings"], done: "Compiled and pinned conduct circuits", copy: openingsCopy,
+    demote: (root: string) => editFile(root, "scripts/conduct/template.mjs", text => text.replace("`export pure circuit ${name}(", "`pure circuit ${name}(")),
+  },
+];
+
+describe.each(EXPORTING_UNITS)("compile-conduct measures export invariance of the $unit unit with a second, unexported compile", ({ entry, circuit, args, done, copy, demote }) => {
   // The refusal comes while the unit's ZKIR is still being mock-compiled; the script lets that finish and removes its
   // scratch before it exits.
-  it("refuses a predicate.compact that exports no pure circuit, and leaves no scratch directory behind", () => {
-    const root = predicateCopy();
-    withoutMutants(root);
-    editFile(root, "circuits/conduct/predicate.compact", text => text.replaceAll("export pure circuit ", "pure circuit "));
+  it("refuses a unit that exports no pure circuit, and leaves no scratch directory behind", () => {
+    const root = copy();
+    demote(root);
     const tmp = mkdtempSync(join(scratch, "tmp-"));
-    const result = compile(root, ["--check", "--units", "predicate"], { TMPDIR: tmp });
+    const result = compile(root, args, { TMPDIR: tmp });
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("predicate.compact exports no pure circuit");
+    expect(result.stderr).toContain(`${entry} exports no pure circuit`);
     expect(readdirSync(tmp), "scratch left behind").toEqual([]);
   });
 
-  const perturbed = (perturb: string) =>
-    compile(predicateCopy(), ["--check", "--units", "predicate"], { COMPACTC: perturbingCompiler, REAL_COMPACTC: compactc, ZKIR: zkir, PERTURB: perturb });
+  const perturbed = (perturb: string) => compile(copy(), args, { COMPACTC: perturbingCompiler, REAL_COMPACTC: compactc, ZKIR: zkir, PERTURB: perturb, PERTURB_ZKIR: circuit });
 
-  it("control: the wrapper with no perturbation reproduces the pins", () => {
+  it("control: the wrapper with no perturbation compiles and pins the unit", () => {
     const result = perturbed("none");
     expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("Conduct circuits reproduce their pins");
+    expect(result.stdout).toContain(done);
   });
 
   it.each([
-    ["bytes", "check_verdict.zkir depends on which pure circuits are exported"],
+    ["bytes", `${circuit}.zkir depends on which pure circuits are exported`],
     ["extra", "the provable circuits depend on which pure circuits are exported"],
   ])("refuses an unexported compile whose ZKIR differs (%s)", (perturb, message) => {
     const result = perturbed(perturb);

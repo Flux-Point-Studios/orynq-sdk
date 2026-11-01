@@ -682,5 +682,11 @@
     "file": "openings.generated.compact",
     "find": "  base58<256>(principalDid);\n",
     "replace": ""
+  },
+  {
+    "id": "m_step_deny_all_skips_last_byte",
+    "file": "openings.generated.compact",
+    "find": "  asciiPrint<3>(asset);\n  assert(windowSecondsValue >= 1, \"mandate window\");\n  assert(egressMode[0] <= 1, \"egress mode\");\n  for (const b of egressRoot) {",
+    "replace": "  asciiPrint<3>(asset);\n  assert(windowSecondsValue >= 1, \"mandate window\");\n  assert(egressMode[0] <= 1, \"egress mode\");\n  for (const b of slice<31>(egressRoot, 0)) {"
   }
 ]

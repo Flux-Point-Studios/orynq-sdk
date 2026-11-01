@@ -5,6 +5,7 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { CLASSES } from "../../scripts/conduct/template.mjs";
 import { loadUnit } from "./harness.js";
+import { bigEndian } from "./mandates.js";
 import { OPENINGS_UNIT } from "./openings.js";
 
 const { pureCircuits } = await loadUnit(OPENINGS_UNIT);
@@ -12,7 +13,6 @@ const WIDTHS = [0, 1, 2, 4, 8] as const;
 const HEADS: Readonly<Record<number, number>> = { 1: 0x18, 2: 0x19, 4: 0x1a, 8: 0x1b };
 const VECTORS = [0n, 23n, 24n, 255n, 256n, 65535n, 65536n, (1n << 32n) - 1n, 1n << 32n, (1n << 64n) - 1n];
 
-const bigEndian = (value: bigint, width: number) => Array.from({ length: width }, (_, i) => Number((value >> BigInt(8 * (width - 1 - i))) & 0xffn));
 
 // A uint field of width 0 is its head byte; otherwise the head names the width and the body follows.
 function gadget(width: number, body: readonly number[]): number | { throws: string } | bigint {
@@ -45,15 +45,15 @@ function disagreements(width: number, bodies: Iterable<readonly number[]>): stri
 }
 
 function* allBodies(width: number): Generator<number[]> {
-  for (let n = 0; n < 2 ** (8 * Math.max(width, 1)); n++) yield bigEndian(BigInt(n), Math.max(width, 1));
+  for (let n = 0; n < 2 ** (8 * Math.max(width, 1)); n++) yield [...bigEndian(BigInt(n), Math.max(width, 1))];
 }
 
 describe("T-B16 the cborUint gadget reads exactly what the strict decoder reads (U13)", () => {
   it.each(VECTORS)("%s decodes in its own width and nowhere wider", value => {
     const fits = WIDTHS.filter(w => (w === 0 ? value <= 255n : value < 1n << BigInt(8 * w)));
-    const accepted = fits.filter(w => typeof gadget(w, w === 0 ? [Number(value)] : bigEndian(value, w)) === "bigint");
+    const accepted = fits.filter(w => typeof gadget(w, w === 0 ? [Number(value)] : [...bigEndian(value, w)]) === "bigint");
     expect(accepted).toEqual([fits.find(w => (w === 0 ? value <= 23n : w === 1 ? value >= 24n : value >= 1n << BigInt(4 * w)))]);
-    for (const w of fits) expect(disagreements(w, [w === 0 ? [Number(value)] : bigEndian(value, w)])).toEqual([]);
+    for (const w of fits) expect(disagreements(w, [w === 0 ? [Number(value)] : [...bigEndian(value, w)]])).toEqual([]);
   });
 
   it.each([0, 1, 2])("agrees with the decoder on every %i-byte argument", width => {
@@ -63,7 +63,7 @@ describe("T-B16 the cborUint gadget reads exactly what the strict decoder reads 
   it.each([4, 8])("agrees with the decoder at every minimality edge and on random %i-byte arguments", width => {
     const edges = [0n, 1n, 23n, 24n, 255n, 256n, 65535n, 65536n, (1n << 32n) - 1n, 1n << 32n, (1n << BigInt(8 * width)) - 1n]
       .filter(v => v < 1n << BigInt(8 * width)).flatMap(v => [v, v + 1n, v - 1n]).filter(v => v >= 0n && v < 1n << BigInt(8 * width));
-    expect(disagreements(width, edges.map(v => bigEndian(v, width)))).toEqual([]);
+    expect(disagreements(width, edges.map(v => [...bigEndian(v, width)]))).toEqual([]);
     fc.assert(fc.property(fc.uint8Array({ minLength: width, maxLength: width }), body => {
       expect(disagreements(width, [[...body]])).toEqual([]);
     }), { seed: 20261101, numRuns: 2000 });

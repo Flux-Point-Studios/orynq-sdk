@@ -2,9 +2,9 @@ import { allowlistLeaf } from "@fluxpointstudios/orynq-sdk-conduct";
 import { computeEventHash, getGenesisHash, updateRollingHash } from "@fluxpointstudios/orynq-sdk-process-trace";
 import { describe, expect, it } from "vitest";
 import { CLASSES, classify, render, TEMPLATE } from "../../scripts/conduct/template.mjs";
-import { PROFILES, traceScene, traceSteps, type RealEvent } from "./guard-events.js";
+import { maxClassEvent, PROFILES, traceScene, traceSteps, type RealEvent } from "./guard-events.js";
 import {
-  fieldVariants, hexLinkForgeries, honestEvents, LEXICAL_FORGERIES, latin1, malformedStrings, misjudged, openingOf, openingOutcome as outcome, rederived, rollAfterOf,
+  fieldVariants, hexLinkForgeries, honestEvents, latin1, lexicalForgeries, malformedStrings, misjudged, openingOf, openingOutcome as outcome, rederived, rollAfterOf,
   runOpening, sha256, spliced, STRING_SEGMENTS, withByte, withWitness,
 } from "./openings.js";
 import { chain, type RollStatement } from "./statement-checker.js";
@@ -33,8 +33,26 @@ async function productStatement(e: RealEvent): Promise<Record<string, Uint8Array
     : { ...common, destinationLeaf: allowlistLeaf(a.destination) };
 }
 
-describe("T-B06 every event class opens an honest guard event", () => {
-  it.each([...events])("%s discloses the guard event's own values", async (id, e) => {
+const ascii = PROFILES["ascii-min"];
+const unicode = PROFILES["unicode-max"];
+const pay = (amount: bigint, timestamp: bigint) => ({ kind: "payment", asset: ascii.asset, amount, counterparty: ascii.counterparty, timestamp }) as const;
+/** A second honest event of each class, with other action values than the first's. */
+const SECOND: readonly (readonly [string, () => Promise<RealEvent>])[] = [
+  ["ev_pa_ascii_min", async () => ({ kind: "payment-action", shape: "ascii-min", ...(await traceScene("ascii-min", { egressMode: 1n, before: [], action: pay(3n, 4n) })) })],
+  ["ev_pa_unicode_max", async () => ({
+    kind: "payment-action", shape: "unicode-max",
+    ...(await traceScene("unicode-max", { egressMode: 1n, before: [], action: { kind: "payment", asset: unicode.asset, amount: unicode.amount - 1n, counterparty: unicode.counterparty, timestamp: unicode.at + 1n } })),
+  })],
+  ["ev_pa_max", () => maxClassEvent(1n)],
+  ["ev_pd4_ascii_min", async () => ({ kind: "payment-denial-4", shape: "ascii-min", ...(await traceScene("ascii-min", { egressMode: 1n, before: [pay(5n, 4n)], action: pay(7n, 4n) })) })],
+  ["ev_ea_ascii_min", async () => ({ kind: "egress-action", shape: "ascii-min", ...(await traceScene("ascii-min", { egressMode: 1n, before: [], action: { kind: "egress", destination: ascii.destination, timestamp: 5n } })) })],
+];
+const seconds = new Map(await Promise.all(SECOND.map(async ([id, make]) => [id, await make()] as const)));
+
+const honest = [...events].flatMap(([id, e]) => [[id, id, e], [`${id} (second)`, id, seconds.get(id)!]] as const);
+
+describe("T-B06 every event class opens two honest guard events", () => {
+  it.each(honest)("%s discloses the guard event's own values", async (_label, id, e) => {
     const opening = openingOf(e);
     expect(opening.circuit).toBe(id);
     const expected = await productStatement(e);
@@ -87,13 +105,16 @@ describe("T-B07 every eventHex byte forged with rollAfter re-derived is refused 
   });
 });
 
-const ascii = PROFILES["ascii-min"];
-const pay = (amount: bigint, timestamp: bigint) => ({ kind: "payment", asset: ascii.asset, amount, counterparty: ascii.counterparty, timestamp }) as const;
-const SECOND: readonly (readonly [string, () => Promise<RealEvent>])[] = [
-  ["ev_pa_ascii_min", async () => ({ kind: "payment-action", shape: "ascii-min", ...(await traceScene("ascii-min", { egressMode: 1n, before: [], action: pay(3n, 4n) })) })],
-  ["ev_pd4_ascii_min", async () => ({ kind: "payment-denial-4", shape: "ascii-min", ...(await traceScene("ascii-min", { egressMode: 1n, before: [pay(5n, 4n)], action: pay(2n, 4n) })) })],
-  ["ev_ea_ascii_min", async () => ({ kind: "egress-action", shape: "ascii-min", ...(await traceScene("ascii-min", { egressMode: 1n, before: [], action: { kind: "egress", destination: ascii.destination, timestamp: 5n } })) })],
-];
+describe("T-B08 no two statement fields of an honest opening hold one value, so a field read from another's bytes is refused", () => {
+  it("has a second honest event of every class", () => {
+    expect([...seconds.keys()].sort()).toEqual(Object.keys(CLASSES.openings.events).sort());
+  });
+
+  it.each(honest)("%s", (_label, _id, e) => {
+    const fields = Object.entries(openingOf(e).statement).map(([field, value]) => [field, typeof value === "bigint" ? `${value}` : Buffer.from(value).toString("hex")] as const);
+    expect(fields.flatMap(([a, value], i) => fields.slice(i + 1).filter(([, other]) => other === value).map(([b]) => `${a} = ${b} = ${value}`))).toEqual([]);
+  });
+});
 
 describe("T-B08 every statement field moved by one is refused, and so is a chimera of two events of one class", () => {
   it.each([...events])("%s", async (_id, e) => {
@@ -111,8 +132,8 @@ describe("T-B08 every statement field moved by one is refused, and so is a chime
     expect(tried).toBeGreaterThanOrEqual(3 * Object.keys(opening.statement).length);
   });
 
-  it.each(SECOND)("%s: the bytes of one event under the statement of another", async (id, make) => {
-    const [a, b] = [openingOf(events.get(id)!), openingOf(await make())];
+  it.each([...seconds])("%s: the bytes of one event under the statement of another", async (id, second) => {
+    const [a, b] = [openingOf(events.get(id)!), openingOf(second)];
     expect([a.circuit, b.circuit]).toEqual([id, id]);
     expect(await outcome(b), "honest control").toBe("accepted");
     for (const statement of [b.statement, { ...b.statement, prevRollHex: a.statement.prevRollHex!, rollAfter: a.statement.rollAfter! }]) {
@@ -137,10 +158,15 @@ describe("T-B09 the lexical gadgets refuse out-of-class bytes whose hash chain a
     expect(await outcome(rederived(opening, "counterparty", spliced(opening.segments.counterparty!, head)))).toBe("accepted");
   });
 
-  it.each(LEXICAL_FORGERIES.map(f => [f.forge(openingOf(events.get(f.circuit)!)), f.circuit] as const).map(([f, id]) => [`${id}: ${f.label}`, f] as const))(
-    "refuses %s", async (_label, forgery) => {
-      expect(await misjudged([forgery], outcome)).toEqual([]);
-    });
+  // Adding a class or a segment changes these counts, so its forgeries are reviewed with it.
+  it("derives the lexical forgeries of every non-string segment of every compiled class, and those its widths cannot hold", () => {
+    const counts = Object.fromEntries([...events].map(([id, e]) => [id, Object.values(lexicalForgeries(openingOf(e))).map(list => list.length)]));
+    expect(counts).toEqual({ ev_pa_ascii_min: [34, 10], ev_pa_unicode_max: [38, 6], ev_pa_max: [43, 1], ev_pd4_ascii_min: [34, 10], ev_ea_ascii_min: [31, 8] });
+  });
+
+  it.each([...events])("%s: every non-string segment refuses bytes outside its lexical class", async (_id, e) => {
+    expect(await misjudged(lexicalForgeries(openingOf(e)).forgeries, outcome), "mutation accepted").toEqual([]);
+  });
 
   it("public and secret share a class: swapped without the hash chain it is refused, re-derived it is another valid event", async () => {
     const opening = openingOf(events.get("ev_pa_unicode_max")!);
