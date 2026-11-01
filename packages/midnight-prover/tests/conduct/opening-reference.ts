@@ -4,16 +4,17 @@ import {
 } from "@fluxpointstudios/orynq-sdk-conduct";
 import { canonicalize } from "@fluxpointstudios/orynq-sdk-core/utils";
 import { HASH_DOMAIN_PREFIXES } from "@fluxpointstudios/orynq-sdk-process-trace";
-import { CLASSES, TEMPLATE } from "../../scripts/conduct/template.mjs";
+import { CLASSES } from "../../scripts/conduct/template.mjs";
 import { KINDS, realEvent } from "./guard-events.js";
-import { MANDATE_UINT_FIELDS } from "./openings.js";
+import { MANDATE_UINT_FIELDS, VALUE_CLASSES } from "./openings.js";
 import { MANDATE_ATOMS_DOMAIN } from "./statement-checker.js";
 
-// The Compact text every compiled opening class must hold, written from the statements the README declares and the
-// producers' own bytes, and never from template.mjs's emitter or renderer. The structure audit parses this text and the
-// generated circuits alike and compares what they read, so its layout need not match the generated file's.
+// The Compact text every compiled opening class and gadget probe must hold, written from the statements the README
+// declares, the audited value classes and the producers' own bytes, and never from template.mjs's template, emitter or
+// renderer. The structure audit parses this text and the generated circuits alike and compares what they read, so its
+// layout need not match the generated file's.
 
-interface Segment { readonly v: string; readonly lex: string; readonly nonzero: boolean }
+interface Segment { readonly v: string; readonly lex: string; readonly nonzero?: true }
 
 /** A hash input: constant bytes, or an expression with the type the hash lists for it. */
 type Input = Uint8Array | readonly [expression: string, type: string];
@@ -42,13 +43,13 @@ const LEXICAL: Readonly<Record<string, (name: string, width: number) => string>>
   vis: (name, width) => `vis${width}(${name});`,
 };
 
-/** Each value of a guard event action, once, in the order the template first writes it. */
+const actionOf = (kind: string) => kind.slice(0, kind.indexOf("-"));
+const ACTIONS = [...new Set(KINDS.map(actionOf))];
+
+/** Each value of a guard event action with its audited class, once, in the order the producer's preimage first holds it. */
 function actionValues(action: string): Segment[] {
-  const seen = new Map<string, Segment>();
-  for (const part of TEMPLATE.actions[action] as { v?: string; lex?: string; nonzero?: boolean }[]) {
-    if (part.v !== undefined && !seen.has(part.v)) seen.set(part.v, { v: part.v, lex: part.lex!, nonzero: part.nonzero === true });
-  }
-  return [...seen.values()];
+  const names = EVENT_PREIMAGES.get(`${action}-action`)!.filter((part): part is string => typeof part === "string");
+  return [...new Set(names)].map(v => ({ v, ...VALUE_CLASSES[v]! }));
 }
 
 const statementType = (action: string) => `${action[0]!.toUpperCase()}${action.slice(1)}Opening`;
@@ -115,7 +116,7 @@ async function eventPreimages(): Promise<ReadonlyMap<string, (Uint8Array | strin
 const EVENT_PREIMAGES = await eventPreimages();
 
 function eventCircuit(id: string, kind: string, lengths: Readonly<Record<string, number>>): string[] {
-  const action = kind.slice(0, kind.indexOf("-"));
+  const action = actionOf(kind);
   const values = actionValues(action);
   const width = ({ v, lex }: Segment) => lengths[v] ?? FIXED_WIDTHS[lex]!;
   const widths = new Map(values.map(segment => [segment.v, width(segment)]));
@@ -257,16 +258,49 @@ function mandateCircuit(id: string, dimensions: Readonly<Record<string, number>>
   ];
 }
 
-/** The reference text of every compiled opening class in classes.json, with the statements they disclose. */
+const EVENT_CLASSES: Readonly<Record<string, { kind: string; lengths: Record<string, number> }>> = CLASSES.openings.events;
+
+// The widths the event classes read the values of the given decimal classes at.
+const decimalWidths = (...lexes: readonly string[]) => [...new Set(Object.values(EVENT_CLASSES).flatMap(({ kind, lengths }) =>
+  actionValues(actionOf(kind)).filter(({ lex }) => lexes.includes(lex)).map(({ v }) => lengths[v]!)))].sort((a, b) => a - b);
+
+/**
+ * The pure probe T-B18 runs each gadget through: each CBOR uint head width, the string gadgets at one to four bytes,
+ * decU64 at every width a class reads a decimal at (dec53 reads through it at its own width), dec53 at every width a
+ * class reads a trace sequence at, and each fixed-shape gadget.
+ */
+function probeCircuits(): string[] {
+  const bytes = (width: number) => `v: ${vector(width)}`;
+  const probes: (readonly [name: string, params: string, returns: string, call: string])[] = [
+    ...Object.keys(UINT_AT_WIDTH).map(Number).map(w => (w === 0
+      ? ["cbor_uint_w0", "head: Uint<8>", "Uint<64>", "cborHeadValue(head)"] as const
+      : [`cbor_uint_w${w}`, bytes(w), "Uint<64>", `cborUint<${w}>(v)`] as const)),
+    ...[1, 2, 3, 4].flatMap(n => [[`json_str_w${n}`, bytes(n), "[]", `jsonStr<${n}>(v)`], [`utf8_any_w${n}`, bytes(n), "[]", `utf8Any<${n}>(v)`]] as const),
+    ...decimalWidths("dec64", "dec53").map(n => [`dec_u64_w${n}`, bytes(n), "Uint<64>", `decU64<${n}>(v)`] as const),
+    ...decimalWidths("dec53").map(n => [`dec53_w${n}`, bytes(n), "Uint<64>", `dec53<${n}>(v)`] as const),
+    ["hex_halves", bytes(FIXED_WIDTHS.hex64!), "[Field, Field]", "hexHalves(v)"],
+    ["hex_of_hash", `${bytes(FIXED_WIDTHS.hex64!)}, hash: Bytes<32>`, "[]", "hexOfHash(v, hash)"],
+    ["uuid_shape", bytes(FIXED_WIDTHS.uuid!), "[]", "uuid(v)"],
+    ["iso8601_shape", bytes(FIXED_WIDTHS.iso24!), "[]", "iso8601(v)"],
+    ["vis6_shape", bytes(6), "[]", "vis6(v)"],
+    ["vis7_shape", bytes(7), "[]", "vis7(v)"],
+    ["base58_w1", bytes(1), "[]", "base58<1>(v)"],
+    ["ascii_print_w1", bytes(1), "[]", "asciiPrint<1>(v)"],
+  ];
+  return probes.flatMap(([name, params, returns, call]) => [`export pure circuit ${name}(${params}): ${returns} {`, `  return ${call};`, "}"]);
+}
+
+/** The reference text of every compiled opening class in classes.json, with the statements they disclose, and every gadget probe. */
 export function referenceOpenings(): string {
   return [
     "pragma language_version 0.23;",
     "import CompactStandardLibrary;",
     'include "gadgets";',
     "import ConductGadgets;",
-    ...Object.keys(TEMPLATE.actions).flatMap(statementStruct),
+    ...ACTIONS.flatMap(statementStruct),
     "export struct MandateOpening {", "  commitment: Bytes<32>,", "  atoms: Bytes<32>", "}", "export ledger mandateOpening: MandateOpening;",
-    ...Object.entries(CLASSES.openings.events as Record<string, { kind: string; lengths: Record<string, number> }>).flatMap(([id, { kind, lengths }]) => eventCircuit(id, kind, lengths)),
+    ...Object.entries(EVENT_CLASSES).flatMap(([id, { kind, lengths }]) => eventCircuit(id, kind, lengths)),
     ...Object.entries(CLASSES.openings.mandates as Record<string, Record<string, number>>).flatMap(([id, dimensions]) => mandateCircuit(id, dimensions)),
+    ...probeCircuits(),
   ].join("\n");
 }

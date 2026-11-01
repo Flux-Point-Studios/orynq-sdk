@@ -31,9 +31,14 @@ describe("AM-9 the conduct circuits compile and run their suite in a CI step of 
   });
 
   it("build-test neither compiles nor tests the conduct circuits; conduct-circuits does, after build-test and beside midnight-submit", () => {
-    expect(step("build-test")).not.toMatch(/conduct/);
+    const buildTest = step("build-test");
+    expect(buildTest).not.toMatch(/conduct/);
     const conduct = step("conduct-circuits");
     expect(conduct).toContain("depends_on: [build-test]");
+    const image = (text: string) => /\n {4}image: (\S+)\n/.exec(text)?.[1];
+    expect(image(conduct)).toMatch(/@sha256:[0-9a-f]{64}$/);
+    expect(image(conduct)).toBe(image(buildTest));
+    expect(conduct).toContain("\n      COMPACTC: /woodpecker/orynq-midnight-tools/compactc/compactc\n");
     expect(conduct).toContain("\n      MIDNIGHT_PP: /woodpecker/orynq-midnight-tools/zk-params\n");
     expect(step("midnight-submit")).toContain("depends_on: [build-test]");
     const build = conduct.indexOf("pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:conduct\n");

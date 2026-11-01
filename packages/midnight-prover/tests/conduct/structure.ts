@@ -322,7 +322,6 @@ interface Circuit {
   readonly name: string;
   readonly modifiers: readonly string[];
   readonly header: string;
-  readonly params: readonly string[];
   readonly booleans: ReadonlySet<string>;
   readonly body: readonly Statement[];
   /** Every numeric literal of the body. */
@@ -441,7 +440,6 @@ class Parser {
       name: `${module}${name}`,
       modifiers,
       header: `${[...modifiers, "circuit"].join(" ")} ${name}${sizes.length > 0 ? `<${sizes.join(", ")}>` : ""}(${params.map(([param, type]) => `${param}: ${type}`).join(", ")}): ${returns}`,
-      params: params.map(([param]) => param),
       booleans: new Set(params.filter(([, type]) => type === "Boolean").map(([param]) => param)),
       body,
       literals: tokens.filter(({ token }) => token.kind === "number").map(({ token }) => token.text),
@@ -692,7 +690,7 @@ function hashText(e: Extract<Expr, { type: "call" }>, elide: boolean): string | 
   let run: number[] = [];
   for (const [i, item] of only.items.entries()) {
     const constant = constantBytes(item);
-    if (constant?.type === types[i]) run.push(...constant.bytes);
+    if (constant !== undefined && constant.type === types[i]) run.push(...constant.bytes);
     else {
       if (run.length > 0) parts.push(constantText(run));
       run = [];
@@ -923,14 +921,6 @@ function gadgetFindings(gadgets: Outline): string[] {
   return findings;
 }
 
-// A pure circuit of the openings unit is a probe: it returns one gadget call on its own parameters, in order.
-function isProbe(c: Circuit, gadgets: ReadonlySet<string>): boolean {
-  const [only, ...rest] = c.body;
-  const call = only?.type === "return" ? only.value : undefined;
-  return rest.length === 0 && call?.type === "call" && gadgets.has(call.callee) && call.args.length === c.params.length
-    && call.args.every((arg, i) => arg.type === "atom" && arg.text === c.params[i]);
-}
-
 interface OpeningsAudit {
   readonly findings: string[];
   /** The audited names the compiled unit must implement, where the sources could be read. */
@@ -944,22 +934,20 @@ function openingsAudit(sources: OpeningSources): OpeningsAudit {
   if (typeof reference === "string") throw new Error(reference);
   const unreadable = [gadgets, generated].filter((outline): outline is string => typeof outline === "string");
   if (typeof gadgets === "string" || typeof generated === "string") return { findings: unreadable };
-  const gadgetNames = new Set(gadgets.circuits.filter(c => c.modifiers.includes("export")).map(c => c.name.slice(c.name.indexOf(".") + 1)));
-  const pure = generated.circuits.filter(c => c.modifiers.includes("pure"));
   const findings = [
     ...gadgetFindings(gadgets),
-    ...multisetDifference("openings.generated.compact declarations", generated.lines.filter(line => !pure.some(c => line === `circuit ${c.name}`)), reference.lines),
-    ...pure.filter(c => !isProbe(c, gadgetNames)).map(c => `the pure circuit ${c.name} does not return one gadget call on its own parameters`),
+    ...multisetDifference("openings.generated.compact declarations", generated.lines, reference.lines),
   ];
   const [found, audited] = [new Set(generated.witnesses), new Set(reference.witnesses)];
   for (const expected of reference.circuits) {
-    const circuit = generated.circuits.find(c => c.name === expected.name && !c.modifiers.includes("pure"));
+    const circuit = generated.circuits.find(c => c.name === expected.name);
     if (circuit !== undefined) findings.push(...viewFindings(expected.name, viewOf(circuit, found), viewOf(expected, audited)));
   }
+  const pure = (c: Circuit) => c.modifiers.includes("pure");
   return {
     findings,
     names: {
-      classes: reference.circuits.map(c => c.name), witnesses: reference.witnesses, probes: pure.map(c => c.name),
+      classes: reference.circuits.filter(c => !pure(c)).map(c => c.name), witnesses: reference.witnesses, probes: reference.circuits.filter(pure).map(c => c.name),
       gadgets: gadgets.circuits.map(c => c.name.slice(c.name.indexOf(".") + 1)),
     },
   };

@@ -36,9 +36,10 @@ const CBOR_FOLD_CAST = "fold((acc, b) => ((acc * 256) + b) as Field, 0 as Field,
 const UUID_TEST = "(((i == 8) || (i == 13)) || (i == 18)) || (i == 23)";
 
 // AM-8: the audit parses gadgets.compact and openings.generated.compact to the last token, compares each gadget with
-// its committed literals, comparisons, calls and statements, and each generated class with the reference text that
-// opening-reference.ts derives from classes.json and the producers. An edit that adds a literal, a comparison, a call,
-// a witness read, a ledger write, a statement or a declaration, or changes one, fails with an exact message.
+// its committed literals, comparisons, calls and statements, and each generated class and probe with the reference text
+// that opening-reference.ts derives from classes.json, the producers and the audited value classes. An edit that adds a
+// literal, a comparison, a call, a witness read, a ledger write, a statement or a declaration, or changes one, fails
+// with an exact message.
 describe("T-A16 (AM-8) the gadgets and every generated opening class hold exactly the audited structure", () => {
   it("the openings unit under test passes the audit, and its compiled contract implements exactly the audited circuits, probes and witnesses", () => {
     expect(auditOpeningsStructure("openings")).toEqual([]);
@@ -98,8 +99,26 @@ describe("T-A16 (AM-8) the gadgets and every generated opening class hold exactl
       `m_base calls differ from the audited list: added [${atoms("Field")}], removed [${atoms("Uint<64>")}]`,
       statementLine("m_base", 25, `assert (${atoms("Field")} == s.atoms), "mandate atoms opening"`, `assert (${atoms("Uint<64>")} == s.atoms), "mandate atoms opening"`),
     ]],
+    ["a payment class without its amount floor", '  assert(s.amount != 0, "decimal nonzero");\n', "", [
+      "ev_pa_ascii_min literals differ from the audited list: added [], removed [0]",
+      "ev_pa_ascii_min comparisons differ from the audited list: added [], removed [s.amount != 0]",
+      statementLine("ev_pa_ascii_min", 19, 'assert (persistentHash(asset: Vector<3, Uint<8>>) == s.assetDigest), "assetDigest opening"', 'assert (s.amount != 0), "decimal nonzero"'),
+    ]],
     ["a pure circuit that is not a probe", "export pure circuit cbor_uint_w0(", "export pure circuit dec_sneak(v: Vector<2, Uint<8>>): Uint<64> {\n  return decU64<2>(v) + 1;\n}\n\nexport pure circuit cbor_uint_w0(", [
-      "the pure circuit dec_sneak does not return one gadget call on its own parameters",
+      "openings.generated.compact declarations differ from the audited list: added [circuit dec_sneak], removed []",
+    ]],
+    ["a string probe retargeted to the other UTF-8 gadget", "return jsonStr<4>(v);", "return utf8Any<4>(v);", [
+      "json_str_w4 calls differ from the audited list: added [utf8Any<4>(v)], removed [jsonStr<4>(v)]",
+      statementLine("json_str_w4", 2, "return utf8Any<4>(v)", "return jsonStr<4>(v)"),
+    ]],
+    ["a dec53 probe read through decU64", "return dec53<1>(v);", "return decU64<1>(v);", [
+      "dec53_w1 calls differ from the audited list: added [decU64<1>(v)], removed [dec53<1>(v)]",
+      statementLine("dec53_w1", 2, "return decU64<1>(v)", "return dec53<1>(v)"),
+    ]],
+    ["a decimal probe read at another width", "return decU64<16>(v);", "return decU64<10>(v);", [
+      "dec_u64_w16 literals differ from the audited list: added [10], removed [16]",
+      "dec_u64_w16 calls differ from the audited list: added [decU64<10>(v)], removed [decU64<16>(v)]",
+      statementLine("dec_u64_w16", 2, "return decU64<10>(v)", "return decU64<16>(v)"),
     ]],
     ["a witness and a circuit outside every class", "export pure circuit cbor_uint_w0(", "witness extra(): Vector<1, Uint<8>>;\nexport circuit sneak(s: PaymentOpening): [] {\n  paymentOpening = disclose(s);\n}\n\nexport pure circuit cbor_uint_w0(", [
       "openings.generated.compact declarations differ from the audited list: added [circuit sneak, witness extra(): Vector<1, Uint<8>>;], removed []",
@@ -118,7 +137,7 @@ describe("T-A16 (AM-8) the gadgets and every generated opening class hold exactl
     expect(findings[0]).toContain('removed [persistentHash("orynq:conduct:mandate:v1|\\xab\\x00\\x01\\x01P", mandateId: Vector<16, Uint<8>>,');
   });
 
-  it.each([
+  it.each<readonly [string, string, readonly Edit[], readonly string[]]>([
     ["an assert turned into a binding nothing reads", "asciiPrint", [['assert(c >= 33 && c <= 126, "printable ASCII");', "const printable = c >= 33 && c <= 126;"]], [
       gadgetLine("asciiPrint", 3, "const printable = (c >= 33) && (c <= 126)", 'assert ((c >= 33) && (c <= 126)), "printable ASCII"'),
     ]],

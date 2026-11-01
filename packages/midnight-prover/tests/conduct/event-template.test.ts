@@ -4,9 +4,10 @@ import { canonicalize } from "@fluxpointstudios/orynq-sdk-core/utils";
 import { computeEventHash } from "@fluxpointstudios/orynq-sdk-process-trace";
 import { describe, expect, it } from "vitest";
 import { KINDS, realEvents } from "./guard-events.js";
-import { sha256, type Segment } from "./openings.js";
+import { sha256, VALUE_CLASSES, type Segment } from "./openings.js";
 
-const template = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../circuits/conduct/templates/guard-event-v1.json"), "utf8"));
+const templateText = readFileSync(resolve(import.meta.dirname, "../../circuits/conduct/templates/guard-event-v1.json"), "utf8");
+const template = JSON.parse(templateText);
 const { classify, expandKinds, render } = await import("../../scripts/conduct/template.mjs");
 const kinds: Record<string, Segment[]> = expandKinds();
 const events = await realEvents();
@@ -54,6 +55,36 @@ describe("T-B01 the guard-event template expands to every kind the guard writes"
       const { hash: _hash, ...body } = event;
       expect(keyPaths(JSON.parse(withoutDomain(rendered)))).toEqual(keyPaths(JSON.parse(canonicalize(body))));
     }
+  });
+});
+
+const shown = ({ lex, nonzero }: Segment) => `${lex}${nonzero === true ? " nonzero" : ""}`;
+
+// Where the template's lexical class or floor of a value differs from the table the openings are audited and forged by.
+function classDrift(actions: Readonly<Record<string, readonly Segment[]>>): string[] {
+  const values = Object.entries(actions).flatMap(([action, parts]) => parts.filter(part => part.v !== undefined).map(part => [action, part] as const));
+  return [
+    ...values.flatMap(([action, part]) => {
+      const audited = VALUE_CLASSES[part.v!];
+      const expected = audited === undefined ? "absent" : shown(audited);
+      return shown(part) === expected ? [] : [`${action} ${part.v} is ${shown(part)} in the template and ${expected} in the audited table`];
+    }),
+    ...Object.keys(VALUE_CLASSES).filter(v => !values.some(([, part]) => part.v === v)).map(v => `${v} is in the audited table and in no template action`),
+  ];
+}
+
+describe("T-B01 the template declares each value in the lexical class and floor the openings are audited and forged by", () => {
+  it("agrees with the audited table", () => {
+    expect(classDrift(template.actions)).toEqual([]);
+  });
+
+  it("refuses a template without the amount floor or with the trace sequence read as any uint64, with exact messages", () => {
+    const loosened = JSON.parse(templateText.replace(', "nonzero": true', "").replaceAll('"lex": "dec53"', '"lex": "dec64"'));
+    expect(classDrift(loosened.actions)).toEqual([
+      "payment amount is dec64 in the template and dec64 nonzero in the audited table",
+      "payment traceSeq is dec64 in the template and dec53 in the audited table",
+      "egress traceSeq is dec64 in the template and dec53 in the audited table",
+    ]);
   });
 });
 

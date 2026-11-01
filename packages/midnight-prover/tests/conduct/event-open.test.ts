@@ -161,6 +161,17 @@ describe("T-B09 the lexical gadgets refuse out-of-class bytes whose hash chain a
     expect(counts).toEqual({ ev_pa_ascii_min: [34, 10], ev_pa_unicode_max: [38, 6], ev_pa_max: [43, 1], ev_pd4_ascii_min: [34, 10], ev_ea_ascii_min: [31, 8] });
   });
 
+  it("forges a zero amount in every payment class whose amount is one digit, and names why a wider amount cannot hold one", () => {
+    const zero = Object.fromEntries([...events].map(([id, e]) => {
+      const { forgeries, unheld } = lexicalForgeries(openingOf(e));
+      return [id, forgeries.find(f => f.label === "amount of zero")?.refusal ?? unheld.find(u => u.label === "amount of zero")?.reason ?? "no amount"];
+    }));
+    const wide = "a zero of more than one digit has a leading zero, which is refused first";
+    expect(zero).toEqual({
+      ev_pa_ascii_min: "failed assert: decimal nonzero", ev_pa_unicode_max: wide, ev_pa_max: wide, ev_pd4_ascii_min: "failed assert: decimal nonzero", ev_ea_ascii_min: "no amount",
+    });
+  });
+
   it.each([...events])("%s: every non-string segment refuses bytes outside its lexical class", async (_id, e) => {
     expect(await misjudged(lexicalForgeries(openingOf(e)).forgeries, outcome), "mutation accepted").toEqual([]);
   });

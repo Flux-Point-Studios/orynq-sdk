@@ -26,6 +26,16 @@ export const OPENINGS_MUTANTS = [
   "cbor_uint_minimal_waived_at_1000",
 ];
 
+/**
+ * Each guard event value's lexical class, and the payment amount's floor, as S-EVENT-OPEN declares them. The opening
+ * reference and the lexical forgeries read them here, never from the template the emitter reads, which must agree.
+ */
+export const VALUE_CLASSES: Readonly<Record<string, { readonly lex: string; readonly nonzero?: true }>> = {
+  amount: { lex: "dec64", nonzero: true }, asset: { lex: "str" }, counterparty: { lex: "str" }, destination: { lex: "str" },
+  ts: { lex: "dec64" }, actionDigest: { lex: "hex64" }, enforcedAt: { lex: "dec64" }, mandateCommitment: { lex: "hex64" },
+  dataSeq: { lex: "dec64" }, id: { lex: "uuid" }, traceSeq: { lex: "dec53" }, iso: { lex: "iso24" }, vis: { lex: "vis" },
+};
+
 /** The uint fields of a mandate, each read from its CBOR head byte or from the argument bytes after it. */
 export const MANDATE_UINT_FIELDS = ["capAmount", "windowSeconds", "notBefore", "notAfter", "threshold", "committeeSize"] as const;
 // Hex digests, the uuid, the ISO time and the event hash hex have fixed widths outside the class tuple.
@@ -179,7 +189,12 @@ export function hexLinkForgeries(opening: Opening): Forgery[] {
 }
 
 const EVENT_CLASSES: Readonly<Record<string, { kind: string }>> = CLASSES.openings.events;
-const classSegments = (id: string): Segment[] => [...valueSpecs(EVENT_CLASSES[id]!.kind).values()];
+/** Each value of a compiled event class with its audited class. */
+const classSegments = (id: string): Segment[] => [...valueSpecs(EVENT_CLASSES[id]!.kind).keys()].map(v => {
+  const audited = VALUE_CLASSES[v];
+  if (audited === undefined) throw new Error(`${v} has no audited lexical class`);
+  return { v, ...audited };
+});
 /** Every string segment of every compiled event class. */
 export const STRING_SEGMENTS: readonly (readonly [string, string])[] = Object.keys(EVENT_CLASSES)
   .flatMap(id => classSegments(id).filter(s => s.lex === "str").map(s => [id, s.v!] as const));
