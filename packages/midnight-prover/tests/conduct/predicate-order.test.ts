@@ -72,8 +72,10 @@ describe("T-A17 every order type of the validity window, action time and guard c
     expect(vectors.size).toBe(reachable.reduce((product, set) => product * set.size, 1));
   });
 
-  // The round-5 review found these crossings missing from the named case sets.
-  it("meets every crossing the round-5 review named, at every scale", () => {
+  // A rule or refusal gated on a spend, a band or a lag survives every cell that misses its gate, so the cells meet: a
+  // refusal or rule after a spend off-list or under deny-all, an out-of-domain kind strictly past notAfter, every payment
+  // verdict with a slot between 2^32 and 2^53, and a lag of 2^32.
+  it("meets every crossing of a spend, a band or a lag with a verdict or refusal, at every scale", () => {
     const U32 = 1n << 32n, U53 = 1n << 53n;
     const crossings: [string, (c: OrderCell, judged: Judgement) => boolean][] = [];
     const v = (c: OrderCell, name: string) => c.args[slot(name)]!;
@@ -84,20 +86,20 @@ describe("T-A17 every order type of the validity window, action time and guard c
     for (const scale of ORDER_SCALES) {
       const on = (c: OrderCell) => c.scale === scale;
       crossings.push(
-        [`R5-P1 ${scale}: a zero payment under deny-all after a spend is refused`, (c, j) => on(c) && spent(c) && v(c, "egress_mode") === 0n && v(c, "action_kind") === 0n && v(c, "action_amount") === 0n && j.guard === "refused"],
-        [`R5-P2 ${scale}: an off-list payment after a spend under a clock-decided expiry`, (c, j) => on(c) && spent(c) && offListPayment(c) && clockExpiry(c) && j.guard === 2],
-        [`R5-P2 ${scale}: an off-list payment after a spend later than the clock`, (c, j) => on(c) && spent(c) && offListPayment(c) && later(c) && j.guard === "refused"],
-        [`R5-P2 ${scale}: a deny-all payment after a spend under a clock-decided expiry`, (c, j) => on(c) && spent(c) && v(c, "egress_mode") === 0n && v(c, "action_kind") === 0n && clockExpiry(c) && j.guard === 2],
-        [`R5-F2 ${scale}: an out-of-domain kind strictly past notAfter`, (c, j) => on(c) && v(c, "action_kind") === 2n && v(c, "action_timestamp") > v(c, "not_after") && j.guard === "refused"],
+        [`${scale}: a zero payment under deny-all after a spend is refused`, (c, j) => on(c) && spent(c) && v(c, "egress_mode") === 0n && v(c, "action_kind") === 0n && v(c, "action_amount") === 0n && j.guard === "refused"],
+        [`${scale}: an off-list payment after a spend under a clock-decided expiry`, (c, j) => on(c) && spent(c) && offListPayment(c) && clockExpiry(c) && j.guard === 2],
+        [`${scale}: an off-list payment after a spend later than the clock`, (c, j) => on(c) && spent(c) && offListPayment(c) && later(c) && j.guard === "refused"],
+        [`${scale}: a deny-all payment after a spend under a clock-decided expiry`, (c, j) => on(c) && spent(c) && v(c, "egress_mode") === 0n && v(c, "action_kind") === 0n && clockExpiry(c) && j.guard === 2],
+        [`${scale}: an out-of-domain kind strictly past notAfter`, (c, j) => on(c) && v(c, "action_kind") === 2n && v(c, "action_timestamp") > v(c, "not_after") && j.guard === "refused"],
       );
     }
     const band = (value: bigint) => value > U32 && value < U53;
     for (const name of ["action_amount", "prior_spent", "cap_amount"]) {
       for (const verdict of [0, 3, 4, 5]) {
-        crossings.push([`R5-F1: a payment judged ${verdict} with ${name} strictly between 2^32 and 2^53`, (c, j) => v(c, "action_kind") === 0n && j.guard === verdict && band(v(c, name) as bigint)]);
+        crossings.push([`a payment judged ${verdict} with ${name} strictly between 2^32 and 2^53`, (c, j) => v(c, "action_kind") === 0n && j.guard === verdict && band(v(c, name) as bigint)]);
       }
     }
-    crossings.push([`R5-F3: an action at least 2^32 later than the clock`, (c, j) => (v(c, "action_timestamp") as bigint) - c.enforcedAt >= U32 && j.guard === "refused"]);
+    crossings.push([`an action at least 2^32 later than the clock`, (c, j) => (v(c, "action_timestamp") as bigint) - c.enforcedAt >= U32 && j.guard === "refused"]);
     const missing = new Set(crossings.map(([name]) => name));
     for (const { cell, judged } of orderCases()) {
       for (const [name, holds] of crossings) if (missing.has(name) && holds(cell, judged)) missing.delete(name);

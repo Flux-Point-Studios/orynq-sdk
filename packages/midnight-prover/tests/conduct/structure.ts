@@ -1,13 +1,28 @@
-import { unitSource } from "./harness.js";
+import { PREDICATE_LAYOUT, type PredicateInput } from "@fluxpointstudios/orynq-sdk-conduct";
+import { generatedSource, unitSource } from "./harness.js";
 
 const AUDITED_FILES = ["verdict_core.compact", "predicate.compact"] as const;
-type Sources = Readonly<Record<(typeof AUDITED_FILES)[number], string>>;
+type AuditedFile = (typeof AUDITED_FILES)[number];
+type Sources = Readonly<Record<AuditedFile, string>>;
 
 export const predicateSources = (unit = "predicate"): Sources =>
   Object.fromEntries(AUDITED_FILES.map(file => [file, unitSource(unit, file)])) as Sources;
 
+/** Each file's declarations in order: every declaration but a circuit verbatim, each circuit by name, and each module's bounds. */
+const AUDITED_OUTLINES: Readonly<Record<AuditedFile, readonly string[]>> = {
+  "verdict_core.compact": ["module ConductVerdict {", "import CompactStandardLibrary;", "circuit ConductVerdict.evaluate", "circuit ConductVerdict.decide", "}"],
+  "predicate.compact": [
+    "pragma language_version 0.23;", "import CompactStandardLibrary;", 'include "verdict_core";', "import ConductVerdict prefix CV_;",
+    "export ledger verdictOut: Uint<8>;", "circuit evaluate", "circuit guard_verdict", "circuit check_verdict",
+  ],
+};
+
 /** Every numeric literal inside a circuit body: the verdict codes 0-7, the kind and mode tests, the domain bounds and the amount floor. */
 const AUDITED_LITERALS: readonly string[] = ["0", "0", "0", "0", "1", "1", "1", "1", "1", "2", "2", "3", "4", "5", "6", "7"];
+
+const COMPACT_TYPES: Readonly<Record<PredicateInput["type"], string>> = { uint64: "Uint<64>", uint8: "Uint<8>", field: "Field", boolean: "Boolean" };
+const PREDICATE_PARAMS = PREDICATE_LAYOUT.map(({ name, type }) => `${name}: ${COMPACT_TYPES[type]}`).join(", ");
+const CLAIM_CHECK = `guard_verdict(enforced_at, ${PREDICATE_LAYOUT.map(({ name }) => name).join(", ")}) == claimed`;
 
 /** Every comparison, as its left operand, operator and right operand. */
 export const AUDITED_COMPARISONS: readonly string[] = [
@@ -15,18 +30,25 @@ export const AUDITED_COMPARISONS: readonly string[] = [
   "action_timestamp < not_before", "action_timestamp >= not_after", "action_kind == 0", "prior_spent + action_amount > cap_amount", "egress_mode == 0",
   "action_timestamp <= enforced_at", "enforced_at >= not_after",
   "cap_asset == action_asset", "cap_asset == action_asset",
-  "guard_verdict(enforced_at, not_before, not_after, cap_asset, cap_amount, egress_mode, action_kind, action_timestamp, action_asset, action_amount, counterparty_ok, prior_spent, egress_ok) == claimed",
+  CLAIM_CHECK,
 ];
 
-const U64 = (...names: string[]) => names.map(name => `${name}: Uint<64>`).join(", ");
-const CORE_PARAMS = `${U64("not_before", "not_after", "cap_amount")}, egress_mode: Uint<8>, action_kind: Uint<8>, ${U64("action_timestamp", "action_amount")}, `
-  + "asset_ok: Boolean, counterparty_ok: Boolean, prior_spent: Uint<64>, egress_ok: Boolean";
-const PREDICATE_PARAMS = `${U64("not_before", "not_after")}, cap_asset: Field, cap_amount: Uint<64>, egress_mode: Uint<8>, action_kind: Uint<8>, `
-  + "action_timestamp: Uint<64>, action_asset: Field, action_amount: Uint<64>, counterparty_ok: Boolean, prior_spent: Uint<64>, egress_ok: Boolean";
-const CORE_ARGS = "not_before, not_after, cap_amount, egress_mode, action_kind, action_timestamp, action_amount, asset_ok, counterparty_ok, prior_spent, egress_ok";
-const WIRED_ARGS = "not_before, not_after, cap_amount, egress_mode, action_kind, action_timestamp, action_amount, cap_asset == action_asset, counterparty_ok, prior_spent, egress_ok";
+/** ConductVerdict's parameters, which `evaluate` and `guard_verdict` wire from the slice-1 layout. */
+const CORE: readonly (readonly [string, string])[] = [
+  ["not_before", "Uint<64>"], ["not_after", "Uint<64>"], ["cap_amount", "Uint<64>"], ["egress_mode", "Uint<8>"], ["action_kind", "Uint<8>"],
+  ["action_timestamp", "Uint<64>"], ["action_amount", "Uint<64>"], ["asset_ok", "Boolean"], ["counterparty_ok", "Boolean"], ["prior_spent", "Uint<64>"],
+  ["egress_ok", "Boolean"],
+];
+const CORE_PARAMS = CORE.map(([name, type]) => `${name}: ${type}`).join(", ");
+const CORE_ARGS = CORE.map(([name]) => name).join(", ");
+const WIRED_ARGS = CORE.map(([name]) => (name === "asset_ok" ? "cap_asset == action_asset" : name)).join(", ");
 
-/** Each circuit's signature, then its decisions in order, with every condition elided as `(...)`. */
+// T-A17 runs these circuits through evaluate and guard_verdict on every truth assignment of the audited comparisons that
+// an input can produce, so their conditions are audited as combinations of audited comparisons and Boolean inputs and
+// shown as `(...)`. Every other circuit's conditions are audited verbatim.
+const REWIRABLE = ["ConductVerdict.evaluate", "ConductVerdict.decide"];
+
+/** Each circuit's signature, then its decisions in order. */
 const AUDITED_DECISIONS: Readonly<Record<string, readonly string[]>> = {
   "ConductVerdict.evaluate": [
     `export circuit evaluate(${CORE_PARAMS}): Uint<8>`,
@@ -56,25 +78,43 @@ const AUDITED_DECISIONS: Readonly<Record<string, readonly string[]>> = {
   guard_verdict: [`export pure circuit guard_verdict(enforced_at: Uint<64>, ${PREDICATE_PARAMS}): Uint<8>`, `return CV_decide(enforced_at, ${WIRED_ARGS})`],
   check_verdict: [
     `export circuit check_verdict(enforced_at: Uint<64>, ${PREDICATE_PARAMS}, claimed: Uint<8>): []`,
-    'assert (...), "verdict mismatch"',
+    `assert (${CLAIM_CHECK}), "verdict mismatch"`,
     "verdictOut = disclose(claimed)",
   ],
 };
 
-interface Token { readonly kind: "number" | "name" | "string" | "punct"; readonly text: string }
+/** The generated contract class's methods: its constructor and initial state, one per audited circuit, and compactc's `_equal_N` helper for each `==` between Uints. */
+const COMPILED_METHODS: readonly string[] = [
+  "constructor", "initialState", ...Object.keys(AUDITED_DECISIONS).map(name => name.split(".").at(-1)!), "equal", "equal", "equal", "equal",
+];
 
+interface Token {
+  readonly kind: "number" | "name" | "string" | "punct";
+  readonly text: string;
+  /** Whitespace or a comment precedes the token. */
+  readonly spaced: boolean;
+}
+
+// compactc also ends a line comment at a carriage return, U+0085 or U+2028, so the audit reads only printable ASCII and
+// newlines, where its comments end where compactc's do.
 function tokenize(source: string): Token[] {
-  const pattern = /\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/|("(?:[^"\\]|\\.)*")|(\d+)|([A-Za-z_]\w*)|(&&|\|\||[<>=!]=|[-+*<>=!?:(){}[\],;.#])/y;
+  const stray = /[^\x20-\x7e\n]/.exec(source);
+  if (stray) throw new Error(`character U+${stray[0].codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")} at offset ${stray.index} is outside printable ASCII`);
+  const pattern = /(\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:[^"\\]|\\.)*")|(\d+)|([A-Za-z_]\w*)|(&&|\|\||[<>=!]=|[-+*<>=!?:(){}[\],;.#])/y;
   const tokens: Token[] = [];
+  let spaced = false;
   while (pattern.lastIndex < source.length) {
     const offset = pattern.lastIndex;
     const match = pattern.exec(source);
     if (!match) throw new Error(`cannot read the Compact source at offset ${offset}`);
-    const [, string, number, name, punct] = match;
-    if (string !== undefined) tokens.push({ kind: "string", text: string });
-    else if (number !== undefined) tokens.push({ kind: "number", text: number });
-    else if (name !== undefined) tokens.push({ kind: "name", text: name });
-    else if (punct !== undefined) tokens.push({ kind: "punct", text: punct });
+    const [, gap, string, number, name, punct] = match;
+    if (gap !== undefined) {
+      spaced = true;
+      continue;
+    }
+    const kind = string !== undefined ? "string" : number !== undefined ? "number" : name !== undefined ? "name" : "punct";
+    tokens.push({ kind, text: (string ?? number ?? name ?? punct)!, spaced });
+    spaced = false;
   }
   return tokens;
 }
@@ -99,6 +139,11 @@ interface Circuit {
   readonly booleans: ReadonlySet<string>;
   readonly body: readonly Statement[];
   readonly literals: readonly string[];
+}
+
+interface Outline {
+  readonly lines: string[];
+  readonly circuits: Circuit[];
 }
 
 const COMPARISONS = ["==", "!=", "<", "<=", ">", ">="];
@@ -128,23 +173,47 @@ class Parser {
     return true;
   }
 
-  // Declarations other than circuits (pragma, import, include, ledger) are skipped up to their semicolon.
-  circuits(module = ""): Circuit[] {
-    const found: Circuit[] = [];
+  // The tokens from `start` up to the current one, with a space wherever the source separated two of them.
+  private text(start: number): string {
+    return this.tokens.slice(start, this.at).map((token, i) => (i > 0 && token.spaced ? ` ${token.text}` : token.text)).join("");
+  }
+
+  /** The whole file: an unread token is an error, so nothing in it escapes the audit. */
+  file(): Outline {
+    const outline: Outline = { lines: [], circuits: [] };
+    this.declarations("", outline);
+    if (this.peek() !== undefined) throw new Error(`unexpected "${this.peek()}" outside any module`);
+    return outline;
+  }
+
+  private declarations(module: string, outline: Outline): void {
     while (this.peek() !== undefined && this.peek() !== "}") {
-      if (this.accept("module")) {
-        const name = this.next().text;
-        this.expect("{");
-        found.push(...this.circuits(`${name}.`));
-        this.expect("}");
-        continue;
-      }
+      const start = this.at;
       const modifiers: string[] = [];
       while (this.peek() === "export" || this.peek() === "pure") modifiers.push(this.next().text);
-      if (this.accept("circuit")) found.push(this.circuit(module, modifiers));
-      else while (this.next().text !== ";");
+      if (this.accept("circuit")) {
+        const circuit = this.circuit(module, modifiers);
+        outline.circuits.push(circuit);
+        outline.lines.push(`circuit ${circuit.name}`);
+      } else if (this.accept("module")) {
+        const name = this.next().text;
+        this.expect("{");
+        outline.lines.push(this.text(start));
+        this.declarations(`${module}${name}.`, outline);
+        this.expect("}");
+        outline.lines.push("}");
+      } else outline.lines.push(this.declaration(start));
     }
-    return found;
+  }
+
+  // Any other declaration runs to its semicolon, or to the close of the block it opens.
+  private declaration(start: number): string {
+    for (let depth = 0; ;) {
+      const { text } = this.next();
+      if (text === "{") depth++;
+      if (text === "}" && --depth < 0) throw new Error(`unexpected "}" in the declaration "${this.text(start)}"`);
+      if (depth === 0 && (text === ";" || text === "}")) return this.text(start);
+    }
   }
 
   private circuit(module: string, modifiers: readonly string[]): Circuit {
@@ -289,16 +358,19 @@ function render(e: Expr, elide = false): string {
   }
 }
 
-function decisions(statements: readonly Statement[]): string[] {
+function decisions(statements: readonly Statement[], elide: boolean): string[] {
+  const condition = (test: Expr) => (elide ? ELIDED : `(${render(test)})`);
   return statements.flatMap(s => {
     switch (s.type) {
-      case "assert": return [`assert ${ELIDED}, ${s.message}`];
-      case "return": return [s.value === undefined ? "return" : `return ${render(s.value, true)}`];
-      case "bind": return [`${s.target} = ${render(s.value, true)}`];
+      case "assert": return [`assert ${condition(s.test)}, ${s.message}`];
+      case "return": return [s.value === undefined ? "return" : `return ${render(s.value, elide)}`];
+      case "bind": return [`${s.target} = ${render(s.value, elide)}`];
       case "if": {
         const [only] = s.then;
-        const then = s.then.length === 1 && only!.type !== "if" ? [`if ${ELIDED} ${decisions(s.then)[0]}`] : [`if ${ELIDED} {`, ...decisions(s.then), "}"];
-        return s.otherwise === undefined ? then : [...then, "else {", ...decisions(s.otherwise), "}"];
+        const then = s.then.length === 1 && only!.type !== "if"
+          ? [`if ${condition(s.test)} ${decisions(s.then, elide)[0]}`]
+          : [`if ${condition(s.test)} {`, ...decisions(s.then, elide), "}"];
+        return s.otherwise === undefined ? then : [...then, "else {", ...decisions(s.otherwise, elide), "}"];
       }
     }
   });
@@ -335,7 +407,9 @@ function unauditedReads(test: Expr, booleans: ReadonlySet<string>): Expr[] {
   return [test];
 }
 
-function multisetDifference(found: readonly string[], audited: readonly string[]): { added: string[]; removed: string[] } {
+const byValue = (a: string, b: string) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0);
+
+function multisetDifference(view: string, found: readonly string[], audited: readonly string[], order?: (a: string, b: string) => number): string[] {
   const removed = [...audited];
   const added: string[] = [];
   for (const item of found) {
@@ -343,30 +417,38 @@ function multisetDifference(found: readonly string[], audited: readonly string[]
     if (index < 0) added.push(item);
     else removed.splice(index, 1);
   }
-  return { added, removed };
+  return added.length + removed.length === 0 ? [] : [`${view} differ from the audited list: added [${added.sort(order).join(", ")}], removed [${removed.sort(order).join(", ")}]`];
 }
 
-const byValue = (a: string, b: string) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0);
+function firstDifference(subject: string, found: readonly string[], audited: readonly string[]): string[] {
+  const line = found.findIndex((text, i) => text !== audited[i]);
+  const at = line < 0 && found.length < audited.length ? found.length : line;
+  return at < 0 ? [] : [`${subject} at line ${at + 1}: found ${JSON.stringify(found[at] ?? "the end")}, audited ${JSON.stringify(audited[at] ?? "the end")}`];
+}
 
 /** The ways the sources differ from the audited structure; empty when they hold exactly the audited structure. */
-export function auditStructure(sources: Sources): string[] {
-  const circuits = AUDITED_FILES.flatMap(file => new Parser(tokenize(sources[file])).circuits());
-  const findings: string[] = [];
-  const report = (view: string, found: readonly string[], audited: readonly string[], order?: (a: string, b: string) => number) => {
-    const { added, removed } = multisetDifference(found, audited);
-    if (added.length + removed.length > 0) findings.push(`${view} differ from the audited list: added [${added.sort(order).join(", ")}], removed [${removed.sort(order).join(", ")}]`);
-  };
-  report("numeric literals", circuits.flatMap(c => c.literals), AUDITED_LITERALS, byValue);
+export function auditSources(sources: Sources): string[] {
+  const outlines: [AuditedFile, Outline][] = [];
+  const unreadable: string[] = [];
+  for (const file of AUDITED_FILES) {
+    try {
+      outlines.push([file, new Parser(tokenize(sources[file])).file()]);
+    } catch (error) {
+      unreadable.push(`${file} cannot be audited: ${(error as Error).message}`);
+    }
+  }
+  if (unreadable.length > 0) return unreadable;
+  const circuits = outlines.flatMap(([, outline]) => outline.circuits);
   const all = circuits.flatMap(c => [...expressions(c.body)].flatMap(({ expr }) => [...subexpressions(expr)]));
-  report("comparisons", all.flatMap(e => (e.type === "binary" && COMPARISONS.includes(e.op) ? [`${render(e.left)} ${e.op} ${render(e.right)}`] : [])), AUDITED_COMPARISONS);
-  report("circuits", circuits.map(c => c.name), Object.keys(AUDITED_DECISIONS));
+  const findings = [
+    ...outlines.flatMap(([file, { lines }]) => firstDifference(`${file} differs from its audited outline`, lines, AUDITED_OUTLINES[file])),
+    ...multisetDifference("numeric literals", circuits.flatMap(c => c.literals), AUDITED_LITERALS, byValue),
+    ...multisetDifference("comparisons", all.flatMap(e => (e.type === "binary" && COMPARISONS.includes(e.op) ? [`${render(e.left)} ${e.op} ${render(e.right)}`] : [])), AUDITED_COMPARISONS),
+  ];
   for (const c of circuits) {
     const audited = AUDITED_DECISIONS[c.name];
     if (audited === undefined) continue;
-    const found = [c.header, ...decisions(c.body)];
-    const line = found.findIndex((text, i) => text !== audited[i]);
-    const at = line < 0 && found.length < audited.length ? found.length : line;
-    if (at >= 0) findings.push(`${c.name} differs from its audited decision list at line ${at + 1}: found ${JSON.stringify(found[at] ?? "the end")}, audited ${JSON.stringify(audited[at] ?? "the end")}`);
+    findings.push(...firstDifference(`${c.name} differs from its audited decision list`, [c.header, ...decisions(c.body, REWIRABLE.includes(c.name))], audited));
     const tests = [...expressions(c.body)].flatMap(({ expr, condition }) => [
       ...(condition ? [expr] : []), ...[...subexpressions(expr)].flatMap(e => (e.type === "ternary" ? [e.test] : [])),
     ]);
@@ -376,3 +458,16 @@ export function auditStructure(sources: Sources): string[] {
   }
   return findings;
 }
+
+/** How the compiled unit's contract methods differ from the audited circuits'. compactc parses the sources on its own, so a circuit the source audit never reached still shows here. */
+export function compiledFindings(unit: string): string[] {
+  const source = generatedSource(unit);
+  const start = source.indexOf("\nexport class Contract {\n");
+  const end = source.indexOf("\n}\n", start);
+  if (start < 0 || end < 0) return [`the compiled ${unit} has no contract class`];
+  const methods = [...source.slice(start, end).matchAll(/^ {2}([A-Za-z_$][\w$]*)\(/gm)].map(([, name]) => name!.replace(/^_(\w+)_\d+$/, "$1"));
+  return multisetDifference("compiled contract methods", methods, COMPILED_METHODS);
+}
+
+/** T-A16 on a compiled predicate unit: its sources and its generated contract. */
+export const auditStructure = (unit: string): string[] => [...auditSources(predicateSources(unit)), ...compiledFindings(unit)];

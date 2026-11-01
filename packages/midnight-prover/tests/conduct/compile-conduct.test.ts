@@ -39,6 +39,13 @@ const editPins = (root: string, edit: (pins: { sources: Record<string, string>; 
     return `${JSON.stringify(pins, null, 2)}\n`;
   });
 
+// Mutants edit predicate.compact, so a copy whose predicate.compact a test edits carries an empty mutant list, pinned.
+function withoutMutants(root: string): void {
+  const none = "[]\n";
+  writeFileSync(join(root, "circuits/conduct/mutants.json"), none);
+  editPins(root, pins => { pins.sources["circuits/conduct/mutants.json"] = createHash("sha256").update(none).digest("hex"); });
+}
+
 // vitest reads the source map of every compiled unit it loads and warns once per map whose sources do not resolve.
 describe("compile-conduct output", () => {
   it("every compiled unit's source map names source files that exist", () => {
@@ -91,6 +98,18 @@ describe("compile-conduct refusals", () => {
     expect(result.stderr).toContain("mutant elsewhere must edit one of predicate.compact, verdict_core.compact");
   });
 
+  // Each mutant compiles into conduct-managed/mutants/<id>/, so a repeated id would overwrite the earlier mutant.
+  it("rejects a repeated mutant id", () => {
+    const root = packageCopy();
+    writeFileSync(join(root, "circuits/conduct/mutants.json"), JSON.stringify([
+      { id: "dup", file: "verdict_core.compact", find: "if (action_timestamp >= not_after) { return 2; }", replace: "if (action_timestamp > not_after) { return 2; }" },
+      { id: "dup", file: "verdict_core.compact", find: "if (egress_mode == 0) { return 6; }", replace: "if (egress_mode == 1) { return 6; }" },
+    ]));
+    const result = compile(root, ["--check"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("mutant id dup is repeated");
+  });
+
   it.each([
     ["matches nothing", "assert(no_such_text);"],
     ["matches twice", "return 0;"],
@@ -138,9 +157,7 @@ describe("compile-conduct --check verifies every pin it keeps", () => {
   // --write would drop the pins of the predicate unit it skips.
   it("treats a repeated unit as one, so a partial --write keeps the pins of the units it skips", () => {
     const root = packageCopy();
-    const noMutants = "[]\n";
-    writeFileSync(join(root, "circuits/conduct/mutants.json"), noMutants);
-    editPins(root, pins => { pins.sources["circuits/conduct/mutants.json"] = createHash("sha256").update(noMutants).digest("hex"); });
+    withoutMutants(root);
     const pinsFile = join(root, "circuits/conduct/pins.json");
     const before = readFileSync(pinsFile, "utf8");
     const result = compile(root, ["--write", "--units", "mutants,mutants,reference"]);
@@ -162,6 +179,7 @@ describe("compile-conduct --check verifies every pin it keeps", () => {
 
   it("refuses a partial --write once the sources have changed, so skipped pins cannot go stale", () => {
     const root = packageCopy();
+    withoutMutants(root);
     editFile(root, "circuits/conduct/predicate.compact", text => text.replace("return CV_decide(enforced_at, not_before, not_after, cap_amount, egress_mode, action_kind, action_timestamp, action_amount,\n    cap_asset == action_asset", "return CV_decide(enforced_at, not_before, not_after, cap_amount, egress_mode, action_kind, action_timestamp, action_amount,\n    cap_asset != action_asset"));
     const result = compile(root, ["--write", "--units", "mutants"]);
     expect(result.status).not.toBe(0);
@@ -186,6 +204,7 @@ chmodSync(perturbingCompiler, 0o755);
 describe("compile-conduct --check measures export invariance with a second, unexported compile", () => {
   it("refuses a predicate.compact that exports no pure circuit", () => {
     const root = packageCopy();
+    withoutMutants(root);
     editFile(root, "circuits/conduct/predicate.compact", text => text.replaceAll("export pure circuit ", "pure circuit "));
     const result = compile(root, ["--check", "--units", "predicate"]);
     expect(result.status).not.toBe(0);

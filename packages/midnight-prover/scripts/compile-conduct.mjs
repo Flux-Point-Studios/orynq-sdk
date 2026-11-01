@@ -33,8 +33,11 @@ const partial = units.length < UNITS.length;
 
 const PREDICATE_SOURCES = ["predicate.compact", "verdict_core.compact"];
 const mutants = JSON.parse(await readFile(join(circuits, "mutants.json"), "utf8"));
+const mutantIds = new Set();
 for (const { id, file, find } of mutants) {
   if (!/^[a-z0-9_]+$/.test(id)) throw new Error(`mutant id ${JSON.stringify(id)} must be lowercase letters, digits and underscores`);
+  if (mutantIds.has(id)) throw new Error(`mutant id ${id} is repeated`);
+  mutantIds.add(id);
   if (!PREDICATE_SOURCES.includes(file)) throw new Error(`mutant ${id} must edit one of ${PREDICATE_SOURCES.join(", ")}`);
   if ((await readFile(join(circuits, file), "utf8")).split(find).length !== 2) throw new Error(`mutant ${id} does not apply exactly once`);
 }

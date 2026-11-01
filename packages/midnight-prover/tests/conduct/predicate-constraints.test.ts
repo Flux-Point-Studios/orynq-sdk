@@ -41,7 +41,7 @@ describe("T-A12 every case set reaches the ZKIR layer, and the cases meet every 
       shapes.push([`a clock ahead inside validity where the prior decides ${verdict}`,
         c => spent(c) && isPayment(c) && c.guard === verdict && at(c, notBefore) <= at(c, ts) && at(c, ts) < c.enforcedAt && c.enforcedAt < at(c, notAfter)]);
     }
-    const refusals = ["action kind out of domain", "egress mode out of domain", "payment amount out of domain", "action after guard clock"];
+    const refusals = ["validity window out of domain", "action kind out of domain", "egress mode out of domain", "payment amount out of domain", "action after guard clock"];
     for (const message of refusals) {
       const refused = (c: VerdictCase) => refusal(c) === message;
       shapes.push(
@@ -84,6 +84,8 @@ describe("T-A12 every case set reaches the ZKIR layer, and the cases meet every 
       ...[early, inside, expired, clockEarly, clockInside].flatMap(p => [
         `action kind out of domain for any kind, ${p}`, ...kinds.map(k => `egress mode out of domain for ${k}, ${p}`), `payment amount out of domain for payment, ${p}`,
       ]),
+      // With notBefore at or after notAfter no action time is inside validity.
+      ...kinds.flatMap(k => [early, clockEarly, expired].map(p => `validity window out of domain for ${k}, ${p}`)),
     ];
     const fixed: Record<string, readonly string[]> = {
       "verdict 3 for payment": ["asset_ok"], "verdict 5 for payment": ["asset_ok", "counterparty_ok"],

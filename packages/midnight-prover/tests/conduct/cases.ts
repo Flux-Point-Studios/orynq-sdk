@@ -534,7 +534,7 @@ export function domainCases(): VerdictCase[] {
     afterSpend("domain", "payment after a spend", 100_000n, payment(4n, 7250n, "lovelace", "supplier"), 7300n),
     afterSpend("domain", "egress after a spend", 100_000n, egress("api.example.com", 7250n), 7300n),
   ];
-  const refuse = (c: VerdictCase, changes: Readonly<Record<string, bigint>>, refusal: Outcome) => ({ ...vary(c, changes), group: "domain", evaluate: refusal, guard: refusal });
+  const refuse = (c: VerdictCase, changes: Readonly<Record<string, bigint | boolean>>, refusal: Outcome) => ({ ...vary(c, changes), group: "domain", evaluate: refusal, guard: refusal });
   const refusals = (c: VerdictCase, values: readonly bigint[], zeroPayment: boolean) => [
     ...values.flatMap(value => [refuse(c, { action_kind: value }, KIND_REFUSAL), refuse(c, { egress_mode: value }, MODE_REFUSAL)]),
     ...(zeroPayment ? [refuse(c, { action_amount: 0n }, AMOUNT_REFUSAL)] : []),
@@ -548,8 +548,26 @@ export function domainCases(): VerdictCase[] {
   const decided = rangeBases().filter(({ base }) => typeof base.guard === "number");
   const ranged = [...decided.map(({ base }) => base), ...decided.filter(({ scale }) => scale === "top").map(({ base }) => flipIgnored(base))];
   const emptyWindows = (c: VerdictCase) => [{ not_before: c.args[slot("not_after")] as bigint }, { not_before: c.args[slot("not_after")] as bigint, not_after: c.args[slot("not_before")] as bigint }];
+  // An empty window at each position an action not later than the clock can take, as [notBefore, notAfter, action
+  // time, clock] at the bottom of uint64 and at the top; every other slot, which the refusal leaves free, sits at the
+  // other end.
+  const EMPTY_WINDOWS = [
+    [[1n, 1n, 0n, 0n], [MAX_U64, MAX_U64, MAX_U64 - 1n, MAX_U64 - 1n]],
+    [[1n, 0n, 0n, 0n], [MAX_U64, MAX_U64, MAX_U64 - 1n, MAX_U64]],
+    [[0n, 0n, 0n, 0n], [MAX_U64, MAX_U64, MAX_U64, MAX_U64]],
+  ] as const;
+  const emptyWindowEnds = inValidity.flatMap(c => EMPTY_WINDOWS.flat().map(([notBefore, notAfter, ts, clock]) => {
+    const bottom = ts === 0n;
+    const refused = refuse(c, {
+      not_before: notBefore, not_after: notAfter, action_timestamp: ts, cap_amount: bottom ? MAX_U64 : 0n, prior_spent: bottom ? MAX_U64 : 0n,
+      action_amount: bottom ? MAX_U64 : isPayment(c) ? 1n : 0n, egress_mode: bottom ? 0n : 1n, action_asset: bottom ? c.args[slot("cap_asset")]! : DUST_TAG,
+      counterparty_ok: bottom, egress_ok: !bottom,
+    }, VALIDITY_REFUSAL);
+    return { ...refused, name: `${refused.name} clock=${clock}`, enforcedAt: clock };
+  }));
   return [
     ...bases.flatMap(c => emptyWindows(c).map(changes => refuse(c, changes, VALIDITY_REFUSAL))),
+    ...emptyWindowEnds,
     ...bases.flatMap(c => refusals(c, [2n, 255n], isPayment(c))),
     ...inValidity.flatMap(c => edges(c).flatMap(edge => refusals(vary(c, edge), [2n], isPayment(c)))),
     ...[1n, MAX_U64].flatMap(amount => refusals(vary(inValidity[0]!, { action_amount: amount }), [2n], false)),

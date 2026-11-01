@@ -1,21 +1,26 @@
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { assetTag } from "@fluxpointstudios/orynq-sdk-conduct";
+import { assetTag, PREDICATE_LAYOUT } from "@fluxpointstudios/orynq-sdk-conduct";
 import { describe, expect, it } from "vitest";
 import { allCases, checkVerdictArgs, circuitOutcomes, CLAIMS, MAX_U64, slot, type VerdictCase } from "./cases.js";
 import { loadUnit, outcome, unitDir, zkCheck, type Outcome, type UnitModule } from "./harness.js";
 import { agrees, atomTruths, orderCases, withoutStacks, type Judged, type Judgement, type OrderCell } from "./order-type.js";
-import { auditStructure, predicateSources } from "./structure.js";
+import { auditStructure } from "./structure.js";
 
-// The round-5 review's surviving mutants, each with the finding it came from.
-const ROUND5_MUTANTS = [
-  ["cap_rule_skipped_in_amount_band", "R5-F1"], ["cap_rule_skipped_in_cap_band", "R5-F1"], ["counterparty_rule_skipped_in_amount_band", "R5-F1"],
-  ["asset_rule_skipped_in_prior_band", "R5-F1"], ["clock_rule_skipped_in_amount_band", "R5-F1"],
-  ["kind_domain_assert_waived_past_not_after", "R5-F2"], ["mode_domain_assert_waived_past_not_after", "R5-F2"], ["amount_floor_waived_past_not_after", "R5-F2"],
-  ["amount_floor_waived_under_deny_all_above_cap_3", "R5-F3"], ["kind_domain_assert_waived_in_cap_band", "R5-F3"], ["clock_assert_waived_in_prior_band", "R5-F3"],
-  ["clock_assert_waived_far_past_clock", "R5-F3"], ["amount_floor_waived_under_deny_all_after_spend", "R5-P1"],
-  ["clock_rule_needs_zero_prior_unless_off_list", "R5-P2"], ["clock_assert_waived_off_list_after_spend", "R5-P2"], ["clock_rule_needs_zero_prior_for_deny_all_payment", "R5-P2"],
+const BAND = "a rule skipped in a band between 2^32 and 2^53";
+const PAST_NOT_AFTER = "a refusal waived strictly past notAfter";
+const THRESHOLD = "a refusal waived past a cap, prior or lag threshold";
+const AFTER_SPEND = "a rule or refusal gated on a prior spend, off-list or under deny-all";
+// Mutants that gate a rule or refusal on a magic band or a combination of slots, each with what it gates.
+const GATED_MUTANTS = [
+  ["cap_rule_skipped_in_amount_band", BAND], ["cap_rule_skipped_in_cap_band", BAND], ["counterparty_rule_skipped_in_amount_band", BAND],
+  ["asset_rule_skipped_in_prior_band", BAND], ["clock_rule_skipped_in_amount_band", BAND],
+  ["kind_domain_assert_waived_past_not_after", PAST_NOT_AFTER], ["mode_domain_assert_waived_past_not_after", PAST_NOT_AFTER],
+  ["amount_floor_waived_past_not_after", PAST_NOT_AFTER], ["amount_floor_waived_under_deny_all_above_cap_3", THRESHOLD],
+  ["kind_domain_assert_waived_in_cap_band", THRESHOLD], ["clock_assert_waived_in_prior_band", THRESHOLD], ["clock_assert_waived_far_past_clock", THRESHOLD],
+  ["amount_floor_waived_under_deny_all_after_spend", AFTER_SPEND], ["clock_rule_needs_zero_prior_unless_off_list", AFTER_SPEND],
+  ["clock_assert_waived_off_list_after_spend", AFTER_SPEND], ["clock_rule_needs_zero_prior_for_deny_all_payment", AFTER_SPEND],
 ] as const;
 const VERDICT_CORE_MUTANTS = [
   "swap_counterparty_cap", "not_after_inclusive", "not_before_exclusive", "cap_inclusive", "clock_rule_removed",
@@ -36,10 +41,15 @@ const VERDICT_CORE_MUTANTS = [
   "mode_domain_assert_waived_with_prior_under_large_cap", "amount_floor_waived_for_large_time", "amount_floor_waived_under_deny_all",
   "amount_floor_waived_for_asset_mismatch", "amount_floor_waived_off_list", "amount_floor_waived_with_egress_ok", "amount_floor_waived_at_time_zero",
   "amount_floor_waived_late_with_prior", "amount_floor_waived_with_prior_under_large_cap", "validity_window_assert_removed",
-  ...ROUND5_MUTANTS.map(([id]) => id), "kind_domain_assert_waived_past_cap", "rewire_window_conditions", "rewire_counterparty_cap_conditions",
+  ...GATED_MUTANTS.map(([id]) => id), "kind_domain_assert_waived_past_cap", "rewire_window_conditions", "rewire_counterparty_cap_conditions",
   "rewire_asset_rule_negated", "rewire_amount_floor_conjunction", "rewire_clock_assert_and_rule",
 ];
-const PREDICATE_MUTANTS = ["unconstrained_verdict", "ledger_verdict_constant", "claim_high_bits"];
+const PREDICATE_MUTANTS = [
+  "unconstrained_verdict", "ledger_verdict_constant", "claim_high_bits", "check_verdict_waived_off_list", "check_verdict_refuses_off_list",
+];
+// A waiver module placed after a declaration with a body, where a parse that stopped early would not see it. It adds
+// literals and comparisons, which AM-6.3 answers by T-A16, so no case or cell is required to kill it.
+const HIDDEN_CODE_MUTANTS = ["hidden_waiver", "hidden_waiver_behind_struct", "hidden_waiver_behind_carriage_return"];
 // AM-1: the egress-mode domain assert runs before the deny-all rule on every path, so `mode != 1` returning 6 cannot
 // differ from the circuit. It is compiled only to show that, and is never counted as killed.
 const EQUIVALENT_MUTANTS = ["egress_mode_not_one_denies"];
@@ -48,7 +58,7 @@ const EQUIVALENT_MUTANTS = ["egress_mode_not_one_denies"];
 const EVALUATE_ONLY_MUTANTS = ["not_after_inclusive", "expiry_needs_zero_prior", "expiry_needs_small_amount", "expiry_skipped_for_payment_with_egress_ok"];
 // The decision owner's rulings name T-A10 as the killer of these refusal mutants.
 const DOMAIN_KILLED_MUTANTS = ["kind_domain_assert_removed", "mode_domain_assert_removed", "amount_floor_removed", "validity_window_assert_removed"];
-// AM-6.3: the mutants that pass T-A16. Each only re-wires audited comparisons and Boolean inputs inside audited
+// AM-6.3: the mutants that pass T-A16. Each only re-wires audited comparisons and Boolean inputs inside ConductVerdict's
 // conditions, so T-A17 must kill it.
 const REWIRING_MUTANTS = [
   "deny_all_needs_off_list", "kind_branch_on_asset_ok", "amount_floor_waived_for_asset_mismatch", "amount_floor_waived_off_list",
@@ -107,8 +117,8 @@ describe("T-A14 every VerdictCore mutant is killed by a T-A03..T-A10 case or a T
   it("mutants.json lists exactly the VerdictCore, predicate and equivalent mutant sets", () => {
     const ids = (file: string) => mutants.filter(m => m.file === file).map(m => m.id).sort();
     expect(ids("verdict_core.compact")).toEqual([...VERDICT_CORE_MUTANTS, ...EQUIVALENT_MUTANTS].sort());
-    expect(ids("predicate.compact")).toEqual([...PREDICATE_MUTANTS].sort());
-    expect(mutants).toHaveLength(VERDICT_CORE_MUTANTS.length + PREDICATE_MUTANTS.length + EQUIVALENT_MUTANTS.length);
+    expect(ids("predicate.compact")).toEqual([...PREDICATE_MUTANTS, ...HIDDEN_CODE_MUTANTS].sort());
+    expect(mutants).toHaveLength(VERDICT_CORE_MUTANTS.length + PREDICATE_MUTANTS.length + HIDDEN_CODE_MUTANTS.length + EQUIVALENT_MUTANTS.length);
   });
 
   it.each(VERDICT_CORE_MUTANTS)("kills %s", async id => {
@@ -162,7 +172,11 @@ describe("AM-1: the egress `mode != 1` returns 6 mutant is equivalent, so it is 
     let inputs = 0;
     for (let mode = 0n; mode < 256n; mode++) for (const kind of [0n, 1n, 2n, 255n]) for (const [ts, clock] of positions) {
       for (let bits = 0; bits < 8; bits++) for (const prior of [0n, MAX_U64]) {
-        const args = [1000n, 2000n, tag, 10n, mode, kind, ts, bits & 1 ? tag : 0n, kind === 1n ? 0n : 5n, (bits & 2) !== 0, prior, (bits & 4) !== 0];
+        const values: Readonly<Record<string, bigint | boolean>> = {
+          not_before: 1000n, not_after: 2000n, cap_asset: tag, cap_amount: 10n, egress_mode: mode, action_kind: kind, action_timestamp: ts,
+          action_asset: bits & 1 ? tag : 0n, action_amount: kind === 1n ? 0n : 5n, counterparty_ok: (bits & 2) !== 0, prior_spent: prior, egress_ok: (bits & 4) !== 0,
+        };
+        const args = PREDICATE_LAYOUT.map(input => values[input.name]!);
         inputs++;
         for (const [name, run] of [["evaluate", (pure: UnitModule["pureCircuits"]) => pure.evaluate!(...args)], ["guard_verdict", (pure: UnitModule["pureCircuits"]) => pure.guard_verdict!(clock, ...args)]] as const) {
           if (!isDeepStrictEqual(outcome(() => run(pureCircuits)), outcome(() => run(equivalent)))) differing.push(`${name}(${args.join(",")})`);
@@ -176,7 +190,7 @@ describe("AM-1: the egress `mode != 1` returns 6 mutant is equivalent, so it is 
 
 describe("AM-6.3: a mutant that passes T-A16 only re-wires audited comparisons, and T-A17 kills it", () => {
   it("exactly the re-wiring mutants pass T-A16", () => {
-    expect(mutants.filter(m => auditStructure(predicateSources(`mutants/${m.id}`)).length === 0).map(m => m.id).sort()).toEqual([...REWIRING_MUTANTS].sort());
+    expect(mutants.filter(m => auditStructure(`mutants/${m.id}`).length === 0).map(m => m.id).sort()).toEqual([...REWIRING_MUTANTS].sort());
   });
 
   it.each(REWIRING_MUTANTS)("T-A17 kills %s", async id => {
@@ -184,8 +198,8 @@ describe("AM-6.3: a mutant that passes T-A16 only re-wires audited comparisons, 
     expect(killer, `mutant ${id} passes T-A16 and survives T-A17: a HIGH finding under AM-6.3`).toBeDefined();
   });
 
-  it.each(ROUND5_MUTANTS)("%s (%s) fails T-A16, and T-A17 kills it", async id => {
-    expect(auditStructure(predicateSources(`mutants/${id}`))).not.toEqual([]);
+  it.each(GATED_MUTANTS)("%s (%s) fails T-A16, and T-A17 kills it", async id => {
+    expect(auditStructure(`mutants/${id}`)).not.toEqual([]);
     expect(await orderGuardKill(id), `mutant ${id} survived every T-A17 cell`).toBeDefined();
   });
 });
@@ -214,7 +228,7 @@ describe("T-A14 ZKIR leg: every mutant that reaches check_verdict is killed by t
 
   // The cases whose guard_verdict the mutant gets wrong at JS come first; when no named case does, the first such T-A17
   // cell. A predicate.compact mutant leaves the pure circuits as they are, so no JS case can differ.
-  it.each(mutants.map(m => m.id).filter(id => !EVALUATE_ONLY_MUTANTS.includes(id) && !EQUIVALENT_MUTANTS.includes(id)))("kills %s", async id => {
+  it.each(mutants.map(m => m.id).filter(id => ![...EVALUATE_ONLY_MUTANTS, ...EQUIVALENT_MUTANTS, ...HIDDEN_CODE_MUTANTS].includes(id)))("kills %s", async id => {
     const unit = `mutants/${id}`;
     const pure = (await loadUnit(unit)).pureCircuits;
     const jsKills = (c: VerdictCase) => !isDeepStrictEqual(circuitOutcomes(pure, c).guard, c.guard);
