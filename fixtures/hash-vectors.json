@@ -131,6 +131,96 @@
       },
       "canonical": "{\"body\":{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"claude-3\"},\"method\":\"POST\",\"url\":\"https://api.example.com/v1/infer\"}",
       "sha256": "d1715e787c12c734cedfe3e4c05e6f4ed6771ddca7ffab5b1577dc1d76803b0f"
+    },
+    {
+      "name": "conduct_guard_payment_action_event",
+      "description": "process-trace custom event body of an allowed conduct guard payment",
+      "input": {
+        "data": {
+          "action": {
+            "amount": "5",
+            "asset": "USD",
+            "counterparty": "acme",
+            "kind": "payment",
+            "timestamp": "3"
+          },
+          "actionDigest": "221dd75f9b0346a60440af384e269940e071b68daf84b9d43c29b48089af7db7",
+          "actionKind": "payment",
+          "enforcedAt": "3",
+          "mandateCommitment": "348a64c90302dad81b3cad80888beef6d22ad70590441d288024ad40d0272a67",
+          "seq": "0",
+          "timestamp": "3",
+          "type": "orynq.conduct.guard.action.v1"
+        },
+        "eventType": "orynq.conduct.guard.v1",
+        "id": "550e8400-e29b-41d4-a716-000000000000",
+        "kind": "custom",
+        "seq": 0,
+        "timestamp": "2026-10-27T00:00:00.000Z",
+        "visibility": "private"
+      },
+      "canonical": "{\"data\":{\"action\":{\"amount\":\"5\",\"asset\":\"USD\",\"counterparty\":\"acme\",\"kind\":\"payment\",\"timestamp\":\"3\"},\"actionDigest\":\"221dd75f9b0346a60440af384e269940e071b68daf84b9d43c29b48089af7db7\",\"actionKind\":\"payment\",\"enforcedAt\":\"3\",\"mandateCommitment\":\"348a64c90302dad81b3cad80888beef6d22ad70590441d288024ad40d0272a67\",\"seq\":\"0\",\"timestamp\":\"3\",\"type\":\"orynq.conduct.guard.action.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"550e8400-e29b-41d4-a716-000000000000\",\"kind\":\"custom\",\"seq\":0,\"timestamp\":\"2026-10-27T00:00:00.000Z\",\"visibility\":\"private\"}",
+      "sha256": "4891494faa2692c06853412cf0d5801c4ef67e65d4953579dc712aeeef80b4f5"
+    },
+    {
+      "name": "conduct_guard_payment_denial_event",
+      "description": "process-trace custom event body of a conduct guard payment denied SPEND_CAP_EXCEEDED",
+      "input": {
+        "data": {
+          "action": {
+            "amount": "5",
+            "asset": "USD",
+            "counterparty": "acme",
+            "kind": "payment",
+            "timestamp": "3"
+          },
+          "actionDigest": "221dd75f9b0346a60440af384e269940e071b68daf84b9d43c29b48089af7db7",
+          "actionKind": "payment",
+          "enforcedAt": "3",
+          "mandateCommitment": "348a64c90302dad81b3cad80888beef6d22ad70590441d288024ad40d0272a67",
+          "reason": "SPEND_CAP_EXCEEDED",
+          "rule": "payment exceeds the remaining window spend cap",
+          "seq": "1",
+          "timestamp": "3",
+          "type": "orynq.conduct.guard.denial.v1"
+        },
+        "eventType": "orynq.conduct.guard.v1",
+        "id": "550e8400-e29b-41d4-a716-000000000000",
+        "kind": "custom",
+        "seq": 0,
+        "timestamp": "2026-10-27T00:00:00.000Z",
+        "visibility": "private"
+      },
+      "canonical": "{\"data\":{\"action\":{\"amount\":\"5\",\"asset\":\"USD\",\"counterparty\":\"acme\",\"kind\":\"payment\",\"timestamp\":\"3\"},\"actionDigest\":\"221dd75f9b0346a60440af384e269940e071b68daf84b9d43c29b48089af7db7\",\"actionKind\":\"payment\",\"enforcedAt\":\"3\",\"mandateCommitment\":\"348a64c90302dad81b3cad80888beef6d22ad70590441d288024ad40d0272a67\",\"reason\":\"SPEND_CAP_EXCEEDED\",\"rule\":\"payment exceeds the remaining window spend cap\",\"seq\":\"1\",\"timestamp\":\"3\",\"type\":\"orynq.conduct.guard.denial.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"550e8400-e29b-41d4-a716-000000000000\",\"kind\":\"custom\",\"seq\":0,\"timestamp\":\"2026-10-27T00:00:00.000Z\",\"visibility\":\"private\"}",
+      "sha256": "592d3a9312b168470d129f390bbef69e1b07c45a3407dd83d3f4d67fab50a17b"
+    },
+    {
+      "name": "conduct_guard_egress_action_event",
+      "description": "process-trace custom event body of an allowed conduct guard egress",
+      "input": {
+        "data": {
+          "action": {
+            "destination": "api1",
+            "kind": "egress",
+            "timestamp": "3"
+          },
+          "actionDigest": "64f3623dca928c0de188a61ef45c1c08768925354974ca3981ef0ee135752274",
+          "actionKind": "egress",
+          "enforcedAt": "3",
+          "mandateCommitment": "348a64c90302dad81b3cad80888beef6d22ad70590441d288024ad40d0272a67",
+          "seq": "0",
+          "timestamp": "3",
+          "type": "orynq.conduct.guard.action.v1"
+        },
+        "eventType": "orynq.conduct.guard.v1",
+        "id": "550e8400-e29b-41d4-a716-000000000000",
+        "kind": "custom",
+        "seq": 0,
+        "timestamp": "2026-10-27T00:00:00.000Z",
+        "visibility": "private"
+      },
+      "canonical": "{\"data\":{\"action\":{\"destination\":\"api1\",\"kind\":\"egress\",\"timestamp\":\"3\"},\"actionDigest\":\"64f3623dca928c0de188a61ef45c1c08768925354974ca3981ef0ee135752274\",\"actionKind\":\"egress\",\"enforcedAt\":\"3\",\"mandateCommitment\":\"348a64c90302dad81b3cad80888beef6d22ad70590441d288024ad40d0272a67\",\"seq\":\"0\",\"timestamp\":\"3\",\"type\":\"orynq.conduct.guard.action.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"550e8400-e29b-41d4-a716-000000000000\",\"kind\":\"custom\",\"seq\":0,\"timestamp\":\"2026-10-27T00:00:00.000Z\",\"visibility\":\"private\"}",
+      "sha256": "e36ffc7fb22a7943b987df2abf9fd40ec8a908984865aeab86b15b2644284e95"
     }
   ]
 }

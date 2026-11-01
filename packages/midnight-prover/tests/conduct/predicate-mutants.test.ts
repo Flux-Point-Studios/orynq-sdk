@@ -70,7 +70,9 @@ const REWIRING_MUTANTS = [
 ];
 
 const { pureCircuits } = await loadUnit("predicate");
-const mutants: { id: string; file: string }[] = JSON.parse(readFileSync(join(resolve(import.meta.dirname, "../.."), "circuits/conduct/mutants.json"), "utf8"));
+const PREDICATE_SOURCES = ["predicate.compact", "verdict_core.compact"];
+const mutants: { id: string; file: string }[] = JSON.parse(readFileSync(join(resolve(import.meta.dirname, "../.."), "circuits/conduct/mutants.json"), "utf8"))
+  .filter((m: { file: string }) => PREDICATE_SOURCES.includes(m.file));
 const cases = allCases();
 const disagreements = (pure: UnitModule["pureCircuits"]): VerdictCase[] =>
   cases.filter(c => !isDeepStrictEqual(circuitOutcomes(pure, c), { evaluate: c.evaluate, guard: c.guard }));
@@ -208,7 +210,6 @@ describe("AM-6.3: a mutant that passes T-A16 only re-wires audited comparisons, 
     const killer = orderKill((await loadUnit(`mutants/${id}`)).pureCircuits, representatives);
     expect(killer, `mutant ${id} passes T-A16 and survives T-A17: a HIGH finding under AM-6.3`).toBeDefined();
   });
-
 
   it.each(GATED_MUTANTS)("%s (%s) fails T-A16, and T-A17 kills it", async id => {
     expect(auditStructure(`mutants/${id}`)).not.toEqual([]);

@@ -104,6 +104,26 @@ export async function runCircuit(unit: string, name: string, witnesses: object, 
   return callCircuit(await loadUnit(unit), name, witnesses, args).data;
 }
 
+// A unit's initial state reads no witness, so the JS runs that need no transaction share one per unit.
+const initialStates = new WeakMap<UnitModule, { coinKey: string; state: unknown }>();
+
+/** Runs a circuit in the generated JS and returns the ledger its call wrote: the disclosed statement. */
+export async function runLedger(unit: string, name: string, witnesses: object, args: readonly unknown[]): Promise<Record<string, unknown>> {
+  const module = await loadUnit(unit);
+  const contract = new module.Contract(witnesses);
+  let initial = initialStates.get(module);
+  if (initial === undefined) {
+    const coinKey = ledger.sampleCoinPublicKey();
+    initial = { coinKey, state: contract.initialState(runtime.createConstructorContext(undefined, coinKey)).currentContractState };
+    initialStates.set(module, initial);
+  }
+  const circuit = contract.circuits[name];
+  if (typeof circuit !== "function") throw new TypeError(`contract.circuits.${name} is not a function`);
+  const call = circuit(runtime.createCircuitContext(runtime.dummyContractAddress(), initial.coinKey, initial.state as never, undefined), ...args) as unknown as
+    { context: { currentQueryContext: { state: runtime.StateValue } } };
+  return module.ledger(call.context.currentQueryContext.state);
+}
+
 // `check` reads only the IR; the provider insists on key fields, and empty ones show no key or parameter is consulted.
 export function conductProvider(unit: string) {
   const dir = unitDir(unit);

@@ -1,0 +1,640 @@
+// Generated from templates/guard-event-v1.json and classes.json by scripts/compile-conduct.mjs --write.
+pragma language_version 0.23;
+import CompactStandardLibrary;
+include "gadgets";
+import ConductGadgets;
+
+export struct PaymentOpening {
+  prevRollHex: Bytes<64>,
+  rollAfter: Bytes<32>,
+  amount: Uint<64>,
+  assetDigest: Bytes<32>,
+  counterpartyLeaf: Bytes<32>,
+  timestamp: Uint<64>,
+  actionDigestHi: Uint<128>,
+  actionDigestLo: Uint<128>,
+  enforcedAt: Uint<64>,
+  mandateCommitmentHi: Uint<128>,
+  mandateCommitmentLo: Uint<128>,
+  dataSeq: Uint<64>,
+  traceSeq: Uint<64>
+}
+export ledger paymentOpening: PaymentOpening;
+
+export struct EgressOpening {
+  prevRollHex: Bytes<64>,
+  rollAfter: Bytes<32>,
+  destinationLeaf: Bytes<32>,
+  timestamp: Uint<64>,
+  actionDigestHi: Uint<128>,
+  actionDigestLo: Uint<128>,
+  enforcedAt: Uint<64>,
+  mandateCommitmentHi: Uint<128>,
+  mandateCommitmentLo: Uint<128>,
+  dataSeq: Uint<64>,
+  traceSeq: Uint<64>
+}
+export ledger egressOpening: EgressOpening;
+
+export struct MandateOpening {
+  commitment: Bytes<32>,
+  atoms: Bytes<32>
+}
+export ledger mandateOpening: MandateOpening;
+
+witness ev_pa_ascii_min_amount(): Vector<1, Uint<8>>;
+witness ev_pa_ascii_min_asset(): Vector<3, Uint<8>>;
+witness ev_pa_ascii_min_counterparty(): Vector<4, Uint<8>>;
+witness ev_pa_ascii_min_ts(): Vector<1, Uint<8>>;
+witness ev_pa_ascii_min_actionDigest(): Vector<64, Uint<8>>;
+witness ev_pa_ascii_min_enforcedAt(): Vector<1, Uint<8>>;
+witness ev_pa_ascii_min_mandateCommitment(): Vector<64, Uint<8>>;
+witness ev_pa_ascii_min_dataSeq(): Vector<1, Uint<8>>;
+witness ev_pa_ascii_min_id(): Vector<36, Uint<8>>;
+witness ev_pa_ascii_min_traceSeq(): Vector<1, Uint<8>>;
+witness ev_pa_ascii_min_iso(): Vector<24, Uint<8>>;
+witness ev_pa_ascii_min_vis(): Vector<7, Uint<8>>;
+witness ev_pa_ascii_min_eventHex(): Vector<64, Uint<8>>;
+
+export circuit ev_pa_ascii_min(s: PaymentOpening): [] {
+  const amount = ev_pa_ascii_min_amount();
+  const asset = ev_pa_ascii_min_asset();
+  const counterparty = ev_pa_ascii_min_counterparty();
+  const ts = ev_pa_ascii_min_ts();
+  const actionDigest = ev_pa_ascii_min_actionDigest();
+  const enforcedAt = ev_pa_ascii_min_enforcedAt();
+  const mandateCommitment = ev_pa_ascii_min_mandateCommitment();
+  const dataSeq = ev_pa_ascii_min_dataSeq();
+  const id = ev_pa_ascii_min_id();
+  const traceSeq = ev_pa_ascii_min_traceSeq();
+  const iso = ev_pa_ascii_min_iso();
+  const vis = ev_pa_ascii_min_vis();
+  const eventHash = persistentHash<[Bytes<48>, Vector<1, Uint<8>>, Bytes<11>, Vector<3, Uint<8>>, Bytes<18>, Vector<4, Uint<8>>, Bytes<32>, Vector<1, Uint<8>>, Bytes<19>, Vector<64, Uint<8>>, Bytes<39>, Vector<1, Uint<8>>, Bytes<23>, Vector<64, Uint<8>>, Bytes<9>, Vector<1, Uint<8>>, Bytes<15>, Vector<1, Uint<8>>, Bytes<85>, Vector<36, Uint<8>>, Bytes<24>, Vector<1, Uint<8>>, Bytes<14>, Vector<24, Uint<8>>, Bytes<16>, Vector<7, Uint<8>>, Bytes<2>]>(["poi-trace:event:v1|{\"data\":{\"action\":{\"amount\":\"", amount, "\",\"asset\":\"", asset, "\",\"counterparty\":\"", counterparty, "\",\"kind\":\"payment\",\"timestamp\":\"", ts, "\"},\"actionDigest\":\"", actionDigest, "\",\"actionKind\":\"payment\",\"enforcedAt\":\"", enforcedAt, "\",\"mandateCommitment\":\"", mandateCommitment, "\",\"seq\":\"", dataSeq, "\",\"timestamp\":\"", ts, "\",\"type\":\"orynq.conduct.guard.action.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"", id, "\",\"kind\":\"custom\",\"seq\":", traceSeq, ",\"timestamp\":\"", iso, "\",\"visibility\":\"", vis, "\"}"]);
+  const eventHex = ev_pa_ascii_min_eventHex();
+  hexOfHash(eventHex, eventHash);
+  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>(["poi-trace:roll:v1|", s.prevRollHex, "|", eventHex]) == s.rollAfter, "rolling root mismatch");
+  assert(decU64<1>(amount) == s.amount, "amount opening");
+  assert(s.amount != 0, "decimal nonzero");
+  assert(persistentHash<[Vector<3, Uint<8>>]>([asset]) == s.assetDigest, "assetDigest opening");
+  assert(persistentHash<[Bytes<33>, Vector<4, Uint<8>>]>(["orynq:conduct:allowlist:leaf:v1|d", counterparty]) == s.counterpartyLeaf, "counterpartyLeaf opening");
+  assert(decU64<1>(ts) == s.timestamp, "timestamp opening");
+  const actionDigestHalves = hexHalves(actionDigest);
+  assert(actionDigestHalves[0] == (s.actionDigestHi as Field) && actionDigestHalves[1] == (s.actionDigestLo as Field), "actionDigest opening");
+  assert(decU64<1>(enforcedAt) == s.enforcedAt, "enforcedAt opening");
+  const mandateCommitmentHalves = hexHalves(mandateCommitment);
+  assert(mandateCommitmentHalves[0] == (s.mandateCommitmentHi as Field) && mandateCommitmentHalves[1] == (s.mandateCommitmentLo as Field), "mandateCommitment opening");
+  assert(decU64<1>(dataSeq) == s.dataSeq, "dataSeq opening");
+  assert(dec53<1>(traceSeq) == s.traceSeq, "traceSeq opening");
+  jsonStr<3>(asset);
+  jsonStr<4>(counterparty);
+  uuid(id);
+  iso8601(iso);
+  vis7(vis);
+  paymentOpening = disclose(s);
+}
+
+witness ev_pa_unicode_max_amount(): Vector<20, Uint<8>>;
+witness ev_pa_unicode_max_asset(): Vector<6, Uint<8>>;
+witness ev_pa_unicode_max_counterparty(): Vector<11, Uint<8>>;
+witness ev_pa_unicode_max_ts(): Vector<10, Uint<8>>;
+witness ev_pa_unicode_max_actionDigest(): Vector<64, Uint<8>>;
+witness ev_pa_unicode_max_enforcedAt(): Vector<10, Uint<8>>;
+witness ev_pa_unicode_max_mandateCommitment(): Vector<64, Uint<8>>;
+witness ev_pa_unicode_max_dataSeq(): Vector<2, Uint<8>>;
+witness ev_pa_unicode_max_id(): Vector<36, Uint<8>>;
+witness ev_pa_unicode_max_traceSeq(): Vector<1, Uint<8>>;
+witness ev_pa_unicode_max_iso(): Vector<24, Uint<8>>;
+witness ev_pa_unicode_max_vis(): Vector<6, Uint<8>>;
+witness ev_pa_unicode_max_eventHex(): Vector<64, Uint<8>>;
+
+export circuit ev_pa_unicode_max(s: PaymentOpening): [] {
+  const amount = ev_pa_unicode_max_amount();
+  const asset = ev_pa_unicode_max_asset();
+  const counterparty = ev_pa_unicode_max_counterparty();
+  const ts = ev_pa_unicode_max_ts();
+  const actionDigest = ev_pa_unicode_max_actionDigest();
+  const enforcedAt = ev_pa_unicode_max_enforcedAt();
+  const mandateCommitment = ev_pa_unicode_max_mandateCommitment();
+  const dataSeq = ev_pa_unicode_max_dataSeq();
+  const id = ev_pa_unicode_max_id();
+  const traceSeq = ev_pa_unicode_max_traceSeq();
+  const iso = ev_pa_unicode_max_iso();
+  const vis = ev_pa_unicode_max_vis();
+  const eventHash = persistentHash<[Bytes<48>, Vector<20, Uint<8>>, Bytes<11>, Vector<6, Uint<8>>, Bytes<18>, Vector<11, Uint<8>>, Bytes<32>, Vector<10, Uint<8>>, Bytes<19>, Vector<64, Uint<8>>, Bytes<39>, Vector<10, Uint<8>>, Bytes<23>, Vector<64, Uint<8>>, Bytes<9>, Vector<2, Uint<8>>, Bytes<15>, Vector<10, Uint<8>>, Bytes<85>, Vector<36, Uint<8>>, Bytes<24>, Vector<1, Uint<8>>, Bytes<14>, Vector<24, Uint<8>>, Bytes<16>, Vector<6, Uint<8>>, Bytes<2>]>(["poi-trace:event:v1|{\"data\":{\"action\":{\"amount\":\"", amount, "\",\"asset\":\"", asset, "\",\"counterparty\":\"", counterparty, "\",\"kind\":\"payment\",\"timestamp\":\"", ts, "\"},\"actionDigest\":\"", actionDigest, "\",\"actionKind\":\"payment\",\"enforcedAt\":\"", enforcedAt, "\",\"mandateCommitment\":\"", mandateCommitment, "\",\"seq\":\"", dataSeq, "\",\"timestamp\":\"", ts, "\",\"type\":\"orynq.conduct.guard.action.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"", id, "\",\"kind\":\"custom\",\"seq\":", traceSeq, ",\"timestamp\":\"", iso, "\",\"visibility\":\"", vis, "\"}"]);
+  const eventHex = ev_pa_unicode_max_eventHex();
+  hexOfHash(eventHex, eventHash);
+  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>(["poi-trace:roll:v1|", s.prevRollHex, "|", eventHex]) == s.rollAfter, "rolling root mismatch");
+  assert(decU64<20>(amount) == s.amount, "amount opening");
+  assert(s.amount != 0, "decimal nonzero");
+  assert(persistentHash<[Vector<6, Uint<8>>]>([asset]) == s.assetDigest, "assetDigest opening");
+  assert(persistentHash<[Bytes<33>, Vector<11, Uint<8>>]>(["orynq:conduct:allowlist:leaf:v1|k", counterparty]) == s.counterpartyLeaf, "counterpartyLeaf opening");
+  assert(decU64<10>(ts) == s.timestamp, "timestamp opening");
+  const actionDigestHalves = hexHalves(actionDigest);
+  assert(actionDigestHalves[0] == (s.actionDigestHi as Field) && actionDigestHalves[1] == (s.actionDigestLo as Field), "actionDigest opening");
+  assert(decU64<10>(enforcedAt) == s.enforcedAt, "enforcedAt opening");
+  const mandateCommitmentHalves = hexHalves(mandateCommitment);
+  assert(mandateCommitmentHalves[0] == (s.mandateCommitmentHi as Field) && mandateCommitmentHalves[1] == (s.mandateCommitmentLo as Field), "mandateCommitment opening");
+  assert(decU64<2>(dataSeq) == s.dataSeq, "dataSeq opening");
+  assert(dec53<1>(traceSeq) == s.traceSeq, "traceSeq opening");
+  jsonStr<6>(asset);
+  jsonStr<11>(counterparty);
+  uuid(id);
+  iso8601(iso);
+  vis6(vis);
+  paymentOpening = disclose(s);
+}
+
+witness ev_pa_max_amount(): Vector<20, Uint<8>>;
+witness ev_pa_max_asset(): Vector<128, Uint<8>>;
+witness ev_pa_max_counterparty(): Vector<256, Uint<8>>;
+witness ev_pa_max_ts(): Vector<20, Uint<8>>;
+witness ev_pa_max_actionDigest(): Vector<64, Uint<8>>;
+witness ev_pa_max_enforcedAt(): Vector<20, Uint<8>>;
+witness ev_pa_max_mandateCommitment(): Vector<64, Uint<8>>;
+witness ev_pa_max_dataSeq(): Vector<20, Uint<8>>;
+witness ev_pa_max_id(): Vector<36, Uint<8>>;
+witness ev_pa_max_traceSeq(): Vector<16, Uint<8>>;
+witness ev_pa_max_iso(): Vector<24, Uint<8>>;
+witness ev_pa_max_vis(): Vector<7, Uint<8>>;
+witness ev_pa_max_eventHex(): Vector<64, Uint<8>>;
+
+export circuit ev_pa_max(s: PaymentOpening): [] {
+  const amount = ev_pa_max_amount();
+  const asset = ev_pa_max_asset();
+  const counterparty = ev_pa_max_counterparty();
+  const ts = ev_pa_max_ts();
+  const actionDigest = ev_pa_max_actionDigest();
+  const enforcedAt = ev_pa_max_enforcedAt();
+  const mandateCommitment = ev_pa_max_mandateCommitment();
+  const dataSeq = ev_pa_max_dataSeq();
+  const id = ev_pa_max_id();
+  const traceSeq = ev_pa_max_traceSeq();
+  const iso = ev_pa_max_iso();
+  const vis = ev_pa_max_vis();
+  const eventHash = persistentHash<[Bytes<48>, Vector<20, Uint<8>>, Bytes<11>, Vector<128, Uint<8>>, Bytes<18>, Vector<256, Uint<8>>, Bytes<32>, Vector<20, Uint<8>>, Bytes<19>, Vector<64, Uint<8>>, Bytes<39>, Vector<20, Uint<8>>, Bytes<23>, Vector<64, Uint<8>>, Bytes<9>, Vector<20, Uint<8>>, Bytes<15>, Vector<20, Uint<8>>, Bytes<85>, Vector<36, Uint<8>>, Bytes<24>, Vector<16, Uint<8>>, Bytes<14>, Vector<24, Uint<8>>, Bytes<16>, Vector<7, Uint<8>>, Bytes<2>]>(["poi-trace:event:v1|{\"data\":{\"action\":{\"amount\":\"", amount, "\",\"asset\":\"", asset, "\",\"counterparty\":\"", counterparty, "\",\"kind\":\"payment\",\"timestamp\":\"", ts, "\"},\"actionDigest\":\"", actionDigest, "\",\"actionKind\":\"payment\",\"enforcedAt\":\"", enforcedAt, "\",\"mandateCommitment\":\"", mandateCommitment, "\",\"seq\":\"", dataSeq, "\",\"timestamp\":\"", ts, "\",\"type\":\"orynq.conduct.guard.action.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"", id, "\",\"kind\":\"custom\",\"seq\":", traceSeq, ",\"timestamp\":\"", iso, "\",\"visibility\":\"", vis, "\"}"]);
+  const eventHex = ev_pa_max_eventHex();
+  hexOfHash(eventHex, eventHash);
+  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>(["poi-trace:roll:v1|", s.prevRollHex, "|", eventHex]) == s.rollAfter, "rolling root mismatch");
+  assert(decU64<20>(amount) == s.amount, "amount opening");
+  assert(s.amount != 0, "decimal nonzero");
+  assert(persistentHash<[Vector<128, Uint<8>>]>([asset]) == s.assetDigest, "assetDigest opening");
+  assert(persistentHash<[Bytes<33>, Vector<2, Uint<8>>, Vector<256, Uint<8>>]>(["orynq:conduct:allowlist:leaf:v1|y", [1, 0], counterparty]) == s.counterpartyLeaf, "counterpartyLeaf opening");
+  assert(decU64<20>(ts) == s.timestamp, "timestamp opening");
+  const actionDigestHalves = hexHalves(actionDigest);
+  assert(actionDigestHalves[0] == (s.actionDigestHi as Field) && actionDigestHalves[1] == (s.actionDigestLo as Field), "actionDigest opening");
+  assert(decU64<20>(enforcedAt) == s.enforcedAt, "enforcedAt opening");
+  const mandateCommitmentHalves = hexHalves(mandateCommitment);
+  assert(mandateCommitmentHalves[0] == (s.mandateCommitmentHi as Field) && mandateCommitmentHalves[1] == (s.mandateCommitmentLo as Field), "mandateCommitment opening");
+  assert(decU64<20>(dataSeq) == s.dataSeq, "dataSeq opening");
+  assert(dec53<16>(traceSeq) == s.traceSeq, "traceSeq opening");
+  jsonStr<128>(asset);
+  jsonStr<256>(counterparty);
+  uuid(id);
+  iso8601(iso);
+  vis7(vis);
+  paymentOpening = disclose(s);
+}
+
+witness ev_pd4_ascii_min_amount(): Vector<1, Uint<8>>;
+witness ev_pd4_ascii_min_asset(): Vector<3, Uint<8>>;
+witness ev_pd4_ascii_min_counterparty(): Vector<4, Uint<8>>;
+witness ev_pd4_ascii_min_ts(): Vector<1, Uint<8>>;
+witness ev_pd4_ascii_min_actionDigest(): Vector<64, Uint<8>>;
+witness ev_pd4_ascii_min_enforcedAt(): Vector<1, Uint<8>>;
+witness ev_pd4_ascii_min_mandateCommitment(): Vector<64, Uint<8>>;
+witness ev_pd4_ascii_min_dataSeq(): Vector<1, Uint<8>>;
+witness ev_pd4_ascii_min_id(): Vector<36, Uint<8>>;
+witness ev_pd4_ascii_min_traceSeq(): Vector<1, Uint<8>>;
+witness ev_pd4_ascii_min_iso(): Vector<24, Uint<8>>;
+witness ev_pd4_ascii_min_vis(): Vector<7, Uint<8>>;
+witness ev_pd4_ascii_min_eventHex(): Vector<64, Uint<8>>;
+
+export circuit ev_pd4_ascii_min(s: PaymentOpening): [] {
+  const amount = ev_pd4_ascii_min_amount();
+  const asset = ev_pd4_ascii_min_asset();
+  const counterparty = ev_pd4_ascii_min_counterparty();
+  const ts = ev_pd4_ascii_min_ts();
+  const actionDigest = ev_pd4_ascii_min_actionDigest();
+  const enforcedAt = ev_pd4_ascii_min_enforcedAt();
+  const mandateCommitment = ev_pd4_ascii_min_mandateCommitment();
+  const dataSeq = ev_pd4_ascii_min_dataSeq();
+  const id = ev_pd4_ascii_min_id();
+  const traceSeq = ev_pd4_ascii_min_traceSeq();
+  const iso = ev_pd4_ascii_min_iso();
+  const vis = ev_pd4_ascii_min_vis();
+  const eventHash = persistentHash<[Bytes<48>, Vector<1, Uint<8>>, Bytes<11>, Vector<3, Uint<8>>, Bytes<18>, Vector<4, Uint<8>>, Bytes<32>, Vector<1, Uint<8>>, Bytes<19>, Vector<64, Uint<8>>, Bytes<39>, Vector<1, Uint<8>>, Bytes<23>, Vector<64, Uint<8>>, Bytes<95>, Vector<1, Uint<8>>, Bytes<15>, Vector<1, Uint<8>>, Bytes<85>, Vector<36, Uint<8>>, Bytes<24>, Vector<1, Uint<8>>, Bytes<14>, Vector<24, Uint<8>>, Bytes<16>, Vector<7, Uint<8>>, Bytes<2>]>(["poi-trace:event:v1|{\"data\":{\"action\":{\"amount\":\"", amount, "\",\"asset\":\"", asset, "\",\"counterparty\":\"", counterparty, "\",\"kind\":\"payment\",\"timestamp\":\"", ts, "\"},\"actionDigest\":\"", actionDigest, "\",\"actionKind\":\"payment\",\"enforcedAt\":\"", enforcedAt, "\",\"mandateCommitment\":\"", mandateCommitment, "\",\"reason\":\"SPEND_CAP_EXCEEDED\",\"rule\":\"payment exceeds the remaining window spend cap\",\"seq\":\"", dataSeq, "\",\"timestamp\":\"", ts, "\",\"type\":\"orynq.conduct.guard.denial.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"", id, "\",\"kind\":\"custom\",\"seq\":", traceSeq, ",\"timestamp\":\"", iso, "\",\"visibility\":\"", vis, "\"}"]);
+  const eventHex = ev_pd4_ascii_min_eventHex();
+  hexOfHash(eventHex, eventHash);
+  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>(["poi-trace:roll:v1|", s.prevRollHex, "|", eventHex]) == s.rollAfter, "rolling root mismatch");
+  assert(decU64<1>(amount) == s.amount, "amount opening");
+  assert(s.amount != 0, "decimal nonzero");
+  assert(persistentHash<[Vector<3, Uint<8>>]>([asset]) == s.assetDigest, "assetDigest opening");
+  assert(persistentHash<[Bytes<33>, Vector<4, Uint<8>>]>(["orynq:conduct:allowlist:leaf:v1|d", counterparty]) == s.counterpartyLeaf, "counterpartyLeaf opening");
+  assert(decU64<1>(ts) == s.timestamp, "timestamp opening");
+  const actionDigestHalves = hexHalves(actionDigest);
+  assert(actionDigestHalves[0] == (s.actionDigestHi as Field) && actionDigestHalves[1] == (s.actionDigestLo as Field), "actionDigest opening");
+  assert(decU64<1>(enforcedAt) == s.enforcedAt, "enforcedAt opening");
+  const mandateCommitmentHalves = hexHalves(mandateCommitment);
+  assert(mandateCommitmentHalves[0] == (s.mandateCommitmentHi as Field) && mandateCommitmentHalves[1] == (s.mandateCommitmentLo as Field), "mandateCommitment opening");
+  assert(decU64<1>(dataSeq) == s.dataSeq, "dataSeq opening");
+  assert(dec53<1>(traceSeq) == s.traceSeq, "traceSeq opening");
+  jsonStr<3>(asset);
+  jsonStr<4>(counterparty);
+  uuid(id);
+  iso8601(iso);
+  vis7(vis);
+  paymentOpening = disclose(s);
+}
+
+witness ev_ea_ascii_min_destination(): Vector<4, Uint<8>>;
+witness ev_ea_ascii_min_ts(): Vector<1, Uint<8>>;
+witness ev_ea_ascii_min_actionDigest(): Vector<64, Uint<8>>;
+witness ev_ea_ascii_min_enforcedAt(): Vector<1, Uint<8>>;
+witness ev_ea_ascii_min_mandateCommitment(): Vector<64, Uint<8>>;
+witness ev_ea_ascii_min_dataSeq(): Vector<1, Uint<8>>;
+witness ev_ea_ascii_min_id(): Vector<36, Uint<8>>;
+witness ev_ea_ascii_min_traceSeq(): Vector<1, Uint<8>>;
+witness ev_ea_ascii_min_iso(): Vector<24, Uint<8>>;
+witness ev_ea_ascii_min_vis(): Vector<7, Uint<8>>;
+witness ev_ea_ascii_min_eventHex(): Vector<64, Uint<8>>;
+
+export circuit ev_ea_ascii_min(s: EgressOpening): [] {
+  const destination = ev_ea_ascii_min_destination();
+  const ts = ev_ea_ascii_min_ts();
+  const actionDigest = ev_ea_ascii_min_actionDigest();
+  const enforcedAt = ev_ea_ascii_min_enforcedAt();
+  const mandateCommitment = ev_ea_ascii_min_mandateCommitment();
+  const dataSeq = ev_ea_ascii_min_dataSeq();
+  const id = ev_ea_ascii_min_id();
+  const traceSeq = ev_ea_ascii_min_traceSeq();
+  const iso = ev_ea_ascii_min_iso();
+  const vis = ev_ea_ascii_min_vis();
+  const eventHash = persistentHash<[Bytes<53>, Vector<4, Uint<8>>, Bytes<31>, Vector<1, Uint<8>>, Bytes<19>, Vector<64, Uint<8>>, Bytes<38>, Vector<1, Uint<8>>, Bytes<23>, Vector<64, Uint<8>>, Bytes<9>, Vector<1, Uint<8>>, Bytes<15>, Vector<1, Uint<8>>, Bytes<85>, Vector<36, Uint<8>>, Bytes<24>, Vector<1, Uint<8>>, Bytes<14>, Vector<24, Uint<8>>, Bytes<16>, Vector<7, Uint<8>>, Bytes<2>]>(["poi-trace:event:v1|{\"data\":{\"action\":{\"destination\":\"", destination, "\",\"kind\":\"egress\",\"timestamp\":\"", ts, "\"},\"actionDigest\":\"", actionDigest, "\",\"actionKind\":\"egress\",\"enforcedAt\":\"", enforcedAt, "\",\"mandateCommitment\":\"", mandateCommitment, "\",\"seq\":\"", dataSeq, "\",\"timestamp\":\"", ts, "\",\"type\":\"orynq.conduct.guard.action.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"", id, "\",\"kind\":\"custom\",\"seq\":", traceSeq, ",\"timestamp\":\"", iso, "\",\"visibility\":\"", vis, "\"}"]);
+  const eventHex = ev_ea_ascii_min_eventHex();
+  hexOfHash(eventHex, eventHash);
+  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>(["poi-trace:roll:v1|", s.prevRollHex, "|", eventHex]) == s.rollAfter, "rolling root mismatch");
+  assert(persistentHash<[Bytes<33>, Vector<4, Uint<8>>]>(["orynq:conduct:allowlist:leaf:v1|d", destination]) == s.destinationLeaf, "destinationLeaf opening");
+  assert(decU64<1>(ts) == s.timestamp, "timestamp opening");
+  const actionDigestHalves = hexHalves(actionDigest);
+  assert(actionDigestHalves[0] == (s.actionDigestHi as Field) && actionDigestHalves[1] == (s.actionDigestLo as Field), "actionDigest opening");
+  assert(decU64<1>(enforcedAt) == s.enforcedAt, "enforcedAt opening");
+  const mandateCommitmentHalves = hexHalves(mandateCommitment);
+  assert(mandateCommitmentHalves[0] == (s.mandateCommitmentHi as Field) && mandateCommitmentHalves[1] == (s.mandateCommitmentLo as Field), "mandateCommitment opening");
+  assert(decU64<1>(dataSeq) == s.dataSeq, "dataSeq opening");
+  assert(dec53<1>(traceSeq) == s.traceSeq, "traceSeq opening");
+  jsonStr<4>(destination);
+  uuid(id);
+  iso8601(iso);
+  vis7(vis);
+  egressOpening = disclose(s);
+}
+
+witness m_base_mandateId(): Vector<16, Uint<8>>;
+witness m_base_principalDid(): Vector<47, Uint<8>>;
+witness m_base_agentDid(): Vector<47, Uint<8>>;
+witness m_base_asset(): Vector<8, Uint<8>>;
+witness m_base_capAmount(): Vector<4, Uint<8>>;
+witness m_base_windowSeconds(): Vector<4, Uint<8>>;
+witness m_base_counterpartyRoot(): Vector<32, Uint<8>>;
+witness m_base_egressMode(): Vector<1, Uint<8>>;
+witness m_base_egressRoot(): Vector<32, Uint<8>>;
+witness m_base_measurementRoot(): Vector<32, Uint<8>>;
+witness m_base_notBefore(): Vector<4, Uint<8>>;
+witness m_base_notAfter(): Vector<4, Uint<8>>;
+witness m_base_committeeId(): Vector<20, Uint<8>>;
+witness m_base_threshold(): Vector<1, Uint<8>>;
+witness m_base_committeeSize(): Vector<1, Uint<8>>;
+
+export circuit m_base(s: MandateOpening): [] {
+  const mandateId = m_base_mandateId();
+  const principalDid = m_base_principalDid();
+  const agentDid = m_base_agentDid();
+  const asset = m_base_asset();
+  const capAmount = m_base_capAmount();
+  const windowSeconds = m_base_windowSeconds();
+  const counterpartyRoot = m_base_counterpartyRoot();
+  const egressMode = m_base_egressMode();
+  const egressRoot = m_base_egressRoot();
+  const measurementRoot = m_base_measurementRoot();
+  const notBefore = m_base_notBefore();
+  const notAfter = m_base_notAfter();
+  const committeeId = m_base_committeeId();
+  const threshold = m_base_threshold();
+  const committeeSize = m_base_committeeSize();
+  const commitment = persistentHash<[Bytes<25>, Vector<4, Uint<8>>, Bytes<1>, Vector<16, Uint<8>>, Vector<1, Uint<8>>, Bytes<11>, Vector<47, Uint<8>>, Vector<1, Uint<8>>, Bytes<11>, Vector<47, Uint<8>>, Vector<5, Uint<8>>, Bytes<1>, Vector<8, Uint<8>>, Vector<2, Uint<8>>, Vector<4, Uint<8>>, Vector<2, Uint<8>>, Vector<4, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<3, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<4, Uint<8>>, Vector<4, Uint<8>>, Vector<2, Uint<8>>, Vector<4, Uint<8>>, Vector<3, Uint<8>>, Bytes<1>, Vector<20, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>]>(["orynq:conduct:mandate:v1|", [171, 0, 1, 1], "P", mandateId, [2], "x8did:key:z", principalDid, [3], "x8did:key:z", agentDid, [4, 0, 5, 163, 0], "h", asset, [1, 26], capAmount, [2, 26], windowSeconds, [6], "X ", counterpartyRoot, [7, 162, 0], egressMode, [1], "X ", egressRoot, [8], "X ", measurementRoot, [9, 162, 0, 26], notBefore, [1, 26], notAfter, [10, 163, 0], "t", committeeId, [1], threshold, [2], committeeSize]);
+  assert(commitment == s.commitment, "mandate commitment opening");
+  const capAmountValue = cborUint<4>(capAmount);
+  const windowSecondsValue = cborUint<4>(windowSeconds);
+  const notBeforeValue = cborUint<4>(notBefore);
+  const notAfterValue = cborUint<4>(notAfter);
+  const thresholdValue = cborHeadValue(threshold[0]);
+  const committeeSizeValue = cborHeadValue(committeeSize[0]);
+  assert(persistentHash<[Bytes<32>, Bytes<32>, Uint<64>, Uint<64>, Bytes<32>, Uint<64>, Uint<64>, Uint<8>, Vector<32, Uint<8>>, Vector<32, Uint<8>>]>([pad(32, "orynq:conduct:mandate-atoms:v1"), commitment, notBeforeValue, notAfterValue, persistentHash<[Vector<8, Uint<8>>]>([asset]), capAmountValue, windowSecondsValue, egressMode[0], counterpartyRoot, egressRoot]) == s.atoms, "mandate atoms opening");
+  base58<47>(principalDid);
+  base58<47>(agentDid);
+  asciiPrint<8>(asset);
+  assert(windowSecondsValue >= 1, "mandate window");
+  assert(egressMode[0] <= 1, "egress mode");
+  for (const b of egressRoot) {
+    assert(egressMode[0] == 1 || b == 0, "deny-all egress root");
+  }
+  assert(notBeforeValue < notAfterValue, "mandate validity window");
+  utf8Any<20>(committeeId);
+  assert(thresholdValue >= 1 && thresholdValue <= committeeSizeValue, "mandate disclosure threshold");
+  mandateOpening = disclose(s);
+}
+
+witness m_zero_cap_mandateId(): Vector<16, Uint<8>>;
+witness m_zero_cap_principalDid(): Vector<47, Uint<8>>;
+witness m_zero_cap_agentDid(): Vector<47, Uint<8>>;
+witness m_zero_cap_asset(): Vector<5, Uint<8>>;
+witness m_zero_cap_capAmount(): Vector<1, Uint<8>>;
+witness m_zero_cap_windowSeconds(): Vector<1, Uint<8>>;
+witness m_zero_cap_counterpartyRoot(): Vector<32, Uint<8>>;
+witness m_zero_cap_egressMode(): Vector<1, Uint<8>>;
+witness m_zero_cap_egressRoot(): Vector<32, Uint<8>>;
+witness m_zero_cap_measurementRoot(): Vector<32, Uint<8>>;
+witness m_zero_cap_notBefore(): Vector<4, Uint<8>>;
+witness m_zero_cap_notAfter(): Vector<4, Uint<8>>;
+witness m_zero_cap_committeeId(): Vector<20, Uint<8>>;
+witness m_zero_cap_threshold(): Vector<1, Uint<8>>;
+witness m_zero_cap_committeeSize(): Vector<1, Uint<8>>;
+
+export circuit m_zero_cap(s: MandateOpening): [] {
+  const mandateId = m_zero_cap_mandateId();
+  const principalDid = m_zero_cap_principalDid();
+  const agentDid = m_zero_cap_agentDid();
+  const asset = m_zero_cap_asset();
+  const capAmount = m_zero_cap_capAmount();
+  const windowSeconds = m_zero_cap_windowSeconds();
+  const counterpartyRoot = m_zero_cap_counterpartyRoot();
+  const egressMode = m_zero_cap_egressMode();
+  const egressRoot = m_zero_cap_egressRoot();
+  const measurementRoot = m_zero_cap_measurementRoot();
+  const notBefore = m_zero_cap_notBefore();
+  const notAfter = m_zero_cap_notAfter();
+  const committeeId = m_zero_cap_committeeId();
+  const threshold = m_zero_cap_threshold();
+  const committeeSize = m_zero_cap_committeeSize();
+  const commitment = persistentHash<[Bytes<25>, Vector<4, Uint<8>>, Bytes<1>, Vector<16, Uint<8>>, Vector<1, Uint<8>>, Bytes<11>, Vector<47, Uint<8>>, Vector<1, Uint<8>>, Bytes<11>, Vector<47, Uint<8>>, Vector<5, Uint<8>>, Bytes<1>, Vector<5, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<3, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<4, Uint<8>>, Vector<4, Uint<8>>, Vector<2, Uint<8>>, Vector<4, Uint<8>>, Vector<3, Uint<8>>, Bytes<1>, Vector<20, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>]>(["orynq:conduct:mandate:v1|", [171, 0, 1, 1], "P", mandateId, [2], "x8did:key:z", principalDid, [3], "x8did:key:z", agentDid, [4, 0, 5, 163, 0], "e", asset, [1], capAmount, [2], windowSeconds, [6], "X ", counterpartyRoot, [7, 162, 0], egressMode, [1], "X ", egressRoot, [8], "X ", measurementRoot, [9, 162, 0, 26], notBefore, [1, 26], notAfter, [10, 163, 0], "t", committeeId, [1], threshold, [2], committeeSize]);
+  assert(commitment == s.commitment, "mandate commitment opening");
+  const capAmountValue = cborHeadValue(capAmount[0]);
+  const windowSecondsValue = cborHeadValue(windowSeconds[0]);
+  const notBeforeValue = cborUint<4>(notBefore);
+  const notAfterValue = cborUint<4>(notAfter);
+  const thresholdValue = cborHeadValue(threshold[0]);
+  const committeeSizeValue = cborHeadValue(committeeSize[0]);
+  assert(persistentHash<[Bytes<32>, Bytes<32>, Uint<64>, Uint<64>, Bytes<32>, Uint<64>, Uint<64>, Uint<8>, Vector<32, Uint<8>>, Vector<32, Uint<8>>]>([pad(32, "orynq:conduct:mandate-atoms:v1"), commitment, notBeforeValue, notAfterValue, persistentHash<[Vector<5, Uint<8>>]>([asset]), capAmountValue, windowSecondsValue, egressMode[0], counterpartyRoot, egressRoot]) == s.atoms, "mandate atoms opening");
+  base58<47>(principalDid);
+  base58<47>(agentDid);
+  asciiPrint<5>(asset);
+  assert(windowSecondsValue >= 1, "mandate window");
+  assert(egressMode[0] <= 1, "egress mode");
+  for (const b of egressRoot) {
+    assert(egressMode[0] == 1 || b == 0, "deny-all egress root");
+  }
+  assert(notBeforeValue < notAfterValue, "mandate validity window");
+  utf8Any<20>(committeeId);
+  assert(thresholdValue >= 1 && thresholdValue <= committeeSizeValue, "mandate disclosure threshold");
+  mandateOpening = disclose(s);
+}
+
+witness m_field_maxima_mandateId(): Vector<16, Uint<8>>;
+witness m_field_maxima_principalDid(): Vector<47, Uint<8>>;
+witness m_field_maxima_agentDid(): Vector<47, Uint<8>>;
+witness m_field_maxima_asset(): Vector<81, Uint<8>>;
+witness m_field_maxima_capAmount(): Vector<8, Uint<8>>;
+witness m_field_maxima_windowSeconds(): Vector<4, Uint<8>>;
+witness m_field_maxima_counterpartyRoot(): Vector<32, Uint<8>>;
+witness m_field_maxima_egressMode(): Vector<1, Uint<8>>;
+witness m_field_maxima_egressRoot(): Vector<32, Uint<8>>;
+witness m_field_maxima_measurementRoot(): Vector<32, Uint<8>>;
+witness m_field_maxima_notBefore(): Vector<1, Uint<8>>;
+witness m_field_maxima_notAfter(): Vector<8, Uint<8>>;
+witness m_field_maxima_committeeId(): Vector<26, Uint<8>>;
+witness m_field_maxima_threshold(): Vector<1, Uint<8>>;
+witness m_field_maxima_committeeSize(): Vector<1, Uint<8>>;
+
+export circuit m_field_maxima(s: MandateOpening): [] {
+  const mandateId = m_field_maxima_mandateId();
+  const principalDid = m_field_maxima_principalDid();
+  const agentDid = m_field_maxima_agentDid();
+  const asset = m_field_maxima_asset();
+  const capAmount = m_field_maxima_capAmount();
+  const windowSeconds = m_field_maxima_windowSeconds();
+  const counterpartyRoot = m_field_maxima_counterpartyRoot();
+  const egressMode = m_field_maxima_egressMode();
+  const egressRoot = m_field_maxima_egressRoot();
+  const measurementRoot = m_field_maxima_measurementRoot();
+  const notBefore = m_field_maxima_notBefore();
+  const notAfter = m_field_maxima_notAfter();
+  const committeeId = m_field_maxima_committeeId();
+  const threshold = m_field_maxima_threshold();
+  const committeeSize = m_field_maxima_committeeSize();
+  const commitment = persistentHash<[Bytes<25>, Vector<4, Uint<8>>, Bytes<1>, Vector<16, Uint<8>>, Vector<1, Uint<8>>, Bytes<11>, Vector<47, Uint<8>>, Vector<1, Uint<8>>, Bytes<11>, Vector<47, Uint<8>>, Vector<5, Uint<8>>, Bytes<2>, Vector<81, Uint<8>>, Vector<2, Uint<8>>, Vector<8, Uint<8>>, Vector<2, Uint<8>>, Vector<4, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<3, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<3, Uint<8>>, Vector<1, Uint<8>>, Vector<2, Uint<8>>, Vector<8, Uint<8>>, Vector<3, Uint<8>>, Bytes<1>, Vector<1, Uint<8>>, Vector<26, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<2, Uint<8>>, Vector<1, Uint<8>>]>(["orynq:conduct:mandate:v1|", [171, 0, 1, 1], "P", mandateId, [2], "x8did:key:z", principalDid, [3], "x8did:key:z", agentDid, [4, 0, 5, 163, 0], "xQ", asset, [1, 27], capAmount, [2, 26], windowSeconds, [6], "X ", counterpartyRoot, [7, 162, 0], egressMode, [1], "X ", egressRoot, [8], "X ", measurementRoot, [9, 162, 0], notBefore, [1, 27], notAfter, [10, 163, 0], "x", [26], committeeId, [1], threshold, [2, 24], committeeSize]);
+  assert(commitment == s.commitment, "mandate commitment opening");
+  const capAmountValue = cborUint<8>(capAmount);
+  const windowSecondsValue = cborUint<4>(windowSeconds);
+  const notBeforeValue = cborHeadValue(notBefore[0]);
+  const notAfterValue = cborUint<8>(notAfter);
+  const thresholdValue = cborHeadValue(threshold[0]);
+  const committeeSizeValue = cborUint<1>(committeeSize);
+  assert(persistentHash<[Bytes<32>, Bytes<32>, Uint<64>, Uint<64>, Bytes<32>, Uint<64>, Uint<64>, Uint<8>, Vector<32, Uint<8>>, Vector<32, Uint<8>>]>([pad(32, "orynq:conduct:mandate-atoms:v1"), commitment, notBeforeValue, notAfterValue, persistentHash<[Vector<81, Uint<8>>]>([asset]), capAmountValue, windowSecondsValue, egressMode[0], counterpartyRoot, egressRoot]) == s.atoms, "mandate atoms opening");
+  base58<47>(principalDid);
+  base58<47>(agentDid);
+  asciiPrint<81>(asset);
+  assert(windowSecondsValue >= 1, "mandate window");
+  assert(egressMode[0] <= 1, "egress mode");
+  for (const b of egressRoot) {
+    assert(egressMode[0] == 1 || b == 0, "deny-all egress root");
+  }
+  assert(notBeforeValue < notAfterValue, "mandate validity window");
+  utf8Any<26>(committeeId);
+  assert(thresholdValue >= 1 && thresholdValue <= committeeSizeValue, "mandate disclosure threshold");
+  mandateOpening = disclose(s);
+}
+
+witness m_one_second_mandateId(): Vector<16, Uint<8>>;
+witness m_one_second_principalDid(): Vector<47, Uint<8>>;
+witness m_one_second_agentDid(): Vector<47, Uint<8>>;
+witness m_one_second_asset(): Vector<8, Uint<8>>;
+witness m_one_second_capAmount(): Vector<4, Uint<8>>;
+witness m_one_second_windowSeconds(): Vector<4, Uint<8>>;
+witness m_one_second_counterpartyRoot(): Vector<32, Uint<8>>;
+witness m_one_second_egressMode(): Vector<1, Uint<8>>;
+witness m_one_second_egressRoot(): Vector<32, Uint<8>>;
+witness m_one_second_measurementRoot(): Vector<32, Uint<8>>;
+witness m_one_second_notBefore(): Vector<4, Uint<8>>;
+witness m_one_second_notAfter(): Vector<4, Uint<8>>;
+witness m_one_second_committeeId(): Vector<1, Uint<8>>;
+witness m_one_second_threshold(): Vector<1, Uint<8>>;
+witness m_one_second_committeeSize(): Vector<1, Uint<8>>;
+
+export circuit m_one_second(s: MandateOpening): [] {
+  const mandateId = m_one_second_mandateId();
+  const principalDid = m_one_second_principalDid();
+  const agentDid = m_one_second_agentDid();
+  const asset = m_one_second_asset();
+  const capAmount = m_one_second_capAmount();
+  const windowSeconds = m_one_second_windowSeconds();
+  const counterpartyRoot = m_one_second_counterpartyRoot();
+  const egressMode = m_one_second_egressMode();
+  const egressRoot = m_one_second_egressRoot();
+  const measurementRoot = m_one_second_measurementRoot();
+  const notBefore = m_one_second_notBefore();
+  const notAfter = m_one_second_notAfter();
+  const committeeId = m_one_second_committeeId();
+  const threshold = m_one_second_threshold();
+  const committeeSize = m_one_second_committeeSize();
+  const commitment = persistentHash<[Bytes<25>, Vector<4, Uint<8>>, Bytes<1>, Vector<16, Uint<8>>, Vector<1, Uint<8>>, Bytes<11>, Vector<47, Uint<8>>, Vector<1, Uint<8>>, Bytes<11>, Vector<47, Uint<8>>, Vector<5, Uint<8>>, Bytes<1>, Vector<8, Uint<8>>, Vector<2, Uint<8>>, Vector<4, Uint<8>>, Vector<2, Uint<8>>, Vector<4, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<3, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<4, Uint<8>>, Vector<4, Uint<8>>, Vector<2, Uint<8>>, Vector<4, Uint<8>>, Vector<3, Uint<8>>, Bytes<1>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>]>(["orynq:conduct:mandate:v1|", [171, 0, 1, 1], "P", mandateId, [2], "x8did:key:z", principalDid, [3], "x8did:key:z", agentDid, [4, 0, 5, 163, 0], "h", asset, [1, 26], capAmount, [2, 26], windowSeconds, [6], "X ", counterpartyRoot, [7, 162, 0], egressMode, [1], "X ", egressRoot, [8], "X ", measurementRoot, [9, 162, 0, 26], notBefore, [1, 26], notAfter, [10, 163, 0], "a", committeeId, [1], threshold, [2], committeeSize]);
+  assert(commitment == s.commitment, "mandate commitment opening");
+  const capAmountValue = cborUint<4>(capAmount);
+  const windowSecondsValue = cborUint<4>(windowSeconds);
+  const notBeforeValue = cborUint<4>(notBefore);
+  const notAfterValue = cborUint<4>(notAfter);
+  const thresholdValue = cborHeadValue(threshold[0]);
+  const committeeSizeValue = cborHeadValue(committeeSize[0]);
+  assert(persistentHash<[Bytes<32>, Bytes<32>, Uint<64>, Uint<64>, Bytes<32>, Uint<64>, Uint<64>, Uint<8>, Vector<32, Uint<8>>, Vector<32, Uint<8>>]>([pad(32, "orynq:conduct:mandate-atoms:v1"), commitment, notBeforeValue, notAfterValue, persistentHash<[Vector<8, Uint<8>>]>([asset]), capAmountValue, windowSecondsValue, egressMode[0], counterpartyRoot, egressRoot]) == s.atoms, "mandate atoms opening");
+  base58<47>(principalDid);
+  base58<47>(agentDid);
+  asciiPrint<8>(asset);
+  assert(windowSecondsValue >= 1, "mandate window");
+  assert(egressMode[0] <= 1, "egress mode");
+  for (const b of egressRoot) {
+    assert(egressMode[0] == 1 || b == 0, "deny-all egress root");
+  }
+  assert(notBeforeValue < notAfterValue, "mandate validity window");
+  utf8Any<1>(committeeId);
+  assert(thresholdValue >= 1 && thresholdValue <= committeeSizeValue, "mandate disclosure threshold");
+  mandateOpening = disclose(s);
+}
+
+witness m_max_mandateId(): Vector<16, Uint<8>>;
+witness m_max_principalDid(): Vector<256, Uint<8>>;
+witness m_max_agentDid(): Vector<256, Uint<8>>;
+witness m_max_asset(): Vector<128, Uint<8>>;
+witness m_max_capAmount(): Vector<8, Uint<8>>;
+witness m_max_windowSeconds(): Vector<8, Uint<8>>;
+witness m_max_counterpartyRoot(): Vector<32, Uint<8>>;
+witness m_max_egressMode(): Vector<1, Uint<8>>;
+witness m_max_egressRoot(): Vector<32, Uint<8>>;
+witness m_max_measurementRoot(): Vector<32, Uint<8>>;
+witness m_max_notBefore(): Vector<8, Uint<8>>;
+witness m_max_notAfter(): Vector<8, Uint<8>>;
+witness m_max_committeeId(): Vector<128, Uint<8>>;
+witness m_max_threshold(): Vector<8, Uint<8>>;
+witness m_max_committeeSize(): Vector<8, Uint<8>>;
+
+export circuit m_max(s: MandateOpening): [] {
+  const mandateId = m_max_mandateId();
+  const principalDid = m_max_principalDid();
+  const agentDid = m_max_agentDid();
+  const asset = m_max_asset();
+  const capAmount = m_max_capAmount();
+  const windowSeconds = m_max_windowSeconds();
+  const counterpartyRoot = m_max_counterpartyRoot();
+  const egressMode = m_max_egressMode();
+  const egressRoot = m_max_egressRoot();
+  const measurementRoot = m_max_measurementRoot();
+  const notBefore = m_max_notBefore();
+  const notAfter = m_max_notAfter();
+  const committeeId = m_max_committeeId();
+  const threshold = m_max_threshold();
+  const committeeSize = m_max_committeeSize();
+  const commitment = persistentHash<[Bytes<25>, Vector<4, Uint<8>>, Bytes<1>, Vector<16, Uint<8>>, Vector<1, Uint<8>>, Bytes<1>, Vector<2, Uint<8>>, Bytes<9>, Vector<256, Uint<8>>, Vector<1, Uint<8>>, Bytes<1>, Vector<2, Uint<8>>, Bytes<9>, Vector<256, Uint<8>>, Vector<5, Uint<8>>, Bytes<1>, Vector<1, Uint<8>>, Vector<128, Uint<8>>, Vector<2, Uint<8>>, Vector<8, Uint<8>>, Vector<2, Uint<8>>, Vector<8, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<3, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<4, Uint<8>>, Vector<8, Uint<8>>, Vector<2, Uint<8>>, Vector<8, Uint<8>>, Vector<3, Uint<8>>, Bytes<1>, Vector<1, Uint<8>>, Vector<128, Uint<8>>, Vector<2, Uint<8>>, Vector<8, Uint<8>>, Vector<2, Uint<8>>, Vector<8, Uint<8>>]>(["orynq:conduct:mandate:v1|", [171, 0, 1, 1], "P", mandateId, [2], "y", [1, 9], "did:key:z", principalDid, [3], "y", [1, 9], "did:key:z", agentDid, [4, 0, 5, 163, 0], "x", [128], asset, [1, 27], capAmount, [2, 27], windowSeconds, [6], "X ", counterpartyRoot, [7, 162, 0], egressMode, [1], "X ", egressRoot, [8], "X ", measurementRoot, [9, 162, 0, 27], notBefore, [1, 27], notAfter, [10, 163, 0], "x", [128], committeeId, [1, 27], threshold, [2, 27], committeeSize]);
+  assert(commitment == s.commitment, "mandate commitment opening");
+  const capAmountValue = cborUint<8>(capAmount);
+  const windowSecondsValue = cborUint<8>(windowSeconds);
+  const notBeforeValue = cborUint<8>(notBefore);
+  const notAfterValue = cborUint<8>(notAfter);
+  const thresholdValue = cborUint<8>(threshold);
+  const committeeSizeValue = cborUint<8>(committeeSize);
+  assert(persistentHash<[Bytes<32>, Bytes<32>, Uint<64>, Uint<64>, Bytes<32>, Uint<64>, Uint<64>, Uint<8>, Vector<32, Uint<8>>, Vector<32, Uint<8>>]>([pad(32, "orynq:conduct:mandate-atoms:v1"), commitment, notBeforeValue, notAfterValue, persistentHash<[Vector<128, Uint<8>>]>([asset]), capAmountValue, windowSecondsValue, egressMode[0], counterpartyRoot, egressRoot]) == s.atoms, "mandate atoms opening");
+  base58<256>(principalDid);
+  base58<256>(agentDid);
+  asciiPrint<128>(asset);
+  assert(windowSecondsValue >= 1, "mandate window");
+  assert(egressMode[0] <= 1, "egress mode");
+  for (const b of egressRoot) {
+    assert(egressMode[0] == 1 || b == 0, "deny-all egress root");
+  }
+  assert(notBeforeValue < notAfterValue, "mandate validity window");
+  utf8Any<128>(committeeId);
+  assert(thresholdValue >= 1 && thresholdValue <= committeeSizeValue, "mandate disclosure threshold");
+  mandateOpening = disclose(s);
+}
+
+witness m_step_mandateId(): Vector<16, Uint<8>>;
+witness m_step_principalDid(): Vector<8, Uint<8>>;
+witness m_step_agentDid(): Vector<8, Uint<8>>;
+witness m_step_asset(): Vector<3, Uint<8>>;
+witness m_step_capAmount(): Vector<1, Uint<8>>;
+witness m_step_windowSeconds(): Vector<1, Uint<8>>;
+witness m_step_counterpartyRoot(): Vector<32, Uint<8>>;
+witness m_step_egressMode(): Vector<1, Uint<8>>;
+witness m_step_egressRoot(): Vector<32, Uint<8>>;
+witness m_step_measurementRoot(): Vector<32, Uint<8>>;
+witness m_step_notBefore(): Vector<1, Uint<8>>;
+witness m_step_notAfter(): Vector<1, Uint<8>>;
+witness m_step_committeeId(): Vector<1, Uint<8>>;
+witness m_step_threshold(): Vector<1, Uint<8>>;
+witness m_step_committeeSize(): Vector<1, Uint<8>>;
+
+export circuit m_step(s: MandateOpening): [] {
+  const mandateId = m_step_mandateId();
+  const principalDid = m_step_principalDid();
+  const agentDid = m_step_agentDid();
+  const asset = m_step_asset();
+  const capAmount = m_step_capAmount();
+  const windowSeconds = m_step_windowSeconds();
+  const counterpartyRoot = m_step_counterpartyRoot();
+  const egressMode = m_step_egressMode();
+  const egressRoot = m_step_egressRoot();
+  const measurementRoot = m_step_measurementRoot();
+  const notBefore = m_step_notBefore();
+  const notAfter = m_step_notAfter();
+  const committeeId = m_step_committeeId();
+  const threshold = m_step_threshold();
+  const committeeSize = m_step_committeeSize();
+  const commitment = persistentHash<[Bytes<25>, Vector<4, Uint<8>>, Bytes<1>, Vector<16, Uint<8>>, Vector<1, Uint<8>>, Bytes<10>, Vector<8, Uint<8>>, Vector<1, Uint<8>>, Bytes<10>, Vector<8, Uint<8>>, Vector<5, Uint<8>>, Bytes<1>, Vector<3, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<3, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<1, Uint<8>>, Bytes<2>, Vector<32, Uint<8>>, Vector<3, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<3, Uint<8>>, Bytes<1>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>, Vector<1, Uint<8>>]>(["orynq:conduct:mandate:v1|", [171, 0, 1, 1], "P", mandateId, [2], "qdid:key:z", principalDid, [3], "qdid:key:z", agentDid, [4, 0, 5, 163, 0], "c", asset, [1], capAmount, [2], windowSeconds, [6], "X ", counterpartyRoot, [7, 162, 0], egressMode, [1], "X ", egressRoot, [8], "X ", measurementRoot, [9, 162, 0], notBefore, [1], notAfter, [10, 163, 0], "a", committeeId, [1], threshold, [2], committeeSize]);
+  assert(commitment == s.commitment, "mandate commitment opening");
+  const capAmountValue = cborHeadValue(capAmount[0]);
+  const windowSecondsValue = cborHeadValue(windowSeconds[0]);
+  const notBeforeValue = cborHeadValue(notBefore[0]);
+  const notAfterValue = cborHeadValue(notAfter[0]);
+  const thresholdValue = cborHeadValue(threshold[0]);
+  const committeeSizeValue = cborHeadValue(committeeSize[0]);
+  assert(persistentHash<[Bytes<32>, Bytes<32>, Uint<64>, Uint<64>, Bytes<32>, Uint<64>, Uint<64>, Uint<8>, Vector<32, Uint<8>>, Vector<32, Uint<8>>]>([pad(32, "orynq:conduct:mandate-atoms:v1"), commitment, notBeforeValue, notAfterValue, persistentHash<[Vector<3, Uint<8>>]>([asset]), capAmountValue, windowSecondsValue, egressMode[0], counterpartyRoot, egressRoot]) == s.atoms, "mandate atoms opening");
+  base58<8>(principalDid);
+  base58<8>(agentDid);
+  asciiPrint<3>(asset);
+  assert(windowSecondsValue >= 1, "mandate window");
+  assert(egressMode[0] <= 1, "egress mode");
+  for (const b of egressRoot) {
+    assert(egressMode[0] == 1 || b == 0, "deny-all egress root");
+  }
+  assert(notBeforeValue < notAfterValue, "mandate validity window");
+  utf8Any<1>(committeeId);
+  assert(thresholdValue >= 1 && thresholdValue <= committeeSizeValue, "mandate disclosure threshold");
+  mandateOpening = disclose(s);
+}
+
+export pure circuit cbor_uint_w0(head: Uint<8>): Uint<64> {
+  return cborHeadValue(head);
+}
+
+export pure circuit cbor_uint_w1(body: Vector<1, Uint<8>>): Uint<64> {
+  return cborUint<1>(body);
+}
+
+export pure circuit cbor_uint_w2(body: Vector<2, Uint<8>>): Uint<64> {
+  return cborUint<2>(body);
+}
+
+export pure circuit cbor_uint_w4(body: Vector<4, Uint<8>>): Uint<64> {
+  return cborUint<4>(body);
+}
+
+export pure circuit cbor_uint_w8(body: Vector<8, Uint<8>>): Uint<64> {
+  return cborUint<8>(body);
+}

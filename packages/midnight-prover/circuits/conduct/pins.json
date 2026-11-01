@@ -7,9 +7,13 @@
     "zkir": "midnight-zkir 2.1.0"
   },
   "sources": {
-    "circuits/conduct/mutants.json": "01272eb518b0da0db58fbeb3f3e23c08ef6546298b71ef23ed3769bb29cf01d9",
+    "circuits/conduct/classes.json": "3e0d1fff738d9fdedb4bff7fe4903aad49f1ec327ec3aba398b8a8fedadc0f7c",
+    "circuits/conduct/gadgets.compact": "bc2f24702b414100b28decc5c36085fb5340b59aeff348a71fed4d1425a14843",
+    "circuits/conduct/mutants.json": "0bc8c0c73b36828fda3954752414a580bb3c99103dff07dec8c1952bf67cc7d4",
+    "circuits/conduct/openings.generated.compact": "8db1be82ad70377e7e7dc2847c15dd1b45d19eefd52e3eff198a89bdae30c9ab",
     "circuits/conduct/predicate.compact": "b83ec16fbb500bfa9537c7b6930c44489826c772284f7953a922d1abd7e9b2c0",
     "circuits/conduct/reference/poac_verdict_core.compact": "189fc0ac6f6d36f85591d82e1b470478ee5df6be6a580cd97462673a12b29605",
+    "circuits/conduct/templates/guard-event-v1.json": "48537eb87fc8d870896e0dec4b5dfade90f3067c51bee186239d2bfbe83c07ee",
     "circuits/conduct/verdict_core.compact": "bb063e92994397f84757161f4c36c94a1088945b60f40d97bf163e10b76593d1"
   },
   "units": {
@@ -33,6 +37,244 @@
             "load_imm": 11,
             "pi_skip": 3,
             "test_eq": 5
+          }
+        }
+      }
+    },
+    "openings": {
+      "pureExportInvariant": true,
+      "circuits": {
+        "ev_ea_ascii_min": {
+          "zkirSha256": "db0bdfefce83fc2fb0fb4168e0cd12d9cd77e69cc732f0a21dc18f0864ce9aed",
+          "k": 16,
+          "rows": 54983,
+          "ops": {
+            "total": 4599,
+            "persistent_hash": 3,
+            "add": 544,
+            "assert": 299,
+            "cond_select": 1461,
+            "constrain_bits": 286,
+            "declare_pub_input": 35,
+            "div_mod_power_of_two": 30,
+            "less_than": 977,
+            "load_imm": 58,
+            "mul": 156,
+            "neg": 388,
+            "pi_skip": 3,
+            "private_input": 267,
+            "reconstitute_field": 6,
+            "test_eq": 86
+          }
+        },
+        "ev_pa_ascii_min": {
+          "zkirSha256": "99c89a036ec1e075f0fae9905a835d9e31567a8b61fb8e2d2c9bedafd22417e9",
+          "k": 16,
+          "rows": 57924,
+          "ops": {
+            "total": 4759,
+            "persistent_hash": 4,
+            "add": 545,
+            "assert": 304,
+            "cond_select": 1539,
+            "constrain_bits": 294,
+            "declare_pub_input": 40,
+            "div_mod_power_of_two": 30,
+            "less_than": 1007,
+            "load_imm": 60,
+            "mul": 156,
+            "neg": 389,
+            "pi_skip": 3,
+            "private_input": 271,
+            "reconstitute_field": 6,
+            "test_eq": 111
+          }
+        },
+        "ev_pa_max": {
+          "zkirSha256": "d7b80df3d349c7e0bffdb0d65b1e182f58e06579a397a7b7855838f461d0b859",
+          "k": 18,
+          "rows": 155513,
+          "ops": {
+            "total": 24626,
+            "persistent_hash": 4,
+            "add": 727,
+            "assert": 400,
+            "cond_select": 12659,
+            "constrain_bits": 762,
+            "declare_pub_input": 40,
+            "div_mod_power_of_two": 30,
+            "less_than": 4959,
+            "load_imm": 61,
+            "mul": 247,
+            "neg": 480,
+            "pi_skip": 3,
+            "private_input": 739,
+            "reconstitute_field": 6,
+            "test_eq": 3509
+          }
+        },
+        "ev_pa_unicode_max": {
+          "zkirSha256": "48478eb0a1f985addd1ae6ba92be41f5e31c5b978d050815e1515846067b5b80",
+          "k": 16,
+          "rows": 64240,
+          "ops": {
+            "total": 5695,
+            "persistent_hash": 4,
+            "add": 621,
+            "assert": 346,
+            "cond_select": 1910,
+            "constrain_bits": 341,
+            "declare_pub_input": 40,
+            "div_mod_power_of_two": 30,
+            "less_than": 1183,
+            "load_imm": 62,
+            "mul": 194,
+            "neg": 427,
+            "pi_skip": 3,
+            "private_input": 318,
+            "reconstitute_field": 10,
+            "test_eq": 206
+          }
+        },
+        "ev_pd4_ascii_min": {
+          "zkirSha256": "030ca760fef0f6c5b3db1a76265635fddf8119cec6e033ec374822d5a7016ecb",
+          "k": 16,
+          "rows": 61738,
+          "ops": {
+            "total": 4762,
+            "persistent_hash": 4,
+            "add": 545,
+            "assert": 304,
+            "cond_select": 1539,
+            "constrain_bits": 294,
+            "declare_pub_input": 40,
+            "div_mod_power_of_two": 30,
+            "less_than": 1007,
+            "load_imm": 63,
+            "mul": 156,
+            "neg": 389,
+            "pi_skip": 3,
+            "private_input": 271,
+            "reconstitute_field": 6,
+            "test_eq": 111
+          }
+        },
+        "m_base": {
+          "zkirSha256": "745ed19c2063cd65d5cc117f0a61aa387c3e259adf902c79b42392b3b10296ea",
+          "k": 16,
+          "rows": 39982,
+          "ops": {
+            "total": 4391,
+            "persistent_hash": 3,
+            "add": 12,
+            "assert": 147,
+            "cond_select": 2125,
+            "constrain_bits": 261,
+            "declare_pub_input": 15,
+            "less_than": 1333,
+            "load_imm": 56,
+            "mul": 12,
+            "pi_skip": 3,
+            "private_input": 253,
+            "test_eq": 171
+          }
+        },
+        "m_field_maxima": {
+          "zkirSha256": "25b7c45ff45bfe11c83274a7de6df44d60522ca1feda17a11b8dc51377f65b5c",
+          "k": 16,
+          "rows": 47127,
+          "ops": {
+            "total": 5177,
+            "persistent_hash": 3,
+            "add": 17,
+            "assert": 220,
+            "cond_select": 2415,
+            "constrain_bits": 345,
+            "declare_pub_input": 15,
+            "less_than": 1533,
+            "load_imm": 59,
+            "mul": 17,
+            "pi_skip": 3,
+            "private_input": 337,
+            "test_eq": 213
+          }
+        },
+        "m_max": {
+          "zkirSha256": "065768501ed1d66ad89c7344a8ade9fb723787faa11eb886117d2e189d80c804",
+          "k": 18,
+          "rows": 142215,
+          "ops": {
+            "total": 23264,
+            "persistent_hash": 3,
+            "add": 42,
+            "assert": 685,
+            "cond_select": 12063,
+            "constrain_bits": 939,
+            "declare_pub_input": 15,
+            "less_than": 7561,
+            "load_imm": 55,
+            "mul": 42,
+            "pi_skip": 3,
+            "private_input": 929,
+            "test_eq": 927
+          }
+        },
+        "m_one_second": {
+          "zkirSha256": "9da01f4ed1a09c13fffe0811bd062f2a0410ac35f2e8abf9897d2e582676a430",
+          "k": 16,
+          "rows": 37062,
+          "ops": {
+            "total": 3588,
+            "persistent_hash": 3,
+            "add": 12,
+            "assert": 147,
+            "cond_select": 1671,
+            "constrain_bits": 242,
+            "declare_pub_input": 15,
+            "less_than": 1162,
+            "load_imm": 49,
+            "mul": 12,
+            "pi_skip": 3,
+            "private_input": 234,
+            "test_eq": 38
+          }
+        },
+        "m_step": {
+          "zkirSha256": "b5165cec4b321c918e4a9dac10d69dd5ae47602d0f4ee2adaf812de28794c214",
+          "k": 15,
+          "rows": 22075,
+          "ops": {
+            "total": 1002,
+            "persistent_hash": 3,
+            "assert": 64,
+            "cond_select": 335,
+            "constrain_bits": 143,
+            "declare_pub_input": 15,
+            "less_than": 216,
+            "load_imm": 46,
+            "pi_skip": 3,
+            "private_input": 139,
+            "test_eq": 38
+          }
+        },
+        "m_zero_cap": {
+          "zkirSha256": "be3e4be5d685b76c361e45d14f34a08493d998a1f130e5a83ec17184d07edb4c",
+          "k": 16,
+          "rows": 39644,
+          "ops": {
+            "total": 4344,
+            "persistent_hash": 3,
+            "add": 6,
+            "assert": 144,
+            "cond_select": 2119,
+            "constrain_bits": 250,
+            "declare_pub_input": 15,
+            "less_than": 1327,
+            "load_imm": 56,
+            "mul": 6,
+            "pi_skip": 3,
+            "private_input": 244,
+            "test_eq": 171
           }
         }
       }

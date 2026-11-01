@@ -17,7 +17,7 @@ const shipped: string[] = JSON.parse(readFileSync(join(pkg, "package.json"), "ut
 // The copy holds only paths the npm tarball ships, so the script reads nothing a published package lacks.
 function packageCopy(): string {
   const root = mkdtempSync(join(scratch, "pkg-"));
-  for (const path of ["scripts/compile-conduct.mjs", "circuits/conduct"]) {
+  for (const path of ["scripts/compile-conduct.mjs", "scripts/conduct", "circuits/conduct"]) {
     expect(shipped.some(entry => path === entry || path.startsWith(`${entry}/`)), `${path} ships in the npm tarball`).toBe(true);
     cpSync(join(pkg, path), join(root, path), { recursive: true });
   }
@@ -39,6 +39,13 @@ const editPins = (root: string, edit: (pins: { sources: Record<string, string>; 
     return `${JSON.stringify(pins, null, 2)}\n`;
   });
 
+// A copy that pins only the predicate unit, so a --check of that unit alone rebuilds every pin it keeps.
+function predicateCopy(): string {
+  const root = packageCopy();
+  editPins(root, pins => { delete pins.units.openings; });
+  return root;
+}
+
 // Mutants edit predicate.compact, so a copy whose predicate.compact a test edits carries an empty mutant list, pinned.
 function withoutMutants(root: string): void {
   const none = "[]\n";
@@ -46,7 +53,8 @@ function withoutMutants(root: string): void {
   editPins(root, pins => { pins.sources["circuits/conduct/mutants.json"] = createHash("sha256").update(none).digest("hex"); });
 }
 
-// vitest reads the source map of every compiled unit it loads and warns once per map whose sources do not resolve.
+// vitest reads the source map of every compiled unit it loads and warns once per map whose sources do not resolve; it
+// skips a virtual source, which only compactc's built-in standard library is.
 describe("compile-conduct output", () => {
   it("every compiled unit's source map names source files that exist", () => {
     const managed = join(pkg, "conduct-managed");
@@ -55,7 +63,8 @@ describe("compile-conduct output", () => {
     const missing = maps.flatMap(name => {
       const file = join(managed, name);
       const map: { sourceRoot?: string; sources: string[] } = JSON.parse(readFileSync(file, "utf8"));
-      return map.sources.map(source => resolve(dirname(file), map.sourceRoot ?? "", source)).filter(path => !existsSync(path)).map(path => `${name}: ${path}`);
+      return map.sources.filter(source => source !== "virtual:compiler/standard-library.compact")
+        .map(source => resolve(dirname(file), map.sourceRoot ?? "", source)).filter(path => !existsSync(path)).map(path => `${name}: ${path}`);
     });
     expect(missing).toEqual([]);
   });
@@ -81,7 +90,7 @@ describe("compile-conduct refusals", () => {
   ])("rejects %s with the usage text", (_label, args) => {
     const result = compile(packageCopy(), args);
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("usage: compile-conduct.mjs --write|--check [--units predicate,mutants,reference]");
+    expect(result.stderr).toContain("usage: compile-conduct.mjs --write|--check [--units predicate,openings,mutants,reference]");
   });
 
   it("rejects an unknown unit", () => {
@@ -95,7 +104,7 @@ describe("compile-conduct refusals", () => {
     writeFileSync(join(root, "circuits/conduct/mutants.json"), JSON.stringify([{ id: "elsewhere", file: "reference/poac_verdict_core.compact", find: "return 6;", replace: "return 7;" }]));
     const result = compile(root, ["--check"]);
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("mutant elsewhere must edit one of predicate.compact, verdict_core.compact");
+    expect(result.stderr).toContain("mutant elsewhere must edit one of predicate.compact, verdict_core.compact, openings.generated.compact");
   });
 
   // Each mutant compiles into conduct-managed/mutants/<id>/, so a repeated id would overwrite the earlier mutant.
@@ -122,15 +131,29 @@ describe("compile-conduct refusals", () => {
   });
 });
 
+describe("compile-conduct regenerates the opening circuits from the template and classes", () => {
+  it.each([
+    ["a class added to classes.json", "circuits/conduct/classes.json", (text: string) => text.replace('"ev_pa_ascii_min": {', '"ev_pa_ascii_min_copy": { "kind": "payment-action", "lengths": { "amount": 2, "asset": 3, "counterparty": 4, "ts": 1, "enforcedAt": 1, "dataSeq": 1, "traceSeq": 1, "vis": 7 } },\n      "ev_pa_ascii_min": {')],
+    ["a template constant changed", "circuits/conduct/templates/guard-event-v1.json", (text: string) => text.replace('\\",\\"asset\\":\\"', '\\",\\"Asset\\":\\"')],
+    ["a hand edit of the generated circuits", "circuits/conduct/openings.generated.compact", (text: string) => `${text}\n`],
+  ])("refuses %s until --write regenerates them", (_label, path, edit) => {
+    const root = packageCopy();
+    editFile(root, path, edit);
+    const result = compile(root, ["--check"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("generated circuits differ from classes.json; run --write");
+  });
+});
+
 describe("compile-conduct --check verifies every pin it keeps", () => {
   it("control: an untouched copy reproduces its pins", () => {
-    const result = compile(packageCopy(), ["--check", "--units", "predicate"]);
+    const result = compile(predicateCopy(), ["--check", "--units", "predicate"]);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("Conduct circuits reproduce their pins");
   });
 
   it("refuses a changed pin of a unit it rebuilds", () => {
-    const root = packageCopy();
+    const root = predicateCopy();
     editPins(root, pins => { pins.units.predicate!.circuits.check_verdict!.rows += 1; });
     const result = compile(root, ["--check", "--units", "predicate"]);
     expect(result.status).not.toBe(0);
@@ -139,10 +162,10 @@ describe("compile-conduct --check verifies every pin it keeps", () => {
 
   it("refuses pins for a unit it does not know", () => {
     const root = packageCopy();
-    editPins(root, pins => { pins.units.openings = { circuits: { ev_pa_ascii_min: { rows: 4000 } } }; });
+    editPins(root, pins => { pins.units.steps = { circuits: { st_pa: { rows: 4000 } } }; });
     const result = compile(root, ["--check"]);
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("pins.json names unknown conduct unit: openings");
+    expect(result.stderr).toContain("pins.json names unknown conduct unit: steps");
   });
 
   it("refuses a --check that would carry a pinned unit without rebuilding it", () => {
@@ -203,7 +226,7 @@ chmodSync(perturbingCompiler, 0o755);
 
 describe("compile-conduct --check measures export invariance with a second, unexported compile", () => {
   it("refuses a predicate.compact that exports no pure circuit", () => {
-    const root = packageCopy();
+    const root = predicateCopy();
     withoutMutants(root);
     editFile(root, "circuits/conduct/predicate.compact", text => text.replaceAll("export pure circuit ", "pure circuit "));
     const result = compile(root, ["--check", "--units", "predicate"]);
@@ -212,7 +235,7 @@ describe("compile-conduct --check measures export invariance with a second, unex
   });
 
   const perturbed = (perturb: string) =>
-    compile(packageCopy(), ["--check", "--units", "predicate"], { COMPACTC: perturbingCompiler, REAL_COMPACTC: compactc, ZKIR: zkir, PERTURB: perturb });
+    compile(predicateCopy(), ["--check", "--units", "predicate"], { COMPACTC: perturbingCompiler, REAL_COMPACTC: compactc, ZKIR: zkir, PERTURB: perturb });
 
   it("control: the wrapper with no perturbation reproduces the pins", () => {
     const result = perturbed("none");

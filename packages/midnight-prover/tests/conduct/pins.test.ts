@@ -28,21 +28,25 @@ describe("conduct circuit pins", () => {
     for (const path of sources) expect(pins().sources[path], path).toBe(sha256(path));
   });
 
-  it("pin exactly the predicate unit and its one provable circuit", () => {
-    expect(Object.keys(pins().units)).toEqual(["predicate"]);
+  it("pin exactly the predicate and openings units, and one provable circuit per verdict and compiled class", () => {
+    const { events, mandates } = JSON.parse(readFileSync(join(pkg, "circuits/conduct/classes.json"), "utf8")).openings;
+    expect(Object.keys(pins().units)).toEqual(["predicate", "openings"]);
     expect(Object.keys(pins().units.predicate!.circuits)).toEqual(["check_verdict"]);
+    expect(Object.keys(pins().units.openings!.circuits)).toEqual([...Object.keys(events), ...Object.keys(mandates)].sort());
   });
 
-  it("the compiled predicate unit under test carries the pinned ZKIR", () => {
-    const ir = relative(pkg, join(unitDir("predicate"), "zkir/check_verdict.zkir"));
-    expect(existsSync(join(pkg, ir)), "conduct circuits not compiled: run pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:circuits").toBe(true);
-    expect(sha256(ir)).toBe(pins().units.predicate!.circuits.check_verdict!.zkirSha256);
+  it.each(["predicate", "openings"])("the compiled %s unit under test carries the pinned ZKIR", unit => {
+    for (const [name, pin] of Object.entries(pins().units[unit]!.circuits)) {
+      const ir = relative(pkg, join(unitDir(unit), `zkir/${name}.zkir`));
+      expect(existsSync(join(pkg, ir)), "conduct circuits not compiled: run pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:circuits").toBe(true);
+      expect(sha256(ir), `${unit}/${name}`).toBe(pin.zkirSha256);
+    }
   });
 
   // compile-conduct writes this only after an unexported recompile yielded identical ZKIR; it refuses otherwise, which
   // compile-conduct.test.ts exercises with a perturbing compiler.
-  it("T-A15: pin that exporting the pure circuits leaves the provable circuit's ZKIR unchanged", () => {
-    expect(pins().units.predicate!.pureExportInvariant).toBe(true);
+  it.each(["predicate", "openings"])("T-A15: pin that exporting the %s unit's pure circuits leaves its provable circuits' ZKIR unchanged", unit => {
+    expect(pins().units[unit]!.pureExportInvariant).toBe(true);
   });
 
   it("pin k, rows, an op histogram and the ZKIR hash of every circuit", () => {

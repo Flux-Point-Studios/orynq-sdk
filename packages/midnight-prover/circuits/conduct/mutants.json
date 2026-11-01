@@ -598,5 +598,11 @@
     "file": "verdict_core.compact",
     "find": "    assert(action_kind <= 1, \"action kind out of domain\");\n    assert(egress_mode <= 1, \"egress mode out of domain\");\n",
     "replace": "    assert(action_kind <= 1, \"egress mode out of domain\");\n    assert(egress_mode <= 1, \"action kind out of domain\");\n"
+  },
+  {
+    "id": "open_no_hash_link",
+    "file": "openings.generated.compact",
+    "find": "  const eventHex = ev_pa_ascii_min_eventHex();\n  hexOfHash(eventHex, eventHash);\n",
+    "replace": "  const eventHex = ev_pa_ascii_min_eventHex();\n"
   }
 ]
