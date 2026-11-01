@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { allCases, checkVerdictArgs as claim, CLAIMS, guardVectorCases, MAX_U64, predicateVectorCases, slot, VERDICT_CODES, type VerdictCase } from "./cases.js";
+import { allCases, checkVerdictArgs as claim, CIRCUIT_REFUSALS, CLAIMS, guardVectorCases, MAX_U64, predicateVectorCases, slot, VERDICT_CODES, type VerdictCase } from "./cases.js";
 import { generatedSource, prepareCheck, runCircuit, stripAsserts, unitDir, zkCheck } from "./harness.js";
 
 const GROUPS = ["predicate-vectors", "guard-vectors", "clock", "matrix", "boundary", "unicode", "range", "invariance", "prior", "spent", "domain"];
@@ -41,8 +41,7 @@ describe("T-A12 every case set reaches the ZKIR layer, and the cases meet every 
       shapes.push([`a clock ahead inside validity where the prior decides ${verdict}`,
         c => spent(c) && isPayment(c) && c.guard === verdict && at(c, notBefore) <= at(c, ts) && at(c, ts) < c.enforcedAt && c.enforcedAt < at(c, notAfter)]);
     }
-    const refusals = ["validity window out of domain", "action kind out of domain", "egress mode out of domain", "payment amount out of domain", "action after guard clock"];
-    for (const message of refusals) {
+    for (const message of CIRCUIT_REFUSALS) {
       const refused = (c: VerdictCase) => refusal(c) === message;
       shapes.push(
         [`${message} with a prior spend above 0`, c => refused(c) && spent(c)],

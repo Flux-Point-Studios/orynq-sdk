@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { checkVerdictArgs, circuitOutcomes, CLAIMS, slot } from "./cases.js";
 import { loadUnit, zkCheck, type Outcome } from "./harness.js";
 import {
-  agrees, ATOMS, atomTruths, cellsOf, judgementsOf, ORDER_SCALES, orderCases, orderChunks, weakOrderings, withoutStacks, type Judgement, type OrderCell,
+  agrees, assertsApplying, ATOMS, atomTruths, cellsOf, judgementsOf, ORDER_SCALES, orderCases, orderChunks, weakOrderings, withoutStacks, type Judgement, type OrderCell,
 } from "./order-type.js";
 
 const { pureCircuits } = await loadUnit("predicate");
@@ -30,7 +30,7 @@ describe("T-A17 every order type of the validity window, action time and guard c
       for (const [i, cell] of cells.entries()) {
         const judged = judgements[i]!;
         const got = circuitOutcomes(pureCircuits, cell);
-        if (!agrees(got.evaluate, judged.evaluate) || !agrees(got.guard, judged.guard)) {
+        if (!agrees(got.evaluate, judged.evaluate, () => assertsApplying(cell).evaluate) || !agrees(got.guard, judged.guard, () => assertsApplying(cell).guard)) {
           wrong.push(`${cell.name}: evaluate ${show(got.evaluate)} where the runtime gives ${judged.evaluate}, guard_verdict ${show(got.guard)} where it gives ${judged.guard}`);
         }
       }
@@ -111,14 +111,9 @@ describe("T-A17 every order type of the validity window, action time and guard c
 // One case per decision path and scale, and for each also its first case after a spend: check accepts exactly the
 // runtime verdict, and no claim for an input the runtime refuses. A refused case is one that only its own refusal
 // applies to, so the sample meets each refusal alone.
-const causes = (c: OrderCell) => {
-  const v = (name: string) => c.args[slot(name)]! as bigint;
-  return [v("not_before") >= v("not_after"), v("egress_mode") > 1n, v("action_kind") > 1n, v("action_kind") === 0n && v("action_amount") === 0n, v("action_timestamp") > c.enforcedAt]
-    .filter(Boolean).length;
-};
 const strata = new Map<string, { readonly cell: OrderCell; readonly judged: Judgement }[]>();
 for (const sample of orderCases()) {
-  if (causes(sample.cell) > 1) continue;
+  if (assertsApplying(sample.cell).guard.length > 1) continue;
   const key = `${sample.cell.scale}: ${sample.judged.path}`;
   const chosen = strata.get(key);
   if (chosen === undefined) strata.set(key, [sample]);

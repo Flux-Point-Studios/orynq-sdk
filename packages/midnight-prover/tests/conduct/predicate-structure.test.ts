@@ -70,7 +70,7 @@ describe("T-A16 the verdict sources hold exactly the audited declarations, liter
   });
 
   // compactc ends a line comment at each of these as well as at a newline, so it reads the rest of the line as code.
-  it.each([["a carriage return", "\r", "000D"], ["a next-line character", "\u0085", "0085"], ["a line separator", " ", "2028"]])(
+  it.each([["a carriage return", "\r", "000D"], ["a next-line character", "\u0085", "0085"], ["a line separator", "\u2028", "2028"]])(
     "refuses %s, after which compactc reads a line comment's text as code", (_label, separator, code) => {
       const sources = predicateSources();
       const predicate = `${sources["predicate.compact"]}// note${separator}export ledger hidden: Uint<8>;\n`;

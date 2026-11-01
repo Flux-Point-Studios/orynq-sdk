@@ -82,7 +82,10 @@ const toAction = (j: JsonAction): GuardAction => j.kind === "payment"
   ? { kind: "payment", asset: j.asset!, amount: BigInt(j.amount!), counterparty: j.counterparty!, timestamp: BigInt(j.timestamp) }
   : { kind: "egress", destination: j.destination!, timestamp: BigInt(j.timestamp) };
 
-const CLOCK_REFUSAL = /action timestamp must not be later than the guard clock/;
+export const CLOCK_REFUSAL = /action timestamp must not be later than the guard clock/;
+
+/** The messages of the circuit asserts that refuse an input, as `evaluate` and then `guard_verdict` add them. */
+export const CIRCUIT_REFUSALS = ["validity window out of domain", "action kind out of domain", "egress mode out of domain", "payment amount out of domain", "action after guard clock"] as const;
 
 export const allowlists = (policy: Policy) =>
   ({ counterpartyAllowlist: policy.counterparties, ...(policy.egress ? { egressAllowlist: policy.egress } : {}) });

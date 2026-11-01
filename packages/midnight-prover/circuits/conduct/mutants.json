@@ -592,5 +592,11 @@
     "file": "predicate.compact",
     "find": "action_asset, action_amount, counterparty_ok, prior_spent, egress_ok) == claimed, \"verdict mismatch\");",
     "replace": "action_asset, action_amount, counterparty_ok, prior_spent, egress_ok) == claimed && (counterparty_ok || egress_ok), \"verdict mismatch\");"
+  },
+  {
+    "id": "refusal_messages_swapped",
+    "file": "verdict_core.compact",
+    "find": "    assert(action_kind <= 1, \"action kind out of domain\");\n    assert(egress_mode <= 1, \"egress mode out of domain\");\n",
+    "replace": "    assert(action_kind <= 1, \"egress mode out of domain\");\n    assert(egress_mode <= 1, \"action kind out of domain\");\n"
   }
 ]

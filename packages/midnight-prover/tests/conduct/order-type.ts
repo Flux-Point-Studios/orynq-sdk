@@ -1,7 +1,9 @@
 import {
   assetTag, compileMandatePredicate, MandateError, PREDICATE_LAYOUT, VERDICT_NAME, type GuardAction, type PredicateArgs,
 } from "@fluxpointstudios/orynq-sdk-conduct";
-import { allowlists, decisionCode, egress, guardFor, MAX_U64, payment, policy, slot, T0, type Policy } from "./cases.js";
+import {
+  allowlists, CIRCUIT_REFUSALS, CLOCK_REFUSAL, decisionCode, egress, guardFor, MAX_U64, payment, policy, slot, T0, type Policy,
+} from "./cases.js";
 import type { Outcome } from "./harness.js";
 import { AUDITED_COMPARISONS } from "./structure.js";
 
@@ -122,11 +124,31 @@ export function withoutStacks<T>(scan: () => T): T {
 
 export type Judged = number | "refused";
 
-const REFUSALS = ["validity window out of domain", "action kind out of domain", "egress mode out of domain", "payment amount out of domain", "action after guard clock"]
-  .map(message => `failed assert: ${message}`);
+type Refusal = (typeof CIRCUIT_REFUSALS)[number];
 
-/** A circuit outcome meets the runtime's when both are the same verdict, or both refuse. */
-export const agrees = (got: Outcome, judged: Judged) => (judged === "refused" ? typeof got !== "number" && REFUSALS.includes(got.throws) : got === judged);
+const [NOT_BEFORE, NOT_AFTER, KIND, MODE, AMOUNT, TIMESTAMP] = ["not_before", "not_after", "action_kind", "egress_mode", "action_amount", "action_timestamp"].map(slot);
+
+/** The circuit asserts whose own condition the cell's inputs break, in `evaluate` and, with the clock, in `guard_verdict`. */
+export function assertsApplying(cell: OrderCell): { readonly evaluate: readonly Refusal[]; readonly guard: readonly Refusal[] } {
+  const v = (index: number) => cell.args[index] as bigint;
+  const broken: Record<Refusal, boolean> = {
+    "validity window out of domain": v(NOT_BEFORE!) >= v(NOT_AFTER!),
+    "action kind out of domain": v(KIND!) > 1n,
+    "egress mode out of domain": v(MODE!) > 1n,
+    "payment amount out of domain": v(KIND!) !== 1n && v(AMOUNT!) === 0n,
+    "action after guard clock": v(TIMESTAMP!) > cell.enforcedAt,
+  };
+  const guard = CIRCUIT_REFUSALS.filter(message => broken[message]);
+  return { evaluate: guard.filter(message => message !== "action after guard clock"), guard };
+}
+
+/**
+ * A circuit outcome meets the runtime's when both are the same verdict, or when the runtime refuses and the circuit
+ * refuses with one of the asserts the input breaks. Where one assert applies, its message must match exactly.
+ */
+export const agrees = (got: Outcome, judged: Judged, applying: () => readonly Refusal[]) => (judged === "refused"
+  ? typeof got !== "number" && applying().some(message => got.throws === `failed assert: ${message}`)
+  : got === judged);
 
 export interface Judgement {
   /** `MandateGuard.evaluate`, the explicit-time judge of the 12-argument evaluate. */
@@ -137,11 +159,21 @@ export interface Judgement {
   readonly path: string;
 }
 
-const CLOCK_REFUSAL = /action timestamp must not be later than the guard clock/;
 const REFUSAL_PATHS: Readonly<Record<string, string>> = {
   SCHEMA_BAD_VALIDITY: "refused: empty validity window", SCHEMA_BAD_EGRESS: "refused: egress mode",
   SCHEMA_BAD_TYPE: "refused: action kind", SCHEMA_BAD_AMOUNT: "refused: zero payment",
 };
+const ASSERT_OF_PATH: Readonly<Record<string, Refusal>> = {
+  "refused: empty validity window": "validity window out of domain", "refused: egress mode": "egress mode out of domain",
+  "refused: action kind": "action kind out of domain", "refused: zero payment": "payment amount out of domain",
+  "refused: later than the clock": "action after guard clock",
+};
+
+// The runtime refuses exactly where an assert applies, and its refusal is one of those asserts.
+function requireRefusalModel(cell: OrderCell, judged: Judged, path: string, applying: readonly Refusal[], judge: string): void {
+  const consistent = judged === "refused" ? applying.includes(ASSERT_OF_PATH[path]!) : applying.length === 0;
+  if (!consistent) throw new Error(`${cell.name}: ${judge} gives ${judged} (${path}) where the asserts that apply are [${applying.join(", ")}]`);
+}
 
 // A refusal the schema raises, or the later-than-clock refusal, is a judgement; any other throw is a harness error, such
 // as a D12 precondition the construction was meant to avoid.
@@ -151,7 +183,8 @@ function refusalOf(error: unknown): string {
   throw error;
 }
 
-const judgements = new Map<string, Judgement>();
+type JudgementWithEvaluatePath = Judgement & { readonly evaluatePath: string };
+const judgements = new Map<string, JudgementWithEvaluatePath>();
 
 /**
  * The runtime's decisions for the cell, through its own code path: a guard built from the cell's mandate, an allowed
@@ -170,13 +203,19 @@ function judge(cell: OrderCell): Judgement {
   const step: GuardAction = kind === 0n ? payment(cell.held || amount === 0n ? amount : prior + amount, ts, asset, counterparty)
     : kind === 1n ? egress(destination, ts) : { kind: `kind ${kind}`, timestamp: ts } as unknown as GuardAction;
   const key = [nb, na, cap, mode, cell.window, prior, cell.held, cell.enforcedAt, kind, ts, ...(kind === 0n ? [amount, asset, counterparty] : kind === 1n ? [destination] : [])].join("|");
-  const known = judgements.get(key);
-  if (known !== undefined) return known;
+  return judgements.get(key) ?? judgeAnew(cell, key, { nb, na, cap, mode, kind, ts, amount, prior, asset, counterparty, step });
+}
 
+interface Judging {
+  readonly nb: bigint; readonly na: bigint; readonly cap: bigint; readonly mode: bigint; readonly kind: bigint; readonly ts: bigint;
+  readonly amount: bigint; readonly prior: bigint; readonly asset: string; readonly counterparty: string; readonly step: GuardAction;
+}
+
+function judgeAnew(cell: OrderCell, key: string, { nb, na, cap, mode, kind, ts, amount, prior, asset, counterparty, step }: Judging): JudgementWithEvaluatePath {
   const base = policy({ cap, window: cell.window, notBefore: nb, notAfter: na, counterparties: [MEMBER], ...(mode === 1n ? { egress: [LISTED] } : {}) });
   const p: Policy = mode > 1n ? { ...base, mandate: { ...base.mandate, egressPolicy: { mode, allowlistRoot: new Uint8Array(32) } } } : base;
   let now = 0n;
-  let judgement: Judgement;
+  let judgement: JudgementWithEvaluatePath;
   try {
     const guard = guardFor(p, () => now);
     if (cell.held) {
@@ -184,11 +223,12 @@ function judge(cell: OrderCell): Judgement {
       if (!guard.enforce(payment(prior, nb, "lovelace", MEMBER)).allowed) throw new Error(`${cell.name}: the opening payment was denied`);
     }
     if (guard.spentInWindow(ts) !== (cell.held ? prior : 0n)) throw new Error(`${cell.name}: the guard does not hold the prior spend`);
+    let evaluatePath = "";
     const evaluate = (() => {
       try {
         return decisionCode(guard.evaluate(step));
       } catch (error) {
-        refusalOf(error);
+        evaluatePath = refusalOf(error);
         return "refused" as const;
       }
     })();
@@ -196,16 +236,20 @@ function judge(cell: OrderCell): Judgement {
     try {
       const code = decisionCode(guard.enforce(step));
       const qualifier = code === 0 ? (kind === 0n ? " payment" : " egress") : code === 2 ? (ts >= na ? " by the action time" : " by the clock") : "";
-      judgement = { evaluate, guard: code, path: `${code} ${VERDICT_NAME[code]}${qualifier}` };
+      judgement = { evaluate, evaluatePath, guard: code, path: `${code} ${VERDICT_NAME[code]}${qualifier}` };
     } catch (error) {
-      judgement = { evaluate, guard: "refused", path: refusalOf(error) };
+      judgement = { evaluate, evaluatePath, guard: "refused", path: refusalOf(error) };
     }
   } catch (error) {
-    judgement = { evaluate: "refused", guard: "refused", path: refusalOf(error) };
+    const path = refusalOf(error);
+    judgement = { evaluate: "refused", evaluatePath: path, guard: "refused", path };
   }
   if (kind <= 1n && (kind === 1n || amount > 0n) && judgement.path !== "refused: empty validity window" && judgement.path !== "refused: egress mode") {
     requireBuiltArgs(cell, p, kind === 0n ? payment(amount, ts, asset, counterparty) : step);
   }
+  const applying = assertsApplying(cell);
+  requireRefusalModel(cell, judgement.evaluate, judgement.evaluatePath, applying.evaluate, "MandateGuard.evaluate");
+  requireRefusalModel(cell, judgement.guard, judgement.path, applying.guard, "MandateGuard.enforce");
   judgements.set(key, judgement);
   return judgement;
 }

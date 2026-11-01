@@ -5,7 +5,7 @@ import { assetTag, PREDICATE_LAYOUT } from "@fluxpointstudios/orynq-sdk-conduct"
 import { describe, expect, it } from "vitest";
 import { allCases, checkVerdictArgs, circuitOutcomes, CLAIMS, MAX_U64, slot, type VerdictCase } from "./cases.js";
 import { loadUnit, outcome, unitDir, zkCheck, type Outcome, type UnitModule } from "./harness.js";
-import { agrees, atomTruths, orderCases, withoutStacks, type Judged, type Judgement, type OrderCell } from "./order-type.js";
+import { agrees, assertsApplying, atomTruths, orderCases, withoutStacks, type Judged, type Judgement, type OrderCell } from "./order-type.js";
 import { auditStructure } from "./structure.js";
 
 const BAND = "a rule skipped in a band between 2^32 and 2^53";
@@ -42,7 +42,7 @@ const VERDICT_CORE_MUTANTS = [
   "amount_floor_waived_for_asset_mismatch", "amount_floor_waived_off_list", "amount_floor_waived_with_egress_ok", "amount_floor_waived_at_time_zero",
   "amount_floor_waived_late_with_prior", "amount_floor_waived_with_prior_under_large_cap", "validity_window_assert_removed",
   ...GATED_MUTANTS.map(([id]) => id), "kind_domain_assert_waived_past_cap", "rewire_window_conditions", "rewire_counterparty_cap_conditions",
-  "rewire_asset_rule_negated", "rewire_amount_floor_conjunction", "rewire_clock_assert_and_rule",
+  "rewire_asset_rule_negated", "rewire_amount_floor_conjunction", "rewire_clock_assert_and_rule", "refusal_messages_swapped",
 ];
 const PREDICATE_MUTANTS = [
   "unconstrained_verdict", "ledger_verdict_constant", "claim_high_bits", "check_verdict_waived_off_list", "check_verdict_refuses_off_list",
@@ -50,6 +50,9 @@ const PREDICATE_MUTANTS = [
 // A waiver module placed after a declaration with a body, where a parse that stopped early would not see it. It adds
 // literals and comparisons, which AM-6.3 answers by T-A16, so no case or cell is required to kill it.
 const HIDDEN_CODE_MUTANTS = ["hidden_waiver", "hidden_waiver_behind_struct", "hidden_waiver_behind_carriage_return"];
+// ZKIR carries no assert message, so a mutant that only moves messages between asserts compiles to the predicate's
+// constraints and only the generated JS can tell it apart.
+const MESSAGE_ONLY_MUTANTS = ["refusal_messages_swapped"];
 // AM-1: the egress-mode domain assert runs before the deny-all rule on every path, so `mode != 1` returning 6 cannot
 // differ from the circuit. It is compiled only to show that, and is never counted as killed.
 const EQUIVALENT_MUTANTS = ["egress_mode_not_one_denies"];
@@ -81,7 +84,7 @@ function orderKill(pure: UnitModule["pureCircuits"], samples: Iterable<OrderCase
   return withoutStacks(() => {
     for (const { cell, judged } of samples) {
       const got = circuitOutcomes(pure, cell);
-      if (!agrees(got.guard, judged.guard) || (!guardOnly && !agrees(got.evaluate, judged.evaluate))) {
+      if (!agrees(got.guard, judged.guard, () => assertsApplying(cell).guard) || (!guardOnly && !agrees(got.evaluate, judged.evaluate, () => assertsApplying(cell).evaluate))) {
         return { name: cell.name, enforcedAt: cell.enforcedAt, args: cell.args, guard: judged.guard };
       }
     }
@@ -198,6 +201,12 @@ describe("AM-6.3: a mutant that passes T-A16 only re-wires audited comparisons, 
     expect(killer, `mutant ${id} passes T-A16 and survives T-A17: a HIGH finding under AM-6.3`).toBeDefined();
   });
 
+  it.each(MESSAGE_ONLY_MUTANTS)("T-A17 alone tells %s apart by the refusal it raises", async id => {
+    expect(readFileSync(join(unitDir(`mutants/${id}`), "zkir/check_verdict.zkir")).equals(readFileSync(join(unitDir("predicate"), "zkir/check_verdict.zkir")))).toBe(true);
+    const killer = orderKill((await loadUnit(`mutants/${id}`)).pureCircuits, representatives);
+    expect(killer, `mutant ${id} raises the wrong refusal on every T-A17 cell`).toBeDefined();
+  });
+
   it.each(GATED_MUTANTS)("%s (%s) fails T-A16, and T-A17 kills it", async id => {
     expect(auditStructure(`mutants/${id}`)).not.toEqual([]);
     expect(await orderGuardKill(id), `mutant ${id} survived every T-A17 cell`).toBeDefined();
@@ -228,7 +237,7 @@ describe("T-A14 ZKIR leg: every mutant that reaches check_verdict is killed by t
 
   // The cases whose guard_verdict the mutant gets wrong at JS come first; when no named case does, the first such T-A17
   // cell. A predicate.compact mutant leaves the pure circuits as they are, so no JS case can differ.
-  it.each(mutants.map(m => m.id).filter(id => ![...EVALUATE_ONLY_MUTANTS, ...EQUIVALENT_MUTANTS, ...HIDDEN_CODE_MUTANTS].includes(id)))("kills %s", async id => {
+  it.each(mutants.map(m => m.id).filter(id => ![...EVALUATE_ONLY_MUTANTS, ...EQUIVALENT_MUTANTS, ...HIDDEN_CODE_MUTANTS, ...MESSAGE_ONLY_MUTANTS].includes(id)))("kills %s", async id => {
     const unit = `mutants/${id}`;
     const pure = (await loadUnit(unit)).pureCircuits;
     const jsKills = (c: VerdictCase) => !isDeepStrictEqual(circuitOutcomes(pure, c).guard, c.guard);
