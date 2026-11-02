@@ -204,6 +204,11 @@ export {
   isCanonical,
 } from "./utils/canonical-json.js";
 
+// Strict JSON
+export type { StrictJsonErrorCode } from "./utils/strict-json.js";
+
+export { parseStrictJson, StrictJsonError, STRICT_JSON_MAX_DEPTH } from "./utils/strict-json.js";
+
 // Hash utilities
 export type { IdempotencyKeyOptions } from "./utils/hash.js";
 

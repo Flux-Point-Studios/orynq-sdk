@@ -159,18 +159,18 @@
     {
       "id": "known-authors-document",
       "name": "Signed KNOWN_AUTHORS document",
-      "desc": "Signed relay and batch author windows, immutable checkpoint identities and append-only checkpoint prefixes across increasing serials. The first shipped policy pins the historical mainnet relay window, the hosted batch author and the original checkpoint. Defaults strictly verify every shipped document; explicit roots select a separate trust domain while every caller document remains mandatory and strictly verified. Higher serials close author windows, same-serial conflicts fail, and older documents cannot roll back revocation. Ed25519 domain-separated signatures cover exact document strings. Initial custody uses owner-only software keys on operator-approved existing hosts; root signing is separate from the online batch author. Bounded strict JSON rejects duplicate decoded keys, including escaped aliases, before policy interpretation. knownAuthorsSigningSummary and the inspect CLI expose document SHA-256, serial, issued time, author windows and checkpoint authority fingerprints. CLI signing binds the exact inspected digest and requires independently replayed GRANDPA advancement evidence for each appended checkpoint from a current pinned predecessor; bootstrap and root replacement require separate trust review. Neither an RPC authority list nor a self-consistent replacement checkpoint is signing evidence.",
+      "desc": "Signed relay and batch author windows, immutable checkpoint identities and append-only checkpoint prefixes across increasing serials. The first shipped policy pins the historical mainnet relay window, the hosted batch author and the original checkpoint. Defaults strictly verify every shipped document; explicit roots select a separate trust domain while every caller document remains mandatory and strictly verified. Higher serials close author windows, same-serial conflicts fail, and older documents cannot roll back revocation. Ed25519 domain-separated signatures cover exact document strings. Initial custody uses owner-only software keys on operator-approved existing hosts; root signing is separate from the online batch author. Policy text is parsed by the shared strict JSON parser before interpretation, so duplicate decoded keys (escaped aliases included), lone surrogates, nesting past 32 and numbers without one exact spelling are refused. knownAuthorsSigningSummary and the inspect CLI expose document SHA-256, serial, issued time, author windows and checkpoint authority fingerprints. CLI signing binds the exact inspected digest and requires independently replayed GRANDPA advancement evidence for each appended checkpoint from a current pinned predecessor; bootstrap and root replacement require separate trust review. Neither an RPC authority list nor a self-consistent replacement checkpoint is signing evidence.",
       "kind": "toolkit",
       "paths": [
         "packages/anchors-midnight/src/known-authors.ts",
         "packages/anchors-midnight/known-authors.json",
         "packages/anchors-midnight/scripts/known-authors.ts",
         "packages/anchors-midnight/src/checkpoints.ts",
-        "packages/anchors-midnight/src/strict-json.ts",
         "packages/anchors-midnight/src/signing-review.ts"
       ],
       "consumes": [
-        "grandpa-finality-verifier"
+        "grandpa-finality-verifier",
+        "strict-json"
       ],
       "status": "live"
     },
@@ -495,6 +495,17 @@
       ],
       "status": "experimental",
       "terminal": true
+    },
+    {
+      "id": "strict-json",
+      "name": "Strict JSON parser",
+      "desc": "parseStrictJson(text, maxBytes) gives every accepted text exactly one decoded meaning: it refuses text over the byte limit (UTF-8), invalid JSON, duplicate decoded object keys including escaped spellings, lone surrogates in keys or values, values nested more than 32 containers deep, integers beyond ±2^53 (judged on the digits, not the rounded double) and integers spelled with a fraction, exponent or minus zero; non-integral numbers pass through for the caller's schema. Refusals are StrictJsonError with a code and a fixed message that never quotes the input.",
+      "kind": "toolkit",
+      "paths": [
+        "packages/core/src/utils/strict-json.ts"
+      ],
+      "consumes": [],
+      "status": "live"
     },
     {
       "id": "checkpoint-primitives",
