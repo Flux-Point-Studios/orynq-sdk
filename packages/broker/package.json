@@ -1,0 +1,48 @@
+{
+  "name": "@fluxpointstudios/orynq-sdk-broker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Orynq credential broker: agents use credentials they never see, released only for requests that verify against an issued conduct mandate",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "docs",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.tests.json",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "tsup": "^8.0.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  },
+  "author": "Flux Point Studios",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
+    "directory": "packages/broker"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "sideEffects": false
+}
