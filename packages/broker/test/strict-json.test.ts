@@ -29,6 +29,14 @@ describe("parseJsonPayload", () => {
     }
   });
 
+  it("refuses a truncated sequence that U+FFFD would replace at the same size", () => {
+    // f0 9f 98 is three bytes of a four-byte sequence; a lenient decoder writes one U+FFFD, also
+    // three bytes, so only the decoder itself can refuse it.
+    const error = refusal(Uint8Array.of(0x22, 0xf0, 0x9f, 0x98, 0x22));
+    expect(error.code).toBe(-32700);
+    expect(error.cause).toBeInstanceOf(TypeError);
+  });
+
   it("refuses a byte-order mark instead of stripping it", () => {
     expect(refusal(Uint8Array.from([0xef, 0xbb, 0xbf, 0x7b, 0x7d])).code).toBe(-32700);
   });
