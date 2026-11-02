@@ -26,6 +26,7 @@
     "clean": "rimraf dist"
   },
   "dependencies": {
+    "@fluxpointstudios/orynq-sdk-conduct": "workspace:*",
     "@fluxpointstudios/orynq-sdk-core": "workspace:*"
   },
   "devDependencies": {

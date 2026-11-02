@@ -305,6 +305,9 @@ importers:
 
   packages/broker:
     dependencies:
+      '@fluxpointstudios/orynq-sdk-conduct':
+        specifier: workspace:*
+        version: link:../conduct
       '@fluxpointstudios/orynq-sdk-core':
         specifier: workspace:*
         version: link:../core
