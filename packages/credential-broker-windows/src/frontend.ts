@@ -5,15 +5,18 @@ const OPEN = 1;
 const FRAME = 2;
 const CLOSE = 3;
 
-export interface Principal {
+/** The OS identity of a pipe client; the broker maps it to a principal. */
+export interface Peer {
+  os: "windows";
   sid: string;
   /** Logon session LUID as a decimal string. */
   logonLuid: string;
-  session: number;
+  /** Terminal Services session id. */
+  tsSessionId: number;
   /** Mandatory integrity level RID, e.g. 0x2000 for medium. */
-  integrity: number;
-  /** Client process id; informational only, since a pid can be reused. */
-  pid: number | null;
+  integrityRid: number;
+  /** Client process id. Never an authorization input: a pid can be reused. */
+  pidHint: number | null;
 }
 
 export interface FrontendOptions {
@@ -24,7 +27,7 @@ export interface FrontendOptions {
   /** User (S-1-5-21-…) or service (S-1-5-80-…) SIDs that may connect besides this account and SYSTEM. */
   admit?: string[];
   /** Answers one frame; the frontend sends the next frame on a connection only after this resolves. */
-  handle: (frame: Buffer, principal: Principal | null) => Promise<Uint8Array>;
+  handle: (frame: Buffer, peer: Peer | null) => Promise<Uint8Array>;
   onError?: (error: unknown) => void;
 }
 
@@ -78,7 +81,7 @@ export function startFrontend(options: FrontendOptions): Promise<Frontend> {
     windowsHide: true,
   });
   const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-  const principals = new Map<bigint, Principal | null>();
+  const peers = new Map<bigint, Peer | null>();
   const reader = new MessageReader();
   let stderr = "";
   let ready = false;
@@ -90,7 +93,7 @@ export function startFrontend(options: FrontendOptions): Promise<Frontend> {
   child.stdin.on("error", report);
 
   const answer = (conn: bigint, frame: Buffer) =>
-    options.handle(frame, principals.get(conn) ?? null).then(
+    options.handle(frame, peers.get(conn) ?? null).then(
       (response) => child.stdin.write(message(FRAME, conn, response)),
       (error: unknown) => {
         report(error);
@@ -120,11 +123,11 @@ export function startFrontend(options: FrontendOptions): Promise<Frontend> {
             },
           });
         } else if (kind === OPEN) {
-          principals.set(conn, JSON.parse(payload.toString("utf8")) as Principal | null);
+          peers.set(conn, JSON.parse(payload.toString("utf8")) as Peer | null);
         } else if (kind === FRAME) {
           void answer(conn, Buffer.from(payload));
         } else if (kind === CLOSE) {
-          principals.delete(conn);
+          peers.delete(conn);
         } else {
           report(new Error(`orynq-pipe-frontend sent message kind ${kind}`));
         }

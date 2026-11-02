@@ -1,10 +1,10 @@
 //! Named-pipe transport for the orynq credential broker on Windows.
 //!
 //! libuv sets no SDDL on a pipe and exposes no pipe handle, so this process owns the pipe and hands
-//! `{connId, principal, frame}` to its Node parent over stdio. It never parses a frame.
+//! `{connId, peer, frame}` to its Node parent over stdio. It never parses a frame.
 //!
 //! stdio messages, both directions: `u32 length | u8 kind | u64 connId | payload`, big-endian, where
-//! length counts kind, connId and payload. Kinds: 0 ready, 1 open (payload: principal JSON or `null`),
+//! length counts kind, connId and payload. Kinds: 0 ready, 1 open (payload: peer JSON or `null`),
 //! 2 frame, 3 close. The parent sends only frame (a response) and close.
 
 use std::{
@@ -47,7 +47,7 @@ const OPEN: u8 = 1;
 const FRAME: u8 = 2;
 const CLOSE: u8 = 3;
 const MAX_FRAME: u32 = 16 << 20;
-const MAX_PER_PRINCIPAL: usize = 32;
+const MAX_PER_PEER: usize = 32;
 // Read/write data, read attributes, READ_CONTROL, SYNCHRONIZE. Never FILE_CREATE_PIPE_INSTANCE (0x4):
 // a client holding it could create instances of this pipe and answer other clients.
 const CLIENT_RIGHTS: &str = "0x120083";
@@ -66,7 +66,7 @@ enum Command {
 struct Shared {
     out: mpsc::Sender<Vec<u8>>,
     conns: Mutex<HashMap<u64, mpsc::Sender<Command>>>,
-    per_principal: Mutex<HashMap<String, usize>>,
+    per_peer: Mutex<HashMap<String, usize>>,
     idle: Duration,
 }
 
@@ -82,32 +82,32 @@ impl Shared {
         }
     }
 
-    fn claim(self: &Arc<Self>, principal: String) -> Option<Slot> {
-        let mut counts = self.per_principal.lock().unwrap();
-        let count = counts.entry(principal.clone()).or_insert(0);
-        if *count >= MAX_PER_PRINCIPAL {
+    fn claim(self: &Arc<Self>, peer: String) -> Option<Slot> {
+        let mut counts = self.per_peer.lock().unwrap();
+        let count = counts.entry(peer.clone()).or_insert(0);
+        if *count >= MAX_PER_PEER {
             return None;
         }
         *count += 1;
         Some(Slot {
             shared: Arc::clone(self),
-            principal,
+            peer,
         })
     }
 }
 
 struct Slot {
     shared: Arc<Shared>,
-    principal: String,
+    peer: String,
 }
 
 impl Drop for Slot {
     fn drop(&mut self) {
-        let mut counts = self.shared.per_principal.lock().unwrap();
-        if let Some(count) = counts.get_mut(&self.principal) {
+        let mut counts = self.shared.per_peer.lock().unwrap();
+        if let Some(count) = counts.get_mut(&self.peer) {
             *count -= 1;
             if *count == 0 {
-                counts.remove(&self.principal);
+                counts.remove(&self.peer);
             }
         }
     }
@@ -178,7 +178,7 @@ impl Token {
         sid_text(unsafe { (*user.as_ptr().cast::<TOKEN_USER>()).User.Sid })
     }
 
-    fn principal(&self, pipe: HANDLE) -> Option<serde_json::Value> {
+    fn peer(&self, pipe: HANDLE) -> Option<serde_json::Value> {
         let stats = self.info(TokenStatistics)?;
         let luid = unsafe { (*stats.as_ptr().cast::<TOKEN_STATISTICS>()).AuthenticationId };
         let session = self.info(TokenSessionId)?;
@@ -190,11 +190,12 @@ impl Token {
         let mut pid = 0u32;
         let pid = (unsafe { GetNamedPipeClientProcessId(pipe, &mut pid) } != 0).then_some(pid);
         Some(json!({
+            "os": "windows",
             "sid": self.user_sid()?,
             "logonLuid": ((u64::from(luid.HighPart as u32) << 32) | u64::from(luid.LowPart)).to_string(),
-            "session": unsafe { *session.as_ptr().cast::<u32>() },
-            "integrity": integrity,
-            "pid": pid,
+            "tsSessionId": unsafe { *session.as_ptr().cast::<u32>() },
+            "integrityRid": integrity,
+            "pidHint": pid,
         }))
     }
 }
@@ -237,7 +238,7 @@ fn identify(pipe: HANDLE) -> Option<serde_json::Value> {
     if opened == 0 {
         return None;
     }
-    Token(handle).principal(pipe)
+    Token(handle).peer(pipe)
 }
 
 // Users and service SIDs only: SDDL aliases and well-known groups would admit whole populations.
@@ -313,8 +314,8 @@ async fn serve(pipe: NamedPipeServer, conn: u64, shared: Arc<Shared>) {
     if first == 0 || first > MAX_FRAME {
         return;
     }
-    let principal = identify(handle as HANDLE);
-    let key = principal.as_ref().map_or_else(String::new, |p| {
+    let peer = identify(handle as HANDLE);
+    let key = peer.as_ref().map_or_else(String::new, |p| {
         p["sid"].as_str().unwrap_or_default().to_string()
     });
     let Some(_slot) = shared.claim(key) else {
@@ -327,8 +328,7 @@ async fn serve(pipe: NamedPipeServer, conn: u64, shared: Arc<Shared>) {
         .emit(
             OPEN,
             conn,
-            principal
-                .map_or_else(|| b"null".to_vec(), |p| p.to_string().into_bytes())
+            peer.map_or_else(|| b"null".to_vec(), |p| p.to_string().into_bytes())
                 .as_slice(),
         )
         .await;
@@ -441,7 +441,7 @@ async fn run() -> Result<(), String> {
     let shared = Arc::new(Shared {
         out,
         conns: Mutex::default(),
-        per_principal: Mutex::default(),
+        per_peer: Mutex::default(),
         idle: config.idle,
     });
     tokio::spawn(route_commands(Arc::clone(&shared)));

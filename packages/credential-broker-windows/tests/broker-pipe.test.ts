@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { type BrokerConnection, connectBroker } from "../src/client.js";
-import { type Frontend, type FrontendOptions, type Principal, startFrontend } from "../src/frontend.js";
+import { type Frontend, type FrontendOptions, type Peer, startFrontend } from "../src/frontend.js";
 import { FRONTEND_EXECUTABLE } from "./frontend-executable.js";
 
 const whoami = (...args: string[]) =>
@@ -37,16 +37,17 @@ describe.runIf(process.platform === "win32")("broker pipe", { timeout: 30_000 },
   });
 
   it("tells the handler which Windows account is calling", async () => {
-    const seen: (Principal | null)[] = [];
+    const seen: (Peer | null)[] = [];
     const frontend = await start({
-      handle: async (_frame, principal) => {
-        seen.push(principal);
+      handle: async (_frame, peer) => {
+        seen.push(peer);
         return text("{}");
       },
     });
     await (await connect(frontend)).request(text("{}"));
     expect(seen).toHaveLength(1);
-    expect(seen[0]).toMatchObject({ sid: ownSid(), pid: process.pid });
+    expect(seen[0]).toMatchObject({ os: "windows", sid: ownSid(), pidHint: process.pid });
+    expect(Object.keys(seen[0] ?? {}).sort()).toEqual(["integrityRid", "logonLuid", "os", "pidHint", "sid", "tsSessionId"]);
   });
 
   it("refuses to talk to a pipe owned by another account", async () => {

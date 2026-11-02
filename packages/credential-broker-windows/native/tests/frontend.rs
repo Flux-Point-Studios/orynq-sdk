@@ -192,7 +192,7 @@ fn closed_within(mut client: File, period: Duration) -> bool {
     rx.recv_timeout(period).unwrap_or(false)
 }
 
-fn principal(event: &Event) -> serde_json::Value {
+fn peer(event: &Event) -> serde_json::Value {
     assert_eq!(event.kind, OPEN);
     serde_json::from_slice(&event.payload).unwrap()
 }
@@ -321,12 +321,13 @@ fn reports_the_callers_identity_from_impersonation() {
     let mut frontend = Frontend::start(&[]);
     let mut client = frontend.connect();
     client.write_all(&frame(b"{}")).unwrap();
-    let identity = principal(&frontend.next());
+    let identity = peer(&frontend.next());
+    assert_eq!(identity["os"], "windows");
     assert_eq!(identity["sid"], own_sid());
-    assert_eq!(identity["session"], own_session());
-    assert_eq!(identity["integrity"], own_integrity_rid());
+    assert_eq!(identity["tsSessionId"], own_session());
+    assert_eq!(identity["integrityRid"], own_integrity_rid());
     assert_eq!(identity["logonLuid"], own_logon_luid());
-    assert_eq!(identity["pid"], std::process::id() as u64);
+    assert_eq!(identity["pidHint"], std::process::id() as u64);
 }
 
 #[test]
@@ -353,7 +354,7 @@ fn relays_a_frame_and_its_response() {
 }
 
 #[test]
-fn gives_an_anonymous_client_no_principal() {
+fn gives_an_anonymous_client_no_peer() {
     let mut frontend = Frontend::start(&[]);
     let mut client = connect(&frontend.pipe, SECURITY_ANONYMOUS).unwrap();
     client.write_all(&frame(b"{}")).unwrap();
@@ -443,7 +444,7 @@ fn closes_a_connection_when_the_parent_says_so() {
 }
 
 #[test]
-fn caps_connections_per_principal_at_thirty_two() {
+fn caps_connections_per_peer_at_thirty_two() {
     let mut frontend = Frontend::start(&[]);
     let mut clients = Vec::new();
     for _ in 0..32 {
