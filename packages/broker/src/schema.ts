@@ -1,7 +1,8 @@
 import { array, bytes, choice, literal, map, optional, text, uint, type Shape } from "./dcbor.js";
 
 // The runtime form of docs/params.cddl, mandate-draft.cddl and release.cddl, keyed by CDDL rule
-// name. The CDDL is normative; test/vectors holds both to the same verdict on every vector.
+// name. The CDDL is normative: test/schema.test.ts holds both to one verdict on every vector and
+// on bound probes generated for every member and choice of every rule.
 
 // The params and release effect an effect kind adds to $$intent-effect and $$release-effect.
 export interface EffectKind {
