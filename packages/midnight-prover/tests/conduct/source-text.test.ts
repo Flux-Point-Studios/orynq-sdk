@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const pkg = resolve(import.meta.dirname, "../..");
 const SOURCES = ["tests/conduct", "scripts/conduct"].flatMap(dir => readdirSync(join(pkg, dir)).map(name => `${dir}/${name}`))
-  .concat("scripts/compile-conduct.mjs");
+  .concat("scripts/compile-conduct.mjs", "tests/conduct-ci.test.ts", "vitest.conduct.config.mts");
 // Code points a reader cannot see and an editor may drop or normalize: NEL, the soft hyphen, zero-width and
 // directional format characters, the line and paragraph separators, invisible operators and the BOM.
 const INVISIBLE: readonly (readonly [number, number])[] = [[0x85, 0x85], [0xad, 0xad], [0x200b, 0x200f], [0x2028, 0x202e], [0x2060, 0x2064], [0xfeff, 0xfeff]];

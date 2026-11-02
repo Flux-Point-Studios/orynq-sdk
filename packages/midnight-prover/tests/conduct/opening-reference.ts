@@ -6,7 +6,7 @@ import { canonicalize } from "@fluxpointstudios/orynq-sdk-core/utils";
 import { HASH_DOMAIN_PREFIXES } from "@fluxpointstudios/orynq-sdk-process-trace";
 import { CLASSES } from "../../scripts/conduct/template.mjs";
 import { KINDS, realEvent } from "./guard-events.js";
-import { MANDATE_UINT_FIELDS, VALUE_CLASSES } from "./openings.js";
+import { DID_PREFIX, MANDATE_UINT_FIELDS, VALUE_CLASSES } from "./openings.js";
 import { MANDATE_ATOMS_DOMAIN } from "./statement-checker.js";
 
 // The Compact text every compiled opening class and gadget probe must hold, written from the statements the README
@@ -170,7 +170,6 @@ const MANDATE_FIELDS: Readonly<Record<string, string>> = {
   "7.0": "egressMode", "7.1": "egressRoot", "8": "measurementRoot", "9.0": "notBefore", "9.1": "notAfter", "10.0": "committeeId",
   "10.1": "threshold", "10.2": "committeeSize",
 };
-const DID_PREFIX = "did:key:z";
 const DIDS = ["principalDid", "agentDid"];
 const UINT_AT_WIDTH: Readonly<Record<number, bigint>> = { 0: 1n, 1: 24n, 2: 256n, 4: 65536n, 8: 1n << 32n };
 

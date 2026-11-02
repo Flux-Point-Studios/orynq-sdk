@@ -4,9 +4,10 @@
 
 Prototype conduct circuits ship as Compact sources under `circuits/conduct`,
 with `scripts/compile-conduct.mjs`, which rebuilds them from the published
-files and checks their pins. They hold the conduct verdict, and openings of
-process-trace guard events and conduct mandate CBOR in exact-length classes,
-generated from one guard-event template through `scripts/conduct/template.mjs`.
+files and checks their pins. They hold the conduct verdict, and openings in
+exact-length classes of process-trace guard events, generated from one
+guard-event template, and of conduct mandate CBOR in the codec's layout, both
+emitted through `scripts/conduct/template.mjs`.
 Their tests ship under `tests/conduct` and run inside the workspace, which
 holds the conduct fixtures they read, through `vitest.conduct.config.mts`. The
 package entry does not export the circuits. They are undeployed and their ABI

@@ -11,6 +11,9 @@ import { withFixtureProof } from "../fixture-prover.js";
 const managed = resolve(import.meta.dirname, "../../conduct-managed");
 const circuits = resolve(import.meta.dirname, "../../circuits/conduct");
 const ASSERT_CALL = "__compactRuntime.assert(";
+export const CAST_FAILED = "cast from Field or Uint value to smaller Uint value failed";
+// compactc's runtime check of a narrowing cast, which the ZKIR holds as a bit bound.
+const NARROWING_CAST = new RegExp(String.raw`if \((\w+) > \d+n\) \{\s*throw new __compactRuntime\.CompactError\('[^']*: ${CAST_FAILED}: ' \+ \1 \+ ' is greater than \d+'\);\s*\}`, "g");
 
 export interface ProofData {
   input: { value: Uint8Array[]; alignment: unknown[] };
@@ -67,8 +70,13 @@ export function unitSource(unit: string, file: string): string {
   return readFileSync(join(dir.startsWith(join(managed, "mutants") + sep) ? join(dir, "source") : circuits, file), "utf8");
 }
 
-export function stripAsserts(source: string): { source: string; removed: number } {
-  return { source: source.replaceAll(ASSERT_CALL, "((_c, _m) => {})("), removed: source.split(ASSERT_CALL).length - 1 };
+/** The generated JS with every assert a no-op and every narrowing cast unchecked, and how many of each it held. */
+export function stripChecks(source: string): { source: string; asserts: number; casts: number } {
+  return {
+    source: source.replace(NARROWING_CAST, "").replaceAll(ASSERT_CALL, "((_c, _m) => {})("),
+    asserts: source.split(ASSERT_CALL).length - 1,
+    casts: source.match(NARROWING_CAST)?.length ?? 0,
+  };
 }
 
 // The copy keeps every ZKIR constraint but none of the generated JS checks, so only `check` can refuse a forgery. Its
@@ -78,8 +86,9 @@ function loadStripped(unit: string): Promise<UnitModule> {
   const file = contractFile(unit);
   let module = strippedUnits.get(file);
   if (module === undefined) {
-    const { source, removed } = stripAsserts(generatedSource(unit).replace(/^\/\/# sourceMappingURL=.*$/m, ""));
-    if (removed === 0) throw new Error(`no generated assertions to strip in ${unit}`);
+    const { source, asserts } = stripChecks(generatedSource(unit).replace(/^\/\/# sourceMappingURL=.*$/m, ""));
+    if (asserts === 0) throw new Error(`no generated assertions to strip in ${unit}`);
+    if (source.includes(CAST_FAILED)) throw new Error(`a narrowing cast in ${unit} is not in the form the strip removes`);
     const stripped = join(file, "../index.stripped.js");
     const temp = `${stripped}.${randomUUID()}`;
     writeFileSync(temp, source);

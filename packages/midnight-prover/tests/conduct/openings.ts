@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { classify, CLASSES, eventClass, eventOpening, eventSegments, valueSpecs } from "../../scripts/conduct/template.mjs";
 import { maxClassEvent, realEvent, type RealEvent } from "./guard-events.js";
-import { runLedger, unitDir, zkCheck } from "./harness.js";
+import { CAST_FAILED, runLedger, unitDir, zkCheck } from "./harness.js";
 
 export interface Segment { readonly c?: string; readonly v?: string; readonly lex?: string; readonly max?: number; readonly nonzero?: boolean }
 
@@ -42,7 +42,8 @@ export const MANDATE_UINT_FIELDS = ["capAmount", "windowSeconds", "notBefore", "
 const FIXED_EVENT_WITNESS_BYTES = 64 + 64 + 36 + 24 + 64;
 // The mandate id, the counterparty, egress and measurement roots, and the egress mode byte.
 const FIXED_MANDATE_WITNESS_BYTES = 16 + 32 + 32 + 32 + 1;
-const DID_PREFIX = "did:key:z";
+/** The prefix of every DID a mandate holds; its circuits read only the tail after it. */
+export const DID_PREFIX = "did:key:z";
 const sum = (values: readonly number[]) => values.reduce((total, n) => total + n, 0);
 
 /**
@@ -220,10 +221,10 @@ export function malformedStrings(opening: Opening, name: string): Forgery[] {
 }
 
 /**
- * A lexical forgery. Where the arithmetic of its bytes leaves a statement field's type, the field keeps its honest
- * value and a cast refuses the forgery in the generated JS, before any transcript exists for the constraints to check.
+ * A lexical forgery. Where the arithmetic of its bytes leaves a statement field's type, the forgery is out of type and
+ * the field keeps its honest value.
  */
-export interface LexicalForgery extends Forgery { readonly castRefused?: true }
+export interface LexicalForgery extends Forgery { readonly outOfType?: true }
 /** A lexical forgery that a segment of its class's width cannot hold, and why. */
 export interface Unheld { readonly label: string; readonly reason: string }
 
@@ -232,10 +233,10 @@ function lexical(o: Opening, label: string, name: string, bytes: Uint8Array, ref
   const forged = rederived(o, name, bytes);
   const outside = Object.keys(forged.statement).filter(field => typeof forged.statement[field] === "bigint" && !fits(field, forged.statement[field] as bigint));
   if (outside.length === 0) return { label, opening: forged, refusal };
-  return { label, opening: { ...forged, statement: { ...forged.statement, ...Object.fromEntries(outside.map(field => [field, o.statement[field]!])) } }, refusal, castRefused: true };
+  return { label, opening: { ...forged, statement: { ...forged.statement, ...Object.fromEntries(outside.map(field => [field, o.statement[field]!])) } }, refusal, outOfType: true };
 }
 
-const CAST = /cast from Field or Uint value to smaller Uint value failed/;
+const CAST = new RegExp(CAST_FAILED);
 // The bytes just outside the digits, and just outside the digits and the lowercase hex letters.
 const DIGIT_EDGES = [0x2f, 0x3a];
 const HEX_EDGES = [0x2f, 0x3a, 0x60, 0x67];

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import type { UnitModule } from "./harness.js";
+import { CAST_FAILED, type UnitModule } from "./harness.js";
 import { latin1, sha256 } from "./openings.js";
 import { withoutStacks } from "./order-type.js";
 
@@ -20,7 +20,7 @@ const accepted = (value: unknown = []): Judgement => ({ value });
 const refused = (message: string): Judgement => ({ refused: message });
 const ASSERT = "failed assert: ";
 // A cast to a narrower Uint is a constraint too: decU64 refuses 2^64 and above with it.
-const CAST = /^[^:]+ line \d+ char \d+: cast from Field or Uint value to smaller Uint value failed/;
+const CAST = new RegExp(String.raw`^[^:]+ line \d+ char \d+: ${CAST_FAILED}`);
 const asText = (bytes: readonly number[]) => Buffer.from(bytes).toString("latin1");
 const ascii = (text: string) => [...latin1(text)];
 

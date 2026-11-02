@@ -189,6 +189,26 @@ describe("T-A16 (AM-8) the gadgets and every generated opening class hold exactl
     expect(edited("gadgets.compact", [find, replace])).toEqual(messages);
   });
 
+  // The order of the ledger declarations sets each statement cell's slot in the public transcript.
+  it("refuses the ledger declarations reordered with its exact message", () => {
+    const [payment, egress] = ["export ledger paymentOpening: PaymentOpening;", "export ledger egressOpening: EgressOpening;"];
+    expect(edited("openings.generated.compact", [payment, "SWAP"], [egress, payment], ["SWAP", egress])).toEqual([
+      `openings.generated.compact differs from its audited outline at line 6: found ${JSON.stringify(egress)}, audited ${JSON.stringify(payment)}`,
+    ]);
+  });
+
+  const unparsed = (file: OpeningFile, close: string, found: string) =>
+    `${file} cannot be audited: expected "," or "${close}" in the Compact source, found "${found}"`;
+  it.each<readonly [string, OpeningFile, Edit, string]>([
+    ["call arguments", "openings.generated.compact", ["hexOfHash(eventHex, eventHash);", "hexOfHash(eventHex eventHash);"], unparsed("openings.generated.compact", ")", "eventHash")],
+    ["tuple items", "openings.generated.compact", [ROLL, ROLL.replace('|", s.', '|" s.')], unparsed("openings.generated.compact", "]", "s")],
+    ["circuit parameters", "gadgets.compact", ["], b: Uint<8>, ascii: Boolean)", "] b: Uint<8>, ascii: Boolean)"], unparsed("gadgets.compact", ")", "b")],
+    ["tuple type members", "gadgets.compact", ["(s: [Uint<0..4>, Uint<8>,", "(s: [Uint<0..4> Uint<8>,"], unparsed("gadgets.compact", "]", "Uint")],
+    ["type arguments", "gadgets.compact", ["decU64<#N>(ds: Vector<N, Uint<8>>)", "decU64<#N>(ds: Vector<N Uint<8>>)"], unparsed("gadgets.compact", ">", "Uint")],
+  ])("refuses %s without their separating comma, which compactc cannot parse, with its exact message", (_label, file, edit, message) => {
+    expect(edited(file, edit)).toEqual([message]);
+  });
+
   it("refuses a carriage return in a gadget's line comment, after which compactc reads the rest of the line as code", () => {
     expect(edited("gadgets.compact", ["module ConductGadgets {", "module ConductGadgets { // note\r"])).toEqual([
       "gadgets.compact cannot be audited: character U+000D at offset 31 is outside printable ASCII",

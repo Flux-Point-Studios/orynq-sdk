@@ -366,6 +366,18 @@ class Parser {
     return true;
   }
 
+  // Items up to `close`, separated by commas as compactc requires.
+  private list<T>(close: string, item: () => T): T[] {
+    const items: T[] = [];
+    if (this.accept(close)) return items;
+    for (;;) {
+      items.push(item());
+      if (this.accept(close)) return items;
+      const token = this.next();
+      if (token.text !== ",") throw new Error(`expected "," or "${close}" in the Compact source, found "${token.text}"`);
+    }
+  }
+
   // The tokens from `start` up to the current one, with a space wherever the source separated two of them.
   private text(start: number): string {
     return this.tokens.slice(start, this.at).map((token, i) => (i > 0 && token.spaced ? ` ${token.text}` : token.text)).join("");
@@ -414,22 +426,16 @@ class Parser {
 
   private circuit(module: string, modifiers: readonly string[]): Circuit {
     const name = this.next().text;
-    const sizes: string[] = [];
-    if (this.accept("<")) {
-      while (!this.accept(">")) {
-        this.expect("#");
-        sizes.push(`#${this.next().text}`);
-        this.accept(",");
-      }
-    }
+    const sizes = !this.accept("<") ? [] : this.list(">", () => {
+      this.expect("#");
+      return `#${this.next().text}`;
+    });
     this.expect("(");
-    const params: [string, string][] = [];
-    while (!this.accept(")")) {
+    const params = this.list(")", (): [string, string] => {
       const param = this.next().text;
       this.expect(":");
-      params.push([param, this.type()]);
-      this.accept(",");
-    }
+      return [param, this.type()];
+    });
     this.expect(":");
     const returns = this.type();
     const start = this.at;
@@ -448,23 +454,11 @@ class Parser {
   }
 
   private type(): string {
-    if (this.accept("[")) {
-      const members: string[] = [];
-      while (!this.accept("]")) {
-        members.push(this.type());
-        this.accept(",");
-      }
-      return `[${members.join(", ")}]`;
-    }
+    if (this.accept("[")) return `[${this.list("]", () => this.type()).join(", ")}]`;
     const token = this.next();
     if (token.kind !== "name") throw new Error(`expected a type in the Compact source, found "${token.text}"`);
     if (!this.accept("<")) return token.text;
-    const args: string[] = [];
-    while (!this.accept(">")) {
-      args.push(this.typeArgument());
-      this.accept(",");
-    }
-    return `${token.text}<${args.join(", ")}>`;
+    return `${token.text}<${this.list(">", () => this.typeArgument()).join(", ")}>`;
   }
 
   // A size, a size range or a type.
@@ -579,25 +573,14 @@ class Parser {
       this.expect(")");
       return inner;
     }
-    if (this.accept("[")) {
-      const items: Expr[] = [];
-      while (!this.accept("]")) {
-        items.push(this.expr());
-        this.accept(",");
-      }
-      return { type: "tuple", items };
-    }
+    if (this.accept("[")) return { type: "tuple", items: this.list("]", () => this.expr()) };
     const start = this.at;
     const token = this.next();
     if (token.kind === "punct") throw new Error(`unexpected "${token.text}" in a Compact expression`);
     if (token.kind !== "name") return { type: "atom", text: token.text };
     const generics = this.generics();
     if (!this.accept("(")) return { type: "atom", text: token.text };
-    const args: Expr[] = [];
-    while (!this.accept(")")) {
-      args.push(this.expr());
-      this.accept(",");
-    }
+    const args = this.list(")", () => this.expr());
     if (token.text === HASH) this.hashes.push([start, this.at]);
     return { type: "call", callee: token.text, generics, args };
   }
@@ -618,12 +601,7 @@ class Parser {
     }
     if (this.tokens[end + 1]?.text !== "(") return [];
     this.expect("<");
-    const args: string[] = [];
-    while (!this.accept(">")) {
-      args.push(this.typeArgument());
-      this.accept(",");
-    }
-    return args;
+    return this.list(">", () => this.typeArgument());
   }
 
   // `(a, b) => body`, or undefined with nothing read when the parenthesis opens anything else.
@@ -934,9 +912,10 @@ function openingsAudit(sources: OpeningSources): OpeningsAudit {
   if (typeof reference === "string") throw new Error(reference);
   const unreadable = [gadgets, generated].filter((outline): outline is string => typeof outline === "string");
   if (typeof gadgets === "string" || typeof generated === "string") return { findings: unreadable };
+  const declarations = multisetDifference("openings.generated.compact declarations", generated.lines, reference.lines);
   const findings = [
     ...gadgetFindings(gadgets),
-    ...multisetDifference("openings.generated.compact declarations", generated.lines, reference.lines),
+    ...(declarations.length > 0 ? declarations : firstDifference("openings.generated.compact differs from its audited outline", generated.lines, reference.lines)),
   ];
   const [found, audited] = [new Set(generated.witnesses), new Set(reference.witnesses)];
   for (const expected of reference.circuits) {
