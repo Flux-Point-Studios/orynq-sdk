@@ -361,7 +361,14 @@ Tests are RED first and scored by the harness; `substrate.json` changes with the
 Protocol, hashes, journal and receipts match Linux; one conformance suite drives both. Agents run only in WSL2. Windows runs replay only, holds no shares, and has no Z or B-m.
 
 - **(a) Services.** `NT SERVICE\orynq-broker` holds no key; `NT SERVICE\orynq-sealed` owns `C:\ProgramData\orynq-sealed` (DACL: SYSTEM and its SID), with X's identity wrapped by a non-exportable Platform Crypto Provider key. Non-admins cannot stop or reconfigure either.
-- **(b) Transport.** The v1 Rust front end runs B's pipe under v1 rules (first instance, remote clients rejected, no 0x4 right, `ImpersonateNamedPipeClient` identity, server-SID check under `SECURITY_IDENTIFICATION`), an `orynq-sealed` pipe admitting only B's SID, and an hvsocket listener (service-GUID registration) for the WSL2 relay. Built-in `ssh-agent` stays disabled.
+- **(b) Transport.** libuv sets no SDDL and exposes neither pipe handles nor AF_HYPERV, so a small Rust front end (tokio `named_pipe`, windows-rs) owns transport and passes `(connId, principal, frame)` to its Node parent over stdio. It does length framing only; strict JSON and dCBOR parsing stay in `packages/broker`. It serves three endpoints:
+- **B's pipe.** Created with `first_pipe_instance` and `reject_remote_clients`. The server builds the DACL itself: the owner is its own SID; SYSTEM and the service get full access; admitted SIDs get `FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE` (0x120083), never 0x4 (`FILE_CREATE_PIPE_INSTANCE`).
+  - Caller identity: `ImpersonateNamedPipeClient` → `OpenThreadToken`, which yields the SID, logon LUID, session and integrity level, then `RevertToSelf`; abort on failure. A client connecting at anonymous level gets `PEER_UNKNOWN`. The client pid is grade H only.
+  - Clients open with `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`. Before sending a byte, they require the pipe owner (or the token SID of the server process) to be the pinned service SID.
+- **An `orynq-sealed` pipe** admitting only B's SID.
+- **An hvsocket listener** (service-GUID registration) for the WSL2 relay.
+
+The built-in `ssh-agent` stays disabled.
 - **(c) Approvals.** Hello uses the WebAuthn platform authenticator via `webauthn.dll` (ES256, `tpm` attestation). It counts at T1 only with a key TPM-attested at a T2 enrollment and no agent running as the interactive user; never T2 or Tier-A.
 - **(d) Lockout.** Deny ACEs on `C:\Users\<operator>`, browser profiles and wallet stores, plus a 4663 SACL tripwire.
 - **(e) Clients.** `install-mcp.ps1` writes only the pipe name.
