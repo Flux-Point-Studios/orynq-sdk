@@ -96,6 +96,26 @@ steps:
       - corepack enable
       - su node -s /bin/bash -c 'pnpm --filter @fluxpointstudios/orynq-sdk-broker test:socket'
 
+  # The pipe frontend only compiles for Windows and CI has no Windows agent, so this
+  # type-checks and lints it for the Windows target (no linking). Its tests run on Windows.
+  - name: broker-windows-native
+    image: rust:1.99.0-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6
+    depends_on: [build-test]
+    backend_options:
+      docker:
+        user: '1000:1000'
+    environment:
+      CARGO_HOME: /tmp/orynq-broker-windows-cargo
+      CARGO_TARGET_DIR: /tmp/orynq-broker-windows-target
+    commands:
+      - test "$(id -u)" = 1000
+      - rustup component add --toolchain 1.99.0 rustfmt clippy
+      - rustup target add --toolchain 1.99.0 x86_64-pc-windows-gnu
+      - cargo +1.99.0 install cargo-audit --version 0.22.2 --locked
+      - cargo +1.99.0 audit --file packages/credential-broker-windows/native/Cargo.lock --deny warnings
+      - cargo +1.99.0 fmt --manifest-path packages/credential-broker-windows/native/Cargo.toml -- --check
+      - cargo +1.99.0 clippy --locked --target x86_64-pc-windows-gnu --all-targets --manifest-path packages/credential-broker-windows/native/Cargo.toml -- -D warnings
+
   - name: midnight-real-proofs
     image: node:24-bookworm@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
     depends_on: [midnight-native]

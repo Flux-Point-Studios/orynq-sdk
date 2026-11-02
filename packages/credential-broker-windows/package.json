@@ -30,7 +30,8 @@
     "test": "vitest run tests",
     "test:native": "cargo test --locked --manifest-path native/Cargo.toml",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src --ext .ts && cargo clippy --locked --all-targets --manifest-path native/Cargo.toml -- -D warnings",
+    "lint": "eslint src --ext .ts",
+    "lint:native": "cargo clippy --locked --all-targets --manifest-path native/Cargo.toml -- -D warnings",
     "clean": "rimraf dist"
   },
   "keywords": [
