@@ -1,0 +1,63 @@
+{
+  "name": "@fluxpointstudios/orynq-sdk-credential-broker-windows",
+  "version": "0.1.0",
+  "description": "Windows host for the orynq credential broker: Rust named-pipe frontend with impersonation-derived caller identity, owner-pinned client, and TPM-sealed executor identity",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "build:native": "cargo build --release --locked --manifest-path native/Cargo.toml",
+    "test": "vitest run tests",
+    "test:native": "cargo test --locked --manifest-path native/Cargo.toml",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts && cargo clippy --locked --all-targets --manifest-path native/Cargo.toml -- -D warnings",
+    "clean": "rimraf dist"
+  },
+  "keywords": [
+    "orynq",
+    "credential-broker",
+    "windows",
+    "named-pipe",
+    "tpm"
+  ],
+  "author": "Flux Point Studios",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux-Point-Studios/orynq-sdk",
+    "directory": "packages/credential-broker-windows"
+  },
+  "os": [
+    "win32"
+  ],
+  "dependencies": {
+    "koffi": "^3.3.6"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

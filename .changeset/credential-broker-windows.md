@@ -1,0 +1,5 @@
+---
+"@fluxpointstudios/orynq-sdk-credential-broker-windows": minor
+---
+
+Add the Windows host package for the orynq credential broker (spec §16). `orynq-pipe-frontend`, a Rust sidecar, owns the named pipe: first instance only, remote clients rejected, an owner-pinned DACL that grants admitted accounts no pipe-instance creation, caller identity taken by impersonating the client at identification level (SID, logon LUID, session, integrity), 1 B to 16 MiB frames, one request in flight, a 300 s idle close and 32 connections per principal. It hands `{connId, principal, frame}` to Node over stdio and never parses a frame. `startFrontend` runs it from Node; `connectBroker` connects at identification level and refuses a pipe its pinned service account does not own. `sealSecret`/`unsealSecret` wrap the sealed executor's identity under a non-exportable TPM key in the calling account's Platform Crypto Provider store.
