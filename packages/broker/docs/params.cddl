@@ -1,0 +1,87 @@
+; Orynq credential broker: the params of every JSON-RPC method in spec §6.2, normative CDDL.
+;
+; Read with mandate-draft.cddl and release.cddl: a validator compiles the three files
+; concatenated. Each method's params match one rule:
+;
+;   broker.hello      broker-hello-params      session.open      session-open-params
+;   credential.list   credential-list-params   session.close     session-close-params
+;   mandate.get       mandate-get-params       mandate.prepare   mandate-prepare-params
+;   intent.submit     intent-submit-params     mandate.register  mandate-register-params
+;   release.commit    release-request          mandate.revoke    mandate-revoke-params
+;   release.history   release-history-params
+;
+; The rules describe the deterministic CBOR (dCBOR) the broker hashes and forwards: RFC 8949
+; §4.2.1 deterministic encoding as conduct's cborEncode writes it, with text map keys and only
+; uints, text and bytes as values. On the wire a request is JSON (§6.1), which the JSON-to-dCBOR
+; profile (§6.3) maps as follows:
+;   - a map is a JSON object with exactly the members declared here;
+;   - a uint whose bound is at most 2^53 is a JSON integer; any other uint is a uint64 and is a
+;     decimal string with no sign, leading zero, exponent or space;
+;   - text is a JSON string, sized in UTF-8 bytes, and .regexp matches the whole string;
+;   - bytes are a lowercase hex string;
+;   - null, booleans, floats and negative numbers match nothing (-32602).
+
+broker-hello-params = {}
+
+credential-list-params = {}
+
+mandate-get-params = { mandate: commitment }
+
+intent-submit-params = {
+  $$intent-effect,                    ; kind and its params; each effect kind adds a choice
+  mandates: [1*8 commitment],         ; must equal the broker's derivation (§3.2)
+  ? expect: expectation,
+  ? wait: uint .le 30,                ; seconds
+  ? note: text .size (0..256),        ; not hashed
+}
+
+; What the agent expects the decoded effect to do; a mismatch is DECODE_REFUSED (§6.2).
+expectation = {
+  calls: uint .le 1,
+  outflows: [0*256 outflow],
+  fee: uint,
+}
+
+outflow = { counterparty: ca1-id, amount: uint .ge 1 }
+
+ca1-id = text .regexp "ca1:[0-9a-f]{60}"
+
+session-open-params = { mandates: [1*16 commitment] }
+
+session-close-params = { sessionId: session-id }
+
+session-id = bytes .size 16           ; random 128 bits (§5.2)
+
+mandate-prepare-params = { draft: mandate-draft }
+
+mandate-register-params = {
+  cbor: bytes .size (1..2048),        ; the mandate-v1 CBOR that mandate.prepare returned
+  members: [1*256 member],
+  domain: executor-domain,
+  assertion: assertion,
+  purpose: text .size (1..1024),      ; hashed into the record only
+}
+
+mandate-revoke-params = { mandate: commitment, reason: text .size (1..256) }
+
+release-history-params = { C: commitment, fromCount: uint }
+
+; The principal's authenticator signs issuanceDigest, or intentHash || nonce16 for an
+; out-of-mandate intent, as a WebAuthn challenge or an offline CTAP2 clientDataHash (§3.3, §12).
+assertion = webauthn-assertion / ctap2-assertion
+
+webauthn-assertion = {
+  type: "webauthn",
+  credentialId: bytes .size (1..1023),
+  authenticatorData: bytes .size (37..1024),
+  clientDataJSON: bytes .size (1..4096),
+  signature: bytes .size (8..72),     ; ES256 DER or Ed25519
+  ? userHandle: bytes .size (1..64),
+}
+
+ctap2-assertion = {
+  type: "ctap2",
+  credentialId: bytes .size (1..1023),
+  authenticatorData: bytes .size (37..1024),
+  signature: bytes .size (8..72),
+}

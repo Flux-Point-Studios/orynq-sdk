@@ -1,0 +1,88 @@
+; Orynq credential broker: release.commit's ReleaseRequest (spec §4.2) and the release record X
+; signs (§4.1), normative CDDL. Neither carries a secret.
+;
+; Wire form, method rules and the files read with this one: see params.cddl.
+
+release-request = {
+  v: 1,
+  intentHash: digest,
+  $$release-effect,                   ; kind and effect: its validated params or full tx bytes
+  alias: alias-name,
+  release-gate,
+  ? instanceSig: bytes .size 64,      ; by C's agentDid, for committee mandates (§4.2)
+}
+
+; In mandate: guard steps per mandate in sorted-C order (§4.1). Out of mandate: no steps and
+; the principal's approval (§12).
+release-gate = (
+  mandates: [1*8 mandate-release] //
+  mandates: [], approval: approval
+)
+
+mandate-release = { C: commitment, head: head, steps: [1*258 step] }
+
+; Replay authenticates the guard log, ZK the roll (§4.1).
+head = {
+  guardLog: { count: uint, hash: digest },
+  trace: { roll: digest, seq: uint },
+}
+
+step = {
+  event: guard-event,
+  traceMeta: { id: trace-event-id, seq: uint, timestamp: trace-time },
+  ? proof: step-proof,
+}
+
+; conduct's orynq.conduct.guard.v1 action event, with its hex digests as bytes. Denials never
+; enter a mandate trace (§4.1), and every broker action is a payment (§3.2).
+guard-event = {
+  type: "orynq.conduct.guard.action.v1",
+  seq: uint,
+  timestamp: uint,
+  enforcedAt: uint,
+  mandateCommitment: commitment,
+  actionDigest: digest,
+  actionKind: "payment",
+  action: payment-action,
+}
+
+payment-action = {
+  kind: "payment",
+  asset: broker-asset,
+  amount: uint .ge 1,
+  counterparty: counterparty-id,
+  timestamp: uint,
+}
+
+; An oc1 capability or ca1 Cardano counterparty string (§3.2).
+counterparty-id = text .regexp "(oc1|ca1):[0-9a-f]{60}"
+
+; process-trace event metadata: a UUID and an ISO 8601 UTC time with milliseconds.
+trace-event-id = text .regexp "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+trace-time = text .regexp "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z"
+
+step-proof = {
+  circuitId: proof-id,
+  classId: proof-id,
+  transactionBase64: base64-text,
+  referenceStateBase64: base64-text,
+}
+
+proof-id = text .regexp "[a-z0-9][a-z0-9._:-]{0,63}"
+
+base64-text = base64-size .and base64-alphabet
+base64-size = text .size (4..1048576)
+base64-alphabet = text .regexp "([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?"
+
+approval = { nonce: bytes .size 16, assertion: assertion }
+
+release-record = {
+  intentHash: digest,
+  effectDigest: digest,               ; requestHash (http) or bodyHash (cardano.signTx)
+  heads: [1*8 { C: commitment, prev: head, next: head }],
+  notAfter: uint,
+  mode: verify-mode,
+  ? proofRefs: [1*258 digest],
+}
+
+verify-mode = "replay" / "replay+zk-shadow" / "zk+replay" / "zk"

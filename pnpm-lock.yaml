@@ -312,6 +312,9 @@ importers:
         specifier: workspace:*
         version: link:../core
     devDependencies:
+      '@cbortech/cbor':
+        specifier: 0.27.3
+        version: 0.27.3
       '@types/node':
         specifier: ^24.19.1
         version: 24.19.1
@@ -1601,6 +1604,11 @@ packages:
     requiresBuild: true
     dev: false
     optional: true
+
+  /@cbortech/cbor@0.27.3:
+    resolution: {integrity: sha512-9FZWQMs7+iYBGpIaCLAxCaK6oB+POSkRTrtYPVdquvIqF59XHYeBbvvShUC2qIRxhPhpJ/eLIqy0IZMqs/AwFw==}
+    engines: {node: '>=20'}
+    dev: true
 
   /@chainsafe/is-ip@2.1.0:
     resolution: {integrity: sha512-KIjt+6IfysQ4GCv66xihEitBjvhU/bixbbbFxdJ1sqCp4uJ0wuZiYBPhksZoy4lfaF0k9cwNzY5upEW/VWdw3w==}

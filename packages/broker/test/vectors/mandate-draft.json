@@ -1,0 +1,819 @@
+{
+  "description": "mandate-draft.cddl vectors: each valid draft in wire JSON and as the dCBOR it maps to (CBOR diagnostic notation, canonical key order); each invalid one patches a valid draft at one path and names who must refuse it: the JSON-to-dCBOR profile (-32602), the CDDL, or both.",
+  "valid": [
+    {
+      "name": "minimal draft",
+      "rule": "mandate-draft",
+      "json": {
+        "principalDid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+        "domain": "X:abababababababababababababababababababababababababababababababab",
+        "spendCap": {
+          "asset": "orynq:call",
+          "amount": "500",
+          "windowSeconds": "3600"
+        },
+        "members": [
+          {
+            "cap": {
+              "kind": "http.request",
+              "alias": "github-ci",
+              "ruleDigest": "4444444444444444444444444444444444444444444444444444444444444444"
+            }
+          }
+        ],
+        "approvedMeasurementSetRoot": "6666666666666666666666666666666666666666666666666666666666666666",
+        "validityWindow": {
+          "notBefore": "1793000000",
+          "notAfter": "1793604800"
+        },
+        "disclosurePolicy": {
+          "committeeId": "orynq-evidence-escrow",
+          "threshold": "3",
+          "committeeSize": "5"
+        }
+      },
+      "cdn": "{\"domain\": \"X:abababababababababababababababababababababababababababababababab\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"github-ci\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}], \"spendCap\": {\"asset\": \"orynq:call\", \"amount\": 500, \"windowSeconds\": 3600}, \"principalDid\": \"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK\", \"validityWindow\": {\"notAfter\": 1793604800, \"notBefore\": 1793000000}, \"disclosurePolicy\": {\"threshold\": 3, \"committeeId\": \"orynq-evidence-escrow\", \"committeeSize\": 5}, \"approvedMeasurementSetRoot\": h'6666666666666666666666666666666666666666666666666666666666666666'}"
+    },
+    {
+      "name": "widening committee draft",
+      "rule": "mandate-draft",
+      "json": {
+        "principalDid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+        "domain": "committee:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "supersedes": "3333333333333333333333333333333333333333333333333333333333333333",
+        "spendCap": {
+          "asset": "lovelace",
+          "amount": "18446744073709551615",
+          "windowSeconds": "86400"
+        },
+        "members": [
+          {
+            "cap": {
+              "kind": "http.request",
+              "alias": "github-ci",
+              "ruleDigest": "4444444444444444444444444444444444444444444444444444444444444444"
+            }
+          },
+          {
+            "cap": {
+              "kind": "cardano.fee",
+              "alias": "test:treasury",
+              "ruleDigest": "4545454545454545454545454545454545454545454545454545454545454545"
+            }
+          },
+          {
+            "ca1": {
+              "networkId": 1,
+              "paymentCred": "55555555555555555555555555555555555555555555555555555555",
+              "stakeCred": "56565656565656565656565656565656565656565656565656565656"
+            }
+          },
+          {
+            "ca1": {
+              "networkId": 0,
+              "paymentCred": "57575757575757575757575757575757575757575757575757575757"
+            }
+          }
+        ],
+        "approvedMeasurementSetRoot": "6666666666666666666666666666666666666666666666666666666666666666",
+        "validityWindow": {
+          "notBefore": "1793000000",
+          "notAfter": "1800776000"
+        },
+        "disclosurePolicy": {
+          "committeeId": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+          "threshold": "1",
+          "committeeSize": "1"
+        }
+      },
+      "cdn": "{\"domain\": \"committee:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"github-ci\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}, {\"cap\": {\"kind\": \"cardano.fee\", \"alias\": \"test:treasury\", \"ruleDigest\": h'4545454545454545454545454545454545454545454545454545454545454545'}}, {\"ca1\": {\"networkId\": 1, \"stakeCred\": h'56565656565656565656565656565656565656565656565656565656', \"paymentCred\": h'55555555555555555555555555555555555555555555555555555555'}}, {\"ca1\": {\"networkId\": 0, \"paymentCred\": h'57575757575757575757575757575757575757575757575757575757'}}], \"spendCap\": {\"asset\": \"lovelace\", \"amount\": 18446744073709551615, \"windowSeconds\": 86400}, \"supersedes\": h'3333333333333333333333333333333333333333333333333333333333333333', \"principalDid\": \"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK\", \"validityWindow\": {\"notAfter\": 1800776000, \"notBefore\": 1793000000}, \"disclosurePolicy\": {\"threshold\": 1, \"committeeId\": \"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\", \"committeeSize\": 1}, \"approvedMeasurementSetRoot\": h'6666666666666666666666666666666666666666666666666666666666666666'}"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "principalDid is not did:key",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "principalDid"
+          ],
+          "json": "did:web:example.com",
+          "cdn": "\"did:web:example.com\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "principalDid uses a character outside base58btc",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "principalDid"
+          ],
+          "json": "did:key:z0OIl00000",
+          "cdn": "\"did:key:z0OIl00000\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "principalDid is too short",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "principalDid"
+          ],
+          "json": "did:key:z1234567",
+          "cdn": "\"did:key:z1234567\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "domain names no executor kind",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "domain"
+          ],
+          "json": "Y:abababababababababababababababababababababababababababababababab",
+          "cdn": "\"Y:abababababababababababababababababababababababababababababababab\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "domain id is upper-case hex",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "domain"
+          ],
+          "json": "X:ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB",
+          "cdn": "\"X:ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "domain id is 31 bytes",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "domain"
+          ],
+          "json": "X:ababababababababababababababababababababababababababababababab",
+          "cdn": "\"X:ababababababababababababababababababababababababababababababab\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "supersedes is 31 bytes",
+      "base": "widening committee draft",
+      "patch": [
+        {
+          "path": [
+            "supersedes"
+          ],
+          "json": "33333333333333333333333333333333333333333333333333333333333333",
+          "cdn": "h'33333333333333333333333333333333333333333333333333333333333333'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "supersedes is null",
+      "base": "widening committee draft",
+      "patch": [
+        {
+          "path": [
+            "supersedes"
+          ],
+          "json": null,
+          "cdn": "null"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "asset is not a broker asset",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "spendCap",
+            "asset"
+          ],
+          "json": "tdust",
+          "cdn": "\"tdust\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "amount is zero",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "spendCap",
+            "amount"
+          ],
+          "json": "0",
+          "cdn": "0"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "amount exceeds uint64",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "spendCap",
+            "amount"
+          ],
+          "json": "18446744073709551616",
+          "cdn": "18446744073709551616"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "amount is negative",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "spendCap",
+            "amount"
+          ],
+          "json": -1,
+          "cdn": "-1"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "amount is a float",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "spendCap",
+            "amount"
+          ],
+          "json": 1.5,
+          "cdn": "1.5"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "amount is a JSON number, not a uint64 decimal string",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "spendCap",
+            "amount"
+          ],
+          "json": 500
+        }
+      ],
+      "refusedBy": [
+        "profile"
+      ]
+    },
+    {
+      "name": "windowSeconds has a leading zero",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "spendCap",
+            "windowSeconds"
+          ],
+          "json": "03600"
+        }
+      ],
+      "refusedBy": [
+        "profile"
+      ]
+    },
+    {
+      "name": "windowSeconds is zero",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "spendCap",
+            "windowSeconds"
+          ],
+          "json": "0",
+          "cdn": "0"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "spendCap carries an unknown member",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "spendCap",
+            "window"
+          ],
+          "json": "1",
+          "cdn": "1"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "members is empty",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "members"
+          ],
+          "json": [],
+          "cdn": "[]"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "a member is both cap and ca1",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "members",
+            0,
+            "ca1"
+          ],
+          "json": {
+            "networkId": 1,
+            "paymentCred": "55555555555555555555555555555555555555555555555555555555"
+          },
+          "cdn": "{\"networkId\": 1, \"paymentCred\": h'55555555555555555555555555555555555555555555555555555555'}"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "a member is neither cap nor ca1",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "members",
+            0
+          ],
+          "json": {
+            "oc1": "oc1:abababababababababababababababababababababababababababababab"
+          },
+          "cdn": "{\"oc1\": \"oc1:abababababababababababababababababababababababababababababab\"}"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "capability kind starts upper-case",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "members",
+            0,
+            "cap",
+            "kind"
+          ],
+          "json": "Http.request",
+          "cdn": "\"Http.request\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "capability kind has no dot",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "members",
+            0,
+            "cap",
+            "kind"
+          ],
+          "json": "http",
+          "cdn": "\"http\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "alias ends with a dash",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "members",
+            0,
+            "cap",
+            "alias"
+          ],
+          "json": "github-",
+          "cdn": "\"github-\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "alias is upper-case",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "members",
+            0,
+            "cap",
+            "alias"
+          ],
+          "json": "GitHub",
+          "cdn": "\"GitHub\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "ruleDigest is 33 bytes",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "members",
+            0,
+            "cap",
+            "ruleDigest"
+          ],
+          "json": "444444444444444444444444444444444444444444444444444444444444444444",
+          "cdn": "h'444444444444444444444444444444444444444444444444444444444444444444'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "ruleDigest is upper-case hex",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "members",
+            0,
+            "cap",
+            "ruleDigest"
+          ],
+          "json": "4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A4A"
+        }
+      ],
+      "refusedBy": [
+        "profile"
+      ]
+    },
+    {
+      "name": "networkId exceeds 15",
+      "base": "widening committee draft",
+      "patch": [
+        {
+          "path": [
+            "members",
+            2,
+            "ca1",
+            "networkId"
+          ],
+          "json": 16,
+          "cdn": "16"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "networkId is a decimal string",
+      "base": "widening committee draft",
+      "patch": [
+        {
+          "path": [
+            "members",
+            2,
+            "ca1",
+            "networkId"
+          ],
+          "json": "1"
+        }
+      ],
+      "refusedBy": [
+        "profile"
+      ]
+    },
+    {
+      "name": "networkId is negative",
+      "base": "widening committee draft",
+      "patch": [
+        {
+          "path": [
+            "members",
+            2,
+            "ca1",
+            "networkId"
+          ],
+          "json": -1,
+          "cdn": "-1"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "paymentCred is 32 bytes",
+      "base": "widening committee draft",
+      "patch": [
+        {
+          "path": [
+            "members",
+            2,
+            "ca1",
+            "paymentCred"
+          ],
+          "json": "5555555555555555555555555555555555555555555555555555555555555555",
+          "cdn": "h'5555555555555555555555555555555555555555555555555555555555555555'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "ca1 carries a pointer",
+      "base": "widening committee draft",
+      "patch": [
+        {
+          "path": [
+            "members",
+            3,
+            "ca1",
+            "pointer"
+          ],
+          "json": "01",
+          "cdn": "h'01'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "approvedMeasurementSetRoot is missing",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "approvedMeasurementSetRoot"
+          ],
+          "remove": true
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "notAfter is missing",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "validityWindow",
+            "notAfter"
+          ],
+          "remove": true
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "notBefore is a boolean",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "validityWindow",
+            "notBefore"
+          ],
+          "json": true,
+          "cdn": "true"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "committeeId is empty",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "disclosurePolicy",
+            "committeeId"
+          ],
+          "json": "",
+          "cdn": "\"\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "committeeId is 129 UTF-8 bytes",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "disclosurePolicy",
+            "committeeId"
+          ],
+          "json": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééa",
+          "cdn": "\"ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééa\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "threshold is zero",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "disclosurePolicy",
+            "threshold"
+          ],
+          "json": "0",
+          "cdn": "0"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "a draft carries the mandateId the broker fills",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "mandateId"
+          ],
+          "json": "01010101010101010101010101010101",
+          "cdn": "h'01010101010101010101010101010101'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "a draft carries the agentDid the broker fills",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "agentDid"
+          ],
+          "json": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "cdn": "\"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "a draft carries an allowlist root instead of members",
+      "base": "minimal draft",
+      "patch": [
+        {
+          "path": [
+            "counterpartyAllowlistRoot"
+          ],
+          "json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "cdn": "h'2222222222222222222222222222222222222222222222222222222222222222'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    }
+  ]
+}
