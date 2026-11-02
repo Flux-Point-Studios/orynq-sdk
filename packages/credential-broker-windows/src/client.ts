@@ -35,8 +35,9 @@ const GetSecurityInfo = advapi32.func(
 );
 const ConvertSidToStringSidW = advapi32.func("int __stdcall ConvertSidToStringSidW(void *sid, _Out_ void **text)");
 
-const GENERIC_READ = 0x80000000;
-const GENERIC_WRITE = 0x40000000;
+// Read/write data, read attributes, READ_CONTROL (for the owner check), SYNCHRONIZE: exactly what the frontend
+// grants an admitted account. GENERIC_WRITE would also ask for FILE_CREATE_PIPE_INSTANCE and be refused.
+const CLIENT_ACCESS = 0x120083;
 const OPEN_EXISTING = 3;
 const FILE_FLAG_OVERLAPPED = 0x40000000;
 const SECURITY_SQOS_PRESENT = 0x00100000;
@@ -174,7 +175,7 @@ function ownerOf(pipe: unknown): string {
 export async function connectBroker(path: string, serverSid: string): Promise<BrokerConnection> {
   const pipe = CreateFileW(
     path,
-    GENERIC_READ | GENERIC_WRITE,
+    CLIENT_ACCESS,
     0,
     null,
     OPEN_EXISTING,

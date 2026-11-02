@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { type BrokerConnection, connectBroker } from "../src/client.js";
 import { type Frontend, type FrontendOptions, type Peer, startFrontend } from "../src/frontend.js";
 import { FRONTEND_EXECUTABLE } from "./frontend-executable.js";
+import { openWithGenericRights, whileRestrictedTo } from "./restricted-token.js";
 
 const whoami = (...args: string[]) =>
   execFileSync(`${process.env.SystemRoot ?? "C:\\Windows"}\\System32\\whoami.exe`, args, { encoding: "utf8" });
@@ -34,6 +35,17 @@ describe.runIf(process.platform === "win32")("broker pipe", { timeout: 30_000 },
     const client = await connect(frontend);
     expect((await client.request(text("ping"))).toString("utf8")).toBe("echo:ping");
     expect((await client.request(text("again"))).toString("utf8")).toBe("echo:again");
+  });
+
+  it("serves an admitted account that does not own the pipe", async () => {
+    const admitted = "S-1-5-21-1-2-3-1001";
+    const owner = ownSid();
+    const frontend = await start({ admit: [admitted], handle: async () => text("ok") });
+    expect(whileRestrictedTo(admitted, () => openWithGenericRights(frontend.pipe))).toBe(5);
+    // connectBroker opens the pipe before its first await, so the open runs under the restricted token.
+    const client = await whileRestrictedTo(admitted, () => connectBroker(frontend.pipe, owner));
+    clients.push(client);
+    expect((await client.request(text("{}"))).toString("utf8")).toBe("ok");
   });
 
   it("tells the handler which Windows account is calling", async () => {
