@@ -128,16 +128,21 @@ function errorPayload(id: RequestId | null, error: RpcError): Uint8Array {
 // table, anything else closes the connection and rejects.
 export type RequestHandler = (request: RpcRequest) => Promise<Uint8Array>;
 
-export type CloseReason = "end" | "idle" | "frame" | "concurrent";
+// "reset" is any stream error, such as a client that disconnects while its reply is written.
+export type CloseReason = "end" | "idle" | "frame" | "concurrent" | "reset";
 
-// Serves one request at a time: a byte that arrives before the reply is written closes the
-// connection. The idle clock runs from the open and from each reply and stops while a request
-// runs; partial frames do not restart it, so a client must complete a request within
-// IDLE_TIMEOUT_MS. Settles once the stream is destroyed.
+// Serves one request at a time: a byte that arrives before the reply has drained closes the
+// connection. The idle clock runs from the open, stops while a request runs, and restarts when
+// the reply is queued and again when it has drained, so a reply the client leaves unread also
+// closes the connection after IDLE_TIMEOUT_MS. Partial frames do not restart it. A client FIN
+// ends the connection once a request already dispatched has been answered, which needs a
+// half-open stream (net.createServer({ allowHalfOpen: true })); any other stream is refused.
+// Settles once the stream is destroyed; it rejects only for a handler failure or a misused stream.
 export function serveConnection(stream: Duplex, handle: RequestHandler): Promise<CloseReason> {
   return new Promise<CloseReason>((resolve, reject) => {
     const decoder = new FrameDecoder();
     let busy = false;
+    let ending = false;
     let settled = false;
     let idle: ReturnType<typeof setTimeout> | undefined;
 
@@ -155,9 +160,11 @@ export function serveConnection(stream: Duplex, handle: RequestHandler): Promise
       idle = setTimeout(() => finish("idle"), IDLE_TIMEOUT_MS);
     };
     const send = (payload: Uint8Array) =>
-      new Promise<void>((done, fail) => {
+      new Promise<void>(done => {
         if (settled) return done();
-        stream.write(encodeFrame(payload), error => (error ? fail(error) : done()));
+        // A failed write also emits "error", which settles the connection as "reset".
+        stream.write(encodeFrame(payload), () => done());
+        arm();
       });
     const respond = async (frame: Uint8Array) => {
       let request: RpcRequest;
@@ -191,14 +198,22 @@ export function serveConnection(stream: Duplex, handle: RequestHandler): Promise
       clearTimeout(idle);
       respond(frames[0] as Uint8Array).then(() => {
         busy = false;
-        if (!settled) arm();
+        if (ending) finish("end");
+        else if (!settled) arm();
       }, finish);
     }
 
+    stream.on("error", () => finish("reset"));
+    if (!stream.allowHalfOpen) {
+      finish(new TypeError("the stream must allow half-open so a reply can follow the client's FIN"));
+      return;
+    }
     stream.on("data", onData);
-    stream.once("end", () => finish("end"));
+    stream.once("end", () => {
+      ending = true;
+      if (!busy) finish("end");
+    });
     stream.once("close", () => finish("end"));
-    stream.once("error", finish);
     arm();
   });
 }

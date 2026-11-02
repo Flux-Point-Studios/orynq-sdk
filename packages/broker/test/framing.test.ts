@@ -265,6 +265,31 @@ describe("serveConnection", () => {
     expect(server.destroyed).toBe(true);
   });
 
+  it("rejects a stream that carries text instead of bytes, before decoding", async () => {
+    const { server, send } = pair();
+    server.setEncoding("utf8");
+    const handle = vi.fn(echo);
+    const closed = serveConnection(server, handle);
+    send(encodeFrame(request(1)));
+    await expect(closed).rejects.toThrow(new TypeError("the stream must carry bytes"));
+    expect(handle).not.toHaveBeenCalled();
+    expect(server.destroyed).toBe(true);
+  });
+
+  it("rejects a stream that ends its write side when the client half-closes", async () => {
+    const stream = new Duplex({ allowHalfOpen: false, read() {}, write: (_chunk, _encoding, done) => done() });
+    const handle = vi.fn(echo);
+    const outcome = serveConnection(stream, handle).then(
+      reason => `resolved ${reason}`,
+      (error: Error) => `${error.name}: ${error.message}`,
+    );
+    stream.push(encodeFrame(request(1)));
+    const pending = new Promise(resolve => setImmediate(() => resolve("pending")));
+    expect(await Promise.race([outcome, pending])).toBe("TypeError: the stream must allow half-open so a reply can follow the client's FIN");
+    expect(handle).not.toHaveBeenCalled();
+    expect(stream.destroyed).toBe(true);
+  });
+
   it("closes on a framing error without calling the handler", async () => {
     for (const bytes of [header(0), header(MAX_FRAME_BYTES + 1)]) {
       const { server, replies, send } = pair();
@@ -355,25 +380,87 @@ describe("serveConnection over a Unix domain socket", () => {
   let listener: Server | undefined;
 
   afterEach(async () => {
+    vi.useRealTimers();
     await new Promise<void>(resolve => (listener ? listener.close(() => resolve()) : resolve()));
     if (dir) rmSync(dir, { recursive: true, force: true });
     listener = undefined;
     dir = undefined;
   });
 
-  async function listen(): Promise<{ path: string; reasons: CloseReason[] }> {
+  // A rejection is recorded as `rejected <code or message>`, so a test sees it next to the reasons.
+  async function listen(handle: RequestHandler = echo): Promise<{ path: string; reasons: string[]; sockets: Socket[] }> {
     dir = mkdtempSync(join(tmpdir(), "orynq-broker-framing-"));
     const path = join(dir, "rpc.sock");
-    const reasons: CloseReason[] = [];
-    listener = createServer(socket => {
-      void serveConnection(socket, echo).then(reason => reasons.push(reason));
+    const reasons: string[] = [];
+    const sockets: Socket[] = [];
+    listener = createServer({ allowHalfOpen: true }, socket => {
+      sockets.push(socket);
+      void serveConnection(socket, handle).then(
+        (reason: CloseReason) => reasons.push(reason),
+        (error: NodeJS.ErrnoException) => reasons.push(`rejected ${error.code ?? error.message}`),
+      );
     });
     await new Promise<void>(resolve => listener!.listen(path, resolve));
-    return { path, reasons };
+    return { path, reasons, sockets };
   }
 
-  async function connect(path: string): Promise<{ socket: Socket; replies: Uint8Array[]; closed: Promise<void> }> {
-    const socket = createConnection(path);
+  const turns = async (n: number) => {
+    for (let i = 0; i < n; i++) await new Promise(resolve => setImmediate(resolve));
+  };
+  const bigReply = (req: RpcRequest) => json({ jsonrpc: "2.0", id: req.id, result: "x".repeat(8 * 1024 * 1024) });
+
+  it(`closes a connection whose client leaves its reply unread for ${IDLE_TIMEOUT_MS / 1000} s`, async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let answered = false;
+    const { path, reasons, sockets } = await listen(async req => {
+      answered = true;
+      return bigReply(req);
+    });
+    const { socket } = await connect(path);
+    socket.pause();
+    socket.write(encodeFrame(request(1)));
+    while (!answered) await turns(1);
+    await turns(10);
+    const [server] = sockets;
+    expect(server!.writableLength).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(IDLE_TIMEOUT_MS - 1);
+    await turns(10);
+    expect(reasons).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    await turns(10);
+    expect(reasons).toEqual(["idle"]);
+    expect(server!.destroyed).toBe(true);
+    socket.destroy();
+  });
+
+  it("answers a request whose client half-closes after sending it, then closes", async () => {
+    const handle = vi.fn(async (req: RpcRequest) => {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return echo(req);
+    });
+    const { path, reasons } = await listen(handle);
+    const { socket, replies, closed } = await connect(path, { allowHalfOpen: true });
+    socket.end(encodeFrame(request(9)));
+    await closed;
+    expect(handle).toHaveBeenCalledTimes(1);
+    expect(decoded(replies)).toEqual([{ jsonrpc: "2.0", id: 9, result: { method: "broker.hello" } }]);
+    await vi.waitFor(() => expect(reasons).toEqual(["end"]));
+  });
+
+  it("resolves 'reset' when the client vanishes while its reply is written", async () => {
+    const { path, reasons } = await listen(async req => bigReply(req));
+    for (let i = 0; i < 5; i++) {
+      const { socket, closed } = await connect(path);
+      socket.once("data", () => socket.destroy());
+      socket.write(encodeFrame(request(i)));
+      await closed;
+      await vi.waitFor(() => expect(reasons).toHaveLength(i + 1));
+    }
+    expect(reasons).toEqual(Array(5).fill("reset"));
+  });
+
+  async function connect(path: string, options: { allowHalfOpen?: boolean } = {}): Promise<{ socket: Socket; replies: Uint8Array[]; closed: Promise<void> }> {
+    const socket = createConnection({ path, ...options });
     await new Promise<void>((resolve, reject) => socket.once("connect", resolve).once("error", reject));
     const decoder = new FrameDecoder();
     const replies: Uint8Array[] = [];
