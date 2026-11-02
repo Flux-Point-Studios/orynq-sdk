@@ -109,10 +109,39 @@ describe("FrameDecoder", () => {
     expect(new FrameDecoder().push(header(MAX_FRAME_BYTES))).toEqual([]);
   });
 
-  it("stays refused after a framing error", () => {
+  it("allocates payload memory as bytes arrive, not when a header announces them", () => {
+    const before = process.memoryUsage().arrayBuffers;
+    const decoders = Array.from({ length: 64 }, () => {
+      const decoder = new FrameDecoder();
+      decoder.push(header(MAX_FRAME_BYTES));
+      decoder.push(new Uint8Array(1000));
+      return decoder;
+    });
+    expect(decoders.every(decoder => decoder.buffered === 1004)).toBe(true);
+    expect(process.memoryUsage().arrayBuffers - before).toBeLessThan(1024 * 1024);
+  });
+
+  it("returns a frame in a buffer of exactly its length, however it arrived", () => {
+    const payload = Uint8Array.from({ length: 300_000 }, (_, i) => i % 251);
+    const bytes = encodeFrame(payload);
+    for (const cuts of [[], [5], [4, 5, 70_000], [1, 2, 3, 4, 100, 299_999]]) {
+      const decoder = new FrameDecoder();
+      const frames: Uint8Array[] = [];
+      [0, ...cuts, bytes.length].reduce((start, end) => {
+        frames.push(...decoder.push(bytes.subarray(start, end)));
+        return end;
+      });
+      expect(frames).toHaveLength(1);
+      expect(frames[0]).toEqual(payload);
+      expect(frames[0]!.buffer.byteLength).toBe(payload.length);
+    }
+  });
+
+  it("rethrows its first framing error on every later push, an empty one included", () => {
     const decoder = new FrameDecoder();
-    frameError(() => decoder.push(header(0)));
-    expect(frameError(() => decoder.push(encodeFrame(utf8("{}")))).code).toBe("FRAME_EMPTY");
+    const first = frameError(() => decoder.push(header(0)));
+    expect(frameError(() => decoder.push(encodeFrame(utf8("{}"))))).toBe(first);
+    expect(frameError(() => decoder.push(new Uint8Array(0)))).toBe(first);
   });
 });
 

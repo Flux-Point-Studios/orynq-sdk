@@ -34,12 +34,17 @@ export function encodeFrame(payload: Uint8Array): Uint8Array {
   return frame;
 }
 
-// Reassembles frames from arbitrary chunks. The payload buffer is allocated only after the
-// header's length passes checkLength; after a framing error every push throws it again.
+const EMPTY = new Uint8Array(0);
+
+// Reassembles frames from arbitrary chunks. A header's length must pass checkLength, and the
+// payload buffer then grows with the bytes that arrive (doubling, capped at the length), so a
+// header alone costs nothing and a finished frame's buffer is exactly its length. After a
+// framing error every push throws it again.
 export class FrameDecoder {
   private readonly header = new Uint8Array(4);
   private headerBytes = 0;
-  private payload: Uint8Array | undefined;
+  private length = 0;
+  private payload = EMPTY;
   private payloadBytes = 0;
   private failure: FrameError | undefined;
 
@@ -52,7 +57,7 @@ export class FrameDecoder {
     const frames: Uint8Array[] = [];
     let at = 0;
     while (at < chunk.length) {
-      if (!this.payload) {
+      if (this.headerBytes < 4) {
         const take = Math.min(4 - this.headerBytes, chunk.length - at);
         this.header.set(chunk.subarray(at, at + take), this.headerBytes);
         this.headerBytes += take;
@@ -65,20 +70,29 @@ export class FrameDecoder {
           this.failure = error as FrameError;
           throw error;
         }
-        this.payload = new Uint8Array(n);
+        this.length = n;
+        continue;
       }
-      const take = Math.min(this.payload.length - this.payloadBytes, chunk.length - at);
+      const take = Math.min(this.length - this.payloadBytes, chunk.length - at);
+      this.reserve(this.payloadBytes + take);
       this.payload.set(chunk.subarray(at, at + take), this.payloadBytes);
       this.payloadBytes += take;
       at += take;
-      if (this.payloadBytes === this.payload.length) {
+      if (this.payloadBytes === this.length) {
         frames.push(this.payload);
-        this.payload = undefined;
+        this.payload = EMPTY;
         this.headerBytes = 0;
         this.payloadBytes = 0;
       }
     }
     return frames;
+  }
+
+  private reserve(bytes: number): void {
+    if (bytes <= this.payload.length) return;
+    const grown = new Uint8Array(Math.min(this.length, Math.max(bytes, 2 * this.payload.length)));
+    grown.set(this.payload.subarray(0, this.payloadBytes));
+    this.payload = grown;
   }
 }
 
