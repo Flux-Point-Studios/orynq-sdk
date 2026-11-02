@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { type BrokerConnection, connectBroker } from "../src/client.js";
 import { type Frontend, type FrontendOptions, type Peer, startFrontend } from "../src/frontend.js";
-import { FRONTEND_EXECUTABLE } from "./frontend-executable.js";
+import { frontendExecutable } from "./frontend-executable.js";
 import { openWithGenericRights, whileRestrictedTo } from "./restricted-token.js";
 
 const whoami = (...args: string[]) =>
@@ -16,7 +16,7 @@ describe.runIf(process.platform === "win32")("broker pipe", { timeout: 30_000 },
   const frontends: Frontend[] = [];
   const clients: BrokerConnection[] = [];
   const start = async (options: Partial<FrontendOptions> & Pick<FrontendOptions, "handle">) => {
-    const frontend = await startFrontend({ executable: FRONTEND_EXECUTABLE, pipe: pipeName(), ...options });
+    const frontend = await startFrontend({ executable: frontendExecutable(), pipe: pipeName(), ...options });
     frontends.push(frontend);
     return frontend;
   };
@@ -110,7 +110,7 @@ describe.runIf(process.platform === "win32")("broker pipe", { timeout: 30_000 },
 
   it("reports why the sidecar could not start", async () => {
     const frontend = await start({ handle: async () => text("{}") });
-    await expect(startFrontend({ executable: FRONTEND_EXECUTABLE, pipe: frontend.pipe, handle: async () => text("{}") })).rejects.toThrow(
+    await expect(startFrontend({ executable: frontendExecutable(), pipe: frontend.pipe, handle: async () => text("{}") })).rejects.toThrow(
       /cannot create .*orynq-broker-test/,
     );
   });

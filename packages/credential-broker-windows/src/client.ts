@@ -1,39 +1,45 @@
 import koffi from "koffi";
 
-const kernel32 = koffi.load("kernel32.dll");
-const advapi32 = koffi.load("advapi32.dll");
+// Bound on first use, so importing the package loads no DLL and works off Windows.
+function bind() {
+  const kernel32 = koffi.load("kernel32.dll");
+  const advapi32 = koffi.load("advapi32.dll");
+  koffi.pointer("HANDLE", koffi.opaque());
+  return {
+    OVERLAPPED: koffi.struct("OVERLAPPED", {
+      Internal: "uintptr_t",
+      InternalHigh: "uintptr_t",
+      Offset: "uint32_t",
+      OffsetHigh: "uint32_t",
+      hEvent: "HANDLE",
+    }),
+    CreateFileW: kernel32.func(
+      "HANDLE __stdcall CreateFileW(const char16_t *name, uint32_t access, uint32_t share, void *security, uint32_t disposition, uint32_t flags, HANDLE template)",
+    ),
+    ReadFile: kernel32.func("int __stdcall ReadFile(HANDLE file, void *buffer, uint32_t length, void *read, void *overlapped)"),
+    WriteFile: kernel32.func("int __stdcall WriteFile(HANDLE file, void *buffer, uint32_t length, void *written, void *overlapped)"),
+    GetOverlappedResult: kernel32.func(
+      "int __stdcall GetOverlappedResult(HANDLE file, void *overlapped, _Out_ uint32_t *transferred, int wait)",
+    ),
+    CancelIoEx: kernel32.func("int __stdcall CancelIoEx(HANDLE file, void *overlapped)"),
+    CreateEventW: kernel32.func("HANDLE __stdcall CreateEventW(void *sa, int manualReset, int initialState, const char16_t *name)"),
+    SetEvent: kernel32.func("int __stdcall SetEvent(HANDLE event)"),
+    ResetEvent: kernel32.func("int __stdcall ResetEvent(HANDLE event)"),
+    WaitForMultipleObjects: kernel32.func(
+      "uint32_t __stdcall WaitForMultipleObjects(uint32_t count, HANDLE *handles, int waitAll, uint32_t milliseconds)",
+    ),
+    CloseHandle: kernel32.func("int __stdcall CloseHandle(HANDLE handle)"),
+    LocalFree: kernel32.func("void * __stdcall LocalFree(void *memory)"),
+    GetLastError: kernel32.func("uint32_t __stdcall GetLastError()"),
+    GetSecurityInfo: advapi32.func(
+      "uint32_t __stdcall GetSecurityInfo(HANDLE handle, int objectType, uint32_t info, _Out_ void **owner, void *group, void *dacl, void *sacl, _Out_ void **descriptor)",
+    ),
+    ConvertSidToStringSidW: advapi32.func("int __stdcall ConvertSidToStringSidW(void *sid, _Out_ void **text)"),
+  };
+}
 
-koffi.pointer("HANDLE", koffi.opaque());
-const OVERLAPPED = koffi.struct("OVERLAPPED", {
-  Internal: "uintptr_t",
-  InternalHigh: "uintptr_t",
-  Offset: "uint32_t",
-  OffsetHigh: "uint32_t",
-  hEvent: "HANDLE",
-});
-
-const CreateFileW = kernel32.func(
-  "HANDLE __stdcall CreateFileW(const char16_t *name, uint32_t access, uint32_t share, void *security, uint32_t disposition, uint32_t flags, HANDLE template)",
-);
-const ReadFile = kernel32.func("int __stdcall ReadFile(HANDLE file, void *buffer, uint32_t length, void *read, void *overlapped)");
-const WriteFile = kernel32.func("int __stdcall WriteFile(HANDLE file, void *buffer, uint32_t length, void *written, void *overlapped)");
-const GetOverlappedResult = kernel32.func(
-  "int __stdcall GetOverlappedResult(HANDLE file, void *overlapped, _Out_ uint32_t *transferred, int wait)",
-);
-const CancelIoEx = kernel32.func("int __stdcall CancelIoEx(HANDLE file, void *overlapped)");
-const CreateEventW = kernel32.func("HANDLE __stdcall CreateEventW(void *sa, int manualReset, int initialState, const char16_t *name)");
-const SetEvent = kernel32.func("int __stdcall SetEvent(HANDLE event)");
-const ResetEvent = kernel32.func("int __stdcall ResetEvent(HANDLE event)");
-const WaitForMultipleObjects = kernel32.func(
-  "uint32_t __stdcall WaitForMultipleObjects(uint32_t count, HANDLE *handles, int waitAll, uint32_t milliseconds)",
-);
-const CloseHandle = kernel32.func("int __stdcall CloseHandle(HANDLE handle)");
-const LocalFree = kernel32.func("void * __stdcall LocalFree(void *memory)");
-const GetLastError = kernel32.func("uint32_t __stdcall GetLastError()");
-const GetSecurityInfo = advapi32.func(
-  "uint32_t __stdcall GetSecurityInfo(HANDLE handle, int objectType, uint32_t info, _Out_ void **owner, void *group, void *dacl, void *sacl, _Out_ void **descriptor)",
-);
-const ConvertSidToStringSidW = advapi32.func("int __stdcall ConvertSidToStringSidW(void *sid, _Out_ void **text)");
+let bound: ReturnType<typeof bind> | undefined;
+const native = () => (bound ??= bind());
 
 // Read/write data, read attributes, READ_CONTROL (for the owner check), SYNCHRONIZE: exactly what the frontend
 // grants an admitted account. GENERIC_WRITE would also ask for FILE_CREATE_PIPE_INSTANCE and be refused.
@@ -75,22 +81,22 @@ const isEndOfConnection = (code: number) =>
 
 const waitAny = (handles: unknown[]): Promise<number> =>
   new Promise((resolve, reject) =>
-    WaitForMultipleObjects.async(handles.length, handles, 0, INFINITE, (error: unknown, index: number) =>
+    native().WaitForMultipleObjects.async(handles.length, handles, 0, INFINITE, (error: unknown, index: number) =>
       error ? reject(error) : resolve(index),
     ),
   );
 
 class Overlapped {
-  readonly event = CreateEventW(null, 1, 0, null);
-  readonly pointer = koffi.alloc(OVERLAPPED, 1);
+  readonly event = native().CreateEventW(null, 1, 0, null);
+  readonly pointer = koffi.alloc(native().OVERLAPPED, 1);
 
   arm(): void {
-    ResetEvent(this.event);
-    koffi.encode(this.pointer, OVERLAPPED, { Internal: 0, InternalHigh: 0, Offset: 0, OffsetHigh: 0, hEvent: this.event });
+    native().ResetEvent(this.event);
+    koffi.encode(this.pointer, native().OVERLAPPED, { Internal: 0, InternalHigh: 0, Offset: 0, OffsetHigh: 0, hEvent: this.event });
   }
 
   dispose(): void {
-    CloseHandle(this.event);
+    native().CloseHandle(this.event);
     koffi.free(this.pointer);
   }
 }
@@ -102,14 +108,14 @@ async function settle(pipe: unknown, io: Overlapped, cancel: unknown, code: numb
   if (code !== 0) {
     if (code !== ERROR_IO_PENDING) throw isEndOfConnection(code) ? new ConnectionEnded() : new WindowsError(operation, code);
     if ((await waitAny([io.event, cancel])) !== 0) {
-      CancelIoEx(pipe, io.pointer);
-      GetOverlappedResult(pipe, io.pointer, [0], 1);
+      native().CancelIoEx(pipe, io.pointer);
+      native().GetOverlappedResult(pipe, io.pointer, [0], 1);
       throw new ConnectionEnded();
     }
   }
   const transferred: [number] = [0];
-  if (!GetOverlappedResult(pipe, io.pointer, transferred, 0)) {
-    const code = GetLastError();
+  if (!native().GetOverlappedResult(pipe, io.pointer, transferred, 0)) {
+    const code = native().GetLastError();
     throw isEndOfConnection(code) ? new ConnectionEnded() : new WindowsError(operation, code);
   }
   return transferred[0];
@@ -122,8 +128,8 @@ async function readExact(pipe: unknown, length: number, io: Overlapped, cancel: 
     let filled = 0;
     while (filled < length) {
       io.arm();
-      const started = ReadFile(pipe, memory, length - filled, null, io.pointer);
-      const count = await settle(pipe, io, cancel, started ? 0 : GetLastError(), "ReadFile");
+      const started = native().ReadFile(pipe, memory, length - filled, null, io.pointer);
+      const count = await settle(pipe, io, cancel, started ? 0 : native().GetLastError(), "ReadFile");
       if (count === 0) throw new ConnectionEnded();
       Buffer.from(koffi.view(memory, count)).copy(out, filled);
       filled += count;
@@ -141,8 +147,8 @@ async function writeAll(pipe: unknown, data: Buffer, io: Overlapped, cancel: unk
     let sent = 0;
     while (sent < data.length) {
       io.arm();
-      const started = WriteFile(pipe, memory, data.length - sent, null, io.pointer);
-      sent += await settle(pipe, io, cancel, started ? 0 : GetLastError(), "WriteFile");
+      const started = native().WriteFile(pipe, memory, data.length - sent, null, io.pointer);
+      sent += await settle(pipe, io, cancel, started ? 0 : native().GetLastError(), "WriteFile");
     }
   } finally {
     koffi.free(memory);
@@ -152,18 +158,18 @@ async function writeAll(pipe: unknown, data: Buffer, io: Overlapped, cancel: unk
 function ownerOf(pipe: unknown): string {
   const owner = [null];
   const descriptor = [null];
-  const status = GetSecurityInfo(pipe, SE_KERNEL_OBJECT, OWNER_SECURITY_INFORMATION, owner, null, null, null, descriptor);
+  const status = native().GetSecurityInfo(pipe, SE_KERNEL_OBJECT, OWNER_SECURITY_INFORMATION, owner, null, null, null, descriptor);
   if (status !== 0) throw new WindowsError("GetSecurityInfo", status);
   try {
     const text = [null];
-    if (!ConvertSidToStringSidW(owner[0], text)) throw new WindowsError("ConvertSidToStringSidW", GetLastError());
+    if (!native().ConvertSidToStringSidW(owner[0], text)) throw new WindowsError("ConvertSidToStringSidW", native().GetLastError());
     try {
       return koffi.decode(text[0], "char16_t", -1) as string;
     } finally {
-      LocalFree(text[0]);
+      native().LocalFree(text[0]);
     }
   } finally {
-    LocalFree(descriptor[0]);
+    native().LocalFree(descriptor[0]);
   }
 }
 
@@ -173,7 +179,7 @@ function ownerOf(pipe: unknown): string {
  * cannot receive a single byte.
  */
 export async function connectBroker(path: string, serverSid: string): Promise<BrokerConnection> {
-  const pipe = CreateFileW(
+  const pipe = native().CreateFileW(
     path,
     CLIENT_ACCESS,
     0,
@@ -182,16 +188,16 @@ export async function connectBroker(path: string, serverSid: string): Promise<Br
     FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
     null,
   );
-  if (koffi.address(pipe) === INVALID_HANDLE) throw new WindowsError("CreateFileW", GetLastError());
+  if (koffi.address(pipe) === INVALID_HANDLE) throw new WindowsError("CreateFileW", native().GetLastError());
   try {
     const owner = ownerOf(pipe);
     if (owner !== serverSid) throw new Error(`pipe ${path} is owned by ${owner}, not ${serverSid}`);
   } catch (error) {
-    CloseHandle(pipe);
+    native().CloseHandle(pipe);
     throw error;
   }
 
-  const cancel = CreateEventW(null, 1, 0, null);
+  const cancel = native().CreateEventW(null, 1, 0, null);
   const io = new Overlapped();
   let closed = false;
   let queue: Promise<unknown> = Promise.resolve();
@@ -220,10 +226,10 @@ export async function connectBroker(path: string, serverSid: string): Promise<Br
     async close() {
       if (closed) return;
       closed = true;
-      SetEvent(cancel);
+      native().SetEvent(cancel);
       await queue;
-      CloseHandle(pipe);
-      CloseHandle(cancel);
+      native().CloseHandle(pipe);
+      native().CloseHandle(cancel);
       io.dispose();
     },
   };

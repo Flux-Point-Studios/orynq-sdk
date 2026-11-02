@@ -1,31 +1,37 @@
 import koffi from "koffi";
 
-const ncrypt = koffi.load("ncrypt.dll");
+// Bound on first use, so importing the package loads no DLL and works off Windows.
+function bind() {
+  const ncrypt = koffi.load("ncrypt.dll");
+  koffi.pointer("NCRYPT_HANDLE", koffi.opaque());
+  koffi.struct("BCRYPT_OAEP_PADDING_INFO", { pszAlgId: "const char16_t *", pbLabel: "void *", cbLabel: "uint32_t" });
+  return {
+    NCryptOpenStorageProvider: ncrypt.func(
+      "int32_t __stdcall NCryptOpenStorageProvider(_Out_ NCRYPT_HANDLE *provider, const char16_t *name, uint32_t flags)",
+    ),
+    NCryptOpenKey: ncrypt.func(
+      "int32_t __stdcall NCryptOpenKey(NCRYPT_HANDLE provider, _Out_ NCRYPT_HANDLE *key, const char16_t *name, uint32_t legacyKeySpec, uint32_t flags)",
+    ),
+    NCryptCreatePersistedKey: ncrypt.func(
+      "int32_t __stdcall NCryptCreatePersistedKey(NCRYPT_HANDLE provider, _Out_ NCRYPT_HANDLE *key, const char16_t *algorithm, const char16_t *name, uint32_t legacyKeySpec, uint32_t flags)",
+    ),
+    NCryptSetProperty: ncrypt.func(
+      "int32_t __stdcall NCryptSetProperty(NCRYPT_HANDLE object, const char16_t *property, void *input, uint32_t size, uint32_t flags)",
+    ),
+    NCryptFinalizeKey: ncrypt.func("int32_t __stdcall NCryptFinalizeKey(NCRYPT_HANDLE key, uint32_t flags)"),
+    NCryptEncrypt: ncrypt.func(
+      "int32_t __stdcall NCryptEncrypt(NCRYPT_HANDLE key, void *input, uint32_t inputSize, BCRYPT_OAEP_PADDING_INFO *padding, void *output, uint32_t outputSize, _Out_ uint32_t *result, uint32_t flags)",
+    ),
+    NCryptDecrypt: ncrypt.func(
+      "int32_t __stdcall NCryptDecrypt(NCRYPT_HANDLE key, void *input, uint32_t inputSize, BCRYPT_OAEP_PADDING_INFO *padding, void *output, uint32_t outputSize, _Out_ uint32_t *result, uint32_t flags)",
+    ),
+    NCryptDeleteKey: ncrypt.func("int32_t __stdcall NCryptDeleteKey(NCRYPT_HANDLE key, uint32_t flags)"),
+    NCryptFreeObject: ncrypt.func("int32_t __stdcall NCryptFreeObject(NCRYPT_HANDLE object)"),
+  };
+}
 
-koffi.pointer("NCRYPT_HANDLE", koffi.opaque());
-koffi.struct("BCRYPT_OAEP_PADDING_INFO", { pszAlgId: "const char16_t *", pbLabel: "void *", cbLabel: "uint32_t" });
-
-const NCryptOpenStorageProvider = ncrypt.func(
-  "int32_t __stdcall NCryptOpenStorageProvider(_Out_ NCRYPT_HANDLE *provider, const char16_t *name, uint32_t flags)",
-);
-const NCryptOpenKey = ncrypt.func(
-  "int32_t __stdcall NCryptOpenKey(NCRYPT_HANDLE provider, _Out_ NCRYPT_HANDLE *key, const char16_t *name, uint32_t legacyKeySpec, uint32_t flags)",
-);
-const NCryptCreatePersistedKey = ncrypt.func(
-  "int32_t __stdcall NCryptCreatePersistedKey(NCRYPT_HANDLE provider, _Out_ NCRYPT_HANDLE *key, const char16_t *algorithm, const char16_t *name, uint32_t legacyKeySpec, uint32_t flags)",
-);
-const NCryptSetProperty = ncrypt.func(
-  "int32_t __stdcall NCryptSetProperty(NCRYPT_HANDLE object, const char16_t *property, void *input, uint32_t size, uint32_t flags)",
-);
-const NCryptFinalizeKey = ncrypt.func("int32_t __stdcall NCryptFinalizeKey(NCRYPT_HANDLE key, uint32_t flags)");
-const NCryptEncrypt = ncrypt.func(
-  "int32_t __stdcall NCryptEncrypt(NCRYPT_HANDLE key, void *input, uint32_t inputSize, BCRYPT_OAEP_PADDING_INFO *padding, void *output, uint32_t outputSize, _Out_ uint32_t *result, uint32_t flags)",
-);
-const NCryptDecrypt = ncrypt.func(
-  "int32_t __stdcall NCryptDecrypt(NCRYPT_HANDLE key, void *input, uint32_t inputSize, BCRYPT_OAEP_PADDING_INFO *padding, void *output, uint32_t outputSize, _Out_ uint32_t *result, uint32_t flags)",
-);
-const NCryptDeleteKey = ncrypt.func("int32_t __stdcall NCryptDeleteKey(NCRYPT_HANDLE key, uint32_t flags)");
-const NCryptFreeObject = ncrypt.func("int32_t __stdcall NCryptFreeObject(NCRYPT_HANDLE object)");
+let bound: ReturnType<typeof bind> | undefined;
+const native = () => (bound ??= bind());
 
 const PLATFORM_CRYPTO_PROVIDER = "Microsoft Platform Crypto Provider";
 const NCRYPT_SILENT_FLAG = 0x40;
@@ -47,17 +53,17 @@ const check = (operation: string, status: number): void => {
 
 function withProvider<T>(use: (provider: unknown) => T): T {
   const provider = [null];
-  check("NCryptOpenStorageProvider", NCryptOpenStorageProvider(provider, PLATFORM_CRYPTO_PROVIDER, 0));
+  check("NCryptOpenStorageProvider", native().NCryptOpenStorageProvider(provider, PLATFORM_CRYPTO_PROVIDER, 0));
   try {
     return use(provider[0]);
   } finally {
-    NCryptFreeObject(provider[0]);
+    native().NCryptFreeObject(provider[0]);
   }
 }
 
 function openKey(provider: unknown, name: string): unknown {
   const key = [null];
-  check("NCryptOpenKey", NCryptOpenKey(provider, key, name, 0, NCRYPT_SILENT_FLAG));
+  check("NCryptOpenKey", native().NCryptOpenKey(provider, key, name, 0, NCRYPT_SILENT_FLAG));
   return key[0];
 }
 
@@ -68,20 +74,20 @@ function openOrCreateKey(provider: unknown, name: string): unknown {
     if (!(error instanceof NCryptError && error.status === NTE_BAD_KEYSET)) throw error;
   }
   const key = [null];
-  check("NCryptCreatePersistedKey", NCryptCreatePersistedKey(provider, key, "RSA", name, 0, NCRYPT_SILENT_FLAG));
+  check("NCryptCreatePersistedKey", native().NCryptCreatePersistedKey(provider, key, "RSA", name, 0, NCRYPT_SILENT_FLAG));
   try {
     const bits = Buffer.alloc(4);
     bits.writeUInt32LE(KEY_BITS, 0);
-    check("NCryptSetProperty", NCryptSetProperty(key[0], "Length", bits, bits.length, NCRYPT_SILENT_FLAG));
-    check("NCryptFinalizeKey", NCryptFinalizeKey(key[0], NCRYPT_SILENT_FLAG));
+    check("NCryptSetProperty", native().NCryptSetProperty(key[0], "Length", bits, bits.length, NCRYPT_SILENT_FLAG));
+    check("NCryptFinalizeKey", native().NCryptFinalizeKey(key[0], NCRYPT_SILENT_FLAG));
     return key[0];
   } catch (error) {
-    NCryptDeleteKey(key[0], 0);
+    native().NCryptDeleteKey(key[0], 0);
     throw error;
   }
 }
 
-function transform(fn: typeof NCryptEncrypt, operation: string, key: unknown, input: Uint8Array): Buffer {
+function transform(fn: ReturnType<typeof bind>["NCryptEncrypt"], operation: string, key: unknown, input: Uint8Array): Buffer {
   const size: [number] = [0];
   check(operation, fn(key, input, input.length, OAEP_SHA256, null, 0, size, NCRYPT_PAD_OAEP_FLAG | NCRYPT_SILENT_FLAG));
   const output = Buffer.alloc(size[0]);
@@ -100,9 +106,9 @@ export function sealSecret(keyName: string, secret: Uint8Array): Buffer {
   return withProvider((provider) => {
     const key = openOrCreateKey(provider, keyName);
     try {
-      return transform(NCryptEncrypt, "NCryptEncrypt", key, secret);
+      return transform(native().NCryptEncrypt, "NCryptEncrypt", key, secret);
     } finally {
-      NCryptFreeObject(key);
+      native().NCryptFreeObject(key);
     }
   });
 }
@@ -111,9 +117,9 @@ export function unsealSecret(keyName: string, sealed: Uint8Array): Buffer {
   return withProvider((provider) => {
     const key = openKey(provider, keyName);
     try {
-      return transform(NCryptDecrypt, "NCryptDecrypt", key, sealed);
+      return transform(native().NCryptDecrypt, "NCryptDecrypt", key, sealed);
     } finally {
-      NCryptFreeObject(key);
+      native().NCryptFreeObject(key);
     }
   });
 }
@@ -121,9 +127,9 @@ export function unsealSecret(keyName: string, sealed: Uint8Array): Buffer {
 export function deleteSealingKey(keyName: string): void {
   withProvider((provider) => {
     const key = openKey(provider, keyName);
-    const status = NCryptDeleteKey(key, 0);
+    const status = native().NCryptDeleteKey(key, 0);
     if (status !== 0) {
-      NCryptFreeObject(key);
+      native().NCryptFreeObject(key);
       check("NCryptDeleteKey", status);
     }
   });
