@@ -66,17 +66,45 @@ describe("parseStrictJson", () => {
     expect(parseStrictJson('["\\ud83d\\ude00","\u{1F600}"]', LIMIT)).toEqual(["\u{1F600}", "\u{1F600}"]);
   });
 
-  it(`accepts values nested ${STRICT_JSON_MAX_DEPTH} containers deep and refuses one more`, () => {
+  it(`accepts a value enclosed by ${STRICT_JSON_MAX_DEPTH} containers and refuses one enclosed by more`, () => {
     const arrays = (n: number) => "[".repeat(n) + "0" + "]".repeat(n);
     const objects = (n: number) => '{"a":'.repeat(n) + "0" + "}".repeat(n);
     expect(STRICT_JSON_MAX_DEPTH).toBe(32);
     expect(() => parseStrictJson(arrays(32), LIMIT)).not.toThrow();
     expect(() => parseStrictJson(objects(32), LIMIT)).not.toThrow();
+    // The innermost empty array is itself the value at level 32.
     expect(() => parseStrictJson("[".repeat(33) + "]".repeat(33), LIMIT)).not.toThrow();
     expect(code(arrays(33))).toBe("JSON_DEPTH");
     expect(code(objects(33))).toBe("JSON_DEPTH");
     expect(code("[".repeat(34) + "]".repeat(34))).toBe("JSON_DEPTH");
     expect(code("[".repeat(100_000) + "]".repeat(100_000), 1_000_000)).toBe("JSON_DEPTH");
+  });
+
+  it("judges nesting before syntax, so a deep text is refused without being parsed", () => {
+    expect(code("[".repeat(40))).toBe("JSON_DEPTH");
+    expect(code("{".repeat(40))).toBe("JSON_DEPTH");
+    expect(code("[".repeat(20))).toBe("JSON_SYNTAX");
+  });
+
+  it("counts only brackets outside strings, whatever the strings escape", () => {
+    const brackets = ["[".repeat(40), "{".repeat(40), '\\"' + "[".repeat(40), "\\\\", "\\u005b".repeat(40)];
+    const shallow = `[${brackets.map(s => `"${s}"`).join(",")}]`;
+    expect(parseStrictJson(shallow, LIMIT)).toEqual(JSON.parse(shallow));
+    // An escaped backslash ends the string, so the brackets after it count.
+    expect(code('["\\\\",' + "[".repeat(32) + "0" + "]".repeat(33))).toBe("JSON_DEPTH");
+    expect(() => parseStrictJson('["\\\\",' + "[".repeat(31) + "0" + "]".repeat(32), LIMIT)).not.toThrow();
+    expect(code('{"\\"":' + "[".repeat(32) + "0" + "]".repeat(32) + "}")).toBe("JSON_DEPTH");
+  });
+
+  it("refuses a 16 MiB nesting frame without building it", () => {
+    const half = 8 * 1024 * 1024;
+    const text = "[".repeat(half) + "]".repeat(half);
+    const rss = process.memoryUsage().rss;
+    const start = performance.now();
+    expect(code(text, 2 * half)).toBe("JSON_DEPTH");
+    const elapsed = performance.now() - start;
+    expect(process.memoryUsage().rss - rss).toBeLessThan(64 * 1024 * 1024);
+    expect(elapsed).toBeLessThan(400);
   });
 
   it("accepts integers up to ±2^53 exactly and refuses any beyond", () => {

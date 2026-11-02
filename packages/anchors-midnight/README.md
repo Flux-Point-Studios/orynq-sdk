@@ -279,7 +279,8 @@ JSON canonicalization sits between a signature and what it covers. Parsing is st
 fields, networks and roles, malformed keys, overlapping windows for one key, duplicate JSON
 object keys at every depth (including escaped aliases), lone surrogates, and integers spelled
 with a fraction, an exponent or a minus zero or beyond ±2^53 are refused (core's
-`parseStrictJson`). Policy documents are bounded to 2 MiB and 32 nesting levels.
+`parseStrictJson`). Policy documents are bounded to 2 MiB, and no value may sit inside more
+than 32 containers.
 Each signature check refuses with its own message, so a caller can tell which one failed: `the
 known-authors document carries no signature by a trust root` when no signature names one,
 `... is not 64 bytes of lowercase hex` when every trust-root signature is malformed, and `... does

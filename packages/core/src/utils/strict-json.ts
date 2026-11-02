@@ -4,6 +4,8 @@
 // spellings, every string must be well-formed Unicode, and every integer must have exactly one
 // spelling within ±2^53. Other numbers pass through for the caller's schema to judge.
 
+// A value enclosed by more containers than this is refused; the top-level value is enclosed by
+// none, so `[[]]` holds a value at level 1. conduct's CBOR decoder counts levels the same way.
 export const STRICT_JSON_MAX_DEPTH = 32;
 
 export type StrictJsonErrorCode =
@@ -35,69 +37,170 @@ export class StrictJsonError extends Error {
 }
 
 const MAX_EXACT_INTEGER = 2n ** 53n;
-const INTEGER = /^-?(0|[1-9][0-9]*)$/;
+const NON_ASCII = /[\u0080-\uffff]/;
+const SURROGATE = /[\ud800-\udfff]/;
 const LONE_SURROGATE = /\p{Cs}/u;
 
-function checkNumber(lexeme: string): void {
-  if (INTEGER.test(lexeme)) {
-    const digits = lexeme.replace("-", "");
-    if (lexeme === "-0" || digits.length > 16 || BigInt(digits) > MAX_EXACT_INTEGER) {
-      throw new StrictJsonError("JSON_NUMBER");
+const TAB = 0x09;
+const LF = 0x0a;
+const CR = 0x0d;
+const SPACE = 0x20;
+const QUOTE = 0x22;
+const PLUS = 0x2b;
+const COMMA = 0x2c;
+const MINUS = 0x2d;
+const DOT = 0x2e;
+const ZERO = 0x30;
+const NINE = 0x39;
+const COLON = 0x3a;
+const UPPER_E = 0x45;
+const OPEN_ARRAY = 0x5b;
+const BACKSLASH = 0x5c;
+const CLOSE_ARRAY = 0x5d;
+const LOWER_E = 0x65;
+const OPEN_OBJECT = 0x7b;
+const CLOSE_OBJECT = 0x7d;
+
+const isWhitespace = (unit: number) => unit === SPACE || unit === LF || unit === CR || unit === TAB;
+const isDigit = (unit: number) => unit >= ZERO && unit <= NINE;
+
+// What TextEncoder would write (a lone surrogate becomes U+FFFD), without allocating it.
+function utf8Length(text: string): number {
+  let bytes = 0;
+  for (let at = 0; at < text.length; at++) {
+    const unit = text.charCodeAt(at);
+    if (unit < 0x80) bytes += 1;
+    else if (unit < 0x800) bytes += 2;
+    else if (unit >= 0xd800 && unit <= 0xdbff && (text.charCodeAt(at + 1) & 0xfc00) === 0xdc00) {
+      bytes += 4;
+      at++;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+// Runs before JSON.parse, on text not yet known to be JSON, so a nesting bomb is refused before
+// any of it is built.
+function checkDepth(text: string): void {
+  let open = 0;
+  for (let at = 0; at < text.length; at++) {
+    const unit = text.charCodeAt(at);
+    if (unit === CLOSE_ARRAY || unit === CLOSE_OBJECT) {
+      if (open > 0) open--;
+      continue;
     }
-    return;
+    if (isWhitespace(unit) || unit === COMMA || unit === COLON) continue;
+    if (open > STRICT_JSON_MAX_DEPTH) throw new StrictJsonError("JSON_DEPTH");
+    if (unit === OPEN_ARRAY || unit === OPEN_OBJECT) {
+      open++;
+    } else if (unit === QUOTE) {
+      at++;
+      while (at < text.length && text.charCodeAt(at) !== QUOTE) at += text.charCodeAt(at) === BACKSLASH ? 2 : 1;
+    }
+  }
+}
+
+// Checks the number at `at` and returns the index past it.
+function checkNumber(text: string, at: number): number {
+  const start = at;
+  if (text.charCodeAt(at) === MINUS) at++;
+  const digitsStart = at;
+  let unit = text.charCodeAt(at);
+  while (isDigit(unit)) unit = text.charCodeAt(++at);
+  if (unit !== DOT && unit !== LOWER_E && unit !== UPPER_E) {
+    const digits = at - digitsStart;
+    // JSON.parse refused leading zeros, so 15 digits are below 2^53.
+    if (digits < 16) {
+      if (digits === 1 && digitsStart > start && text.charCodeAt(digitsStart) === ZERO) throw new StrictJsonError("JSON_NUMBER");
+      return at;
+    }
+    if (digits > 16 || BigInt(text.slice(digitsStart, at)) > MAX_EXACT_INTEGER) throw new StrictJsonError("JSON_NUMBER");
+    return at;
+  }
+  while (isDigit(unit) || unit === DOT || unit === LOWER_E || unit === UPPER_E || unit === PLUS || unit === MINUS) {
+    unit = text.charCodeAt(++at);
   }
   // A fraction or exponent must not spell an integer: 1.0 and 1e0 would both decode to 1, and
   // 9007199254740993.0 would decode to 2^53. Non-integral doubles are all below 2^53.
-  const value = Number(lexeme);
+  const value = Number(text.slice(start, at));
   if (!Number.isFinite(value) || Number.isInteger(value)) throw new StrictJsonError("JSON_NUMBER");
+  return at;
 }
 
-export function parseStrictJson(text: string, maxBytes: number): unknown {
-  if (text.length > maxBytes || new TextEncoder().encode(text).length > maxBytes) {
-    throw new StrictJsonError("JSON_TOO_LARGE");
+// Runs after JSON.parse accepted the text, so it only meets well-formed tokens: a string after
+// `{` or after a comma inside an object is a key. Each open object's keys are `true` while it has
+// none, the key itself while it has one, then a Set.
+function checkTokens(text: string): void {
+  const surrogates = SURROGATE.test(text);
+  const open: (boolean | string | Set<string>)[] = [];
+  let expectKey = false;
+  let at = 0;
+  while (at < text.length) {
+    const unit = text.charCodeAt(at);
+    if (unit === QUOTE) {
+      const start = at++;
+      let escaped = false;
+      for (;;) {
+        const inner = text.charCodeAt(at);
+        if (inner === QUOTE) break;
+        if (inner === BACKSLASH) {
+          escaped = true;
+          at += 2;
+        } else at++;
+      }
+      at++;
+      if (!expectKey && !escaped && !surrogates) continue;
+      const decoded = escaped ? (JSON.parse(text.slice(start, at)) as string) : text.slice(start + 1, at - 1);
+      if ((escaped || surrogates) && LONE_SURROGATE.test(decoded)) throw new StrictJsonError("JSON_LONE_SURROGATE");
+      if (!expectKey) continue;
+      expectKey = false;
+      const top = open.length - 1;
+      const keys = open[top] as true | string | Set<string>;
+      if (keys === true) {
+        open[top] = decoded;
+      } else if (typeof keys === "string") {
+        if (keys === decoded) throw new StrictJsonError("JSON_DUPLICATE_KEY");
+        open[top] = new Set([keys, decoded]);
+      } else {
+        if (keys.has(decoded)) throw new StrictJsonError("JSON_DUPLICATE_KEY");
+        keys.add(decoded);
+      }
+      continue;
+    }
+    if (unit === MINUS || isDigit(unit)) {
+      at = checkNumber(text, at);
+      continue;
+    }
+    if (unit === OPEN_OBJECT) {
+      open.push(true);
+      expectKey = true;
+    } else if (unit === OPEN_ARRAY) {
+      open.push(false);
+    } else if (unit === CLOSE_OBJECT || unit === CLOSE_ARRAY) {
+      open.pop();
+    } else if (unit === COMMA) {
+      expectKey = open[open.length - 1] !== false;
+    }
+    at++;
   }
+}
+
+function fitsBytes(text: string, maxBytes: number): boolean {
+  if (text.length > maxBytes) return false;
+  if (text.length * 3 <= maxBytes || !NON_ASCII.test(text)) return true;
+  return utf8Length(text) <= maxBytes;
+}
+
+// Nesting is judged first, so a deep text is refused as JSON_DEPTH even when it is also invalid.
+export function parseStrictJson(text: string, maxBytes: number): unknown {
+  if (!fitsBytes(text, maxBytes)) throw new StrictJsonError("JSON_TOO_LARGE");
+  checkDepth(text);
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
     throw new StrictJsonError("JSON_SYNTAX");
   }
-  // JSON.parse accepted the text, so the scan below only meets well-formed tokens.
-  let at = 0;
-  const whitespace = () => { while (at < text.length && /\s/.test(text[at]!)) at++; };
-  const string = (): string => {
-    const start = at++;
-    while (text[at] !== '"') at += text[at] === "\\" ? 2 : 1;
-    const decoded = JSON.parse(text.slice(start, ++at)) as string;
-    if (LONE_SURROGATE.test(decoded)) throw new StrictJsonError("JSON_LONE_SURROGATE");
-    return decoded;
-  };
-  const value = (depth: number): void => {
-    if (depth > STRICT_JSON_MAX_DEPTH) throw new StrictJsonError("JSON_DEPTH");
-    whitespace();
-    if (text[at] === "{") {
-      at++; whitespace();
-      if (text[at] === "}") { at++; return; }
-      const keys = new Set<string>();
-      for (;;) {
-        const key = string();
-        if (keys.has(key)) throw new StrictJsonError("JSON_DUPLICATE_KEY");
-        keys.add(key); whitespace(); at++; value(depth + 1); whitespace();
-        if (text[at++] === "}") return;
-        whitespace();
-      }
-    }
-    if (text[at] === "[") {
-      at++; whitespace();
-      if (text[at] === "]") { at++; return; }
-      for (;;) { value(depth + 1); whitespace(); if (text[at++] === "]") return; }
-    }
-    if (text[at] === '"') { string(); return; }
-    const start = at;
-    while (at < text.length && !/[\s,\]}]/.test(text[at]!)) at++;
-    const lexeme = text.slice(start, at);
-    if (lexeme !== "true" && lexeme !== "false" && lexeme !== "null") checkNumber(lexeme);
-  };
-  value(0);
+  checkTokens(text);
   return parsed;
 }

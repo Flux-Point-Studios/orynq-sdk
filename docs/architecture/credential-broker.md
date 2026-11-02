@@ -171,7 +171,7 @@ Principals: `agent:<sessionId>` (an `orynq-agent` peer in the session's cgroup),
 
 ### 6.1 Framing
 
-A frame is a uint32 big-endian length N (1 ≤ N ≤ 16 MiB) plus one UTF-8 JSON-RPC 2.0 request with an id; batches, concurrency and id-less requests are refused. `parseStrictJson` returns -32700 for duplicate keys, lone surrogates, depth over 32 or numbers beyond ±2^53; uint64s are decimal strings. Connections close after 300 s idle (≤ 8 per agent, 32 per other principal). Clients require an `orynq-broker`-owned socket.
+A frame is a uint32 big-endian length N (1 ≤ N ≤ 16 MiB) plus one UTF-8 JSON-RPC 2.0 request with an id; batches, concurrency and id-less requests are refused. `parseStrictJson` returns -32700 for duplicate keys, lone surrogates, a value inside more than 32 containers (judged before parsing) or numbers beyond ±2^53; uint64s are decimal strings. Connections close after 300 s idle (≤ 8 per agent, 32 per other principal). Clients require an `orynq-broker`-owned socket.
 
 ### 6.2 Methods
 

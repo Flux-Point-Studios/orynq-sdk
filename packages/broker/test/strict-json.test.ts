@@ -52,6 +52,18 @@ describe("parseJsonPayload", () => {
     expect((error.cause as StrictJsonError).code).toBe(code);
   });
 
+  it("refuses the largest nesting frame without building it", () => {
+    const half = 8 * 1024 * 1024;
+    const payload = utf8("[".repeat(half) + "]".repeat(half));
+    const rss = process.memoryUsage().rss;
+    const start = performance.now();
+    const error = refusal(payload);
+    const elapsed = performance.now() - start;
+    expect((error.cause as StrictJsonError).code).toBe("JSON_DEPTH");
+    expect(process.memoryUsage().rss - rss).toBeLessThan(64 * 1024 * 1024);
+    expect(elapsed).toBeLessThan(400);
+  });
+
   it("keeps the input out of the error message", () => {
     const error = refusal(utf8('{"token":"secret-canary-value","token":1}'));
     expect(error.message).not.toContain("secret-canary-value");
