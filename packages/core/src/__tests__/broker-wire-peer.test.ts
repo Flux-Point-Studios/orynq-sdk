@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { BrokerWireError, decodeOpenPayload, parsePeer, type Peer } from "../broker-wire/index.js";
 
 const utf8 = (text: string) => new TextEncoder().encode(text);
@@ -207,6 +207,21 @@ describe("decodeOpenPayload", () => {
       expect((error as BrokerWireError).code).toBe("PEER_INVALID");
     }
     expect(() => decodeOpenPayload(Uint8Array.of(0x7b, 0xff, 0x7d))).toThrow(BrokerWireError);
+  });
+
+  // A peer holds at most 7 values (its object and six fields), so 16 is room enough.
+  it("refuses an OPEN payload of more than 16 values before JSON.parse builds it", () => {
+    const withValues = (count: number) => utf8(JSON.stringify({ ...linux, extra: new Array<number>(count - 7).fill(0) }));
+    const parse = vi.spyOn(JSON, "parse");
+    try {
+      for (const [count, parsed] of [[16, 1], [17, 0], [4096, 0]] as const) {
+        parse.mockClear();
+        expect(() => decodeOpenPayload(withValues(count))).toThrow(new BrokerWireError("PEER_INVALID", "peer"));
+        expect(parse).toHaveBeenCalledTimes(parsed);
+      }
+    } finally {
+      parse.mockRestore();
+    }
   });
 
   it("refuses a duplicate key, so one OPEN has one meaning", () => {

@@ -134,6 +134,18 @@ describe("MuxDecoder", () => {
     expect(decoder.buffered).toBe(14);
   });
 
+  it("grows a payload buffer with the bytes that arrive, never to the announced length at once", () => {
+    const start = Uint8Array.from([...hex(vectors.large.headerHex), ...new Uint8Array(1000)]);
+    const before = process.memoryUsage().arrayBuffers;
+    const decoders = Array.from({ length: 4 }, () => {
+      const decoder = new MuxDecoder();
+      expect(decoder.push(start)).toEqual([]);
+      return decoder;
+    });
+    expect(decoders.every(decoder => decoder.buffered === 1013)).toBe(true);
+    expect(process.memoryUsage().arrayBuffers - before).toBeLessThan(1024 * 1024);
+  });
+
   it("does not keep a view of the caller's chunk", () => {
     const bytes = hex(vectors.valid[4]!.hex);
     const [message] = new MuxDecoder().push(bytes);
