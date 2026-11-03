@@ -15,3 +15,15 @@ canonical user (`S-1-5-21-` plus four sub-authorities) or service
 `decodeOpenPayload(bytes)` reads an OPEN payload: the literal bytes `null`
 for a client the frontend could not identify, otherwise one peer as strict
 JSON. Refusals throw `BrokerWireError` naming the field, never quoting it.
+
+The subpath also carries the stdio mux a broker and its frontend speak,
+wire-identical to the shipped Windows sidecar: `u32 length | u8 kind |
+u64 conn | payload`, big-endian, where length counts kind, conn and payload
+(9 to 9 + 16 MiB, so a full 16 MiB payload fits). Kinds: `MUX_READY` (conn
+0, no payload), `MUX_OPEN` (a peer or `null`), `MUX_FRAME` (1 byte to
+16 MiB) and `MUX_CLOSE` (no payload). `encodeMuxMessage` writes one;
+`MuxDecoder` reassembles them from arbitrary chunks, judges each header as
+its bytes arrive so a bad length, kind or kind rule is refused from the
+shortest prefix that shows it, and allocates a payload only as its bytes
+arrive. Refusals are `BrokerWireError` with codes `MUX_LENGTH`, `MUX_KIND`,
+`MUX_READY`, `MUX_FRAME` and `MUX_CLOSE`.
