@@ -41,6 +41,11 @@ const CGROUP = /^(\/|(\/[^/\0\n]+)+)$/;
 const MAX_CGROUP_BYTES = 4096;
 const MAX_PEER_VALUES = 16;
 
+// A user (S-1-5-21-…) or service (S-1-5-80-…) SID in canonical form: the only accounts a Windows
+// peer may name, since groups and well-known SIDs stand for whole populations.
+export const isAccountSid = (value: unknown): value is string =>
+  typeof value === "string" && SID.test(value) && value.split("-").slice(3).every(part => Number(part) <= U32_MAX);
+
 const isU32 = (value: unknown): value is number =>
   typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= U32_MAX && !Object.is(value, -0);
 
@@ -49,7 +54,7 @@ const FIELDS: Readonly<Record<string, (value: unknown) => boolean>> = {
   gid: isU32,
   pidHint: value => value === null || isU32(value),
   cgroup: value => typeof value === "string" && CGROUP.test(value) && new TextEncoder().encode(value).length <= MAX_CGROUP_BYTES,
-  sid: value => typeof value === "string" && SID.test(value) && value.split("-").slice(3).every(part => Number(part) <= U32_MAX),
+  sid: isAccountSid,
   logonLuid: value => typeof value === "string" && DECIMAL.test(value) && BigInt(value) <= U64_MAX,
   tsSessionId: isU32,
   integrityRid: isU32,

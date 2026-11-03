@@ -12,6 +12,7 @@ gid, tsSessionId and integrityRid are u32 numbers, pidHint a u32 number or
 null, cgroup an absolute cgroup v2 path of at most 4096 UTF-8 bytes, sid a
 canonical user (`S-1-5-21-` plus four sub-authorities) or service
 (`S-1-5-80-` plus five) SID, and logonLuid a canonical decimal u64 string.
+`isAccountSid(value)` is that SID check on its own, for configuration.
 `decodeOpenPayload(bytes)` reads an OPEN payload: the literal bytes `null`
 for a client the frontend could not identify, otherwise one peer as strict
 JSON. Refusals throw `BrokerWireError` naming the field, never quoting it.

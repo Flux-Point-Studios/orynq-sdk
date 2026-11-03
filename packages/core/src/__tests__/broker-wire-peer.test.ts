@@ -194,3 +194,21 @@ describe("the broker-wire subpath", () => {
     expect(tsup).toContain('"src/broker-wire/index.ts"');
   });
 });
+
+describe("isAccountSid", () => {
+  it("accepts exactly the SIDs a Windows peer may carry", async () => {
+    const { isAccountSid } = await import("../broker-wire/index.js");
+    const sids = ["S-1-5-21-1-2-3-4", "S-1-5-80-1-2-3-4-5", "S-1-5-18", "S-1-5-21-01-2-3-4", "S-1-5-21-4294967296-2-3-4", "", 7];
+    for (const sid of sids) {
+      const peer = (() => {
+        try {
+          return parsePeer({ ...windows, sid });
+        } catch (error) {
+          expect(error).toBeInstanceOf(BrokerWireError);
+          return undefined;
+        }
+      })();
+      expect(isAccountSid(sid)).toBe(peer !== undefined);
+    }
+  });
+});

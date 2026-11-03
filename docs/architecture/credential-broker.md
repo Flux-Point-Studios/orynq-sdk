@@ -177,7 +177,7 @@ A frame is a uint32 big-endian length N (1 ≤ N ≤ 16 MiB) plus one UTF-8 JSON
 
 | Method | Params → Result |
 |---|---|
-| `broker.hello` | `{}` → `{protocol: 2, brokerId, receiptKey, policyHash, principal, sessionId, mandates, verifyMode, journalHead}` |
+| `broker.hello` | `{}` → `{protocol: 2, brokerId, receiptKey, policyHash, principal, sessionId?, mandates, verifyMode, journalHead}` |
 | `credential.list` | `{}` → capabilities with their `mandate` |
 | `mandate.get` | `{mandate}` → `{cbor, summary, windowIndex, spent, notAfter}` |
 | `intent.submit` | `{kind, params, mandates: [C], expect?, wait?, note?}` → `Intent` |
@@ -186,7 +186,7 @@ A frame is a uint32 big-endian length N (1 ≤ N ≤ 16 MiB) plus one UTF-8 JSON
 | admin `mandate.register`, `.revoke` | `{cbor, members, domain, assertion, purpose}` → `{C}`; `{mandate, reason}` → `{}` |
 | X `release.commit`, `release.history` (B only) | `ReleaseRequest` → `{status, result, heads, releaseRecord}`; `{C, fromCount}` → `{events, head}` |
 
-Other v1 rows and bounds are unchanged. As JSON-RPC 2.0 allows, a request may omit params; B reads them as `{}`. Effect methods are `intent.submit` with the method as kind and a 30 s wait; `mandates` must equal B's §3.2 derivation; `expect` (`{calls, outflows, fee}`) mismatching the decode is `DECODE_REFUSED`. `Intent = {intentId, requestHash, intentHash, status, mandates, release?: {mode, steps, proofRefs?}, result?, approval?, error?: {code, reason, rule?, field?}}`. Statuses are v1's; `uncertain` is never retried.
+Other v1 rows and bounds are unchanged. As JSON-RPC 2.0 allows, a request may omit params; B reads them as `{}`. Only an agent has a session, so only its hello carries `sessionId`, with its session's `mandates`; `journalHead` is `{seq, hash}`, the row count and the last row's hash (32 zero bytes before the first row). A method the caller's principal may not call, admin methods for an agent or service included, is -32601, as is a method B does not serve yet; a peer with no principal gets `PEER_UNKNOWN` for every request. Effect methods are `intent.submit` with the method as kind and a 30 s wait; `mandates` must equal B's §3.2 derivation; `expect` (`{calls, outflows, fee}`) mismatching the decode is `DECODE_REFUSED`. `Intent = {intentId, requestHash, intentHash, status, mandates, release?: {mode, steps, proofRefs?}, result?, approval?, error?: {code, reason, rule?, field?}}`. Statuses are v1's; `uncertain` is never retried.
 
 ### 6.3 Errors and hashes
 
