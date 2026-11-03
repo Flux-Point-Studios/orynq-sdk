@@ -529,6 +529,37 @@ describe("serveConnection over a Unix domain socket", () => {
     await vi.waitFor(() => expect(reasons).toEqual(["end"]));
   });
 
+  it("resolves 'end' when its stream is destroyed with no error, as by a server shutting down", async () => {
+    const { path, reasons, sockets } = await listen();
+    const { closed } = await connect(path);
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    sockets[0]!.destroy();
+    await closed;
+    await vi.waitFor(() => expect(reasons).toEqual(["end"]), { timeout: 2_000 });
+  });
+
+  it("neither writes nor arms the idle clock for a reply that comes after the connection closed", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let release!: (reply: Uint8Array) => void;
+    const { path, reasons, sockets } = await listen(
+      () => new Promise<Uint8Array>(resolve => { release = resolve; }),
+    );
+    const { socket, closed } = await connect(path);
+    socket.write(encodeFrame(request(1)));
+    while (release === undefined) await turns(1);
+    const [server] = sockets;
+    const write = vi.spyOn(server!, "write");
+    expect(vi.getTimerCount()).toBe(0);
+    server!.destroy();
+    await closed;
+    while (reasons.length === 0) await turns(1);
+    expect(reasons).toEqual(["end"]);
+    release(json({ jsonrpc: "2.0", id: 1, result: {} }));
+    await turns(10);
+    expect(write).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("resolves 'reset' when the client vanishes while its reply is written", async () => {
     const { path, reasons } = await listen(async req => bigReply(req));
     for (let i = 0; i < 5; i++) {
