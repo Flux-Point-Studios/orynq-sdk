@@ -206,15 +206,15 @@ function fitsBytes(text: string, maxBytes: number): boolean {
   return utf8Length(text) <= maxBytes;
 }
 
-// A value is a container, a string, a number or a literal: `{"a":[1]}` holds three. Nesting and
-// values are judged first, so a deep or wide text is refused as JSON_DEPTH or JSON_VALUES even
-// when it is also invalid.
 // A NaN limit fails every comparison, so it would bound nothing.
 function checkLimit(name: string, limit: unknown): void {
   if (limit === Number.POSITIVE_INFINITY || (Number.isInteger(limit) && (limit as number) >= 0)) return;
   throw new TypeError(`${name} must be a non-negative integer or Infinity`);
 }
 
+// A value is a container, a string, a number or a literal: `{"a":[1]}` holds three. Nesting and
+// values are judged first, so a deep or wide text is refused as JSON_DEPTH or JSON_VALUES even
+// when it is also invalid.
 export function parseStrictJson(text: string, maxBytes: number, maxValues = Number.POSITIVE_INFINITY): unknown {
   checkLimit("maxBytes", maxBytes);
   checkLimit("maxValues", maxValues);

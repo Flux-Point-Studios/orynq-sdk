@@ -371,7 +371,7 @@ Tests are RED first and scored by the harness; `substrate.json` changes with the
 Protocol, hashes, journal and receipts match Linux; one conformance suite drives both. Agents run only in WSL2. Windows runs replay only, holds no shares, and has no Z or B-m.
 
 - **(a) Services.** `NT SERVICE\orynq-broker` holds no key; `NT SERVICE\orynq-sealed` owns `C:\ProgramData\orynq-sealed` (DACL: SYSTEM and its SID), with X's identity wrapped by a non-exportable Platform Crypto Provider key. Non-admins cannot stop or reconfigure either.
-- **(b) Transport.** libuv sets no SDDL and exposes neither pipe handles nor AF_HYPERV, so a small Rust front end (tokio `named_pipe`, windows-rs) owns transport and passes `(connId, principal, frame)` to its Node parent over stdio. It does length framing only; strict JSON and dCBOR parsing stay in `packages/broker`. It serves three endpoints:
+- **(b) Transport.** libuv sets no SDDL and exposes neither pipe handles nor AF_HYPERV, so a small Rust front end (tokio `named_pipe`, windows-rs) owns transport and passes `(connId, peer, frame)` to its Node parent over stdio, as the Linux frontend does (§6.1), and B maps the peer to a principal. It does length framing only; strict JSON and dCBOR parsing stay in `packages/broker`. It serves three endpoints:
 - **B's pipe.** Created with `first_pipe_instance` and `reject_remote_clients`. The server builds the DACL itself: the owner is its own SID; SYSTEM and the service get full access; admitted SIDs get `FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE` (0x120083), never 0x4 (`FILE_CREATE_PIPE_INSTANCE`).
   - Caller identity: `ImpersonateNamedPipeClient` → `OpenThreadToken`, which yields the SID, logon LUID, session and integrity level, then `RevertToSelf`; abort on failure. A client connecting at anonymous level gets `PEER_UNKNOWN`. The client pid is grade H only.
   - Clients open with `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`. Before sending a byte, they require the pipe owner (or the token SID of the server process) to be the pinned service SID.
@@ -395,6 +395,7 @@ The built-in `ssh-agent` stays disabled.
 6. t colluding holders; one operator until externals join.
 7. Unanchored journal testimony (≤ 10 min), fd passing, unprofiled hosts, and W, Materios or committee outages.
 8. Third parties hold our tokens; `matra_` keys stay bearer during their window.
+9. Local denial of service: the frontend bounds each uid, but an account with subordinate uids can hold all 1,024 connections and 256 MiB of requests until they idle out.
 
 ## Appendix A. Review dispositions
 
