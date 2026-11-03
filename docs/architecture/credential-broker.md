@@ -19,7 +19,7 @@
 The goal: agents use credentials they can never see, even if they try.
 
 **Cannot.**
-- Third-party APIs (GitHub, Cloudflare, npm, Blockfrost, model providers) verify bearer tokens or their own signatures, so some process sends each plaintext token; this design keeps it away from agents.
+- Third-party APIs (source hosting, DNS and CDN, package registries, chain indexers, model providers) verify bearer tokens or their own signatures, so some process sends each plaintext token; this design keeps it away from agents.
 - Midnight author secrets and wallet seeds are circuit witnesses, whole in one process while proving (B-m, §7.5).
 - A proof covers committed bytes: not decoder correctness (every verifier decodes again), wisdom, or completeness of the log.
 - 2a's C1 is partition agreement plus audit, conditional on D12 preconditions that verifiers enforce off-circuit. Prior spend, sequence and root enter unauthenticated (2c A1–A3): verifiers' own heads discharge A1–A2; A3 needs anchored release records (§11).
@@ -220,19 +220,19 @@ An alias `{type, keyId, revision, principals, rules, policy, domain}` holds one 
 
 ### 7.1 http
 
-Alias: `{inject: {header, template} | {pathTemplate}, rules: [{host, port, methods, pathPrefixes, queryKeys?}], callerHeaders, deny, maxReqBytes, maxRespBytes ≤ 12 MiB, timeoutMs}`. v1's request rules hold: HTTPS to exact A-label hosts; no userinfo, fragments, wildcards, PSL multi-tenant suffixes, dot segments, `%2e`, `%2f`, `%5c`, `\`, `//` or `;`; `/`-boundary prefixes; allowlisted caller headers; X alone sets method, authority, path, Content-Length and `Accept-Encoding: identity` over fresh HTTP/1.1 connections. Header or `pathTemplate` injection (for APIs that carry the token in the URL path); SigV4 stays human-only. Credential endpoints need T2 per call, and the v1 deny list applies after normalization (GitHub keys, runner and installation tokens and secrets; Cloudflare `/user/tokens`; hosting-platform environment-variable reads; CI secret and pipeline-run endpoints; GraphQL without persisted queries). `alias.put` refuses key, token, secret and env-admin scopes. Network handling is v1's; from slice 2 X egresses via `CONNECT` through W.
+Alias: `{inject: {header, template} | {pathTemplate}, rules: [{host, port, methods, pathPrefixes, queryKeys?}], callerHeaders, deny, maxReqBytes, maxRespBytes ≤ 12 MiB, timeoutMs}`. v1's request rules hold: HTTPS to exact A-label hosts; no userinfo, fragments, wildcards, PSL multi-tenant suffixes, dot segments, `%2e`, `%2f`, `%5c`, `\`, `//` or `;`; `/`-boundary prefixes; allowlisted caller headers; X alone sets method, authority, path, Content-Length and `Accept-Encoding: identity` over fresh HTTP/1.1 connections. Header or `pathTemplate` injection (for APIs that carry the token in the URL path); SigV4 stays human-only. Credential endpoints need T2 per call, and the v1 deny list applies after normalization (source-host keys, runner and installation tokens and repository secrets; DNS and CDN token management such as `/user/tokens`; hosting-platform environment-variable reads; CI secret and pipeline-run endpoints; GraphQL without persisted queries). `alias.put` refuses key, token, secret and env-admin scopes. Network handling is v1's; from slice 2 X egresses via `CONNECT` through W.
 
 **Redaction** happens in X before B sees a byte: the secret and injected value in every v1 encoding across chunk boundaries, plus credential shapes and HMAC fingerprints of vault secrets. A hit locks the session.
 
 ### 7.2 ssh
 
-B serves `ssh-agent.sock` (ssh2 AgentProtocol, MIT), the only `SSH_AUTH_SOCK` L sets; X signs. Only REQUEST_IDENTITIES, SIGN_REQUEST and a verified `session-bind` to a rule host key pass (`agent-restrict.sh` vectors); X signs only `publickey` USERAUTH_REQUESTs for the bound session and an allowed user, never SSHSIG. root, the operator's account and sudo, wheel, docker, lxd or adm members are refused targets; keys carry `restrict,from=<W egress>`. `ssh.cert` (T2) issues 10-min forced-command certificates. GitHub: one deploy key per repository.
+B serves `ssh-agent.sock` (ssh2 AgentProtocol, MIT), the only `SSH_AUTH_SOCK` L sets; X signs. Only REQUEST_IDENTITIES, SIGN_REQUEST and a verified `session-bind` to a rule host key pass (`agent-restrict.sh` vectors); X signs only `publickey` USERAUTH_REQUESTs for the bound session and an allowed user, never SSHSIG. root, the operator's account and sudo, wheel, docker, lxd or adm members are refused targets; keys carry `restrict,from=<W egress>`. `ssh.cert` (T2) issues 10-min forced-command certificates. Source hosts: one deploy key per repository.
 
 ### 7.3 cardano.signTx
 
 `packages/cardano-tx-reader` builds on `plutus-cbor-codec`; the strict Conway decoder is new work. It accepts exactly one `[body, witnesses, isValid, aux]` with no trailing bytes, refusing duplicate keys or set elements, indefinite lengths outside Plutus Data, a key 7 not matching aux, keys outside 0–5, 7–9, 11 and 13–22, and a missing TTL. bodyHash = BLAKE2b-256 of the original body bytes.
 
-ChainSource pins Kupo/Ogmios to one tip and its parameters plus released transactions' unconfirmed outputs, and checks value preservation including deposits and donations. Own outputs pay the alias key with the recorded stake credential or none; counterparties compare on credential bytes; stake and HD-derived keys are separate T2 aliases. In mandate also requires the alias's network, TTL ≤ now + 2 h, signers ⊆ {alias}, no Byron, pointer or non-canonical addresses, only the rule's labels (8746 for anchor-worker), fee ≤ maxFee. A counterparty denylist refuses even approved transactions.
+ChainSource pins Kupo/Ogmios to one tip and its parameters plus released transactions' unconfirmed outputs, and checks value preservation including deposits and donations. Own outputs pay the alias key with the recorded stake credential or none; counterparties compare on credential bytes; stake and HD-derived keys are separate T2 aliases. In mandate also requires the alias's network, TTL ≤ now + 2 h, signers ⊆ {alias}, no Byron, pointer or non-canonical addresses, only the rule's metadata labels, fee ≤ maxFee. A counterparty denylist refuses even approved transactions.
 
 X signs with CSL `PrivateKey` (single-key re-signs are identical). `BrokerSigner` implements `ExtendedSigner.signTransaction`; `sign` and `signMessage` throw. Hash-only `signTx` is dev-only; CIP-8 uses its own alias.
 
@@ -242,7 +242,7 @@ X signs with CSL `PrivateKey` (single-key re-signs are identical). `BrokerSigner
 
 ### 7.5 Midnight (slice 2)
 
-B-m runs under its own uid with `MemorySwapMax=0`, reaching only the Midnight node; X passes the seed per job as a sealed memfd over a socketpair, so it never touches a file or swap. `midnight.anchor` keeps v1's prepare, exact-bytes and summary steps. The standing anchor approval becomes a mandate (0.1 DUST per 86,400 s, 0.01 DUST maxFee, pinned payer, authors and registry). PTY typing, `approvals/` and `used/` retire; Blockfrost becomes an `http.open` alias; author validity windows age out any exposed author secret.
+B-m runs under its own uid with `MemorySwapMax=0`, reaching only the Midnight node; X passes the seed per job as a sealed memfd over a socketpair, so it never touches a file or swap. `midnight.anchor` keeps v1's prepare, exact-bytes and summary steps. The standing anchor approval becomes a mandate (0.1 DUST per 86,400 s, 0.01 DUST maxFee, pinned payer, authors and registry). PTY typing, `approvals/` and `used/` retire; the chain-indexer API key becomes an `http.open` alias; author validity windows age out any exposed author secret.
 
 ### 7.6 Provider keys
 
@@ -288,7 +288,7 @@ A new Compact 0.31.1 contract on ledger 8 (deployment needs the operator's appro
 
 ## 10. zkTLS evidence
 
-For releases, DNS changes and npm publishes, X runs the TLSNotary prover (Apache-2.0/MIT, pinned, labelled unaudited alpha); W notarizes in slice 4, Witness Network attestors later.
+For releases, DNS changes and package publishes, X runs the TLSNotary prover (Apache-2.0/MIT, pinned, labelled unaudited alpha); W notarizes in slice 4, Witness Network attestors later.
 - **Disclosed:** server name and chain, request line, allowlisted headers, body hash, status, selected ranges, and an `Orynq-Request: <requestHash>` header binding the attestation to its intent. **Redacted:** the injected bytes; in MPC mode the notary never holds session keys.
 - **Limits:** TLS 1.2 only; MPC uploads about 30 MB and takes 3–15 s per 1 KB/2 KB exchange. Proxy mode requires an in-circuit key-schedule proof, since AES-GCM is not key-committing.
 - **Grade:** a colluding prover and notary can forge transcripts, so attestations are A while FPS runs both, G with an independent notary.
@@ -331,11 +331,11 @@ A step is done when P's detectors find nothing at the old path, no environment c
 
 1. Offline genesis ceremony: policy, principals, service mandates, both T2 credentials.
 2. The drain; the Midnight runner and standing service.
-3. anchor-worker on its own uid (label 8746, change-only; `SIGNER_URI` becomes `submit_anchor`); materios-orynq-drain off the operator's uid and `~/.materios-orynq-hook.env`.
+3. The anchor submitter on its own uid (its own metadata label, change-only; `SIGNER_URI` becomes `submit_anchor`); the trace drain off the operator's uid and its environment file.
 4. cert-daemon and evidence-submitter via `svc` sockets and a Python client; bonding stays out of mandate.
 5. FPS services: RFC 9421, internal and admin bearer tokens deleted, `matra_` window opened.
 6. DEX keeper and filler services: a broker on their host with the services' existing signing guards as rule validators.
-7. CI: audited image filters, GitHub token under the plugin pattern, hardware-signed tags, no secrets in PR pipelines.
+7. CI: audited image filters, the source host's token under the plugin pattern, hardware-signed tags, no secrets in PR pipelines.
 8. Remaining agent tokens: deleted, human-only, or capabilities; `Environment=` lines, env files, agent client configs, `~/.orynq/config.json` and rc files purged.
 9. orynq-mcp drops keys and adds `broker_credentials`, `broker_mandate`, `broker_http`, `broker_intent_*`; installers write only the socket path; quickstart keys come from X.
 10. Tier-A (slice 3): swept at T2 to script or FROST addresses; proxy mode runs `HTTPS_PROXY` with a CA only `orynq-agent` trusts, name-constrained to rule hosts.
@@ -364,7 +364,7 @@ Tests are RED first and scored by the harness; `substrate.json` changes with the
 
 **Slice 3 (weeks 4–6):** an FPS 3-of-5 committee under the roster rule (script treasury, FROST known-authors root); `replay+zk-shadow` once gates 1–5 hold; Windows, DEX keepers, CI and remaining tokens; proxy mode, phone approver. Accepted when B plus t−1 compromised test holders cannot sign an over-cap or out-of-mandate preprod transaction, B can neither fork a mandate nor learn a share, equivocation yields an attribution record, lagging holders sync only certified steps, both OSes pass conformance, and the detector sweep is empty.
 
-**Slice 4:** `zk+replay`, external `zk`-only holders, membership credentials, zkTLS, ledger-9 credentials. Accepted when an external holder co-signs a preprod payment without the mandate CBOR, a service authenticates with no stored secret and rejects a revoked credential in bound, and a requestHash-bound GitHub TLSNotary attestation verifies offline with no token in any artifact.
+**Slice 4:** `zk+replay`, external `zk`-only holders, membership credentials, zkTLS, ledger-9 credentials. Accepted when an external holder co-signs a preprod payment without the mandate CBOR, a service authenticates with no stored secret and rejects a revoked credential in bound, and a requestHash-bound TLSNotary attestation of a source-host API call verifies offline with no token in any artifact.
 
 ## 16. Windows contract changes
 

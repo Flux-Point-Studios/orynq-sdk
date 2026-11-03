@@ -12,7 +12,7 @@
         "effect": {
           "message": "hello"
         },
-        "alias": "github-ci",
+        "alias": "ci-deploy",
         "mandates": [
           {
             "C": "1111111111111111111111111111111111111111111111111111111111111111",
@@ -54,7 +54,7 @@
           }
         ]
       },
-      "cdn": "{\"v\": 1, \"kind\": \"test.echo\", \"alias\": \"github-ci\", \"effect\": {\"message\": \"hello\"}, \"mandates\": [{\"C\": h'1111111111111111111111111111111111111111111111111111111111111111', \"head\": {\"trace\": {\"seq\": 0, \"roll\": h'e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2'}, \"guardLog\": {\"hash\": h'e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1', \"count\": 0}}, \"steps\": [{\"event\": {\"seq\": 0, \"type\": \"orynq.conduct.guard.action.v1\", \"action\": {\"kind\": \"payment\", \"asset\": \"orynq:call\", \"amount\": 1, \"timestamp\": 1793000000, \"counterparty\": \"oc1:abababababababababababababababababababababababababababababab\"}, \"timestamp\": 1793000000, \"actionKind\": \"payment\", \"enforcedAt\": 1793000001, \"actionDigest\": h'4cfd32035fef90d6d059be4ec4dee26a29e30a884e2cb35799589ee7226d7bec', \"mandateCommitment\": h'1111111111111111111111111111111111111111111111111111111111111111'}, \"traceMeta\": {\"id\": \"0f8fad5b-d9cb-469f-a165-70867728950e\", \"seq\": 0, \"timestamp\": \"2026-10-26T08:53:20.001Z\"}}]}], \"intentHash\": h'f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0'}"
+      "cdn": "{\"v\": 1, \"kind\": \"test.echo\", \"alias\": \"ci-deploy\", \"effect\": {\"message\": \"hello\"}, \"mandates\": [{\"C\": h'1111111111111111111111111111111111111111111111111111111111111111', \"head\": {\"trace\": {\"seq\": 0, \"roll\": h'e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2'}, \"guardLog\": {\"hash\": h'e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1', \"count\": 0}}, \"steps\": [{\"event\": {\"seq\": 0, \"type\": \"orynq.conduct.guard.action.v1\", \"action\": {\"kind\": \"payment\", \"asset\": \"orynq:call\", \"amount\": 1, \"timestamp\": 1793000000, \"counterparty\": \"oc1:abababababababababababababababababababababababababababababab\"}, \"timestamp\": 1793000000, \"actionKind\": \"payment\", \"enforcedAt\": 1793000001, \"actionDigest\": h'4cfd32035fef90d6d059be4ec4dee26a29e30a884e2cb35799589ee7226d7bec', \"mandateCommitment\": h'1111111111111111111111111111111111111111111111111111111111111111'}, \"traceMeta\": {\"id\": \"0f8fad5b-d9cb-469f-a165-70867728950e\", \"seq\": 0, \"timestamp\": \"2026-10-26T08:53:20.001Z\"}}]}], \"intentHash\": h'f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0'}"
     },
     {
       "name": "committee release over two mandates with a proof and instanceSig",
@@ -406,8 +406,8 @@
           "path": [
             "alias"
           ],
-          "json": "GitHub CI",
-          "cdn": "\"GitHub CI\""
+          "json": "Ci Deploy",
+          "cdn": "\"Ci Deploy\""
         }
       ],
       "refusedBy": [

@@ -98,7 +98,7 @@
             {
               "cap": {
                 "kind": "http.request",
-                "alias": "github-ci",
+                "alias": "ci-deploy",
                 "ruleDigest": "4444444444444444444444444444444444444444444444444444444444444444"
               }
             }
@@ -115,7 +115,7 @@
           }
         }
       },
-      "cdn": "{\"draft\": {\"domain\": \"X:abababababababababababababababababababababababababababababababab\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"github-ci\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}], \"spendCap\": {\"asset\": \"orynq:call\", \"amount\": 500, \"windowSeconds\": 3600}, \"principalDid\": \"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK\", \"validityWindow\": {\"notAfter\": 1793604800, \"notBefore\": 1793000000}, \"disclosurePolicy\": {\"threshold\": 3, \"committeeId\": \"orynq-evidence-escrow\", \"committeeSize\": 5}, \"approvedMeasurementSetRoot\": h'6666666666666666666666666666666666666666666666666666666666666666'}}"
+      "cdn": "{\"draft\": {\"domain\": \"X:abababababababababababababababababababababababababababababababab\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"ci-deploy\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}], \"spendCap\": {\"asset\": \"orynq:call\", \"amount\": 500, \"windowSeconds\": 3600}, \"principalDid\": \"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK\", \"validityWindow\": {\"notAfter\": 1793604800, \"notBefore\": 1793000000}, \"disclosurePolicy\": {\"threshold\": 3, \"committeeId\": \"orynq-evidence-escrow\", \"committeeSize\": 5}, \"approvedMeasurementSetRoot\": h'6666666666666666666666666666666666666666666666666666666666666666'}}"
     },
     {
       "name": "mandate.register with a WebAuthn assertion",
@@ -126,7 +126,7 @@
           {
             "cap": {
               "kind": "http.request",
-              "alias": "github-ci",
+              "alias": "ci-deploy",
               "ruleDigest": "4444444444444444444444444444444444444444444444444444444444444444"
             }
           },
@@ -149,7 +149,7 @@
         },
         "purpose": "CI deploys for the preview site"
       },
-      "cdn": "{\"cbor\": h'ab00010150111111111111111111111111111111110278', \"domain\": \"X:abababababababababababababababababababababababababababababababab\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"github-ci\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}, {\"ca1\": {\"networkId\": 1, \"stakeCred\": h'56565656565656565656565656565656565656565656565656565656', \"paymentCred\": h'55555555555555555555555555555555555555555555555555555555'}}], \"purpose\": \"CI deploys for the preview site\", \"assertion\": {\"type\": \"webauthn\", \"signature\": h'99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999', \"userHandle\": h'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', \"credentialId\": h'77777777777777777777777777777777', \"clientDataJSON\": h'7b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a2241414141222c226f726967696e223a2268747470733a2f2f617070726f76652e6578616d706c65227d', \"authenticatorData\": h'88888888888888888888888888888888888888888888888888888888888888888888888888'}}"
+      "cdn": "{\"cbor\": h'ab00010150111111111111111111111111111111110278', \"domain\": \"X:abababababababababababababababababababababababababababababababab\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"ci-deploy\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}, {\"ca1\": {\"networkId\": 1, \"stakeCred\": h'56565656565656565656565656565656565656565656565656565656', \"paymentCred\": h'55555555555555555555555555555555555555555555555555555555'}}], \"purpose\": \"CI deploys for the preview site\", \"assertion\": {\"type\": \"webauthn\", \"signature\": h'99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999', \"userHandle\": h'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', \"credentialId\": h'77777777777777777777777777777777', \"clientDataJSON\": h'7b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a2241414141222c226f726967696e223a2268747470733a2f2f617070726f76652e6578616d706c65227d', \"authenticatorData\": h'88888888888888888888888888888888888888888888888888888888888888888888888888'}}"
     },
     {
       "name": "mandate.register with a CTAP2 assertion",
@@ -160,7 +160,7 @@
           {
             "cap": {
               "kind": "http.request",
-              "alias": "github-ci",
+              "alias": "ci-deploy",
               "ruleDigest": "4444444444444444444444444444444444444444444444444444444444444444"
             }
           },
@@ -181,7 +181,7 @@
         },
         "purpose": "CI deploys for the preview site"
       },
-      "cdn": "{\"cbor\": h'ab00010150111111111111111111111111111111110278', \"domain\": \"X:abababababababababababababababababababababababababababababababab\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"github-ci\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}, {\"ca1\": {\"networkId\": 1, \"stakeCred\": h'56565656565656565656565656565656565656565656565656565656', \"paymentCred\": h'55555555555555555555555555555555555555555555555555555555'}}], \"purpose\": \"CI deploys for the preview site\", \"assertion\": {\"type\": \"ctap2\", \"signature\": h'99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999', \"credentialId\": h'77777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777', \"authenticatorData\": h'88888888888888888888888888888888888888888888888888888888888888888888888888'}}"
+      "cdn": "{\"cbor\": h'ab00010150111111111111111111111111111111110278', \"domain\": \"X:abababababababababababababababababababababababababababababababab\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"ci-deploy\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}, {\"ca1\": {\"networkId\": 1, \"stakeCred\": h'56565656565656565656565656565656565656565656565656565656', \"paymentCred\": h'55555555555555555555555555555555555555555555555555555555'}}], \"purpose\": \"CI deploys for the preview site\", \"assertion\": {\"type\": \"ctap2\", \"signature\": h'99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999', \"credentialId\": h'77777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777', \"authenticatorData\": h'88888888888888888888888888888888888888888888888888888888888888888888888888'}}"
     },
     {
       "name": "mandate.register with a WebAuthn assertion and no userHandle",
@@ -192,7 +192,7 @@
           {
             "cap": {
               "kind": "http.request",
-              "alias": "github-ci",
+              "alias": "ci-deploy",
               "ruleDigest": "4444444444444444444444444444444444444444444444444444444444444444"
             }
           },
@@ -214,7 +214,7 @@
         },
         "purpose": "CI deploys for the preview site"
       },
-      "cdn": "{\"cbor\": h'ab00010150111111111111111111111111111111110278', \"domain\": \"X:abababababababababababababababababababababababababababababababab\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"github-ci\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}, {\"ca1\": {\"networkId\": 1, \"stakeCred\": h'56565656565656565656565656565656565656565656565656565656', \"paymentCred\": h'55555555555555555555555555555555555555555555555555555555'}}], \"purpose\": \"CI deploys for the preview site\", \"assertion\": {\"type\": \"webauthn\", \"signature\": h'99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999', \"credentialId\": h'77777777777777777777777777777777', \"clientDataJSON\": h'7b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a2241414141222c226f726967696e223a2268747470733a2f2f617070726f76652e6578616d706c65227d', \"authenticatorData\": h'88888888888888888888888888888888888888888888888888888888888888888888888888'}}"
+      "cdn": "{\"cbor\": h'ab00010150111111111111111111111111111111110278', \"domain\": \"X:abababababababababababababababababababababababababababababababab\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"ci-deploy\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}, {\"ca1\": {\"networkId\": 1, \"stakeCred\": h'56565656565656565656565656565656565656565656565656565656', \"paymentCred\": h'55555555555555555555555555555555555555555555555555555555'}}], \"purpose\": \"CI deploys for the preview site\", \"assertion\": {\"type\": \"webauthn\", \"signature\": h'99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999', \"credentialId\": h'77777777777777777777777777777777', \"clientDataJSON\": h'7b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a2241414141222c226f726967696e223a2268747470733a2f2f617070726f76652e6578616d706c65227d', \"authenticatorData\": h'88888888888888888888888888888888888888888888888888888888888888888888888888'}}"
     },
     {
       "name": "mandate.revoke",
@@ -261,8 +261,8 @@
           "path": [
             "alias"
           ],
-          "json": "github-ci",
-          "cdn": "\"github-ci\""
+          "json": "ci-deploy",
+          "cdn": "\"ci-deploy\""
         }
       ],
       "refusedBy": [

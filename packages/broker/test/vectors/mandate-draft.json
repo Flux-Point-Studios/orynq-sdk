@@ -16,7 +16,7 @@
           {
             "cap": {
               "kind": "http.request",
-              "alias": "github-ci",
+              "alias": "ci-deploy",
               "ruleDigest": "4444444444444444444444444444444444444444444444444444444444444444"
             }
           }
@@ -32,7 +32,7 @@
           "committeeSize": "5"
         }
       },
-      "cdn": "{\"domain\": \"X:abababababababababababababababababababababababababababababababab\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"github-ci\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}], \"spendCap\": {\"asset\": \"orynq:call\", \"amount\": 500, \"windowSeconds\": 3600}, \"principalDid\": \"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK\", \"validityWindow\": {\"notAfter\": 1793604800, \"notBefore\": 1793000000}, \"disclosurePolicy\": {\"threshold\": 3, \"committeeId\": \"orynq-evidence-escrow\", \"committeeSize\": 5}, \"approvedMeasurementSetRoot\": h'6666666666666666666666666666666666666666666666666666666666666666'}"
+      "cdn": "{\"domain\": \"X:abababababababababababababababababababababababababababababababab\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"ci-deploy\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}], \"spendCap\": {\"asset\": \"orynq:call\", \"amount\": 500, \"windowSeconds\": 3600}, \"principalDid\": \"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK\", \"validityWindow\": {\"notAfter\": 1793604800, \"notBefore\": 1793000000}, \"disclosurePolicy\": {\"threshold\": 3, \"committeeId\": \"orynq-evidence-escrow\", \"committeeSize\": 5}, \"approvedMeasurementSetRoot\": h'6666666666666666666666666666666666666666666666666666666666666666'}"
     },
     {
       "name": "widening committee draft",
@@ -50,7 +50,7 @@
           {
             "cap": {
               "kind": "http.request",
-              "alias": "github-ci",
+              "alias": "ci-deploy",
               "ruleDigest": "4444444444444444444444444444444444444444444444444444444444444444"
             }
           },
@@ -86,7 +86,7 @@
           "committeeSize": "1"
         }
       },
-      "cdn": "{\"domain\": \"committee:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"github-ci\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}, {\"cap\": {\"kind\": \"cardano.fee\", \"alias\": \"test:treasury\", \"ruleDigest\": h'4545454545454545454545454545454545454545454545454545454545454545'}}, {\"ca1\": {\"networkId\": 1, \"stakeCred\": h'56565656565656565656565656565656565656565656565656565656', \"paymentCred\": h'55555555555555555555555555555555555555555555555555555555'}}, {\"ca1\": {\"networkId\": 0, \"paymentCred\": h'57575757575757575757575757575757575757575757575757575757'}}], \"spendCap\": {\"asset\": \"lovelace\", \"amount\": 18446744073709551615, \"windowSeconds\": 86400}, \"supersedes\": h'3333333333333333333333333333333333333333333333333333333333333333', \"principalDid\": \"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK\", \"validityWindow\": {\"notAfter\": 1800776000, \"notBefore\": 1793000000}, \"disclosurePolicy\": {\"threshold\": 1, \"committeeId\": \"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\", \"committeeSize\": 1}, \"approvedMeasurementSetRoot\": h'6666666666666666666666666666666666666666666666666666666666666666'}"
+      "cdn": "{\"domain\": \"committee:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"ci-deploy\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}, {\"cap\": {\"kind\": \"cardano.fee\", \"alias\": \"test:treasury\", \"ruleDigest\": h'4545454545454545454545454545454545454545454545454545454545454545'}}, {\"ca1\": {\"networkId\": 1, \"stakeCred\": h'56565656565656565656565656565656565656565656565656565656', \"paymentCred\": h'55555555555555555555555555555555555555555555555555555555'}}, {\"ca1\": {\"networkId\": 0, \"paymentCred\": h'57575757575757575757575757575757575757575757575757575757'}}], \"spendCap\": {\"asset\": \"lovelace\", \"amount\": 18446744073709551615, \"windowSeconds\": 86400}, \"supersedes\": h'3333333333333333333333333333333333333333333333333333333333333333', \"principalDid\": \"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK\", \"validityWindow\": {\"notAfter\": 1800776000, \"notBefore\": 1793000000}, \"disclosurePolicy\": {\"threshold\": 1, \"committeeId\": \"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\", \"committeeSize\": 1}, \"approvedMeasurementSetRoot\": h'6666666666666666666666666666666666666666666666666666666666666666'}"
     }
   ],
   "invalid": [
@@ -494,8 +494,8 @@
             "cap",
             "alias"
           ],
-          "json": "github-",
-          "cdn": "\"github-\""
+          "json": "ci-deploy-",
+          "cdn": "\"ci-deploy-\""
         }
       ],
       "refusedBy": [
@@ -514,8 +514,8 @@
             "cap",
             "alias"
           ],
-          "json": "GitHub",
-          "cdn": "\"GitHub\""
+          "json": "CiDeploy",
+          "cdn": "\"CiDeploy\""
         }
       ],
       "refusedBy": [
