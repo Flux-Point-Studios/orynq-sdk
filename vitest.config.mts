@@ -11,6 +11,7 @@ export default defineConfig({
       '@fluxpointstudios/orynq-sdk-core/utils': resolve(root, 'packages/core/src/utils/index.ts'),
       '@fluxpointstudios/orynq-sdk-core/types': resolve(root, 'packages/core/src/types/index.ts'),
       '@fluxpointstudios/orynq-sdk-core/chains': resolve(root, 'packages/core/src/chains.ts'),
+      '@fluxpointstudios/orynq-sdk-core/broker-wire': resolve(root, 'packages/core/src/broker-wire/index.ts'),
       '@fluxpointstudios/orynq-sdk-anchors-midnight/journal': resolve(root, 'packages/anchors-midnight/src/journal.ts'),
       // Main package aliases
       '@fluxpointstudios/orynq-sdk-anchors-cardano': resolve(root, 'packages/anchors-cardano/src/index.ts'),

@@ -28,6 +28,7 @@
  * - @fluxpointstudios/orynq-sdk-core/types - Type definitions only
  * - @fluxpointstudios/orynq-sdk-core/chains - Chain utilities only
  * - @fluxpointstudios/orynq-sdk-core/utils - Utility functions only
+ * - @fluxpointstudios/orynq-sdk-core/broker-wire - Credential broker peer contract and frontend mux codec
  */
 
 // ---------------------------------------------------------------------------
