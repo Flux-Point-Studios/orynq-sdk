@@ -218,6 +218,7 @@ describe("serveMux", () => {
     ["a FRAME for a connection never opened", (f: ReturnType<typeof frontend>) => f.call(5n, "broker.hello"), true, "the frontend sent a FRAME for connection 5, which is not open"],
     ["a CLOSE for a connection never opened", (f: ReturnType<typeof frontend>) => f.write(MUX_CLOSE, 5n), true, "the frontend sent a CLOSE for connection 5, which is not open"],
     ["a malformed message", (f: ReturnType<typeof frontend>) => f.input.write(Uint8Array.of(0, 0, 0, 9, 7)), true, "mux message kind is unknown"],
+    ["output that ends inside a message", (f: ReturnType<typeof frontend>) => f.input.end(Uint8Array.of(0, 0, 0, 9, 2)), true, "the frontend's output ended inside a message"],
   ])("rejects on %s, since the frontend is broken", async (_, act, afterReady, message) => {
     const f = frontend();
     if (afterReady) await ready(f);

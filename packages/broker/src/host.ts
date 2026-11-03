@@ -19,7 +19,7 @@ import type { Principal } from "./principals.js";
 export interface MuxHost {
   /** Resolves when the frontend says READY. */
   readonly ready: Promise<void>;
-  /** Resolves when the frontend's output ends; rejects, and stops reading, if it breaks the protocol. */
+  /** Resolves when the frontend's output ends between messages; rejects, and stops reading, if it breaks the protocol. */
   readonly done: Promise<void>;
 }
 
@@ -135,7 +135,7 @@ export function serveMux(input: Readable, output: Writable, broker: Serves, repo
       }
     };
     input.on("data", onData);
-    input.once("end", () => resolve());
+    input.once("end", () => (decoder.buffered === 0 ? resolve() : reject(new Error("the frontend's output ended inside a message"))));
   });
   return { ready, done };
 }
