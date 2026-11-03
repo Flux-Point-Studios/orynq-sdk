@@ -95,8 +95,23 @@ describe("principals", () => {
     expect(broker.principalOf(linux(AGENT, `/elsewhere.slice/${unit}`))).toBeUndefined();
     expect(broker.principalOf(linux(AGENT, `${SLICE}/orynq-agent-${"0".repeat(32)}.service`))).toBeUndefined();
     expect(broker.principalOf(linux(OPERATOR + 7, `${SLICE}/${unit}`))).toBeUndefined();
+    // Each as long as the real path, so cutting the session id out at fixed offsets would find it.
+    expect(broker.principalOf(linux(AGENT, `${SLICE.replace("agents", "agentX")}/${unit}`))).toBeUndefined();
+    expect(broker.principalOf(linux(AGENT, `${SLICE}/orynq-agent-${sessionId}/x.slice`))).toBeUndefined();
     await call(broker, "operator", "session.close", { sessionId });
     expect(broker.principalOf(linux(AGENT, `${SLICE}/${unit}`))).toBeUndefined();
+  });
+
+  it("name a Linux peer by its uid, never by its gid", async () => {
+    const broker = new Broker(options());
+    const { sessionId, unit } = await openSession(broker);
+    const withIds = (uid: number, gid: number, cgroup: string): LinuxPeer => ({ ...linux(uid, cgroup), gid });
+    expect(broker.principalOf(withIds(4242, OPERATOR, "/"))).toBeUndefined();
+    expect(broker.principalOf(withIds(4242, AGENT, `${SLICE}/${unit}`))).toBeUndefined();
+    expect(broker.principalOf(withIds(4242, DRAIN, DRAIN_UNIT))).toBeUndefined();
+    expect(broker.principalOf(withIds(OPERATOR, 4242, "/"))).toBe("operator");
+    expect(broker.principalOf(withIds(AGENT, 4242, `${SLICE}/${unit}`))).toBe(`agent:${sessionId}`);
+    expect(broker.principalOf(withIds(DRAIN, 4242, DRAIN_UNIT))).toBe("service:drain");
   });
 
   it("join a root slice without doubling the slash", async () => {
@@ -202,6 +217,13 @@ describe("sessions", () => {
     expect(first.sessionId).toMatch(/^[0-9a-f]{32}$/);
     expect(first.unit).toBe(`orynq-agent-${first.sessionId}.service`);
     expect(second.sessionId).not.toBe(first.sessionId);
+  });
+
+  it("draw every one of a sessionId's 128 bits at random", async () => {
+    const broker = new Broker(options());
+    const ids = await Promise.all(Array.from({ length: 64 }, () => openSession(broker).then(({ sessionId }) => BigInt(`0x${sessionId}`))));
+    const varying = Array.from({ length: 128 }, (_, bit) => new Set(ids.map(id => (id >> BigInt(bit)) & 1n)).size === 2);
+    expect(varying.indexOf(false)).toBe(-1);
   });
 
   it("bind only registered mandates, each once", async () => {

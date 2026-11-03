@@ -1,5 +1,5 @@
 import { fork } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { Socket } from "node:net";
 import { release } from "node:os";
 import { dirname, join } from "node:path";
@@ -68,7 +68,7 @@ afterEach(async () => {
   dir = undefined;
 });
 
-async function start(principals: BrokerOptions["principals"], options: { idleSeconds?: number } = {}) {
+async function start(principals: BrokerOptions["principals"], options: { idleSeconds?: number; mode?: number } = {}) {
   dir ??= privateDir("orynq-socket-");
   const broker = new RecordingBroker({ ...base, principals });
   const errors: unknown[] = [];
@@ -113,6 +113,15 @@ describe.runIf(hasCgroupIds)("over a real socket", () => {
     const client = await connect(frontend);
     expect(await client.request("broker.hello")).toMatchObject({ protocol: 2, principal: "service:e2e", mandates: [] });
     expect(broker.peers).toEqual([{ os: "linux", uid: UID, gid: GID, pidHint: process.pid, cgroup: OWN_CGROUP }]);
+  });
+
+  it("creates its socket for its owner alone unless given a mode", async () => {
+    const owned = await start({ operatorUid: UID });
+    expect(statSync(owned.frontend.socket).mode & 0o7777).toBe(0o600);
+    await owned.frontend.close();
+    frontends.splice(frontends.indexOf(owned.frontend), 1);
+    const shared = await start({ operatorUid: UID }, { mode: 0o660 });
+    expect(statSync(shared.frontend.socket).mode & 0o7777).toBe(0o660);
   });
 
   it("answers PEER_UNKNOWN to a peer the configuration does not name", async () => {

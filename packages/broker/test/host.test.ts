@@ -11,10 +11,11 @@ import {
   type Peer,
   type WindowsPeer,
 } from "@fluxpointstudios/orynq-sdk-core/broker-wire";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { Broker } from "../src/broker.js";
-import { serveMux } from "../src/host.js";
+import { serveMux, startLinuxFrontend } from "../src/host.js";
 
 const OPERATOR = 1000;
 const AGENT = 1500;
@@ -232,5 +233,19 @@ describe("serveMux", () => {
     f.call(1n, "broker.hello");
     f.call(1n, "broker.hello");
     expect(await f.settled).toBe("rejected: the frontend sent a second request on connection 1 before its reply");
+  });
+});
+
+describe("startLinuxFrontend", () => {
+  it("kills a frontend that breaks the protocol after READY, and reports why", async () => {
+    const errors: unknown[] = [];
+    const frontend = await startLinuxFrontend({
+      executable: join(import.meta.dirname, "fixtures", "broken-frontend.mjs"),
+      socket: "/unused/broker.sock",
+      broker: broker(),
+      onError: error => errors.push(error),
+    });
+    await vi.waitFor(() => expect(() => process.kill(frontend.pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" })), { timeout: 5_000 });
+    expect(errors[0]).toMatchObject({ name: "BrokerWireError", code: "MUX_KIND" });
   });
 });
