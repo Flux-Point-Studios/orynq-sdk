@@ -395,7 +395,7 @@ The built-in `ssh-agent` stays disabled.
 6. t colluding holders; one operator until externals join.
 7. Unanchored journal testimony (≤ 10 min), fd passing, unprofiled hosts, and W, Materios or committee outages.
 8. Third parties hold our tokens; `matra_` keys stay bearer during their window.
-9. Local denial of service: the frontend bounds each peer and uid, but an account with subordinate uids can hold all 1,024 connections and 256 MiB of requests, reconnecting as they idle out. Clients the frontend cannot identify (a connector that hands its socket over and exits) share one peer's 32 connections and 16 MiB, which any account can keep full. Agent sessions share the orynq-agent uid's 128 connections (sixteen sessions at B's 8 each) and 64 MiB, so four sessions that each stall a 16 MiB request delay the others for as long as they keep stalling.
+9. Local denial of service: the frontend bounds each peer and uid, but an account with subordinate uids can hold all 1,024 connections and 256 MiB of requests, reconnecting as they idle out. Clients the frontend cannot identify (a connector that hands its socket over and exits) share one peer's 32 connections and 16 MiB, which any account can keep full. Agent sessions share the orynq-agent uid's 128 connections and 64 MiB: sixteen sessions at B's 8 each fill the connections, a session can take up to 32 frontend slots, each connection past B's 8 holding one until B's CLOSE reaches the frontend, and four sessions that each stall a 16 MiB request delay the others for as long as they keep stalling.
 
 ## Appendix A. Review dispositions
 
