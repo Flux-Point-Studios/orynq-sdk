@@ -76,7 +76,7 @@ export interface ToolReceiptVerificationResult {
 
 /** `obj[key]` only when it is `obj`'s own property, never one inherited from a (possibly polluted) prototype. */
 function ownProperty<T extends object, K extends keyof T>(obj: T | undefined, key: K): T[K] | undefined {
-  return obj !== undefined && Object.hasOwn(obj, key) ? obj[key] : undefined;
+  return obj != null && Object.hasOwn(obj, key) ? obj[key] : undefined;
 }
 
 /** Case-insensitive, 0x-tolerant hex equality. */

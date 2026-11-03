@@ -430,6 +430,13 @@ describe("externally registered schemes", () => {
     }
   });
 
+  it("fails closed instead of throwing when a JavaScript caller passes a null registry", async () => {
+    const bundle = await traceWithReceipt({ scheme: "custom", signer: "s", signature: "AA", signedPayload: "x" }, "x");
+    const ctx = { verifiers: null } as unknown as ToolReceiptVerifyContext;
+    const outcome = await verifyToolReceipts(bundle, ctx);
+    expect(outcome.results[0]).toMatchObject({ verified: false, error: expect.stringMatching(/no verifier/i) });
+  });
+
   it("ignores a response commitment inherited from a polluted Object.prototype", async () => {
     const { privateKey: jwsKey, publicKey: jwsPub } = generateKeyPairSync("ed25519");
     const proxy = createSigningProxy({ signer: "tee://oracle", alg: "EdDSA", privateKey: jwsKey });
