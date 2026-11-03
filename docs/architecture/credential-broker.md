@@ -171,7 +171,7 @@ Principals: `agent:<sessionId>` (an `orynq-agent` peer in the session's cgroup),
 
 ### 6.1 Framing
 
-A frame is a uint32 big-endian length N (1 ≤ N ≤ 16 MiB) plus one UTF-8 JSON-RPC 2.0 request with an id; batches, concurrency and id-less requests are refused. `parseStrictJson` returns -32700 for duplicate keys, lone surrogates, a value inside more than 32 containers (judged before parsing) or numbers beyond ±2^53; uint64s are decimal strings. Connections close after 300 s idle (≤ 8 per agent, 32 per other principal). Clients require an `orynq-broker`-owned socket.
+A frame is a uint32 big-endian length N (1 ≤ N ≤ 16 MiB) plus one UTF-8 JSON-RPC 2.0 request with an id; batches, concurrency and id-less requests are refused. `parseStrictJson` returns -32700 for duplicate keys, lone surrogates, a value inside more than 32 containers (judged before parsing) or numbers beyond ±2^53; uint64s are decimal strings. Connections close after 300 s idle (≤ 8 per agent, 32 per other principal); the clock restarts when a reply is queued and when it drains, so a reply left unread closes the connection too. A client may shut down its write side after a request: B still answers it, then closes. A stream error closes the connection. Clients require an `orynq-broker`-owned socket.
 
 ### 6.2 Methods
 
@@ -186,13 +186,23 @@ A frame is a uint32 big-endian length N (1 ≤ N ≤ 16 MiB) plus one UTF-8 JSON
 | admin `mandate.register`, `.revoke` | `{cbor, members, domain, assertion, purpose}` → `{C}`; `{mandate, reason}` → `{}` |
 | X `release.commit`, `release.history` (B only) | `ReleaseRequest` → `{status, result, heads, releaseRecord}`; `{C, fromCount}` → `{events, head}` |
 
-Other v1 rows and bounds are unchanged. Effect methods are `intent.submit` with the method as kind and a 30 s wait; `mandates` must equal B's §3.2 derivation; `expect` (`{calls, outflows, fee}`) mismatching the decode is `DECODE_REFUSED`. `Intent = {intentId, requestHash, intentHash, status, mandates, release?: {mode, steps, proofRefs?}, result?, approval?, error?: {code, reason, rule?, field?}}`. Statuses are v1's; `uncertain` is never retried.
+Other v1 rows and bounds are unchanged. As JSON-RPC 2.0 allows, a request may omit params; B reads them as `{}`. Effect methods are `intent.submit` with the method as kind and a 30 s wait; `mandates` must equal B's §3.2 derivation; `expect` (`{calls, outflows, fee}`) mismatching the decode is `DECODE_REFUSED`. `Intent = {intentId, requestHash, intentHash, status, mandates, release?: {mode, steps, proofRefs?}, result?, approval?, error?: {code, reason, rule?, field?}}`. Statuses are v1's; `uncertain` is never retried.
 
 ### 6.3 Errors and hashes
 
 Messages come from a fixed table; `field` is a decoder path; no reply carries upstream or vault data. Standard -32700…-32602 (unknown fields, non-canonical values, null, negatives and floats are -32602). v1 codes -32001…-32010 are unchanged (`PEER_UNKNOWN`, `ALIAS_UNAVAILABLE`, `POLICY_REFUSED` with rule `conduct:<REASON>` for guard denials, `DECODE_REFUSED`, `APPROVAL_DENIED/EXPIRED`, `UPSTREAM_FAILED`, `*_UNAVAILABLE` now covering holders, `LOCKED_OUT`, `RATE_LIMITED`, `INTENT_UNKNOWN`); unknown, foreign and forbidden aliases are indistinguishable and never decrypted. New: -32011 `MANDATE_REFUSED` (unknown, revoked, expired, wrong domain, outside the set); -32012 `VERIFY_REFUSED`.
 
 **JSON-to-dCBOR profile:** keys in conduct `cborEncode` order; integers and decimal-string uint64 to uint; strings to text; floats, null and negatives refused. CDDL uses bytes, text and uints, with golden vectors per effect kind.
+
+**Schemas.** `packages/broker/docs/params.cddl`, `mandate-draft.cddl` and `release.cddl` are normative for every §6.2 method's params, the `mandate.prepare` draft, the ReleaseRequest and the release record; the runtime schema is held to them by vectors and by bound probes on every member of every rule. They decide what this spec leaves open:
+- **Sets:** a session binds 1–16 mandates and an intent or release 1–8; a draft or `mandate.register` carries 1–256 members; a mandate release holds 1–258 steps and a release record 1–258 proofRefs (one call, 256 outflows and one fee: a loose cap that verifyRelease narrows).
+- **Identifiers:** executor domains are `X:` or `committee:` plus 32 bytes of lowercase hex; sessionId is 16 bytes; capability kinds, aliases (a `test:` prefix allowed), did:key, oc1 and ca1 strings, trace event ids (UUID) and trace times (ISO 8601 UTC with milliseconds) match fixed patterns.
+- **Assertions:** WebAuthn `{credentialId 1–1023, authenticatorData 37–1024, clientDataJSON 1–4096, signature 8–72, userHandle? 1–64}` bytes or CTAP2 `{credentialId, authenticatorData, signature}`; an approval is `{nonce: 16 bytes, assertion}`, and an approved out-of-mandate release carries `mandates: []` with it.
+- **Sizes:** text in UTF-8 bytes: note ≤ 256, reason 1–256, purpose 1–1024, committeeId 1–128; proof base64 fields 4 bytes to 1 MiB; the `mandate.register` CBOR 1–2048 bytes.
+- **Events:** a release's guard events are payment action events only, since denials never enter a mandate trace (§4.1).
+- **Wire form:** a uint whose bound is at most 2^53 is a JSON integer; any other, notBefore, amounts, seqs and timestamps included, is a canonical decimal string, so each value has one spelling; an integer spelled as a float (`1.0`, `1e0`) is -32700.
+
+Checks the CDDL cannot express belong to the handlers and verifyRelease and are not built yet: notAfter > notBefore and the tier's validity span (§3.1, §12); threshold ≤ committeeSize; each step's mandateCommitment equal to its C; recomputed action digests, canonical order and one outflow per counterparty (§3.2); guard and trace seqs continuing from each head (§4.4); `expect` matching the decode (§6.2). The release vectors already satisfy the step checks.
 
 ```
 requestHash = SHA-256("orynq:broker:request:v1|" ‖ dCBOR({0: kind, 1: params, 2: salt16}))
