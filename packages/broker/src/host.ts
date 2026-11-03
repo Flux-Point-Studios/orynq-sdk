@@ -25,21 +25,27 @@ export interface MuxHost {
 
 interface Connection {
   readonly principal: Principal | undefined;
+  /** The principal, or the account of a peer without one, that the connection counts against. */
+  readonly bucket: string | undefined;
   busy: boolean;
   closing: boolean;
 }
 
 type Serves = Pick<Broker, "principalOf" | "connectionCap" | "handle">;
 
-// B's side of a frontend's stdio mux (spec §6.1, §16). The frontend frames, admits at most 32
-// connections per peer, keeps one request in flight and closes idle connections; B maps each peer
-// to a principal once, at OPEN, caps the principal's connections, and answers each FRAME through
+// Principals are "operator", "agent:…" and "service:…", so these never name one.
+const accountOf = (peer: Peer | null): string => (peer === null ? "anonymous" : peer.os === "linux" ? `uid:${peer.uid}` : `sid:${peer.sid}`);
+
+// B's side of a frontend's stdio mux (spec §6.1, §16). The frontend frames, bounds connections,
+// keeps one request in flight and closes idle connections; B maps each peer to a principal once,
+// at OPEN, caps the principal's connections, or the account's when the peer has no principal (a
+// frontend counts peers by cgroup, which any account can multiply), and answers each FRAME through
 // the same decoder serveConnection uses. A connection B closes stays counted until the frontend's
 // own CLOSE confirms it, and frames that crossed B's CLOSE are dropped.
 export function serveMux(input: Readable, output: Writable, broker: Serves, report: (error: unknown) => void): MuxHost {
   const decoder = new MuxDecoder();
   const connections = new Map<bigint, Connection>();
-  const counts = new Map<Principal, number>();
+  const counts = new Map<string, number>();
   let isReady = false;
   let markReady!: () => void;
   const ready = new Promise<void>(resolve => { markReady = resolve; });
@@ -61,12 +67,16 @@ export function serveMux(input: Readable, output: Writable, broker: Serves, repo
       peer = null;
     }
     const principal = broker.principalOf(peer);
-    const count = principal === undefined ? 0 : (counts.get(principal) ?? 0);
-    const refused = principal !== undefined && count >= broker.connectionCap(principal);
-    const connection: Connection = { principal: refused ? undefined : principal, busy: false, closing: false };
-    connections.set(conn, connection);
-    if (refused) close(conn, connection);
-    else if (principal !== undefined) counts.set(principal, count + 1);
+    const bucket = principal ?? accountOf(peer);
+    const count = counts.get(bucket) ?? 0;
+    if (count >= broker.connectionCap(principal)) {
+      const refused: Connection = { principal: undefined, bucket: undefined, busy: false, closing: false };
+      connections.set(conn, refused);
+      close(conn, refused);
+      return;
+    }
+    connections.set(conn, { principal, bucket, busy: false, closing: false });
+    counts.set(bucket, count + 1);
   };
 
   const respond = async (conn: bigint, connection: Connection, payload: Uint8Array) => {
@@ -85,10 +95,10 @@ export function serveMux(input: Readable, output: Writable, broker: Serves, repo
   const release = (conn: bigint, connection: Connection) => {
     connection.closing = true;
     connections.delete(conn);
-    if (connection.principal === undefined) return;
-    const count = counts.get(connection.principal)! - 1;
-    if (count === 0) counts.delete(connection.principal);
-    else counts.set(connection.principal, count);
+    if (connection.bucket === undefined) return;
+    const count = counts.get(connection.bucket)! - 1;
+    if (count === 0) counts.delete(connection.bucket);
+    else counts.set(connection.bucket, count);
   };
 
   const receive = ({ kind, conn, payload }: MuxMessage) => {

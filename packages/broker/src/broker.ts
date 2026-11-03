@@ -66,8 +66,9 @@ export class Broker {
     return principalOf(peer, this.options.principals, sessionId => this.sessions.has(sessionId));
   }
 
-  connectionCap(principal: Principal): number {
-    return sessionOf(principal) === undefined ? OTHER_CONNECTIONS : AGENT_CONNECTIONS;
+  /** Connections one principal may hold, or one account without a principal (undefined). */
+  connectionCap(principal: Principal | undefined): number {
+    return principal !== undefined && sessionOf(principal) !== undefined ? AGENT_CONNECTIONS : OTHER_CONNECTIONS;
   }
 
   // A principal comes from the connection's peer when it opened; an agent's lapses with its session.

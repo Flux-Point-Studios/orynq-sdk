@@ -9,6 +9,7 @@ import {
   type MuxKind,
   type MuxMessage,
   type Peer,
+  type WindowsPeer,
 } from "@fluxpointstudios/orynq-sdk-core/broker-wire";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
@@ -121,6 +122,27 @@ describe("serveMux", () => {
     await vi.waitFor(() => expect(f.closes()).toEqual([33n, 35n]));
     f.call(34n, "broker.hello");
     await vi.waitFor(() => expect(f.replies(34n)).toHaveLength(1));
+  });
+
+  it("refuses the 33rd connection of an account without a principal, whatever its cgroups, and the 33rd anonymous one", async () => {
+    const f = frontend();
+    await ready(f);
+    const unknownSid = (conn: bigint): WindowsPeer => ({ os: "windows", sid: "S-1-5-21-9-9-9-1001", logonLuid: String(conn), tsSessionId: 1, integrityRid: 0x2000, pidHint: null });
+    for (let conn = 1n; conn <= 33n; conn++) f.open(conn, { ...linux(4242, `/cg/${conn}`), gid: Number(conn) });
+    for (let conn = 101n; conn <= 132n; conn++) f.open(conn, null);
+    f.write(MUX_OPEN, 133n, utf8("{}"));
+    for (let conn = 201n; conn <= 233n; conn++) f.open(conn, unknownSid(conn));
+    for (let conn = 301n; conn <= 333n; conn++) f.open(conn, linux(AGENT, `${SLICE}/orynq-agent-${"0".repeat(32)}.service`));
+    f.open(400n, linux(4243));
+    f.call(400n, "broker.hello");
+    await vi.waitFor(() => expect(f.replies(400n)).toHaveLength(1));
+    expect(f.replies(400n)[0]).toMatchObject({ error: { code: -32001 } });
+    expect(f.closes()).toEqual([33n, 133n, 233n, 333n]);
+    f.write(MUX_CLOSE, 33n);
+    f.write(MUX_CLOSE, 1n);
+    f.open(34n, linux(4242));
+    f.open(35n, linux(4242));
+    await vi.waitFor(() => expect(f.closes()).toEqual([33n, 133n, 233n, 333n, 35n]));
   });
 
   it("refuses the 9th connection of an agent session, each session counted on its own", async () => {

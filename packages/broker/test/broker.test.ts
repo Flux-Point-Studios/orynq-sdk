@@ -125,11 +125,12 @@ describe("principals", () => {
     for (const principals of bad) expect(() => new Broker(options({ principals }))).toThrow(TypeError);
   });
 
-  it("cap connections at 8 per agent session and 32 per other principal", () => {
+  it("cap connections at 8 per agent session, 32 per other principal and 32 per account without one", () => {
     const broker = new Broker(options());
     expect(broker.connectionCap(`agent:${"ab".repeat(16)}`)).toBe(8);
     expect(broker.connectionCap("operator")).toBe(32);
     expect(broker.connectionCap("service:drain")).toBe(32);
+    expect(broker.connectionCap(undefined)).toBe(32);
   });
 });
 
