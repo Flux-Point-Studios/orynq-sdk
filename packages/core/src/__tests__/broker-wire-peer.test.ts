@@ -67,6 +67,26 @@ describe("parsePeer", () => {
     }
     expect(field({ ...linux, sid: windows.sid })).toBe("peer");
     expect(field({ ...windows, uid: 0 })).toBe("peer");
+    expect(field(JSON.parse(`{${JSON.stringify(linux).slice(1, -1)},"__proto__":{}}`))).toBe("peer");
+  });
+
+  it("reads each property once, refusing accessors and hidden keys, so it returns what it checked", () => {
+    let reads = 0;
+    const accessor = Object.defineProperty({ ...linux, uid: undefined }, "uid", { enumerable: true, get: () => (reads++ === 0 ? 1 : 1000) });
+    expect(field(accessor)).toBe("peer");
+    expect(field(Object.defineProperty({ ...linux }, "gid", { enumerable: false }))).toBe("peer");
+    expect(field(Object.assign({ ...linux }, { [Symbol("extra")]: 1 }))).toBe("peer");
+
+    let gets = 0;
+    const shifting = new Proxy(
+      { ...linux },
+      {
+        get: (target, key) => (key === "uid" && gets++ > 0 ? 1000 : Reflect.get(target, key)),
+      },
+    );
+    const peer = parsePeer(shifting);
+    expect(peer).toEqual(linux);
+    expect(Object.getPrototypeOf(peer)).toBe(Object.prototype);
   });
 
   it("takes user and service SIDs only, in canonical form", () => {

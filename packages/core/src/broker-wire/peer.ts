@@ -60,22 +60,37 @@ const FIELDS: Readonly<Record<string, (value: unknown) => boolean>> = {
   integrityRid: isU32,
 };
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+function isPlainObject(value: unknown): value is object {
   if (typeof value !== "object" || value === null) return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
 }
 
+// A plain object's own properties, each read once, so the checks and the result see the same
+// values; an accessor, a symbol key or a non-enumerable key is not peer data. fromEntries defines a
+// "__proto__" key as a property rather than setting the prototype, so it stays refused.
+function snapshot(value: unknown): Record<string, unknown> | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const entries: [string, unknown][] = [];
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    if (typeof key !== "string" || !descriptor?.enumerable || !("value" in descriptor)) return undefined;
+    entries.push([key, descriptor.value]);
+  }
+  return Object.fromEntries(entries);
+}
+
 // Exactly the keys of one system's peer, each of its exact type.
 export function parsePeer(value: unknown): Peer {
-  if (!isPlainObject(value) || (value.os !== "linux" && value.os !== "windows")) throw new BrokerWireError("PEER_INVALID", "peer");
-  const keys: readonly string[] = KEYS[value.os];
-  const present = Object.keys(value);
+  const peer = snapshot(value);
+  if (!peer || (peer.os !== "linux" && peer.os !== "windows")) throw new BrokerWireError("PEER_INVALID", "peer");
+  const keys: readonly string[] = KEYS[peer.os];
+  const present = Object.keys(peer);
   if (present.length !== keys.length || present.some(key => !keys.includes(key))) throw new BrokerWireError("PEER_INVALID", "peer");
   for (const key of keys) {
-    if (key !== "os" && !FIELDS[key]!(value[key])) throw new BrokerWireError("PEER_INVALID", key);
+    if (key !== "os" && !FIELDS[key]!(peer[key])) throw new BrokerWireError("PEER_INVALID", key);
   }
-  return { ...value } as unknown as Peer;
+  return peer as unknown as Peer;
 }
 
 const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
