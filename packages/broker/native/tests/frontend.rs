@@ -599,7 +599,7 @@ impl Drop for Stalled {
 }
 
 #[test]
-fn holds_at_most_64_mib_of_requests_per_uid_while_its_parent_reads_nothing() {
+fn holds_at_most_16_mib_of_one_peers_requests_while_its_parent_reads_nothing() {
     if skip_without_cgroup_ids() {
         return;
     }
@@ -632,7 +632,41 @@ fn holds_at_most_64_mib_of_requests_per_uid_while_its_parent_reads_nothing() {
         writer.join().unwrap();
     }
     let grown = peak_kib(frontend.child.id()) - before;
-    assert!(grown < 96 << 10, "the frontend grew by {grown} KiB");
+    assert!(grown < 40 << 10, "the frontend grew by {grown} KiB");
+}
+
+// Every agent session runs as one uid, each in its own unit cgroup.
+#[test]
+fn serves_one_cgroup_of_a_uid_while_another_stalls_four_16_mib_requests() {
+    if skip_without_cgroup_ids() {
+        return;
+    }
+    let Some(cgroups) = cgroups_or_skip(2) else {
+        return;
+    };
+    let dir = TempDir::new();
+    let mut frontend = Frontend::start(&dir, &["--idle-secs", "30"]);
+    let (_stalling, mut stalled) =
+        connect_from_child(&frontend.socket, 4, Some(&cgroups.0[0]), &["sleep", "600"]);
+    for client in &mut stalled {
+        assert_eq!(frontend.next().kind, OPEN);
+        client.write_all(&(MAX_FRAME as u32).to_be_bytes()).unwrap();
+    }
+    // Long enough for the frontend to read each announced length and reserve it.
+    thread::sleep(QUIET);
+    let (_serving, mut served) =
+        connect_from_child(&frontend.socket, 1, Some(&cgroups.0[1]), &["sleep", "600"]);
+    let open = frontend.next();
+    assert_eq!(open.kind, OPEN);
+    served[0].write_all(&frame(b"hello")).unwrap();
+    let event = frontend
+        .events
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the request waited on another cgroup's stalled ones");
+    assert_eq!(
+        (event.kind, event.conn, event.payload.as_slice()),
+        (FRAME, open.conn, b"hello".as_slice())
+    );
 }
 
 #[test]

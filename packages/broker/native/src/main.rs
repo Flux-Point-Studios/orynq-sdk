@@ -10,7 +10,9 @@
 use std::{
     collections::HashMap,
     ffi::CString,
-    fs, io,
+    fs,
+    hash::Hash,
+    io,
     mem::{MaybeUninit, offset_of, size_of},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
@@ -49,9 +51,12 @@ const MAX_CONNECTIONS: usize = 1024;
 // Descriptors kept back from connections: stdio, the runtime's and the listener's, and the pidfd
 // and /proc file each identification opens.
 const RESERVED_FDS: libc::rlim_t = 64;
-// Request bytes read or waiting for stdout, per uid (every unidentified client together is one)
-// and in all. Each request reserves its announced length before its body is read, so a client that
-// announces and stalls blocks only its own uid's share.
+// Request bytes read or waiting for stdout, per peer, per uid and in all (every unidentified client
+// together is one peer and one uid). Each request reserves its announced length before its body is
+// read. A peer's share is one frame, so a client that announces and stalls blocks only its own
+// peer: the agent sessions sharing one uid each have their own cgroup, and it takes four stalled
+// peers to fill a uid's share.
+const PEER_BUDGET: u32 = MAX_FRAME;
 const UID_BUDGET: u32 = 64 << 20;
 const TOTAL_BUDGET: u32 = 256 << 20;
 const BACKLOG: libc::c_int = 128;
@@ -121,11 +126,40 @@ struct Limits {
 
 #[derive(Default)]
 struct Admitted {
-    peers: HashMap<String, usize>,
-    uids: HashMap<Option<u32>, usize>,
-    // A uid's budget leaves with its last connection; a reservation outliving it keeps its own.
-    budgets: HashMap<Option<u32>, Arc<Semaphore>>,
+    peers: HashMap<String, Share>,
+    uids: HashMap<Option<u32>, Share>,
     total: usize,
+}
+
+/// The connections admitted under one peer or uid, and the request bytes they may hold. A share
+/// leaves with its last connection; a reservation outliving it keeps that share's budget.
+struct Share {
+    connections: usize,
+    budget: Arc<Semaphore>,
+}
+
+fn is_full<K: Eq + Hash>(shares: &HashMap<K, Share>, key: &K, max: usize) -> bool {
+    shares
+        .get(key)
+        .is_some_and(|share| share.connections >= max)
+}
+
+fn join<K: Eq + Hash>(shares: &mut HashMap<K, Share>, key: K, bytes: u32) -> Arc<Semaphore> {
+    let share = shares.entry(key).or_insert_with(|| Share {
+        connections: 0,
+        budget: Arc::new(Semaphore::new(bytes as usize)),
+    });
+    share.connections += 1;
+    Arc::clone(&share.budget)
+}
+
+fn leave<K: Eq + Hash>(shares: &mut HashMap<K, Share>, key: &K) {
+    if let Some(share) = shares.get_mut(key) {
+        share.connections -= 1;
+        if share.connections == 0 {
+            shares.remove(key);
+        }
+    }
 }
 
 impl Limits {
@@ -148,21 +182,15 @@ impl Limits {
         let uid = peer.map(|peer| peer.uid);
         let mut admitted = self.admitted();
         if admitted.total >= self.max_connections
-            || admitted.peers.get(&key).is_some_and(|&n| n >= MAX_PER_PEER)
-            || admitted.uids.get(&uid).is_some_and(|&n| n >= MAX_PER_UID)
+            || is_full(&admitted.peers, &key, MAX_PER_PEER)
+            || is_full(&admitted.uids, &uid, MAX_PER_UID)
         {
             return None;
         }
         admitted.total += 1;
-        *admitted.peers.entry(key.clone()).or_default() += 1;
-        *admitted.uids.entry(uid).or_default() += 1;
         let budget = Budget {
-            uid: Arc::clone(
-                admitted
-                    .budgets
-                    .entry(uid)
-                    .or_insert_with(|| Arc::new(Semaphore::new(UID_BUDGET as usize))),
-            ),
+            peer: join(&mut admitted.peers, key.clone(), PEER_BUDGET),
+            uid: join(&mut admitted.uids, uid, UID_BUDGET),
             total: Arc::clone(&self.total_budget),
         };
         Some(Slot {
@@ -185,49 +213,31 @@ impl Drop for Slot {
     fn drop(&mut self) {
         let mut admitted = self.limits.admitted();
         admitted.total -= 1;
-        release(&mut admitted.peers, &self.key);
-        if release(&mut admitted.uids, &self.uid) {
-            admitted.budgets.remove(&self.uid);
-        }
+        leave(&mut admitted.peers, &self.key);
+        leave(&mut admitted.uids, &self.uid);
     }
-}
-
-/// Whether the key's count reached zero, and left the map.
-fn release<K: Eq + std::hash::Hash>(counts: &mut HashMap<K, usize>, key: &K) -> bool {
-    let Some(count) = counts.get_mut(key) else {
-        return false;
-    };
-    *count -= 1;
-    let gone = *count == 0;
-    if gone {
-        counts.remove(key);
-    }
-    gone
 }
 
 #[derive(Clone)]
 struct Budget {
+    peer: Arc<Semaphore>,
     uid: Arc<Semaphore>,
     total: Arc<Semaphore>,
 }
 
 struct Hold {
-    _uid: OwnedSemaphorePermit,
-    _total: OwnedSemaphorePermit,
+    _permits: Vec<OwnedSemaphorePermit>,
 }
 
 impl Budget {
-    // The uid's share first, so a uid waiting on the total holds no more than its own share.
+    // Narrowest share first, so a request waiting on a wider one holds no more than its own peer's
+    // or uid's share, and a fixed order cannot deadlock.
     async fn reserve(&self, bytes: u32) -> Option<Hold> {
-        let uid = Arc::clone(&self.uid).acquire_many_owned(bytes).await.ok()?;
-        let total = Arc::clone(&self.total)
-            .acquire_many_owned(bytes)
-            .await
-            .ok()?;
-        Some(Hold {
-            _uid: uid,
-            _total: total,
-        })
+        let mut permits = Vec::with_capacity(3);
+        for share in [&self.peer, &self.uid, &self.total] {
+            permits.push(Arc::clone(share).acquire_many_owned(bytes).await.ok()?);
+        }
+        Some(Hold { _permits: permits })
     }
 }
 
@@ -906,44 +916,77 @@ mod tests {
         drop(slots);
         let admitted = limits.admitted();
         assert_eq!(admitted.total, 0);
-        assert!(
-            admitted.peers.is_empty() && admitted.uids.is_empty() && admitted.budgets.is_empty()
-        );
+        assert!(admitted.peers.is_empty() && admitted.uids.is_empty());
         drop(admitted);
         assert!(limits.claim(None).is_some());
     }
 
-    async fn waits(budget: &Budget, bytes: u32) -> bool {
+    // The reservation, or None while it waits.
+    async fn reserve_now(budget: &Budget, bytes: u32) -> Option<Hold> {
         timeout(Duration::from_millis(100), budget.reserve(bytes))
             .await
-            .is_err()
+            .ok()
+            .flatten()
+    }
+
+    fn claim(limits: &Arc<Limits>, uid: u32, cgroup: &str) -> Slot {
+        limits.claim(Some(&peer(uid, uid, cgroup))).unwrap()
     }
 
     #[tokio::test]
-    async fn reserves_request_bytes_up_to_64_mib_per_uid_and_256_mib_in_all() {
+    async fn reserves_request_bytes_up_to_16_mib_per_peer_64_mib_per_uid_and_256_mib_in_all() {
         let limits = Limits::new(MAX_CONNECTIONS);
-        let slots: Vec<Slot> = (0..5)
-            .map(|uid| limits.claim(Some(&peer(uid, uid, "/"))).unwrap())
+        let [first, second] = [(); 2].map(|()| claim(&limits, 7, "/a"));
+        let _first = reserve_now(&first.budget, PEER_BUDGET).await.unwrap();
+        assert!(reserve_now(&second.budget, 1).await.is_none());
+        let [anonymous, other_anonymous] = [(); 2].map(|()| limits.claim(None).unwrap());
+        let _anonymous = reserve_now(&anonymous.budget, PEER_BUDGET).await.unwrap();
+        assert!(reserve_now(&other_anonymous.budget, 1).await.is_none());
+
+        let limits = Limits::new(MAX_CONNECTIONS);
+        let peers: Vec<Slot> = (0..5)
+            .map(|n| claim(&limits, 7, &format!("/{n}")))
             .collect();
         let mut holds = Vec::new();
-        for slot in &slots[..4] {
-            holds.push(slot.budget.reserve(UID_BUDGET).await.unwrap());
+        for slot in &peers[..4] {
+            holds.push(reserve_now(&slot.budget, PEER_BUDGET).await.unwrap());
         }
-        assert!(waits(&slots[4].budget, 1).await);
+        assert!(reserve_now(&peers[4].budget, 1).await.is_none());
+        let other_uid = claim(&limits, 8, "/0");
+        assert!(reserve_now(&other_uid.budget, PEER_BUDGET).await.is_some());
         holds.pop();
-        assert!(waits(&slots[0].budget, 1).await);
-        let _fifth = slots[4].budget.reserve(UID_BUDGET).await.unwrap();
+        assert!(reserve_now(&peers[4].budget, PEER_BUDGET).await.is_some());
 
-        let shared = Limits::new(MAX_CONNECTIONS);
-        let [anonymous, other_anonymous] = [(); 2].map(|()| shared.claim(None).unwrap());
-        let one_cgroup = shared.claim(Some(&peer(7, 1, "/a"))).unwrap();
-        let another_cgroup = shared.claim(Some(&peer(7, 2, "/b"))).unwrap();
-        let _held = (
-            anonymous.budget.reserve(UID_BUDGET).await.unwrap(),
-            one_cgroup.budget.reserve(UID_BUDGET).await.unwrap(),
-        );
-        assert!(waits(&other_anonymous.budget, 1).await);
-        assert!(waits(&another_cgroup.budget, 1).await);
+        let limits = Limits::new(MAX_CONNECTIONS);
+        let slots: Vec<Slot> = (0..17)
+            .map(|n| claim(&limits, n / 4, &format!("/{}", n % 4)))
+            .collect();
+        let mut holds = Vec::new();
+        for slot in &slots[..16] {
+            holds.push(reserve_now(&slot.budget, PEER_BUDGET).await.unwrap());
+        }
+        assert!(reserve_now(&slots[16].budget, 1).await.is_none());
+        holds.pop();
+        assert!(reserve_now(&slots[16].budget, PEER_BUDGET).await.is_some());
+    }
+
+    // Every agent session runs as one uid, each in its own unit cgroup: a session that announces
+    // requests and stalls must not hold the share the others need.
+    #[tokio::test]
+    async fn serves_another_cgroup_of_a_uid_while_one_stalls_four_16_mib_requests() {
+        let limits = Limits::new(MAX_CONNECTIONS);
+        let slots: Vec<Slot> = (0..4).map(|_| claim(&limits, 7, "/session-a")).collect();
+        let stalled: Vec<_> = slots
+            .iter()
+            .map(|slot| {
+                let budget = slot.budget.clone();
+                tokio::spawn(async move { budget.reserve(MAX_FRAME).await })
+            })
+            .collect();
+        sleep(Duration::from_millis(50)).await;
+        let other = claim(&limits, 7, "/session-b");
+        assert!(reserve_now(&other.budget, MAX_FRAME).await.is_some());
+        stalled.iter().for_each(|task| task.abort());
     }
 
     // A kernel before 6.13 cannot report a peer's cgroup id (SO_PEERPIDFD came in 6.5 and

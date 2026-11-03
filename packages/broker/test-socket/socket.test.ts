@@ -1,10 +1,11 @@
 import { fork } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import type { Socket } from "node:net";
+import { createConnection, type Socket } from "node:net";
 import { release } from "node:os";
 import { dirname, join } from "node:path";
 import type { Peer } from "@fluxpointstudios/orynq-sdk-core/broker-wire";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Broker, type BrokerOptions } from "../src/broker.js";
 import { BrokerReplyError, connectBroker, type BrokerClient } from "../src/client.js";
 import { encodeFrame, FrameDecoder } from "../src/framing.js";
@@ -249,6 +250,39 @@ describe.runIf(hasCgroupIds && refusedDelegation === undefined)("with a session 
     expect(broker.peers.at(-1)).toEqual({ os: "linux", uid: UID, gid: GID, pidHint: process.pid, cgroup: `${OWN_CGROUP}/${unit}` });
     const outside = await connect(frontend);
     expect(await code(outside.request("broker.hello"))).toBe(-32001);
+  });
+
+  it("answers one agent session at once while another announces four 16 MiB requests and stalls", async () => {
+    const { broker, frontend } = await start({ agent: { uid: UID, slice: OWN_CGROUP } }, { idleSeconds: 30 });
+    const open = async () =>
+      (JSON.parse(new TextDecoder().decode(await broker.handle({ id: 1, method: "session.open", params: { mandates: [C] } }, "operator"))) as {
+        result: { sessionId: string; unit: string };
+      }).result;
+    const [stalling, served] = [await open(), await open()];
+    const stalled: Socket[] = [];
+    try {
+      await inCgroup(stalling.unit, async () => {
+        for (let i = 0; i < 4; i++) {
+          const socket = createConnection({ path: frontend.socket });
+          stalled.push(socket);
+          await once(socket, "connect");
+        }
+        // The frontend reads a peer's cgroup when it accepts, so stay until B has seen every OPEN.
+        await vi.waitFor(() => expect(broker.peers).toHaveLength(4));
+      });
+      for (const socket of stalled) socket.write(Uint8Array.of(0x01, 0, 0, 0));
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const started = Date.now();
+      const hello = await inCgroup(served.unit, async () => {
+        const client = await connect(frontend);
+        const timedOut = new Promise(resolve => setTimeout(resolve, 5_000, "waited on the stalled session"));
+        return Promise.race([client.request("broker.hello"), timedOut]);
+      });
+      expect(hello).toMatchObject({ principal: `agent:${served.sessionId}`, sessionId: served.sessionId });
+      expect(Date.now() - started).toBeLessThan(5_000);
+    } finally {
+      for (const socket of stalled) socket.destroy();
+    }
   });
 
   it("refuses the 33rd connection of an account without a principal in the broker, from any cgroup", async () => {
