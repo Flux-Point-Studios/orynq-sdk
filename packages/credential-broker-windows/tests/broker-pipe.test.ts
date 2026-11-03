@@ -1,117 +1,191 @@
-import { execFileSync } from "node:child_process";
+import { type ChildProcessByStdio, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import type { Readable, Writable } from "node:stream";
+import {
+  decodeOpenPayload,
+  encodeMuxMessage,
+  MUX_CLOSE,
+  MUX_FRAME,
+  MUX_OPEN,
+  MUX_READY,
+  MuxDecoder,
+  type MuxMessage,
+} from "@fluxpointstudios/orynq-sdk-core/broker-wire";
 import { afterEach, describe, expect, it } from "vitest";
 import { type BrokerConnection, connectBroker } from "../src/client.js";
-import { type Frontend, type FrontendOptions, type Peer, startFrontend } from "../src/frontend.js";
+import { type PipeFrontendOptions, spawnPipeFrontend } from "../src/frontend.js";
 import { frontendExecutable } from "./frontend-executable.js";
 import { openWithGenericRights, whileRestrictedTo } from "./restricted-token.js";
+
+type Sidecar = ChildProcessByStdio<Writable, Readable, Readable>;
 
 const whoami = (...args: string[]) =>
   execFileSync(`${process.env.SystemRoot ?? "C:\\Windows"}\\System32\\whoami.exe`, args, { encoding: "utf8" });
 const ownSid = () => whoami("/user", "/fo", "csv", "/nh").trim().split(",")[1].replaceAll('"', "");
 const pipeName = () => `\\\\.\\pipe\\orynq-broker-test-${randomBytes(6).toString("hex")}`;
 const text = (value: string) => Buffer.from(value, "utf8");
+const utf8 = (bytes: Uint8Array) => Buffer.from(bytes).toString("utf8");
+// "close" rather than "exit", so stderr has been read in full.
+const exitOf = (child: Sidecar) =>
+  new Promise<number | null>((resolve) => (child.exitCode !== null ? resolve(child.exitCode) : child.once("close", resolve)));
+
+// The test speaks the broker's side of the sidecar's stdio mux.
+function mux(child: Sidecar) {
+  const decoder = new MuxDecoder();
+  const queued: MuxMessage[] = [];
+  const waiting: ((message: MuxMessage) => void)[] = [];
+  child.stdout.on("data", (chunk: Buffer) => {
+    for (const message of decoder.push(chunk)) {
+      const waiter = waiting.shift();
+      if (waiter) waiter(message);
+      else queued.push(message);
+    }
+  });
+  return {
+    next: () =>
+      new Promise<MuxMessage>((resolve) => {
+        const message = queued.shift();
+        if (message) resolve(message);
+        else waiting.push(resolve);
+      }),
+    send: (kind: typeof MUX_FRAME | typeof MUX_CLOSE, conn: bigint, payload: Uint8Array = new Uint8Array()) =>
+      child.stdin.write(encodeMuxMessage({ kind, conn, payload })),
+  };
+}
+
+describe("spawnPipeFrontend", () => {
+  const options = { executable: "never-spawned.exe", pipe: "\\\\.\\pipe\\orynq-broker" };
+
+  it.each(["orynq-broker", "\\\\server\\pipe\\orynq-broker", "\\\\.\\mailslot\\orynq-broker"])(
+    "refuses the pipe %s before spawning",
+    (pipe) => {
+      expect(() => spawnPipeFrontend({ ...options, pipe })).toThrow(RangeError);
+    },
+  );
+
+  it.each(["WD", "S-1-1-0", "S-1-5-18", "S-1-5-32-545", "S-1-5-21-1-2-3", "S-1-5-21-1-2-3-1001)(A;;GA;;;WD"])(
+    "refuses to admit %s before spawning",
+    (sid) => {
+      expect(() => spawnPipeFrontend({ ...options, admit: [sid] })).toThrow(RangeError);
+    },
+  );
+
+  it.each([0, 86_401, 1.5, Number.NaN])("refuses an idle period of %s seconds before spawning", (idleSeconds) => {
+    expect(() => spawnPipeFrontend({ ...options, idleSeconds })).toThrow(RangeError);
+  });
+});
 
 describe.runIf(process.platform === "win32")("broker pipe", { timeout: 30_000 }, () => {
-  const frontends: Frontend[] = [];
+  const sidecars: Sidecar[] = [];
   const clients: BrokerConnection[] = [];
-  const start = async (options: Partial<FrontendOptions> & Pick<FrontendOptions, "handle">) => {
-    const frontend = await startFrontend({ executable: frontendExecutable(), pipe: pipeName(), ...options });
-    frontends.push(frontend);
-    return frontend;
+  const start = async (options: Partial<PipeFrontendOptions> = {}) => {
+    const pipe = pipeName();
+    const child = spawnPipeFrontend({ executable: frontendExecutable(), pipe, ...options });
+    sidecars.push(child);
+    const host = mux(child);
+    const ready = await host.next();
+    expect({ kind: ready.kind, conn: ready.conn, bytes: ready.payload.length }).toEqual({ kind: MUX_READY, conn: 0n, bytes: 0 });
+    return { child, host, pipe };
   };
-  const connect = async (frontend: Frontend, serverSid = ownSid()) => {
-    const client = await connectBroker(frontend.pipe, serverSid);
+  const connect = async (pipe: string, serverSid = ownSid()) => {
+    const client = await connectBroker(pipe, serverSid);
     clients.push(client);
     return client;
   };
   afterEach(async () => {
     await Promise.all(clients.splice(0).map((client) => client.close()));
-    await Promise.all(frontends.splice(0).map((frontend) => frontend.close()));
+    await Promise.all(
+      sidecars.splice(0).map((child) => {
+        child.stdin.end();
+        return exitOf(child);
+      }),
+    );
   });
 
-  it("relays a request to the handler and its response back to the client", async () => {
-    const frontend = await start({ handle: async (frame) => text(`echo:${frame.toString("utf8")}`) });
-    const client = await connect(frontend);
-    expect((await client.request(text("ping"))).toString("utf8")).toBe("echo:ping");
-    expect((await client.request(text("again"))).toString("utf8")).toBe("echo:again");
+  it("opens each connection with the caller's Windows account and relays its request and reply", async () => {
+    const { host, pipe } = await start();
+    const reply = (await connect(pipe)).request(text("ping"));
+    const open = await host.next();
+    expect(open.kind).toBe(MUX_OPEN);
+    expect(Object.keys(JSON.parse(utf8(open.payload))).sort()).toEqual(["integrityRid", "logonLuid", "os", "pidHint", "sid", "tsSessionId"]);
+    expect(decodeOpenPayload(open.payload)).toMatchObject({ os: "windows", sid: ownSid(), pidHint: process.pid });
+    const frame = await host.next();
+    expect({ kind: frame.kind, conn: frame.conn, body: utf8(frame.payload) }).toEqual({ kind: MUX_FRAME, conn: open.conn, body: "ping" });
+    host.send(MUX_FRAME, open.conn, text("pong"));
+    expect((await reply).toString("utf8")).toBe("pong");
   });
 
   it("serves an admitted account that does not own the pipe", async () => {
     const admitted = "S-1-5-21-1-2-3-1001";
     const owner = ownSid();
-    const frontend = await start({ admit: [admitted], handle: async () => text("ok") });
-    expect(whileRestrictedTo(admitted, () => openWithGenericRights(frontend.pipe))).toBe(5);
+    const { host, pipe } = await start({ admit: [admitted] });
+    expect(whileRestrictedTo(admitted, () => openWithGenericRights(pipe))).toBe(5);
     // connectBroker opens the pipe before its first await, so the open runs under the restricted token.
-    const client = await whileRestrictedTo(admitted, () => connectBroker(frontend.pipe, owner));
+    const client = await whileRestrictedTo(admitted, () => connectBroker(pipe, owner));
     clients.push(client);
-    expect((await client.request(text("{}"))).toString("utf8")).toBe("ok");
-  });
-
-  it("tells the handler which Windows account is calling", async () => {
-    const seen: (Peer | null)[] = [];
-    const frontend = await start({
-      handle: async (_frame, peer) => {
-        seen.push(peer);
-        return text("{}");
-      },
-    });
-    await (await connect(frontend)).request(text("{}"));
-    expect(seen).toHaveLength(1);
-    expect(seen[0]).toMatchObject({ os: "windows", sid: ownSid(), pidHint: process.pid });
-    expect(Object.keys(seen[0] ?? {}).sort()).toEqual(["integrityRid", "logonLuid", "os", "pidHint", "sid", "tsSessionId"]);
+    const reply = client.request(text("{}"));
+    const open = await host.next();
+    await host.next();
+    host.send(MUX_FRAME, open.conn, text("ok"));
+    expect((await reply).toString("utf8")).toBe("ok");
   });
 
   it("refuses to talk to a pipe owned by another account", async () => {
-    let calls = 0;
-    const frontend = await start({
-      handle: async () => {
-        calls += 1;
-        return text("{}");
-      },
-    });
-    await expect(connectBroker(frontend.pipe, "S-1-5-18")).rejects.toThrow(/owned by S-1-5-21-[\d-]+, not S-1-5-18/);
-    expect(calls).toBe(0);
+    const { host, pipe } = await start();
+    await expect(connectBroker(pipe, "S-1-5-18")).rejects.toThrow(/owned by S-1-5-21-[\d-]+, not S-1-5-18/);
+    const reply = (await connect(pipe)).request(text("{}"));
+    const open = await host.next();
+    expect(decodeOpenPayload(open.payload)).toMatchObject({ pidHint: process.pid });
+    expect((await host.next()).kind).toBe(MUX_FRAME);
+    host.send(MUX_FRAME, open.conn, text("ok"));
+    await reply;
   });
 
-  it("closes only the connection whose handler failed", async () => {
-    const errors: unknown[] = [];
-    let first = true;
-    const frontend = await start({
-      onError: (error) => errors.push(error),
-      handle: async () => {
-        if (first) {
-          first = false;
-          throw new Error("handler bug");
-        }
-        return text("ok");
-      },
-    });
-    const failing = await connect(frontend);
-    const healthy = await connect(frontend);
-    await expect(failing.request(text("{}"))).rejects.toThrow(/closed/);
-    expect((await healthy.request(text("{}"))).toString("utf8")).toBe("ok");
-    expect(errors).toEqual([new Error("handler bug")]);
+  it("closes only the connection the host closes, and confirms it", async () => {
+    const { host, pipe } = await start();
+    const closed = await connect(pipe);
+    const healthy = await connect(pipe);
+    const lost = closed.request(text("{}"));
+    const open = await host.next();
+    await host.next();
+    host.send(MUX_CLOSE, open.conn);
+    await expect(lost).rejects.toThrow(/closed/);
+    const confirm = await host.next();
+    expect({ kind: confirm.kind, conn: confirm.conn }).toEqual({ kind: MUX_CLOSE, conn: open.conn });
+    const reply = healthy.request(text("{}"));
+    const other = await host.next();
+    await host.next();
+    host.send(MUX_FRAME, other.conn, text("ok"));
+    expect((await reply).toString("utf8")).toBe("ok");
   });
 
-  it("cancels a pending request when the client closes", async () => {
-    const frontend = await start({ handle: () => new Promise<Uint8Array>(() => undefined) });
-    const client = await connect(frontend);
+  it("tells the host when a client closes with a request pending", async () => {
+    const { host, pipe } = await start();
+    const client = await connect(pipe);
     const pending = client.request(text("{}"));
+    const open = await host.next();
+    await host.next();
     await client.close();
     await expect(pending).rejects.toThrow(/closed/);
+    const close = await host.next();
+    expect({ kind: close.kind, conn: close.conn }).toEqual({ kind: MUX_CLOSE, conn: open.conn });
   });
 
-  it("stops serving once closed", async () => {
-    const frontend = await start({ handle: async () => text("{}") });
-    await frontend.close();
-    await expect(connectBroker(frontend.pipe, ownSid())).rejects.toThrow(/CreateFileW failed with Windows error 2\b/);
+  it("removes its pipe and exits 0 when its stdin ends", async () => {
+    const { child, pipe } = await start();
+    child.stdin.end();
+    expect(await exitOf(child)).toBe(0);
+    await expect(connectBroker(pipe, ownSid())).rejects.toThrow(/CreateFileW failed with Windows error 2\b/);
   });
 
-  it("reports why the sidecar could not start", async () => {
-    const frontend = await start({ handle: async () => text("{}") });
-    await expect(startFrontend({ executable: frontendExecutable(), pipe: frontend.pipe, handle: async () => text("{}") })).rejects.toThrow(
-      /cannot create .*orynq-broker-test/,
-    );
+  it("exits with its reason when the pipe is already served", async () => {
+    const { pipe } = await start();
+    const second = spawnPipeFrontend({ executable: frontendExecutable(), pipe });
+    let stderr = "";
+    second.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    expect(await exitOf(second)).toBe(1);
+    expect(stderr).toMatch(/cannot create .*orynq-broker-test/);
   });
 });

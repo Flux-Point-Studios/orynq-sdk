@@ -16,6 +16,16 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./frontend": {
+      "import": {
+        "types": "./dist/frontend.d.ts",
+        "default": "./dist/frontend.js"
+      },
+      "require": {
+        "types": "./dist/frontend.d.cts",
+        "default": "./dist/frontend.cjs"
+      }
     }
   },
   "files": [
@@ -52,6 +62,7 @@
     "win32"
   ],
   "dependencies": {
+    "@fluxpointstudios/orynq-sdk-core": "workspace:^",
     "koffi": "3.3.3"
   },
   "devDependencies": {
