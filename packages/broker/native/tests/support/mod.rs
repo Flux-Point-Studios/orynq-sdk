@@ -52,6 +52,34 @@ impl Drop for Connector {
     }
 }
 
+fn address(path: &Path) -> libc::sockaddr_un {
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    for (slot, byte) in address.sun_path.iter_mut().zip(path.as_os_str().as_bytes()) {
+        *slot = *byte as libc::c_char;
+    }
+    address
+}
+
+fn stream_socket() -> OwnedFd {
+    let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
+    assert!(fd >= 0);
+    unsafe { OwnedFd::from_raw_fd(fd) }
+}
+
+// A socket file whose socket never listened, as stale as one a dead broker left: connect() is
+// refused even while a child that a concurrent test forked still holds a copy of the descriptor,
+// which a closed listener would not guarantee.
+pub fn stale_socket(path: &Path) {
+    let address = address(path);
+    let size = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+    let fd = stream_socket();
+    assert_eq!(
+        unsafe { libc::bind(fd.as_raw_fd(), (&raw const address).cast(), size) },
+        0
+    );
+}
+
 // Connects `count` clients from a child process that first joins `cgroup`, when one is given, and
 // then execs `program`. Each connection's peer is that child, and once it has exec'd only this test
 // holds the client ends, since every descriptor here is close-on-exec.
@@ -61,23 +89,8 @@ pub fn connect_from_child(
     cgroup: Option<&Path>,
     program: &[&str],
 ) -> (Connector, Vec<UnixStream>) {
-    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
-    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
-    for (slot, byte) in address
-        .sun_path
-        .iter_mut()
-        .zip(socket.as_os_str().as_bytes())
-    {
-        *slot = *byte as libc::c_char;
-    }
-    let clients: Vec<OwnedFd> = (0..count)
-        .map(|_| {
-            let fd =
-                unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
-            assert!(fd >= 0);
-            unsafe { OwnedFd::from_raw_fd(fd) }
-        })
-        .collect();
+    let address = address(socket);
+    let clients: Vec<OwnedFd> = (0..count).map(|_| stream_socket()).collect();
     let fds: Vec<RawFd> = clients.iter().map(AsRawFd::as_raw_fd).collect();
     let procs = cgroup.map(|cgroup| {
         CString::new(cgroup.join("cgroup.procs").into_os_string().into_vec()).unwrap()

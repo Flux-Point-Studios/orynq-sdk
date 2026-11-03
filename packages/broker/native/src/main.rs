@@ -397,8 +397,6 @@ fn identify(fd: RawFd) -> Option<Peer> {
     })
 }
 
-// As many connections as the descriptor limit leaves room for, up to MAX_CONNECTIONS: a uid's
-// ceiling cannot bound an account that owns subordinate uids.
 fn connection_ceiling() -> Result<usize, String> {
     let mut limit = libc::rlimit {
         rlim_cur: 0,
@@ -410,13 +408,18 @@ fn connection_ceiling() -> Result<usize, String> {
             io::Error::last_os_error()
         ));
     }
-    match limit.rlim_cur.checked_sub(RESERVED_FDS) {
+    ceiling(limit.rlim_cur)
+}
+
+// As many connections as the descriptor limit leaves room for, up to MAX_CONNECTIONS: a uid's
+// ceiling cannot bound an account that owns subordinate uids.
+fn ceiling(descriptors: libc::rlim_t) -> Result<usize, String> {
+    match descriptors.checked_sub(RESERVED_FDS) {
         Some(spare) if spare > 0 => {
             Ok(usize::try_from(spare).map_or(MAX_CONNECTIONS, |spare| spare.min(MAX_CONNECTIONS)))
         }
         _ => Err(format!(
-            "RLIMIT_NOFILE is {}, which leaves no descriptor for a connection beyond the {RESERVED_FDS} this process keeps",
-            limit.rlim_cur
+            "RLIMIT_NOFILE is {descriptors}, which leaves no descriptor for a connection beyond the {RESERVED_FDS} this process keeps"
         )),
     }
 }
@@ -479,14 +482,15 @@ fn parse_args() -> Result<Config, String> {
     Ok(Config { socket, mode, idle })
 }
 
-// Only a stale socket this account created may be replaced; a live one belongs to a running broker.
-fn clear_path(path: &Path) -> Result<(), String> {
+// Only a stale socket that `owner`, this account, created may be replaced; a live one belongs to a
+// running broker.
+fn clear_path(path: &Path, owner: u32) -> Result<(), String> {
     let meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
     };
-    if !meta.file_type().is_socket() || meta.uid() != unsafe { libc::geteuid() } {
+    if !meta.file_type().is_socket() || meta.uid() != owner {
         return Err(format!(
             "{} exists and is not this account's socket",
             path.display()
@@ -501,7 +505,7 @@ fn clear_path(path: &Path) -> Result<(), String> {
 }
 
 fn open_socket(config: &Config) -> Result<(StdUnixListener, SocketFile), String> {
-    clear_path(&config.socket)?;
+    clear_path(&config.socket, unsafe { libc::geteuid() })?;
     let (fd, socket) = bind(&config.socket)?;
     let listener = finish(fd, &socket, config.mode).inspect_err(|_| socket.remove())?;
     Ok((listener, socket))
@@ -799,6 +803,7 @@ mod tests {
     use super::*;
     use crate::support::{
         Connector, cgroup_dir, cgroups_or_skip, connect_from_child, kernel_release, own_cgroup,
+        stale_socket,
     };
     use std::{cell::RefCell, sync::atomic::AtomicU32};
 
@@ -1124,6 +1129,40 @@ mod tests {
         let (accepted, _) = listener.accept().unwrap();
         fs::remove_file(&path).unwrap();
         (connector, accepted, clients)
+    }
+
+    #[test]
+    fn keeps_64_descriptors_and_admits_at_most_1024_connections_whatever_the_limit() {
+        for descriptors in [0, 63, 64] {
+            let error = ceiling(descriptors).unwrap_err();
+            assert!(error.contains("RLIMIT_NOFILE"), "{error}");
+        }
+        for (descriptors, connections) in [
+            (65, 1),
+            (1087, 1023),
+            (1088, 1024),
+            (1089, 1024),
+            (1 << 20, 1024),
+            (libc::RLIM_INFINITY, 1024),
+        ] {
+            assert_eq!(ceiling(descriptors), Ok(connections), "{descriptors}");
+        }
+    }
+
+    // An unprivileged test cannot make a socket another uid owns, so it names another owner.
+    #[test]
+    fn replaces_a_stale_socket_only_when_its_owner_is_this_account() {
+        let path = temp_socket_path();
+        stale_socket(&path);
+        let owner = unsafe { libc::geteuid() };
+        let error = clear_path(&path, owner + 1).unwrap_err();
+        assert!(
+            error.contains("exists and is not this account's socket"),
+            "{error}"
+        );
+        assert!(fs::symlink_metadata(&path).unwrap().file_type().is_socket());
+        assert_eq!(clear_path(&path, owner), Ok(()));
+        assert!(fs::symlink_metadata(&path).is_err());
     }
 
     #[test]

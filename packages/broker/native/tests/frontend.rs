@@ -24,6 +24,7 @@ use std::{
 };
 use support::{
     Connector, cgroup_dir, cgroups_or_skip, connect_from_child, kernel_release, own_cgroup,
+    stale_socket,
 };
 
 const READY: u8 = 0;
@@ -974,7 +975,7 @@ fn replaces_its_own_stale_socket() {
     }
     let dir = TempDir::new();
     let path = dir.0.join("b.sock");
-    drop(UnixListener::bind(&path).unwrap());
+    stale_socket(&path);
     assert!(fs::symlink_metadata(&path).unwrap().file_type().is_socket());
     let mut frontend = Frontend::start_on(&path, &[], 0o022);
     let (_client, conn) = frontend.connect();
