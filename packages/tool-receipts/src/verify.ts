@@ -74,6 +74,11 @@ export interface ToolReceiptVerificationResult {
   error?: string;
 }
 
+/** `obj[key]` only when it is `obj`'s own property, never one inherited from a (possibly polluted) prototype. */
+function ownProperty<T extends object, K extends keyof T>(obj: T | undefined, key: K): T[K] | undefined {
+  return obj !== undefined && Object.hasOwn(obj, key) ? obj[key] : undefined;
+}
+
 /** Case-insensitive, 0x-tolerant hex equality. */
 function hexEq(a: string, b: string): boolean {
   const na = a.startsWith("0x") ? a.slice(2) : a;
@@ -84,9 +89,9 @@ function hexEq(a: string, b: string): boolean {
 /** Context for {@link verifyToolReceipts}; extends key resolution with custom schemes. */
 export interface VerifyToolReceiptsContext extends ToolReceiptVerifyContext {
   /**
-   * Register or override scheme verifiers (e.g. a custom/internal scheme). A
-   * custom scheme's verifier must carry `responseCommitment`, or its receipts
-   * fail with `response-not-bound`.
+   * Register or override scheme verifiers (e.g. a custom/internal scheme), as
+   * own properties. A custom scheme's verifier must carry `responseCommitment`,
+   * or its receipts fail with `response-not-bound`.
    */
   verifiers?: Record<string, ToolReceiptSchemeVerifier>;
   /**
@@ -130,7 +135,9 @@ export async function verifyToolReceipt(
   // `orynqBinding.{runId,requestHash}` that both match can be call-bound; external
   // webhook schemes never can (their signature cannot cover our runId/request).
   const callBound = false;
-  const verifier = ctx?.verifiers?.[scheme] ?? BUILTIN_TOOL_RECEIPT_VERIFIERS[scheme];
+  // `scheme` is bundle data, so an Object.prototype member must not count as a verifier.
+  const verifier =
+    ownProperty(ctx?.verifiers, scheme) ?? ownProperty(BUILTIN_TOOL_RECEIPT_VERIFIERS, scheme);
   if (!verifier) {
     return {
       ...base,
@@ -147,9 +154,7 @@ export async function verifyToolReceipt(
     // A can be paired with a fabricated response B (issue #60's core guarantee).
     // Own property only: a polluted Object.prototype must not hand every
     // verifier, built-ins included, a commitment of its choosing.
-    const ownCommitment = Object.hasOwn(verifier, "responseCommitment")
-      ? verifier.responseCommitment
-      : undefined;
+    const ownCommitment = ownProperty(verifier, "responseCommitment");
     const commit = ownCommitment
       ? await ownCommitment(event)
       : await responseCommitmentHash(event);

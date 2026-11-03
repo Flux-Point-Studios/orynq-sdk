@@ -384,6 +384,52 @@ describe("externally registered schemes", () => {
     expect(outcome.results[0]!.verified).toBe(false);
   });
 
+  it("lets an overriding scheme's unbound commitment replace the built-in one", async () => {
+    const { privateKey: jwsKey, publicKey: jwsPub } = generateKeyPairSync("ed25519");
+    const proxy = createSigningProxy({ signer: "tee://oracle", alg: "EdDSA", privateKey: jwsKey });
+    const bundle = await traceWithReceipt(proxy.sign({ price: 100 }), { price: 100 });
+    const jwsKeys = { "tee://oracle": pem(jwsPub) };
+    const builtin = await verifyToolReceipts(bundle, { keys: jwsKeys });
+    expect(builtin.results[0]!.verified).toBe(true);
+
+    const override: ToolReceiptSchemeVerifier = (event, ctx) => verifyJwsReceipt(event, ctx);
+    override.responseCommitment = async () => null;
+    const outcome = await verifyToolReceipts(bundle, { keys: jwsKeys, verifiers: { jws: override } });
+    expect(outcome.results[0]!.reason).toBe("response-not-bound");
+    expect(outcome.results[0]!.verified).toBe(false);
+  });
+
+  it("finds no verifier for a scheme that only a polluted Object.prototype supplies", async () => {
+    const bundle = await traceWithReceipt(
+      { scheme: "planted-scheme", signer: "s", signature: "AA", signedPayload: "anything" },
+      { price: 1 }
+    );
+    const planted: ToolReceiptSchemeVerifier = async () => true;
+    planted.responseCommitment = async (event) => event.response.hash;
+    Object.defineProperty(Object.prototype, "planted-scheme", { configurable: true, value: planted });
+    try {
+      for (const ctx of [undefined, { verifiers: {} }]) {
+        const outcome = await verifyToolReceipts(bundle, ctx);
+        expect(outcome.results[0]).toMatchObject({ verified: false, error: expect.stringMatching(/no verifier/i) });
+      }
+    } finally {
+      delete (Object.prototype as Record<string, unknown>)["planted-scheme"];
+    }
+  });
+
+  it("finds no verifier for a scheme named after an Object.prototype member", async () => {
+    for (const scheme of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+      const bundle = await traceWithReceipt({ scheme, signer: "s", signature: "AA", signedPayload: "x" }, "x");
+      for (const ctx of [undefined, { verifiers: {} }]) {
+        const outcome = await verifyToolReceipts(bundle, ctx);
+        expect(outcome.results[0], scheme).toMatchObject({
+          verified: false,
+          error: expect.stringMatching(/no verifier/i),
+        });
+      }
+    }
+  });
+
   it("ignores a response commitment inherited from a polluted Object.prototype", async () => {
     const { privateKey: jwsKey, publicKey: jwsPub } = generateKeyPairSync("ed25519");
     const proxy = createSigningProxy({ signer: "tee://oracle", alg: "EdDSA", privateKey: jwsKey });
