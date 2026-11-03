@@ -89,33 +89,48 @@ describe("parsePeer", () => {
     expect(Object.getPrototypeOf(peer)).toBe(Object.prototype);
   });
 
-  it("takes user and service SIDs only, in canonical form", () => {
+  // The pipe's DACL admits SYSTEM, so a token's user SID is not always an account a principal can
+  // name; mapping, not parsing, decides that.
+  it("takes any SID as ConvertSidToStringSidW spells it, with 1 to 15 sub-authorities", () => {
     for (const sid of [
       "S-1-5-21-0-0-0-0",
       "S-1-5-21-4294967295-4294967295-4294967295-4294967295",
       "S-1-5-80-0-1-2-3-4",
-    ]) {
-      expect(parsePeer({ ...windows, sid }).os).toBe("windows");
-    }
-    for (const sid of [
       "S-1-5-18",
       "S-1-5-19",
-      "S-1-5-32-544",
+      "S-1-5-20",
       "S-1-12-1-1-2-3-4",
-      "S-1-5-21-1-2-3",
-      "S-1-5-21-1-2-3-4-5",
-      "S-1-5-80-1-2-3-4",
-      "S-1-5-80-1-2-3-4-5-6",
+      "S-1-0-0",
+      "S-1-4294967295-1",
+      `S-1-5${"-4294967295".repeat(15)}`,
+    ]) {
+      expect(parsePeer({ ...windows, sid }).sid).toBe(sid);
+    }
+    for (const sid of [
+      "S-1-5",
+      `S-1-5${"-1".repeat(16)}`,
+      "S-1-4294967296-1",
+      "S-1-0x100000000-1",
+      "S-2-5-18",
+      "S-1-05-18",
+      "S-1-5-018",
       "S-1-5-21-01-2-3-4",
       "S-1-5-21-4294967296-2-3-4",
-      "s-1-5-21-1-2-3-4",
-      "S-1-5-21-1-2-3-4 ",
-      "S-1-5-21-1-2-3-+4",
+      "s-1-5-18",
+      "S-1-5-18 ",
+      "S-1-5-+18",
+      "S-1-5--18",
+      "S-1-5-18-",
       "",
       1001,
     ]) {
       expect(field({ ...windows, sid })).toBe("sid");
     }
+  });
+
+  it("returns SYSTEM's peer exactly as the sidecar spells it", () => {
+    const system = { ...windows, sid: "S-1-5-18", logonLuid: "999", tsSessionId: 0, integrityRid: 0x4000, pidHint: null };
+    expect(decodeOpenPayload(utf8(JSON.stringify(system)))).toEqual(system);
   });
 
   it("takes the logon LUID as a canonical decimal u64 string", () => {
@@ -216,19 +231,29 @@ describe("the broker-wire subpath", () => {
 });
 
 describe("isAccountSid", () => {
-  it("accepts exactly the SIDs a Windows peer may carry", async () => {
+  it("accepts user (S-1-5-21, four sub-authorities) and service (S-1-5-80, five) SIDs only, each one a peer may carry", async () => {
     const { isAccountSid } = await import("../broker-wire/index.js");
-    const sids = ["S-1-5-21-1-2-3-4", "S-1-5-80-1-2-3-4-5", "S-1-5-18", "S-1-5-21-01-2-3-4", "S-1-5-21-4294967296-2-3-4", "", 7];
-    for (const sid of sids) {
-      const peer = (() => {
-        try {
-          return parsePeer({ ...windows, sid });
-        } catch (error) {
-          expect(error).toBeInstanceOf(BrokerWireError);
-          return undefined;
-        }
-      })();
-      expect(isAccountSid(sid)).toBe(peer !== undefined);
+    for (const sid of ["S-1-5-21-0-0-0-0", "S-1-5-21-4294967295-4294967295-4294967295-4294967295", "S-1-5-80-0-1-2-3-4"]) {
+      expect(isAccountSid(sid)).toBe(true);
+      expect(parsePeer({ ...windows, sid }).sid).toBe(sid);
+    }
+    for (const sid of [
+      "S-1-5-18",
+      "S-1-5-19",
+      "S-1-5-32-544",
+      "S-1-12-1-1-2-3-4",
+      "S-1-5-21-1-2-3",
+      "S-1-5-21-1-2-3-4-5",
+      "S-1-5-80-1-2-3-4",
+      "S-1-5-80-1-2-3-4-5-6",
+      "S-1-5-21-01-2-3-4",
+      "S-1-5-21-4294967296-2-3-4",
+      "s-1-5-21-1-2-3-4",
+      "S-1-5-21-1-2-3-4 ",
+      "",
+      7,
+    ]) {
+      expect(isAccountSid(sid)).toBe(false);
     }
   });
 });

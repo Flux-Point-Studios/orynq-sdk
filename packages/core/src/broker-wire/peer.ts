@@ -14,7 +14,10 @@ export interface LinuxPeer {
 
 export interface WindowsPeer {
   readonly os: "windows";
-  /** A user (S-1-5-21-…) or service (S-1-5-80-…) SID. */
+  /**
+   * The client token's user SID as ConvertSidToStringSidW spells it: a user (S-1-5-21-…) or
+   * service (S-1-5-80-…) SID, or another account the pipe admits, such as SYSTEM (S-1-5-18).
+   */
   readonly sid: string;
   /** The logon session LUID as a canonical decimal u64. */
   readonly logonLuid: string;
@@ -34,17 +37,21 @@ const KEYS = {
 const U32_MAX = 0xffff_ffff;
 const U64_MAX = (1n << 64n) - 1n;
 const SUBAUTHORITY = "(0|[1-9][0-9]{0,9})";
-const SID = new RegExp(`^S-1-5-(21(-${SUBAUTHORITY}){4}|80(-${SUBAUTHORITY}){5})$`);
+const ACCOUNT_SID = new RegExp(`^S-1-5-(21(-${SUBAUTHORITY}){4}|80(-${SUBAUTHORITY}){5})$`);
+// ConvertSidToStringSidW spells an authority of 2^32 or more in hex; no token a pipe admits has one.
+const SID = new RegExp(`^S-1-${SUBAUTHORITY}(-${SUBAUTHORITY}){1,15}$`);
 const DECIMAL = /^(0|[1-9][0-9]{0,19})$/;
 // kernfs refuses "\n" in a cgroup name so that /proc/<pid>/cgroup stays one line per hierarchy.
 const CGROUP = /^(\/|(\/[^/\0\n]+)+)$/;
 const MAX_CGROUP_BYTES = 4096;
 const MAX_PEER_VALUES = 16;
 
-// A user (S-1-5-21-…) or service (S-1-5-80-…) SID in canonical form: the only accounts a Windows
-// peer may name, since groups and well-known SIDs stand for whole populations.
-export const isAccountSid = (value: unknown): value is string =>
-  typeof value === "string" && SID.test(value) && value.split("-").slice(3).every(part => Number(part) <= U32_MAX);
+const isSid = (value: unknown, form: RegExp): value is string =>
+  typeof value === "string" && form.test(value) && value.split("-").slice(2).every(part => Number(part) <= U32_MAX);
+
+// A user (S-1-5-21-…) or service (S-1-5-80-…) SID in canonical form: the only accounts a principal
+// may be configured as, since groups and well-known SIDs stand for whole populations.
+export const isAccountSid = (value: unknown): value is string => isSid(value, ACCOUNT_SID);
 
 const isU32 = (value: unknown): value is number =>
   typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= U32_MAX && !Object.is(value, -0);
@@ -54,7 +61,7 @@ const FIELDS: Readonly<Record<string, (value: unknown) => boolean>> = {
   gid: isU32,
   pidHint: value => value === null || isU32(value),
   cgroup: value => typeof value === "string" && CGROUP.test(value) && new TextEncoder().encode(value).length <= MAX_CGROUP_BYTES,
-  sid: isAccountSid,
+  sid: value => isSid(value, SID),
   logonLuid: value => typeof value === "string" && DECIMAL.test(value) && BigInt(value) <= U64_MAX,
   tsSessionId: isU32,
   integrityRid: isU32,

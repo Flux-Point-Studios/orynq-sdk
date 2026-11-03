@@ -65,7 +65,7 @@ async function openSession(broker: Broker, mandates = [REGISTERED[0]!]): Promise
 describe("principals", () => {
   it("are unknown for an anonymous client and any peer the configuration does not name", () => {
     const broker = new Broker(options());
-    for (const peer of [null, linux(4242, "/user.slice"), linux(0, "/"), windows("S-1-5-21-9-9-9-9")] as (Peer | null)[]) {
+    for (const peer of [null, linux(4242, "/user.slice"), linux(0, "/"), windows("S-1-5-21-9-9-9-9"), windows("S-1-5-18")] as (Peer | null)[]) {
       expect(broker.principalOf(peer)).toBeUndefined();
     }
   });

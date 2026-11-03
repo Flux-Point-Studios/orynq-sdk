@@ -9,10 +9,12 @@ transport frontends that own its sockets and pipes.
 unknown or missing key: `{os: "linux", uid, gid, pidHint, cgroup}` and
 `{os: "windows", sid, logonLuid, tsSessionId, integrityRid, pidHint}`. uid,
 gid, tsSessionId and integrityRid are u32 numbers, pidHint a u32 number or
-null, cgroup an absolute cgroup v2 path of at most 4096 UTF-8 bytes, sid a
-canonical user (`S-1-5-21-` plus four sub-authorities) or service
-(`S-1-5-80-` plus five) SID, and logonLuid a canonical decimal u64 string.
-`isAccountSid(value)` is that SID check on its own, for configuration.
+null, cgroup an absolute cgroup v2 path of at most 4096 UTF-8 bytes, sid any
+SID as `ConvertSidToStringSidW` spells it (a decimal authority and 1 to 15
+decimal u32 sub-authorities, such as SYSTEM's `S-1-5-18`), and logonLuid a
+canonical decimal u64 string. `isAccountSid(value)` is the narrower check
+for configuration: a canonical user (`S-1-5-21-` plus four sub-authorities)
+or service (`S-1-5-80-` plus five) SID.
 `decodeOpenPayload(bytes)` reads an OPEN payload: the literal bytes `null`
 for a client the frontend could not identify, otherwise one peer as strict
 JSON. Refusals throw `BrokerWireError` naming the field, never quoting it.

@@ -98,6 +98,20 @@ describe("serveMux", () => {
     expect(f.reports[0]).toMatchObject({ name: "BrokerWireError", code: "PEER_INVALID" });
   });
 
+  // The Windows sidecar's DACL admits SYSTEM, whose token names no account a principal can.
+  it("answers PEER_UNKNOWN to SYSTEM without reporting it, and counts it apart from anonymous clients", async () => {
+    const f = frontend();
+    await ready(f);
+    const system: WindowsPeer = { os: "windows", sid: "S-1-5-18", logonLuid: "999", tsSessionId: 0, integrityRid: 0x4000, pidHint: null };
+    for (let conn = 1n; conn <= 33n; conn++) f.open(conn, system);
+    f.open(34n, null);
+    for (const conn of [1n, 34n]) f.call(conn, "broker.hello");
+    await vi.waitFor(() => expect([1n, 34n].map(conn => f.replies(conn).length)).toEqual([1, 1]));
+    for (const conn of [1n, 34n]) expect(f.replies(conn)[0]).toMatchObject({ error: { code: -32001 } });
+    expect(f.reports).toEqual([]);
+    expect(f.closes()).toEqual([33n]);
+  });
+
   it("answers a request it cannot decode from the error table with id null", async () => {
     const f = frontend();
     await ready(f);
