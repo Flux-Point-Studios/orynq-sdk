@@ -33,7 +33,7 @@ use serde_json::json;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream, unix::OwnedReadHalf},
-    sync::mpsc,
+    sync::{OwnedSemaphorePermit, Semaphore, mpsc},
     time::{Instant, sleep, sleep_until, timeout},
 };
 
@@ -49,6 +49,11 @@ const MAX_CONNECTIONS: usize = 1024;
 // Descriptors kept back from connections: stdio, the runtime's and the listener's, and the pidfd
 // and /proc file each identification opens.
 const RESERVED_FDS: libc::rlim_t = 64;
+// Request bytes read or waiting for stdout, per uid (every unidentified client together is one)
+// and in all. Each request reserves its announced length before its body is read, so a client that
+// announces and stalls blocks only its own uid's share.
+const UID_BUDGET: u32 = 64 << 20;
+const TOTAL_BUDGET: u32 = 256 << 20;
 const BACKLOG: libc::c_int = 128;
 const CGROUP_ROOT: &str = "/sys/fs/cgroup";
 
@@ -65,8 +70,14 @@ enum Command {
 
 enum Incoming {
     /// A request, already framed as the FRAME message that carries it to the parent.
-    Request(Vec<u8>),
+    Request(Vec<u8>, Hold),
     End,
+}
+
+struct Outgoing {
+    message: Vec<u8>,
+    /// The budget a request's bytes hold until they are written to stdout.
+    hold: Option<Hold>,
 }
 
 /// The socket file this process created, so it removes only that file on exit.
@@ -87,7 +98,7 @@ impl SocketFile {
 }
 
 struct Shared {
-    out: mpsc::Sender<Vec<u8>>,
+    out: mpsc::Sender<Outgoing>,
     conns: Mutex<HashMap<u64, mpsc::Sender<Command>>>,
     limits: Arc<Limits>,
     idle: Duration,
@@ -95,16 +106,19 @@ struct Shared {
 }
 
 /// The connections admitted, counted per peer (every unidentified client together is one), per
-/// uid (None for the unidentified) and in all.
+/// uid (None for the unidentified) and in all, and the request bytes they hold.
 struct Limits {
     max_connections: usize,
     admitted: Mutex<Admitted>,
+    budget: Arc<Semaphore>,
 }
 
 #[derive(Default)]
 struct Admitted {
     peers: HashMap<String, usize>,
     uids: HashMap<Option<u32>, usize>,
+    // A uid's budget leaves with its last connection; a reservation outliving it keeps its own.
+    budgets: HashMap<Option<u32>, Arc<Semaphore>>,
     total: usize,
 }
 
@@ -113,6 +127,7 @@ impl Limits {
         Arc::new(Limits {
             max_connections,
             admitted: Mutex::default(),
+            budget: Arc::new(Semaphore::new(TOTAL_BUDGET as usize)),
         })
     }
 
@@ -135,10 +150,20 @@ impl Limits {
         admitted.total += 1;
         *admitted.peers.entry(key.clone()).or_default() += 1;
         *admitted.uids.entry(uid).or_default() += 1;
+        let budget = Budget {
+            uid: Arc::clone(
+                admitted
+                    .budgets
+                    .entry(uid)
+                    .or_insert_with(|| Arc::new(Semaphore::new(UID_BUDGET as usize))),
+            ),
+            total: Arc::clone(&self.budget),
+        };
         Some(Slot {
             limits: Arc::clone(self),
             key,
             uid,
+            budget,
         })
     }
 }
@@ -147,6 +172,7 @@ struct Slot {
     limits: Arc<Limits>,
     key: String,
     uid: Option<u32>,
+    budget: Budget,
 }
 
 impl Drop for Slot {
@@ -154,26 +180,58 @@ impl Drop for Slot {
         let mut admitted = self.limits.admitted();
         admitted.total -= 1;
         release(&mut admitted.peers, &self.key);
-        release(&mut admitted.uids, &self.uid);
+        if release(&mut admitted.uids, &self.uid) {
+            admitted.budgets.remove(&self.uid);
+        }
     }
 }
 
-fn release<K: Eq + std::hash::Hash>(counts: &mut HashMap<K, usize>, key: &K) {
-    if let Some(count) = counts.get_mut(key) {
-        *count -= 1;
-        if *count == 0 {
-            counts.remove(key);
-        }
+/// Whether the key's count reached zero, and left the map.
+fn release<K: Eq + std::hash::Hash>(counts: &mut HashMap<K, usize>, key: &K) -> bool {
+    let Some(count) = counts.get_mut(key) else {
+        return false;
+    };
+    *count -= 1;
+    let gone = *count == 0;
+    if gone {
+        counts.remove(key);
+    }
+    gone
+}
+
+#[derive(Clone)]
+struct Budget {
+    uid: Arc<Semaphore>,
+    total: Arc<Semaphore>,
+}
+
+struct Hold {
+    _uid: OwnedSemaphorePermit,
+    _total: OwnedSemaphorePermit,
+}
+
+impl Budget {
+    // The uid's share first, so a uid waiting on the total holds no more than its own share.
+    async fn reserve(&self, bytes: u32) -> Option<Hold> {
+        let uid = Arc::clone(&self.uid).acquire_many_owned(bytes).await.ok()?;
+        let total = Arc::clone(&self.total)
+            .acquire_many_owned(bytes)
+            .await
+            .ok()?;
+        Some(Hold {
+            _uid: uid,
+            _total: total,
+        })
     }
 }
 
 impl Shared {
     async fn emit(&self, kind: u8, conn: u64, payload: &[u8]) {
-        self.send(message(kind, conn, payload)).await;
+        self.send(message(kind, conn, payload), None).await;
     }
 
-    async fn send(&self, message: Vec<u8>) {
-        if self.out.send(message).await.is_err() {
+    async fn send(&self, message: Vec<u8>, hold: Option<Hold>) {
+        if self.out.send(Outgoing { message, hold }).await.is_err() {
             self.exit(0);
         }
     }
@@ -543,6 +601,7 @@ async fn read_requests(
     mut reader: OwnedReadHalf,
     conn: u64,
     in_flight: Arc<AtomicBool>,
+    budget: Budget,
     requests: mpsc::Sender<Incoming>,
 ) {
     loop {
@@ -562,6 +621,9 @@ async fn read_requests(
         if length == 0 || length > MAX_FRAME {
             return;
         }
+        let Some(hold) = budget.reserve(length).await else {
+            return;
+        };
         let total = 13 + length as usize;
         let mut message = Vec::with_capacity(total);
         message.extend_from_slice(&header(FRAME, conn, length));
@@ -575,7 +637,11 @@ async fn read_requests(
             }
         }
         in_flight.store(true, Ordering::SeqCst);
-        if requests.send(Incoming::Request(message)).await.is_err() {
+        if requests
+            .send(Incoming::Request(message, hold))
+            .await
+            .is_err()
+        {
             return;
         }
     }
@@ -585,7 +651,7 @@ async fn read_requests(
 // drained; a reply that does not drain within the idle period closes the connection too.
 async fn serve(stream: UnixStream, conn: u64, shared: Arc<Shared>) {
     let peer = identify(stream.as_raw_fd());
-    let Some(_slot) = shared.limits.claim(peer.as_ref()) else {
+    let Some(slot) = shared.limits.claim(peer.as_ref()) else {
         return;
     };
     let (commands_tx, mut commands) = mpsc::channel(4);
@@ -600,6 +666,7 @@ async fn serve(stream: UnixStream, conn: u64, shared: Arc<Shared>) {
         reader,
         conn,
         Arc::clone(&in_flight),
+        slot.budget.clone(),
         requests_tx,
     ));
     let mut deadline = Instant::now() + shared.idle;
@@ -607,7 +674,7 @@ async fn serve(stream: UnixStream, conn: u64, shared: Arc<Shared>) {
     loop {
         tokio::select! {
             incoming = requests.recv(), if !ending => match incoming {
-                Some(Incoming::Request(message)) => shared.send(message).await,
+                Some(Incoming::Request(message, hold)) => shared.send(message, Some(hold)).await,
                 Some(Incoming::End) if in_flight.load(Ordering::SeqCst) => ending = true,
                 _ => break,
             },
@@ -672,7 +739,7 @@ async fn run(
             return Err(format!("cannot serve the socket: {error}"));
         }
     };
-    let (out, mut outgoing) = mpsc::channel::<Vec<u8>>(64);
+    let (out, mut outgoing) = mpsc::channel::<Outgoing>(64);
     let shared = Arc::new(Shared {
         out,
         conns: Mutex::default(),
@@ -683,10 +750,11 @@ async fn run(
     let writer = Arc::clone(&shared);
     tokio::spawn(async move {
         let mut stdout = tokio::io::stdout();
-        while let Some(message) = outgoing.recv().await {
+        while let Some(Outgoing { message, hold }) = outgoing.recv().await {
             if stdout.write_all(&message).await.is_err() || stdout.flush().await.is_err() {
                 writer.exit(0);
             }
+            drop(hold);
         }
     });
     tokio::spawn(route_commands(Arc::clone(&shared)));
@@ -860,9 +928,46 @@ mod tests {
         assert!(limits.claim(Some(&peer(9, 9, "/"))).is_none());
         assert!(limits.claim(None).is_none());
         drop(slots);
-        assert_eq!(limits.admitted().total, 0);
-        assert!(limits.admitted().peers.is_empty() && limits.admitted().uids.is_empty());
+        let admitted = limits.admitted();
+        assert_eq!(admitted.total, 0);
+        assert!(
+            admitted.peers.is_empty() && admitted.uids.is_empty() && admitted.budgets.is_empty()
+        );
+        drop(admitted);
         assert!(limits.claim(None).is_some());
+    }
+
+    async fn waits(budget: &Budget, bytes: u32) -> bool {
+        timeout(Duration::from_millis(100), budget.reserve(bytes))
+            .await
+            .is_err()
+    }
+
+    #[tokio::test]
+    async fn reserves_request_bytes_up_to_64_mib_per_uid_and_256_mib_in_all() {
+        let limits = Limits::new(MAX_CONNECTIONS);
+        let slots: Vec<Slot> = (0..5)
+            .map(|uid| limits.claim(Some(&peer(uid, uid, "/"))).unwrap())
+            .collect();
+        let mut holds = Vec::new();
+        for slot in &slots[..4] {
+            holds.push(slot.budget.reserve(UID_BUDGET).await.unwrap());
+        }
+        assert!(waits(&slots[4].budget, 1).await);
+        holds.pop();
+        assert!(waits(&slots[0].budget, 1).await);
+        let _fifth = slots[4].budget.reserve(UID_BUDGET).await.unwrap();
+
+        let shared = Limits::new(MAX_CONNECTIONS);
+        let [anonymous, other_anonymous] = [(); 2].map(|()| shared.claim(None).unwrap());
+        let one_cgroup = shared.claim(Some(&peer(7, 1, "/a"))).unwrap();
+        let another_cgroup = shared.claim(Some(&peer(7, 2, "/b"))).unwrap();
+        let _held = (
+            anonymous.budget.reserve(UID_BUDGET).await.unwrap(),
+            one_cgroup.budget.reserve(UID_BUDGET).await.unwrap(),
+        );
+        assert!(waits(&other_anonymous.budget, 1).await);
+        assert!(waits(&another_cgroup.budget, 1).await);
     }
 
     fn pair() -> [OwnedFd; 2] {

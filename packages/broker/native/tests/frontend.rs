@@ -13,8 +13,9 @@ use std::{
         },
     },
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, Command, ExitStatus, Stdio},
+    process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio},
     sync::{
+        Arc,
         atomic::{AtomicU32, Ordering},
         mpsc,
     },
@@ -649,8 +650,8 @@ fn closes_a_connection_on_the_first_byte_it_sends_while_a_request_runs() {
     assert_closed(&mut client);
 }
 
-fn peak_kib(frontend: &Frontend) -> u64 {
-    let status = fs::read_to_string(format!("/proc/{}/status", frontend.child.id())).unwrap();
+fn peak_kib(pid: u32) -> u64 {
+    let status = fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
     status
         .lines()
         .find_map(|line| line.strip_prefix("VmHWM:"))
@@ -667,7 +668,7 @@ fn forwards_a_16_mib_request_holding_one_copy_of_it() {
     let dir = TempDir::new();
     let mut frontend = Frontend::start(&dir, &[]);
     let (client, conn) = frontend.connect();
-    let before = peak_kib(&frontend);
+    let before = peak_kib(frontend.child.id());
     let writer = {
         let mut client = client.try_clone().unwrap();
         thread::spawn(move || client.write_all(&frame(&vec![0x61u8; MAX_FRAME])).unwrap())
@@ -678,8 +679,79 @@ fn forwards_a_16_mib_request_holding_one_copy_of_it() {
         (event.kind, event.conn, event.payload.len()),
         (FRAME, conn, MAX_FRAME)
     );
-    let grown = peak_kib(&frontend) - before;
+    let grown = peak_kib(frontend.child.id()) - before;
     assert!(grown < 24 << 10, "the frontend grew by {grown} KiB");
+}
+
+/// A frontend whose READY was read and nothing after it, so whatever it forwards waits on a full
+/// stdout.
+struct Stalled {
+    child: Child,
+    _stdin: ChildStdin,
+    _stdout: ChildStdout,
+    socket: PathBuf,
+}
+
+impl Stalled {
+    fn start(dir: &TempDir) -> Stalled {
+        let socket = dir.0.join("b.sock");
+        let mut child = command(&socket, &[], 0o022).spawn().unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let mut stdout = child.stdout.take().unwrap();
+        let mut ready = [0u8; 13];
+        stdout.read_exact(&mut ready).unwrap();
+        assert_eq!(ready, [0, 0, 0, 9, READY, 0, 0, 0, 0, 0, 0, 0, 0]);
+        Stalled {
+            child,
+            _stdin: stdin,
+            _stdout: stdout,
+            socket,
+        }
+    }
+}
+
+impl Drop for Stalled {
+    fn drop(&mut self) {
+        self.child.kill().ok();
+        self.child.wait().ok();
+    }
+}
+
+#[test]
+fn holds_at_most_64_mib_of_requests_per_uid_while_its_parent_reads_nothing() {
+    if skip_without_peer_pidfd() {
+        return;
+    }
+    let dir = TempDir::new();
+    let frontend = Stalled::start(&dir);
+    let before = peak_kib(frontend.child.id());
+    let request = Arc::new(frame(&vec![0x62u8; MAX_FRAME]));
+    let clients: Vec<UnixStream> = (0..32)
+        .map(|_| UnixStream::connect(&frontend.socket).unwrap())
+        .collect();
+    // Each client pipelines two requests; a write the frontend leaves unread gives up after 2 s.
+    let writers: Vec<_> = clients
+        .iter()
+        .map(|client| {
+            let mut client = client.try_clone().unwrap();
+            let request = Arc::clone(&request);
+            client
+                .set_write_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            thread::spawn(move || {
+                for _ in 0..2 {
+                    if client.write_all(&request).is_err() {
+                        return;
+                    }
+                }
+            })
+        })
+        .collect();
+    for writer in writers {
+        writer.join().unwrap();
+    }
+    let grown = peak_kib(frontend.child.id()) - before;
+    assert!(grown < 96 << 10, "the frontend grew by {grown} KiB");
 }
 
 #[test]
