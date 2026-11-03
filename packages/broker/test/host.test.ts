@@ -208,6 +208,21 @@ describe("serveMux", () => {
     await vi.waitFor(() => expect(f.replies(2n)).toHaveLength(1));
   });
 
+  it("runs no request that crosses its CLOSE, on a connection it refused or one whose handler failed", async () => {
+    const f = frontend();
+    await ready(f);
+    for (let conn = 1n; conn <= 33n; conn++) f.open(conn, linux(OPERATOR, `/cg/${conn}`));
+    const handle = vi.spyOn(f.b, "handle").mockRejectedValueOnce(new Error("vault unreachable"));
+    f.call(1n, "broker.hello");
+    await vi.waitFor(() => expect(f.closes()).toEqual([33n, 1n]));
+    for (const conn of [1n, 33n]) f.call(conn, "session.open", 9, { mandates: [C] });
+    f.call(2n, "broker.hello");
+    await vi.waitFor(() => expect(f.replies(2n)).toHaveLength(1));
+    expect(handle).toHaveBeenCalledTimes(2);
+    expect(f.replies(2n)[0]).toMatchObject({ result: { journalHead: { seq: "0" } } });
+    expect(f.sent.filter(m => m.kind === MUX_FRAME && m.conn !== 2n)).toEqual([]);
+  });
+
   it("sends no reply for a connection the frontend closed while its request ran", async () => {
     const f = frontend();
     await ready(f);

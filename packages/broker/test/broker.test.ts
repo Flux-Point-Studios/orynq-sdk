@@ -77,6 +77,13 @@ describe("principals", () => {
     expect(broker.principalOf(windows(OPERATOR_SID))).toBe("operator");
   });
 
+  it("match a Windows operator or service SID exactly, never one it is a prefix of", () => {
+    const broker = new Broker(options());
+    for (const sid of [`${OPERATOR_SID}1`, `${OPERATOR_SID}00`, `${SEALED_SID}0`, `${SEALED_SID}5`]) {
+      expect(broker.principalOf(windows(sid))).toBeUndefined();
+    }
+  });
+
   it("name a service by its uid inside its unit's cgroup, or by its service SID", () => {
     const broker = new Broker(options());
     expect(broker.principalOf(linux(DRAIN, DRAIN_UNIT))).toBe("service:drain");
