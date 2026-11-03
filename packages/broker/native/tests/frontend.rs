@@ -1,12 +1,12 @@
+mod support;
+
 use std::{
-    ffi::CString,
     fs,
     io::{ErrorKind, Read, Write},
     net::Shutdown,
     os::{
-        fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
+        fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::{
-            ffi::{OsStrExt, OsStringExt},
             fs::{FileTypeExt, MetadataExt, PermissionsExt, symlink},
             net::{UnixListener, UnixStream},
             process::CommandExt,
@@ -22,6 +22,9 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use support::{
+    Connector, cgroup_dir, cgroups_or_skip, connect_from_child, kernel_release, own_cgroup,
+};
 
 const READY: u8 = 0;
 const OPEN: u8 = 1;
@@ -30,7 +33,6 @@ const CLOSE: u8 = 3;
 const MAX_FRAME: usize = 16 << 20;
 const WAIT: Duration = Duration::from_secs(20);
 const QUIET: Duration = Duration::from_millis(500);
-const CGROUP_ROOT: &str = "/sys/fs/cgroup";
 
 struct Event {
     kind: u8,
@@ -236,174 +238,53 @@ fn expect_close(frontend: &mut Frontend, conn: u64) {
     );
 }
 
-fn kernel_release() -> (u32, u32) {
-    let mut name: libc::utsname = unsafe { std::mem::zeroed() };
-    assert_eq!(unsafe { libc::uname(&mut name) }, 0);
-    let release = unsafe { std::ffi::CStr::from_ptr(name.release.as_ptr()) }
-        .to_str()
-        .unwrap();
-    let mut parts = release
-        .split(|c: char| !c.is_ascii_digit())
-        .map(|part| part.parse().unwrap());
-    (parts.next().unwrap(), parts.next().unwrap())
-}
-
-fn has_peer_pidfd() -> bool {
+// Whether this kernel reports a peer's cgroup id: SO_PEERPIDFD (Linux 6.5) names the peer and
+// PIDFD_GET_INFO (Linux 6.13) gives its cgroup id.
+fn kernel_reports_cgroup_ids() -> bool {
     let mut fds = [0; 2];
     assert_eq!(
-        unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) },
+        unsafe {
+            libc::socketpair(
+                libc::AF_UNIX,
+                libc::SOCK_STREAM | libc::SOCK_CLOEXEC,
+                0,
+                fds.as_mut_ptr(),
+            )
+        },
         0
     );
+    let [ours, _theirs] = fds.map(|fd| unsafe { OwnedFd::from_raw_fd(fd) });
     let mut pidfd: libc::c_int = -1;
     let mut size = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
     let found = unsafe {
         libc::getsockopt(
-            fds[0],
+            ours.as_raw_fd(),
             libc::SOL_SOCKET,
             libc::SO_PEERPIDFD,
             (&raw mut pidfd).cast(),
             &mut size,
         )
     } == 0;
-    unsafe {
-        libc::close(fds[0]);
-        libc::close(fds[1]);
-        if found {
-            libc::close(pidfd);
-        }
+    if !found {
+        return false;
     }
-    found
+    let pidfd = unsafe { OwnedFd::from_raw_fd(pidfd) };
+    let mut info: libc::pidfd_info = unsafe { std::mem::zeroed() };
+    info.mask = u64::from(libc::PIDFD_INFO_CGROUPID);
+    let reported =
+        unsafe { libc::ioctl(pidfd.as_raw_fd(), libc::PIDFD_GET_INFO, &raw mut info) } == 0;
+    reported && info.mask & u64::from(libc::PIDFD_INFO_CGROUPID) != 0
 }
 
-// The frontend refuses to start without SO_PEERPIDFD, which
-// starts_only_where_the_kernel_has_so_peerpidfd proves; every test that runs it checks first.
-fn skip_without_peer_pidfd() -> bool {
-    let missing = !has_peer_pidfd();
+// The frontend refuses to start where the kernel cannot report a peer's cgroup id, which
+// starts_only_where_the_kernel_reports_a_peers_cgroup_id proves; every test that runs it checks
+// first.
+fn skip_without_cgroup_ids() -> bool {
+    let missing = !kernel_reports_cgroup_ids();
     if missing {
-        eprintln!("skipped: this kernel lacks SO_PEERPIDFD (Linux 6.5)");
+        eprintln!("skipped: this kernel cannot report a peer's cgroup id (Linux 6.13)");
     }
     missing
-}
-
-fn own_cgroup() -> String {
-    let text = fs::read_to_string("/proc/self/cgroup").unwrap();
-    text.lines()
-        .find_map(|line| line.strip_prefix("0::"))
-        .unwrap()
-        .to_string()
-}
-
-fn cgroup_dir(cgroup: &str) -> PathBuf {
-    Path::new(CGROUP_ROOT).join(cgroup.trim_start_matches('/'))
-}
-
-/// A child process killed and reaped on drop.
-struct Connector(Child);
-
-impl Drop for Connector {
-    fn drop(&mut self) {
-        self.0.kill().ok();
-        self.0.wait().ok();
-    }
-}
-
-// Connects `count` clients from a child process that first joins `cgroup`, when one is given, and
-// then execs `program`. Each connection's peer is that child, and once it has exec'd only this test
-// holds the client ends, since every descriptor here is close-on-exec.
-fn connect_from_child(
-    socket: &Path,
-    count: usize,
-    cgroup: Option<&Path>,
-    program: &[&str],
-) -> (Connector, Vec<UnixStream>) {
-    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
-    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
-    for (slot, byte) in address
-        .sun_path
-        .iter_mut()
-        .zip(socket.as_os_str().as_bytes())
-    {
-        *slot = *byte as libc::c_char;
-    }
-    let clients: Vec<OwnedFd> = (0..count)
-        .map(|_| {
-            let fd =
-                unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
-            assert!(fd >= 0);
-            unsafe { OwnedFd::from_raw_fd(fd) }
-        })
-        .collect();
-    let fds: Vec<RawFd> = clients.iter().map(AsRawFd::as_raw_fd).collect();
-    let procs = cgroup.map(|cgroup| {
-        CString::new(cgroup.join("cgroup.procs").into_os_string().into_vec()).unwrap()
-    });
-    let mut command = Command::new(program[0]);
-    command
-        .args(&program[1..])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    // Only async-signal-safe calls between fork and exec.
-    unsafe {
-        command.pre_exec(move || {
-            if let Some(procs) = &procs {
-                // Writing 0 moves the writing process.
-                let fd = libc::open(procs.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
-                if fd < 0 || libc::write(fd, b"0".as_ptr().cast(), 1) != 1 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                libc::close(fd);
-            }
-            for &fd in &fds {
-                let size = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
-                if libc::connect(fd, (&raw const address).cast(), size) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-            }
-            Ok(())
-        });
-    }
-    let child = Connector(command.spawn().unwrap());
-    (child, clients.into_iter().map(UnixStream::from).collect())
-}
-
-/// Child cgroups of this test's own cgroup, removed on drop once their processes are gone.
-struct Cgroups(Vec<PathBuf>);
-
-impl Drop for Cgroups {
-    fn drop(&mut self) {
-        for path in &self.0 {
-            fs::remove_dir(path).ok();
-        }
-    }
-}
-
-// An unprivileged account can create a cgroup only under one delegated to it (a systemd user
-// session's); elsewhere mkdir is refused, which is the only skip, and it is checked as such.
-fn cgroups_or_skip(count: usize) -> Option<Cgroups> {
-    static NEXT: AtomicU32 = AtomicU32::new(0);
-    let own = cgroup_dir(&own_cgroup());
-    let mut cgroups = Cgroups(Vec::new());
-    for _ in 0..count {
-        let path = own.join(format!(
-            "orynq-sf-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        if let Err(error) = fs::create_dir(&path) {
-            assert!(
-                matches!(
-                    error.raw_os_error(),
-                    Some(libc::EROFS | libc::EACCES | libc::EPERM)
-                ),
-                "{error}"
-            );
-            eprintln!("skipped: no cgroup is delegated to this account ({error})");
-            return None;
-        }
-        cgroups.0.push(path);
-    }
-    Some(cgroups)
 }
 
 fn is_closed(mut client: &UnixStream) -> bool {
@@ -427,7 +308,7 @@ fn exit_with(socket: &Path, args: &[&str]) -> (ExitStatus, String) {
 
 #[test]
 fn opens_each_connection_with_the_identity_the_kernel_recorded() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -449,7 +330,7 @@ fn opens_each_connection_with_the_identity_the_kernel_recorded() {
 
 #[test]
 fn opens_with_null_when_the_connecting_process_is_gone() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -477,7 +358,7 @@ fn connect_and_vanish(frontend: &mut Frontend, count: usize) -> Vec<UnixStream> 
 
 #[test]
 fn admits_at_most_32_unidentified_connections() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -496,7 +377,7 @@ fn admits_at_most_32_unidentified_connections() {
 
 #[test]
 fn admits_at_most_128_connections_per_uid_across_its_cgroups() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let Some(cgroups) = cgroups_or_skip(5) else {
@@ -534,7 +415,7 @@ fn admits_at_most_128_connections_per_uid_across_its_cgroups() {
 
 #[test]
 fn admits_no_more_connections_than_its_descriptors_allow() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -564,7 +445,7 @@ fn refuses_to_start_without_a_descriptor_for_a_connection() {
 
 #[test]
 fn creates_the_socket_with_its_mode_whatever_the_umask() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     for (umask, args, mode) in [
@@ -594,7 +475,7 @@ fn refuses_a_mode_that_is_not_read_write_bits_with_the_owner_able_to_connect() {
 
 #[test]
 fn forwards_each_request_and_writes_its_reply() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -614,7 +495,7 @@ fn forwards_each_request_and_writes_its_reply() {
 
 #[test]
 fn closes_a_connection_that_sends_a_request_before_its_reply() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -637,7 +518,7 @@ fn closes_a_connection_that_sends_a_request_before_its_reply() {
 
 #[test]
 fn closes_a_connection_on_the_first_byte_it_sends_while_a_request_runs() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -662,7 +543,7 @@ fn peak_kib(pid: u32) -> u64 {
 
 #[test]
 fn forwards_a_16_mib_request_holding_one_copy_of_it() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -719,7 +600,7 @@ impl Drop for Stalled {
 
 #[test]
 fn holds_at_most_64_mib_of_requests_per_uid_while_its_parent_reads_nothing() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -756,7 +637,7 @@ fn holds_at_most_64_mib_of_requests_per_uid_while_its_parent_reads_nothing() {
 
 #[test]
 fn takes_frames_of_1_byte_to_16_mib_and_drops_a_client_that_sends_another() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -787,7 +668,7 @@ fn takes_frames_of_1_byte_to_16_mib_and_drops_a_client_that_sends_another() {
 
 #[test]
 fn closes_a_connection_that_completes_no_request_while_idle() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -808,7 +689,7 @@ fn closes_a_connection_that_completes_no_request_while_idle() {
 
 #[test]
 fn stops_the_idle_clock_while_a_request_runs_and_restarts_it_when_the_reply_drains() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -830,7 +711,7 @@ fn stops_the_idle_clock_while_a_request_runs_and_restarts_it_when_the_reply_drai
 
 #[test]
 fn closes_a_connection_whose_client_leaves_its_reply_unread() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -851,7 +732,7 @@ fn closes_a_connection_whose_client_leaves_its_reply_unread() {
 
 #[test]
 fn answers_a_client_that_half_closes_after_its_request_then_closes() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -873,7 +754,7 @@ fn answers_a_client_that_half_closes_after_its_request_then_closes() {
 
 #[test]
 fn closes_a_connection_when_the_parent_closes_it_or_answers_no_request() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -895,7 +776,7 @@ fn closes_a_connection_when_the_parent_closes_it_or_answers_no_request() {
 
 #[test]
 fn admits_at_most_32_connections_per_peer() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -912,7 +793,7 @@ fn admits_at_most_32_connections_per_peer() {
 
 #[test]
 fn exits_when_stdin_closes_and_removes_its_socket() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -926,7 +807,7 @@ fn exits_when_stdin_closes_and_removes_its_socket() {
 
 #[test]
 fn exits_on_a_parent_message_it_does_not_accept() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let mut cases: Vec<Vec<u8>> = vec![
@@ -958,7 +839,7 @@ fn exits_on_a_parent_message_it_does_not_accept() {
 
 #[test]
 fn refuses_a_path_that_exists_and_is_not_its_own_socket() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -998,7 +879,7 @@ fn refuses_a_path_that_exists_and_is_not_its_own_socket() {
 
 #[test]
 fn refuses_a_socket_another_process_is_serving() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -1011,7 +892,7 @@ fn refuses_a_socket_another_process_is_serving() {
 
 #[test]
 fn replaces_its_own_stale_socket() {
-    if skip_without_peer_pidfd() {
+    if skip_without_cgroup_ids() {
         return;
     }
     let dir = TempDir::new();
@@ -1024,18 +905,83 @@ fn replaces_its_own_stale_socket() {
 }
 
 #[test]
-fn starts_only_where_the_kernel_has_so_peerpidfd() {
+fn starts_only_where_the_kernel_reports_a_peers_cgroup_id() {
     let dir = TempDir::new();
-    if has_peer_pidfd() {
+    if kernel_reports_cgroup_ids() {
         Frontend::start(&dir, &[]);
         return;
     }
     let (major, minor) = kernel_release();
     assert!(
-        (major, minor) < (6, 5),
-        "SO_PEERPIDFD is missing on Linux {major}.{minor}"
+        (major, minor) < (6, 13),
+        "PIDFD_GET_INFO is missing on Linux {major}.{minor}"
     );
     let (status, stderr) = exit_with(&dir.0.join("b.sock"), &[]);
     assert_eq!(status.code(), Some(1));
-    assert!(stderr.contains("lacks SO_PEERPIDFD"), "{stderr}");
+    assert!(
+        stderr.contains("cannot identify a peer by its cgroup"),
+        "{stderr}"
+    );
+}
+
+// Answers PIDFD_GET_INFO with ENOTTY in the child alone, as a kernel before 6.13 does.
+fn refuse_pidfd_get_info(command: &mut Command) {
+    let statement = |code: u32, k: u32| libc::sock_filter {
+        code: code as u16,
+        jt: 0,
+        jf: 0,
+        k,
+    };
+    let jump = |k: u32, jf: u8| libc::sock_filter {
+        code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+        jt: 0,
+        jf,
+        k,
+    };
+    let filter = [
+        statement(libc::BPF_LD | libc::BPF_W | libc::BPF_ABS, 0),
+        jump(libc::SYS_ioctl as u32, 3),
+        // The low half of the request, args[1], on a little-endian machine.
+        statement(libc::BPF_LD | libc::BPF_W | libc::BPF_ABS, 24),
+        jump(libc::PIDFD_GET_INFO as u32, 1),
+        statement(
+            libc::BPF_RET | libc::BPF_K,
+            libc::SECCOMP_RET_ERRNO | libc::ENOTTY as u32,
+        ),
+        statement(libc::BPF_RET | libc::BPF_K, libc::SECCOMP_RET_ALLOW),
+    ];
+    unsafe {
+        command.pre_exec(move || {
+            let program = libc::sock_fprog {
+                len: filter.len() as u16,
+                filter: filter.as_ptr().cast_mut(),
+            };
+            if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0
+                || libc::syscall(
+                    libc::SYS_seccomp,
+                    libc::SECCOMP_SET_MODE_FILTER,
+                    0,
+                    &raw const program,
+                ) != 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[test]
+fn refuses_to_start_where_the_kernel_cannot_report_a_peers_cgroup_id() {
+    let dir = TempDir::new();
+    let mut command = command(&dir.0.join("b.sock"), &[], 0o022);
+    refuse_pidfd_get_info(&mut command);
+    let output = command.stdin(Stdio::null()).output().unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("cannot identify a peer by its cgroup"),
+        "{stderr}"
+    );
+    assert!(!dir.0.join("b.sock").exists());
 }

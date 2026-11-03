@@ -23,8 +23,9 @@ const CGROUP_ROOT = "/sys/fs/cgroup";
 const C = "11".repeat(32);
 
 const [major = 0, minor = 0] = release().split(/[^0-9]+/).map(Number);
-// The frontend refuses to start without SO_PEERPIDFD (Linux 6.5); the first test proves it.
-const hasPeerPidfd = major > 6 || (major === 6 && minor >= 5);
+// The frontend refuses to start where the kernel cannot report a peer's cgroup id (PIDFD_GET_INFO,
+// Linux 6.13); the first test proves it.
+const hasCgroupIds = major > 6 || (major === 6 && minor >= 13);
 
 // Agent tests need a peer inside a session unit's cgroup, which an unprivileged process can make
 // only under a cgroup delegated to it; the delegation test proves why it cannot elsewhere.
@@ -96,16 +97,16 @@ async function code(promise: Promise<unknown>): Promise<number | string> {
   throw new Error("the request succeeded");
 }
 
-it("starts the frontend where the kernel has SO_PEERPIDFD, and is refused where it does not", async () => {
-  if (hasPeerPidfd) {
+it("starts the frontend where the kernel reports a peer's cgroup id, and is refused where it does not", async () => {
+  if (hasCgroupIds) {
     const { frontend } = await start({ operatorUid: UID });
     expect(existsSync(frontend.socket)).toBe(true);
     return;
   }
-  await expect(start({ operatorUid: UID })).rejects.toThrow("lacks SO_PEERPIDFD");
+  await expect(start({ operatorUid: UID })).rejects.toThrow("cannot identify a peer by its cgroup");
 });
 
-describe.runIf(hasPeerPidfd)("over a real socket", () => {
+describe.runIf(hasCgroupIds)("over a real socket", () => {
   it("reports this process's uid, gid, pid and cgroup as the peer, and maps it to its service", async () => {
     const { broker, frontend } = await start({ services: { e2e: { uid: UID, cgroup: OWN_CGROUP } } });
     const client = await connect(frontend);
@@ -196,7 +197,7 @@ describe.runIf(hasPeerPidfd)("over a real socket", () => {
   });
 });
 
-it.runIf(hasPeerPidfd && refusedDelegation !== undefined)("cannot place a peer in a session's cgroup here, because no cgroup is delegated to this account", () => {
+it.runIf(hasCgroupIds && refusedDelegation !== undefined)("cannot place a peer in a session's cgroup here, because no cgroup is delegated to this account", () => {
   expect(["EROFS", "EACCES", "EPERM"]).toContain(refusedDelegation!.code);
 });
 
@@ -216,7 +217,7 @@ async function inCgroup<T>(name: string, run: () => Promise<T>): Promise<T> {
   }
 }
 
-describe.runIf(hasPeerPidfd && refusedDelegation === undefined)("with a session unit cgroup delegated to this account", () => {
+describe.runIf(hasCgroupIds && refusedDelegation === undefined)("with a session unit cgroup delegated to this account", () => {
   it("names an agent in its session's unit cgroup, admits 8 of its connections and refuses the 9th", async () => {
     const { broker, frontend } = await start({ agent: { uid: UID, slice: OWN_CGROUP } });
     const opened = JSON.parse(

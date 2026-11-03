@@ -162,8 +162,8 @@ export interface LinuxFrontend {
 }
 
 // Spawns the Linux frontend and serves the broker over its mux. Rejects with the frontend's own
-// message if it exits before READY, as it does for a squatted path or a kernel without
-// SO_PEERPIDFD. A frontend that breaks the protocol is reported and killed.
+// message if it exits before READY, as it does for a squatted path or a kernel that cannot report a
+// peer's cgroup id. A frontend that breaks the protocol is reported and killed.
 export function startLinuxFrontend(options: LinuxFrontendOptions): Promise<LinuxFrontend> {
   const report = options.onError ?? ((error: unknown) => process.emitWarning(error instanceof Error ? error : String(error)));
   const args = ["--socket", options.socket];

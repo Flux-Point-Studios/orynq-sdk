@@ -335,33 +335,13 @@ fn pidfd_info(pidfd: &OwnedFd) -> io::Result<libc::pidfd_info> {
     Ok(info)
 }
 
-/// The pid /proc/self/fdinfo shows for a pidfd: -1 once the process is reaped, 0 outside this pid
-/// namespace.
-fn fdinfo_pid(pidfd: &OwnedFd) -> Option<u32> {
-    let text = fs::read_to_string(format!("/proc/self/fdinfo/{}", pidfd.as_raw_fd())).ok()?;
-    let pid: i64 = text
-        .lines()
-        .find_map(|line| line.strip_prefix("Pid:"))?
-        .trim()
-        .parse()
-        .ok()?;
-    u32::try_from(pid).ok().filter(|&pid| pid > 0)
-}
-
-/// The pid of a pidfd's process in this pid namespace, and its cgroup id where PIDFD_GET_INFO
-/// (Linux 6.13) reports one; None once the process has been reaped.
-fn pidfd_process(pidfd: &OwnedFd) -> Option<(u32, Option<u64>)> {
-    match pidfd_info(pidfd) {
-        Ok(info) => {
-            let cgroup =
-                (info.mask & u64::from(libc::PIDFD_INFO_CGROUPID) != 0).then_some(info.cgroupid);
-            (info.tgid > 0).then_some((info.tgid, cgroup))
-        }
-        Err(error) if matches!(error.raw_os_error(), Some(libc::ENOTTY | libc::EINVAL)) => {
-            fdinfo_pid(pidfd).map(|pid| (pid, None))
-        }
-        Err(_) => None,
-    }
+/// The pid of a pidfd's process and its cgroup id; None once the process is reaped. The pid is 0
+/// outside this pid namespace and the id 0 where the kernel reports none, and neither names
+/// anything under /proc or /sys/fs/cgroup.
+fn pidfd_process(pidfd: &OwnedFd) -> Option<(u32, u64)> {
+    pidfd_info(pidfd)
+        .ok()
+        .map(|info| (info.tgid, info.cgroupid))
 }
 
 fn cgroup_path(pid: u32) -> Option<String> {
@@ -370,40 +350,27 @@ fn cgroup_path(pid: u32) -> Option<String> {
     path.starts_with('/').then(|| path.to_string())
 }
 
-fn is_cgroup2(path: &Path) -> bool {
-    let Ok(text) = CString::new(path.as_os_str().as_bytes()) else {
-        return false;
-    };
-    let mut stat = MaybeUninit::<libc::statfs>::zeroed();
-    unsafe {
-        libc::statfs(text.as_ptr(), stat.as_mut_ptr()) == 0
-            && stat.assume_init().f_type == libc::CGROUP2_SUPER_MAGIC
-    }
-}
-
-// On cgroup v2 a cgroup's id is its directory's inode number. Without a cgroup2 mount here there is
-// nothing to compare the id with, and the pidfd-guarded read stands on its own.
+// On cgroup v2 a cgroup's id is its directory's inode number.
 fn same_cgroup(path: &str, id: u64) -> bool {
-    let root = Path::new(CGROUP_ROOT);
-    if !is_cgroup2(root) {
-        return true;
-    }
-    fs::metadata(root.join(path.trim_start_matches('/'))).is_ok_and(|meta| meta.ino() == id)
+    fs::metadata(Path::new(CGROUP_ROOT).join(path.trim_start_matches('/')))
+        .is_ok_and(|meta| meta.ino() == id)
 }
 
 // The kernel's record of who connected: SO_PEERCRED's uid and gid, and the cgroup of the process
 // SO_PEERPIDFD names. /proc/<pid>/cgroup is read only while that pidfd shows the same live pid
-// before and after, so a reused pid cannot answer for it; where PIDFD_GET_INFO gives the cgroup id,
-// the path must be that cgroup's.
+// before and after, so a reused pid cannot answer for it, and the path must name the cgroup whose
+// id PIDFD_GET_INFO reported.
 fn identify(fd: RawFd) -> Option<Peer> {
     let credentials: libc::ucred = getsockopt(fd, libc::SO_PEERCRED).ok()?;
     let pidfd = peer_pidfd(fd).ok()?;
     let (pid, cgroup_id) = pidfd_process(&pidfd)?;
+    #[cfg(test)]
+    tests::between_reads(tests::Read::Pid);
     let cgroup = cgroup_path(pid)?;
-    if pidfd_process(&pidfd)?.0 != pid || cgroup_id.is_some_and(|id| !same_cgroup(&cgroup, id)) {
-        return None;
-    }
-    Some(Peer {
+    #[cfg(test)]
+    tests::between_reads(tests::Read::Cgroup);
+    let same_process = pidfd_process(&pidfd).is_some_and(|(again, _)| again == pid);
+    (same_process && same_cgroup(&cgroup, cgroup_id)).then_some(Peer {
         uid: credentials.uid,
         gid: credentials.gid,
         pid,
@@ -435,7 +402,7 @@ fn connection_ceiling() -> Result<usize, String> {
     }
 }
 
-fn check_kernel() -> Result<(), String> {
+fn socket_pair() -> io::Result<[OwnedFd; 2]> {
     let mut fds = [0; 2];
     if unsafe {
         libc::socketpair(
@@ -446,15 +413,18 @@ fn check_kernel() -> Result<(), String> {
         )
     } != 0
     {
-        return Err(format!(
-            "cannot create a socket pair: {}",
-            io::Error::last_os_error()
-        ));
+        return Err(io::Error::last_os_error());
     }
-    let pair = unsafe { [OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])] };
-    peer_pidfd(pair[0].as_raw_fd())
-        .map(drop)
-        .map_err(|error| format!("this kernel lacks SO_PEERPIDFD (Linux 6.5 or later): {error}"))
+    Ok(fds.map(|fd| unsafe { OwnedFd::from_raw_fd(fd) }))
+}
+
+// The frontend identifies its own end of a socket pair as it would any peer, which fails where the
+// kernel reports no cgroup id (before Linux 6.13) or /sys/fs/cgroup does not resolve one.
+fn check_kernel() -> Result<(), String> {
+    let pair = socket_pair().map_err(|error| format!("cannot create a socket pair: {error}"))?;
+    identify(pair[0].as_raw_fd()).map(drop).ok_or_else(|| {
+        "cannot identify a peer by its cgroup: this needs SO_PEERPIDFD and PIDFD_GET_INFO (Linux 6.13 or later) and the cgroup2 hierarchy at /sys/fs/cgroup".into()
+    })
 }
 
 fn parse_args() -> Result<Config, String> {
@@ -807,8 +777,16 @@ fn main() {
 }
 
 #[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod support;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::support::{
+        Connector, cgroup_dir, cgroups_or_skip, connect_from_child, kernel_release, own_cgroup,
+    };
+    use std::{cell::RefCell, sync::atomic::AtomicU32};
 
     const VECTORS: &str =
         include_str!("../../../core/src/__tests__/fixtures/broker-mux-vectors.json");
@@ -970,110 +948,61 @@ mod tests {
         assert!(waits(&another_cgroup.budget, 1).await);
     }
 
-    fn pair() -> [OwnedFd; 2] {
-        let mut fds = [0; 2];
-        assert_eq!(
-            unsafe {
-                libc::socketpair(
-                    libc::AF_UNIX,
-                    libc::SOCK_STREAM | libc::SOCK_CLOEXEC,
-                    0,
-                    fds.as_mut_ptr(),
-                )
-            },
-            0
-        );
-        unsafe { [OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])] }
-    }
-
-    fn own_cgroup() -> String {
-        cgroup_path(process::id()).unwrap()
-    }
-
-    fn kernel_release() -> (u32, u32) {
-        let mut name: libc::utsname = unsafe { std::mem::zeroed() };
-        assert_eq!(unsafe { libc::uname(&mut name) }, 0);
-        let release = unsafe { std::ffi::CStr::from_ptr(name.release.as_ptr()) };
-        let mut parts = release
-            .to_str()
-            .unwrap()
-            .split(|c: char| !c.is_ascii_digit())
-            .map(|part| part.parse().unwrap());
-        (parts.next().unwrap(), parts.next().unwrap())
-    }
-
-    // A kernel before 6.5 has no SO_PEERPIDFD; that is the only skip, and it is checked as such.
-    fn peer_pidfd_or_skip(fd: RawFd) -> Option<OwnedFd> {
-        match peer_pidfd(fd) {
-            Ok(pidfd) => Some(pidfd),
+    // A kernel before 6.13 cannot report a peer's cgroup id (SO_PEERPIDFD came in 6.5 and
+    // PIDFD_GET_INFO in 6.13); that is the only skip, and it is checked as such.
+    fn pidfd_or_skip(fd: RawFd) -> Option<OwnedFd> {
+        let pidfd = match peer_pidfd(fd) {
+            Ok(pidfd) => pidfd,
             Err(error) => {
                 assert_eq!(error.raw_os_error(), Some(libc::ENOPROTOOPT));
                 assert!(kernel_release() < (6, 5));
                 eprintln!("skipped: this kernel lacks SO_PEERPIDFD (Linux 6.5)");
-                None
+                return None;
             }
+        };
+        if let Err(error) = pidfd_info(&pidfd) {
+            assert!(matches!(
+                error.raw_os_error(),
+                Some(libc::ENOTTY | libc::EINVAL)
+            ));
+            assert!(kernel_release() < (6, 13));
+            eprintln!("skipped: this kernel lacks PIDFD_GET_INFO (Linux 6.13)");
+            return None;
         }
-    }
-
-    // A kernel before 6.13 refuses PIDFD_GET_INFO as an unknown ioctl; that is the only skip.
-    fn pidfd_info_or_skip(pidfd: &OwnedFd) -> Option<libc::pidfd_info> {
-        match pidfd_info(pidfd) {
-            Ok(info) => Some(info),
-            Err(error) => {
-                assert!(matches!(
-                    error.raw_os_error(),
-                    Some(libc::ENOTTY | libc::EINVAL)
-                ));
-                assert!(kernel_release() < (6, 13));
-                eprintln!("skipped: this kernel lacks PIDFD_GET_INFO (Linux 6.13)");
-                None
-            }
-        }
+        Some(pidfd)
     }
 
     #[test]
-    fn names_the_peer_pid_by_pidfd_info_and_by_fdinfo_alike() {
-        let [ours, _theirs] = pair();
-        let Some(pidfd) = peer_pidfd_or_skip(ours.as_raw_fd()) else {
+    fn names_a_peer_by_its_pid_and_cgroup_id() {
+        let [ours, _theirs] = socket_pair().unwrap();
+        let Some(pidfd) = pidfd_or_skip(ours.as_raw_fd()) else {
             return;
         };
-        assert_eq!(fdinfo_pid(&pidfd), Some(process::id()));
-        assert_eq!(
-            pidfd_process(&pidfd).map(|(pid, _)| pid),
-            Some(process::id())
-        );
-        if let Some(info) = pidfd_info_or_skip(&pidfd) {
-            assert_eq!(info.tgid, process::id());
-        }
-    }
-
-    #[test]
-    fn binds_the_cgroup_path_to_the_cgroup_id_the_kernel_reports() {
-        let [ours, _theirs] = pair();
-        let Some(pidfd) = peer_pidfd_or_skip(ours.as_raw_fd()) else {
-            return;
-        };
-        let Some(info) = pidfd_info_or_skip(&pidfd) else {
-            assert_eq!(pidfd_process(&pidfd), Some((process::id(), None)));
-            return;
-        };
+        let info = pidfd_info(&pidfd).unwrap();
         assert_ne!(info.mask & u64::from(libc::PIDFD_INFO_CGROUPID), 0);
-        assert_eq!(
-            pidfd_process(&pidfd),
-            Some((process::id(), Some(info.cgroupid)))
-        );
-        assert!(is_cgroup2(Path::new(CGROUP_ROOT)));
-        assert!(same_cgroup(&own_cgroup(), info.cgroupid));
+        assert_eq!(pidfd_process(&pidfd), Some((process::id(), info.cgroupid)));
+    }
+
+    #[test]
+    fn binds_a_cgroup_path_only_to_the_id_of_its_directory() {
+        let [ours, _theirs] = socket_pair().unwrap();
+        let Some(pidfd) = pidfd_or_skip(ours.as_raw_fd()) else {
+            return;
+        };
+        let (_, id) = pidfd_process(&pidfd).unwrap();
+        let own = own_cgroup();
+        assert!(same_cgroup(&own, id));
+        assert!(!same_cgroup(&own, id + 1));
         assert!(!same_cgroup(
-            &format!("{}/no-such-child", own_cgroup().trim_end_matches('/')),
-            info.cgroupid
+            &format!("{}/no-such-child", own.trim_end_matches('/')),
+            id
         ));
     }
 
     #[test]
     fn identifies_a_socket_peer_as_the_kernel_recorded_it() {
-        let [ours, _theirs] = pair();
-        if peer_pidfd_or_skip(ours.as_raw_fd()).is_none() {
+        let [ours, _theirs] = socket_pair().unwrap();
+        if pidfd_or_skip(ours.as_raw_fd()).is_none() {
             return;
         }
         let peer = identify(ours.as_raw_fd()).unwrap();
@@ -1090,5 +1019,99 @@ mod tests {
             peer.key(),
             format!("{}:{}:{}", peer.uid, peer.gid, peer.cgroup)
         );
+        assert!(check_kernel().is_ok());
+    }
+
+    #[derive(Clone, Copy, PartialEq)]
+    pub(super) enum Read {
+        Pid,
+        Cgroup,
+    }
+
+    type Hook = (Read, Box<dyn FnOnce()>);
+
+    thread_local! {
+        static BETWEEN_READS: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    }
+
+    // Runs the hook a test set on this thread for this point in identify().
+    pub(super) fn between_reads(read: Read) {
+        let hook = BETWEEN_READS.with(|hook| {
+            let mut hook = hook.borrow_mut();
+            if hook.as_ref().is_some_and(|(at, _)| *at == read) {
+                hook.take()
+            } else {
+                None
+            }
+        });
+        if let Some((_, run)) = hook {
+            run();
+        }
+    }
+
+    fn identify_with(fd: RawFd, at: Read, run: impl FnOnce() + 'static) -> Option<Peer> {
+        BETWEEN_READS.with(|hook| *hook.borrow_mut() = Some((at, Box::new(run))));
+        let peer = identify(fd);
+        assert!(
+            BETWEEN_READS.with(|hook| hook.borrow().is_none()),
+            "identify() returned before the hook"
+        );
+        peer
+    }
+
+    // The accepted end of a connection made by a child that then execs sleep, so the peer lives
+    // until it is killed.
+    fn sleeping_peer() -> (Connector, StdUnixStream, Vec<StdUnixStream>) {
+        static NEXT: AtomicU32 = AtomicU32::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "orynq-sf-unit-{}-{}.sock",
+            process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let listener = StdUnixListener::bind(&path).unwrap();
+        let (connector, clients) = connect_from_child(&path, 1, None, &["sleep", "600"]);
+        let (accepted, _) = listener.accept().unwrap();
+        fs::remove_file(&path).unwrap();
+        (connector, accepted, clients)
+    }
+
+    #[test]
+    fn refuses_a_peer_reaped_between_its_reads() {
+        let [ours, _theirs] = socket_pair().unwrap();
+        if pidfd_or_skip(ours.as_raw_fd()).is_none() {
+            return;
+        }
+        let (mut connector, accepted, _clients) = sleeping_peer();
+        let pid = connector.0.id();
+        assert_eq!(
+            identify(accepted.as_raw_fd()).map(|peer| peer.pid),
+            Some(pid)
+        );
+        let peer = identify_with(accepted.as_raw_fd(), Read::Cgroup, move || {
+            connector.0.kill().unwrap();
+            connector.0.wait().unwrap();
+        });
+        assert!(peer.is_none());
+    }
+
+    #[test]
+    fn refuses_a_peer_that_moves_to_another_cgroup_between_its_reads() {
+        let [ours, _theirs] = socket_pair().unwrap();
+        if pidfd_or_skip(ours.as_raw_fd()).is_none() {
+            return;
+        }
+        let Some(cgroups) = cgroups_or_skip(1) else {
+            return;
+        };
+        let (connector, accepted, _clients) = sleeping_peer();
+        assert_eq!(identify(accepted.as_raw_fd()).unwrap().cgroup, own_cgroup());
+        let procs = cgroups.0[0].join("cgroup.procs");
+        let pid = connector.0.id();
+        let peer = identify_with(accepted.as_raw_fd(), Read::Pid, move || {
+            fs::write(procs, pid.to_string()).unwrap();
+        });
+        assert!(peer.is_none());
+        let moved = identify(accepted.as_raw_fd()).unwrap();
+        assert_eq!(cgroup_dir(&moved.cgroup), cgroups.0[0]);
     }
 }
