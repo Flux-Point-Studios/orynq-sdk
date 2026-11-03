@@ -806,6 +806,21 @@ fn exits_when_stdin_closes_and_removes_its_socket() {
 }
 
 #[test]
+fn leaves_the_socket_another_frontend_bound_at_its_path_when_it_exits() {
+    if skip_without_cgroup_ids() {
+        return;
+    }
+    let dir = TempDir::new();
+    let mut first = Frontend::start(&dir, &[]);
+    fs::remove_file(&first.socket).unwrap();
+    let mut second = Frontend::start(&dir, &[]);
+    drop(first.stdin.take());
+    assert_eq!(first.wait().code(), Some(0));
+    let (_client, conn) = second.connect();
+    assert_eq!(conn, 1);
+}
+
+#[test]
 fn exits_on_a_parent_message_it_does_not_accept() {
     if skip_without_cgroup_ids() {
         return;

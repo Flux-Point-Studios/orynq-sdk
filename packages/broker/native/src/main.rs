@@ -88,10 +88,16 @@ struct SocketFile {
 }
 
 impl SocketFile {
+    // Device and inode name a file only while it exists; once it is gone the number can return on
+    // another file, which a socket's type tells apart from it.
+    fn present(&self) -> bool {
+        fs::symlink_metadata(&self.path).is_ok_and(|meta| {
+            meta.file_type().is_socket() && meta.dev() == self.dev && meta.ino() == self.ino
+        })
+    }
+
     fn remove(&self) {
-        let ours = fs::symlink_metadata(&self.path)
-            .is_ok_and(|meta| meta.dev() == self.dev && meta.ino() == self.ino);
-        if ours {
+        if self.present() {
             fs::remove_file(&self.path).ok();
         }
     }
@@ -515,12 +521,6 @@ fn bind(path: &Path) -> Result<(OwnedFd, SocketFile), String> {
     }
     let meta = fs::symlink_metadata(path)
         .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
-    if !meta.file_type().is_socket() || meta.uid() != unsafe { libc::geteuid() } {
-        return Err(format!(
-            "{} changed while it was being created",
-            path.display()
-        ));
-    }
     let socket = SocketFile {
         path: path.to_path_buf(),
         dev: meta.dev(),
@@ -530,7 +530,8 @@ fn bind(path: &Path) -> Result<(OwnedFd, SocketFile), String> {
 }
 
 // No client can connect before listen(), so the mode is in place for the first one whatever the
-// umask made of the file bind() created.
+// umask made of the file bind() created. fchmodat succeeds only on a file this account owns, so
+// the file still being the recorded socket afterwards means the mode was set on it.
 fn finish(fd: OwnedFd, socket: &SocketFile, mode: u32) -> Result<StdUnixListener, String> {
     let text = CString::new(socket.path.as_os_str().as_bytes())
         .map_err(|_| "the socket path holds a NUL byte")?;
@@ -545,10 +546,7 @@ fn finish(fd: OwnedFd, socket: &SocketFile, mode: u32) -> Result<StdUnixListener
     {
         return Err(os_error("set the mode of", &socket.path));
     }
-    let same = fs::symlink_metadata(&socket.path).is_ok_and(|meta| {
-        meta.dev() == socket.dev && meta.ino() == socket.ino && meta.mode() & 0o7777 == mode
-    });
-    if !same {
+    if !socket.present() {
         return Err(format!(
             "{} changed while it was being created",
             socket.path.display()
@@ -1059,20 +1057,58 @@ mod tests {
         peer
     }
 
-    // The accepted end of a connection made by a child that then execs sleep, so the peer lives
-    // until it is killed.
-    fn sleeping_peer() -> (Connector, StdUnixStream, Vec<StdUnixStream>) {
+    fn temp_socket_path() -> PathBuf {
         static NEXT: AtomicU32 = AtomicU32::new(0);
-        let path = std::env::temp_dir().join(format!(
+        std::env::temp_dir().join(format!(
             "orynq-sf-unit-{}-{}.sock",
             process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        ))
+    }
+
+    // The accepted end of a connection made by a child that then execs sleep, so the peer lives
+    // until it is killed.
+    fn sleeping_peer() -> (Connector, StdUnixStream, Vec<StdUnixStream>) {
+        let path = temp_socket_path();
         let listener = StdUnixListener::bind(&path).unwrap();
         let (connector, clients) = connect_from_child(&path, 1, None, &["sleep", "600"]);
         let (accepted, _) = listener.accept().unwrap();
         fs::remove_file(&path).unwrap();
         (connector, accepted, clients)
+    }
+
+    #[test]
+    fn listens_only_on_the_socket_it_bound() {
+        let path = temp_socket_path();
+        let (fd, file) = bind(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        let other = StdUnixListener::bind(&path).unwrap();
+        let error = finish(fd, &file, 0o600).unwrap_err();
+        assert!(
+            error.contains("changed while it was being created"),
+            "{error}"
+        );
+        file.remove();
+        assert!(fs::symlink_metadata(&path).unwrap().file_type().is_socket());
+        drop(other);
+        fs::remove_file(&path).unwrap();
+    }
+
+    // An inode number is reused once its file is gone; a regular file holding the one the socket
+    // had is not the socket.
+    #[test]
+    fn removes_only_the_socket_it_bound() {
+        let path = temp_socket_path();
+        fs::write(&path, b"keep").unwrap();
+        let meta = fs::symlink_metadata(&path).unwrap();
+        let file = SocketFile {
+            path: path.clone(),
+            dev: meta.dev(),
+            ino: meta.ino(),
+        };
+        file.remove();
+        assert_eq!(fs::read(&path).unwrap(), b"keep");
+        fs::remove_file(&path).unwrap();
     }
 
     #[test]
