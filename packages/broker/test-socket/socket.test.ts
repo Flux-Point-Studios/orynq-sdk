@@ -1,7 +1,7 @@
 import { fork } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import type { Socket } from "node:net";
-import { release, tmpdir } from "node:os";
+import { release } from "node:os";
 import { dirname, join } from "node:path";
 import type { Peer } from "@fluxpointstudios/orynq-sdk-core/broker-wire";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,6 +10,7 @@ import { BrokerReplyError, connectBroker, type BrokerClient } from "../src/clien
 import { encodeFrame, FrameDecoder } from "../src/framing.js";
 import { type LinuxFrontend, startLinuxFrontend } from "../src/host.js";
 import type { Principal } from "../src/principals.js";
+import { privateDir } from "../test/private-dir.js";
 
 // The real binary, the Node host and the client over a real socket, unprivileged: the peer is this
 // test process, so its uid, gid and cgroup are the oracles.
@@ -68,7 +69,7 @@ afterEach(async () => {
 });
 
 async function start(principals: BrokerOptions["principals"], options: { idleSeconds?: number } = {}) {
-  dir ??= mkdtempSync(join(tmpdir(), "orynq-socket-"));
+  dir ??= privateDir("orynq-socket-");
   const broker = new RecordingBroker({ ...base, principals });
   const errors: unknown[] = [];
   const frontend = await startLinuxFrontend({
@@ -183,7 +184,7 @@ describe.runIf(hasCgroupIds)("over a real socket", () => {
   });
 
   it("refuses to start on a path another file squats", async () => {
-    dir = mkdtempSync(join(tmpdir(), "orynq-socket-"));
+    dir = privateDir("orynq-socket-");
     writeFileSync(join(dir, "broker.sock"), "squatter");
     await expect(start({ operatorUid: UID })).rejects.toThrow(`${join(dir, "broker.sock")} exists and is not this account's socket`);
     expect(readFileSync(join(dir, "broker.sock"), "utf8")).toBe("squatter");

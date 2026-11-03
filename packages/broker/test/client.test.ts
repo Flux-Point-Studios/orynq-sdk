@@ -1,10 +1,16 @@
-import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstat } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BrokerReplyError, connectBroker } from "../src/client.js";
 import { encodeFrame, FrameDecoder } from "../src/framing.js";
+import { privateDir } from "./private-dir.js";
+
+vi.mock("node:fs/promises", async importOriginal => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, lstat: vi.fn(actual.lstat) };
+});
 
 const UID = process.getuid!();
 const utf8 = (text: string) => new TextEncoder().encode(text);
@@ -33,7 +39,7 @@ async function listen(
   reply: (request: Received, socket: Socket) => unknown = request => ({ jsonrpc: "2.0", id: request.id, result: { echo: request.method } }),
   name = "rpc.sock",
 ): Promise<{ path: string; connections: Socket[]; requests: Received[] }> {
-  dir ??= mkdtempSync(join(tmpdir(), "orynq-client-"));
+  dir ??= privateDir("orynq-client-");
   const path = join(dir, name);
   const connections: Socket[] = [];
   const requests: Received[] = [];
@@ -157,14 +163,49 @@ describe("connectBroker", () => {
     expect(connections).toEqual([]);
   });
 
-  it("refuses a socket in a directory another account could replace it in", async () => {
+  it("refuses a socket in a directory its group or others can write, sticky or not", async () => {
     const { path, connections } = await listen();
-    chmodSync(dir!, 0o777);
-    expect((await refusal(path)).message).toBe(`${dir} lets other accounts replace the broker socket`);
-    chmodSync(dir!, 0o1777);
+    for (const mode of [0o777, 0o1777, 0o770, 0o1770, 0o730, 0o702]) {
+      chmodSync(dir!, mode);
+      expect((await refusal(path)).message, mode.toString(8)).toBe(`${dir} lets other accounts replace the broker socket`);
+    }
+    chmodSync(dir!, 0o755);
     const client = await connectBroker(path, { brokerUid: UID });
     await client.close();
     expect(connections).toHaveLength(1);
+  });
+
+  it("refuses a socket below a directory another account can write, however far above it", async () => {
+    dir = privateDir("orynq-client-");
+    mkdirSync(join(dir, "inner", "deeper"), { recursive: true, mode: 0o700 });
+    chmodSync(join(dir, "inner"), 0o700);
+    chmodSync(join(dir, "inner", "deeper"), 0o700);
+    const { path, connections } = await listen(undefined, join("inner", "deeper", "rpc.sock"));
+    chmodSync(dir, 0o770);
+    expect((await refusal(path)).message).toBe(`${dir} lets other accounts replace the broker socket`);
+    chmodSync(dir, 0o700);
+    chmodSync(join(dir, "inner"), 0o707);
+    expect((await refusal(path)).message).toBe(`${join(dir, "inner")} lets other accounts replace the broker socket`);
+    expect(connections).toEqual([]);
+  });
+
+  // Only root can give a directory to another account, so the owner lstat reports is altered here.
+  it("refuses a socket in a directory that neither root nor the broker owns", async () => {
+    const { path, connections } = await listen();
+    const owned = realpathSync(dir!);
+    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    vi.mocked(lstat).mockImplementation(async target => {
+      const stats = await actual.lstat(target);
+      return target === owned ? Object.assign(stats, { uid: UID + 1 }) : stats;
+    });
+    try {
+      expect((await refusal(path)).message).toBe(`${owned} lets other accounts replace the broker socket`);
+    } finally {
+      vi.mocked(lstat).mockImplementation(actual.lstat);
+    }
+    expect(connections).toEqual([]);
+    const client = await connectBroker(path, { brokerUid: UID });
+    await client.close();
   });
 
   it("refuses a socket whose mode does not let this account connect", async () => {

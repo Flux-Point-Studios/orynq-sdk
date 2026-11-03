@@ -42,8 +42,11 @@ function modeGrants(mode: number, uid: number, gid: number): boolean {
 }
 
 // The socket must be the broker's, by lstat so a symlink is never followed, and every directory
-// above it may change only at root's or the broker's hand (or be sticky), so that no other account
-// can swap the socket between this check and connect().
+// above it, after realpath, must be owned by root or the broker and writable by neither group nor
+// others, so only those accounts can create, rename or remove an entry on the path between this
+// check and connect(). A sticky directory does not qualify: another account can bind the name once
+// the broker's socket is gone, squat it before the broker starts, or mount a filesystem there that
+// reports any owner.
 async function brokerSocket(path: string, brokerUid: number): Promise<string> {
   if (!isAbsolute(path)) throw new Error("the broker socket path must be absolute");
   let directory = await realpath(dirname(path));
@@ -54,8 +57,7 @@ async function brokerSocket(path: string, brokerUid: number): Promise<string> {
   for (;;) {
     const parent = await lstat(directory);
     const owner = parent.uid === 0 || parent.uid === brokerUid;
-    const guarded = (parent.mode & 0o022) === 0 || (parent.mode & 0o1000) !== 0;
-    if (!owner || !guarded) throw new Error(`${directory} lets other accounts replace the broker socket`);
+    if (!owner || (parent.mode & 0o022) !== 0) throw new Error(`${directory} lets other accounts replace the broker socket`);
     if (directory === "/") return socket;
     directory = dirname(directory);
   }
