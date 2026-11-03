@@ -140,6 +140,9 @@ export function serveMux(input: Readable, output: Writable, broker: Serves, repo
   return { ready, done };
 }
 
+// The frontend refuses a longer --idle-secs; this refuses it before spawning one.
+const MAX_IDLE_SECONDS = 86_400;
+
 export interface LinuxFrontendOptions {
   /** Path to the orynq-socket-frontend binary. */
   readonly executable: string;
@@ -148,7 +151,7 @@ export interface LinuxFrontendOptions {
   readonly broker: Broker;
   /** The socket's mode, 0o600 (owner only) unless given; read and write bits only. */
   readonly mode?: number;
-  /** Seconds without a request before a connection closes; the frontend defaults to 300. */
+  /** Seconds without a request before a connection closes, 1 to 86,400; the frontend defaults to 300. */
   readonly idleSeconds?: number;
   readonly onError?: (error: unknown) => void;
 }
@@ -165,10 +168,14 @@ export interface LinuxFrontend {
 // message if it exits before READY, as it does for a squatted path or a kernel that cannot report a
 // peer's cgroup id. A frontend that breaks the protocol is reported and killed.
 export function startLinuxFrontend(options: LinuxFrontendOptions): Promise<LinuxFrontend> {
+  const { idleSeconds } = options;
+  if (idleSeconds !== undefined && !(Number.isInteger(idleSeconds) && idleSeconds >= 1 && idleSeconds <= MAX_IDLE_SECONDS)) {
+    return Promise.reject(new RangeError(`idleSeconds must be a whole number of seconds from 1 to ${MAX_IDLE_SECONDS}`));
+  }
   const report = options.onError ?? ((error: unknown) => process.emitWarning(error instanceof Error ? error : String(error)));
   const args = ["--socket", options.socket];
   if (options.mode !== undefined) args.push("--mode", options.mode.toString(8));
-  if (options.idleSeconds !== undefined) args.push("--idle-secs", String(options.idleSeconds));
+  if (idleSeconds !== undefined) args.push("--idle-secs", String(idleSeconds));
   const child = spawn(options.executable, args, { stdio: ["pipe", "pipe", "pipe"] });
   const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
   let stderr = "";

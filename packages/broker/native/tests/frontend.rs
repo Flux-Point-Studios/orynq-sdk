@@ -473,6 +473,34 @@ fn refuses_a_mode_that_is_not_read_write_bits_with_the_owner_able_to_connect() {
     assert!(!dir.0.join("b.sock").exists());
 }
 
+// A connection's deadline is now plus the idle period, which overflows the clock past some bound.
+#[test]
+fn refuses_an_idle_period_outside_1_second_to_a_day() {
+    let dir = TempDir::new();
+    for idle in ["0", "86401", "18446744073709551615", "-1", "1.5", ""] {
+        let (status, stderr) = exit_with(&dir.0.join("b.sock"), &["--idle-secs", idle]);
+        assert_eq!(status.code(), Some(1), "{idle}");
+        assert!(stderr.contains("--idle-secs"), "{stderr}");
+    }
+    assert!(!dir.0.join("b.sock").exists());
+}
+
+#[test]
+fn serves_a_connection_at_either_end_of_its_idle_period_bounds() {
+    if skip_without_cgroup_ids() {
+        return;
+    }
+    for idle in ["1", "86400"] {
+        let dir = TempDir::new();
+        let mut frontend = Frontend::start(&dir, &["--idle-secs", idle]);
+        let (mut client, conn) = frontend.connect();
+        client.write_all(&frame(b"ping")).unwrap();
+        assert_eq!(frontend.next().kind, FRAME, "{idle}");
+        frontend.send(FRAME, conn, b"pong");
+        assert_eq!(read_frame(&mut client), b"pong");
+    }
+}
+
 #[test]
 fn forwards_each_request_and_writes_its_reply() {
     if skip_without_cgroup_ids() {

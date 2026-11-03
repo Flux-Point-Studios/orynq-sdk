@@ -238,6 +238,14 @@ describe("serveMux", () => {
 });
 
 describe("startLinuxFrontend", () => {
+  it("refuses an idle period outside 1 second to a day before spawning anything", async () => {
+    for (const idleSeconds of [0, 86_401, 1.5, -1, Number.NaN, 2 ** 64]) {
+      const started = startLinuxFrontend({ executable: "/nonexistent/orynq-socket-frontend", socket: "/unused/broker.sock", broker: broker(), idleSeconds });
+      await expect(started).rejects.toThrow(RangeError);
+      await expect(started).rejects.toThrow("idleSeconds must be a whole number of seconds from 1 to 86400");
+    }
+  });
+
   it("kills a frontend that breaks the protocol after READY, and reports why", async () => {
     const errors: unknown[] = [];
     const frontend = await startLinuxFrontend({

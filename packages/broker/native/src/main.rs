@@ -59,6 +59,9 @@ const RESERVED_FDS: libc::rlim_t = 64;
 const PEER_BUDGET: u32 = MAX_FRAME;
 const UID_BUDGET: u32 = 64 << 20;
 const TOTAL_BUDGET: u32 = 256 << 20;
+// A connection's deadline is now plus the idle period, which panics past the clock's range; a day
+// is far inside it.
+const MAX_IDLE_SECS: u64 = 86_400;
 const BACKLOG: libc::c_int = 128;
 const CGROUP_ROOT: &str = "/sys/fs/cgroup";
 
@@ -457,11 +460,14 @@ fn parse_args() -> Result<Config, String> {
                     .ok_or("--mode must be octal read and write bits that include the owner's (0600 to 0666)")?;
             }
             "--idle-secs" => {
-                idle = Duration::from_secs(
-                    value
-                        .parse()
-                        .map_err(|_| "--idle-secs must be a whole number")?,
-                );
+                idle = value
+                    .parse()
+                    .ok()
+                    .filter(|secs| (1..=MAX_IDLE_SECS).contains(secs))
+                    .map(Duration::from_secs)
+                    .ok_or_else(|| {
+                        format!("--idle-secs must be a whole number of seconds from 1 to {MAX_IDLE_SECS}")
+                    })?;
             }
             _ => return Err(format!("unknown flag {flag}")),
         }
