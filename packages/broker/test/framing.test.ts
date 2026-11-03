@@ -189,8 +189,8 @@ describe("decodeRequest", () => {
     expect(rpcError(json({ jsonrpc: "2.0", id: 1, method: "broker.hello", params: {}, extra: 1 })).code).toBe(-32600);
   });
 
-  it("leaves params, present or not, to the method's schema", () => {
-    expect(decodeRequest(json({ jsonrpc: "2.0", id: 1, method: "broker.hello" }))).toEqual({ id: 1, method: "broker.hello", params: undefined });
+  it("reads omitted params as {}, as JSON-RPC 2.0 allows, and leaves any other params to the method's schema", () => {
+    expect(decodeRequest(json({ jsonrpc: "2.0", id: 1, method: "broker.hello" }))).toEqual({ id: 1, method: "broker.hello", params: {} });
     for (const params of [[], null, "x", 1]) {
       expect(decodeRequest(request(1, "broker.hello", params)).params).toEqual(params);
     }
@@ -268,16 +268,21 @@ describe("serveConnection", () => {
       jsonToCbor(req.params, SCHEMA_RULES[METHOD_PARAMS[req.method as keyof typeof METHOD_PARAMS]]);
       return echo(req);
     });
-    send(encodeFrame(json({ jsonrpc: "2.0", id: 5, method: "broker.hello" })));
-    await vi.waitFor(() => expect(replies).toHaveLength(1));
-    send(encodeFrame(request(6, "mandate.get", ["11".repeat(32)])));
-    await vi.waitFor(() => expect(replies).toHaveLength(2));
-    send(encodeFrame(request(7, "mandate.get", { mandate: "11".repeat(32) })));
-    await vi.waitFor(() => expect(replies).toHaveLength(3));
+    const requests = [
+      json({ jsonrpc: "2.0", id: 5, method: "broker.hello" }),
+      json({ jsonrpc: "2.0", id: 6, method: "mandate.get" }),
+      request(7, "mandate.get", ["11".repeat(32)]),
+      request(8, "mandate.get", { mandate: "11".repeat(32) }),
+    ];
+    for (const [i, payload] of requests.entries()) {
+      send(encodeFrame(payload));
+      await vi.waitFor(() => expect(replies).toHaveLength(i + 1));
+    }
     expect(decoded(replies)).toEqual([
-      { jsonrpc: "2.0", id: 5, error: { code: -32602, message: "Invalid params", data: { field: "params" } } },
-      { jsonrpc: "2.0", id: 6, error: { code: -32602, message: "Invalid params", data: { field: "params" } } },
-      { jsonrpc: "2.0", id: 7, result: { method: "mandate.get" } },
+      { jsonrpc: "2.0", id: 5, result: { method: "broker.hello" } },
+      { jsonrpc: "2.0", id: 6, error: { code: -32602, message: "Invalid params", data: { field: "params.mandate" } } },
+      { jsonrpc: "2.0", id: 7, error: { code: -32602, message: "Invalid params", data: { field: "params" } } },
+      { jsonrpc: "2.0", id: 8, result: { method: "mandate.get" } },
     ]);
     end();
     await expect(closed).resolves.toBe("end");

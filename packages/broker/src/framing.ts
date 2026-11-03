@@ -98,7 +98,8 @@ export class FrameDecoder {
 
 export type RequestId = string | number;
 
-// params stay as decoded, absent included: the method's schema refuses them with the request id.
+// Omitted params read as {} (JSON-RPC 2.0 lets a call without arguments omit them); any params
+// present stay as decoded for the method's schema to judge with the request id.
 export interface RpcRequest {
   readonly id: RequestId;
   readonly method: string;
@@ -125,12 +126,12 @@ export function decodeRequest(payload: Uint8Array): RpcRequest {
   checkLength(payload.length);
   const message = parseJsonPayload(payload);
   if (!isObject(message) || Object.keys(message).some(key => !ENVELOPE.has(key))) throw new RpcError("INVALID_REQUEST");
-  const { jsonrpc, id, method, params } = message;
+  const { jsonrpc, id, method } = message;
   if (jsonrpc !== "2.0" || !isRequestId(id)) throw new RpcError("INVALID_REQUEST");
   if (typeof method !== "string" || utf8Length(method) > MAX_METHOD_BYTES || !METHOD.test(method)) {
     throw new RpcError("INVALID_REQUEST");
   }
-  return { id, method, params };
+  return { id, method, params: Object.hasOwn(message, "params") ? message.params : {} };
 }
 
 function errorPayload(id: RequestId | null, error: RpcError): Uint8Array {

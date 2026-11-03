@@ -83,6 +83,8 @@ describe("RpcError", () => {
   it("takes its code and message from the fixed table", () => {
     expect(new RpcError("PARSE_ERROR")).toMatchObject({ code: -32700, message: "Parse error", name: "RpcError" });
     expect(new RpcError("INVALID_REQUEST")).toMatchObject({ code: -32600, message: "Invalid Request" });
+    expect(() => new RpcError("METHOD_NOT_FOUND")).not.toThrow();
+    expect(new RpcError("METHOD_NOT_FOUND")).toMatchObject({ code: -32601, message: "Method not found" });
     expect(new RpcError("INVALID_PARAMS", { field: "params.mandates[0]" }))
       .toMatchObject({ code: -32602, message: "Invalid params", field: "params.mandates[0]" });
   });

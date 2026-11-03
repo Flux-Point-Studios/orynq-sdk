@@ -1,4 +1,4 @@
-export { jsonToCbor, jsonToDcbor } from "./dcbor.js";
+export { array, bytes, choice, jsonToCbor, jsonToDcbor, literal, map, optional, text, uint } from "./dcbor.js";
 export type { Shape } from "./dcbor.js";
 export { RpcError } from "./errors.js";
 export type { RpcErrorName } from "./errors.js";
