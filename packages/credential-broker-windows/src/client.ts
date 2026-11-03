@@ -52,6 +52,8 @@ const SE_KERNEL_OBJECT = 6;
 const OWNER_SECURITY_INFORMATION = 0x1;
 const INFINITE = 0xffffffff;
 const ERROR_BROKEN_PIPE = 109;
+// A write to an instance the server has closed.
+const ERROR_NO_DATA = 232;
 const ERROR_PIPE_NOT_CONNECTED = 233;
 const ERROR_OPERATION_ABORTED = 995;
 const ERROR_IO_PENDING = 997;
@@ -77,7 +79,7 @@ class ConnectionEnded extends Error {
 }
 
 const isEndOfConnection = (code: number) =>
-  code === ERROR_BROKEN_PIPE || code === ERROR_PIPE_NOT_CONNECTED || code === ERROR_OPERATION_ABORTED;
+  code === ERROR_BROKEN_PIPE || code === ERROR_NO_DATA || code === ERROR_PIPE_NOT_CONNECTED || code === ERROR_OPERATION_ABORTED;
 
 const waitAny = (handles: unknown[]): Promise<number> =>
   new Promise((resolve, reject) =>

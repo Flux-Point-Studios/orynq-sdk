@@ -171,6 +171,13 @@ describe.runIf(process.platform === "win32")("broker pipe", { timeout: 30_000 },
     expect({ kind: close.kind, conn: close.conn }).toEqual({ kind: MUX_CLOSE, conn: open.conn });
   });
 
+  it("closes a connection that stays silent for idleSeconds", async () => {
+    const { pipe } = await start({ idleSeconds: 1 });
+    const client = await connect(pipe);
+    await new Promise((resolve) => setTimeout(resolve, 2_500));
+    await expect(client.request(text("{}"))).rejects.toThrow(/closed/);
+  });
+
   it("removes its pipe and exits 0 when its stdin ends", async () => {
     const { child, pipe } = await start();
     child.stdin.end();
