@@ -400,6 +400,54 @@ fn closes_a_connection_that_sends_a_request_before_its_reply() {
 }
 
 #[test]
+fn closes_a_connection_on_the_first_byte_it_sends_while_a_request_runs() {
+    if skip_without_peer_pidfd() {
+        return;
+    }
+    let dir = TempDir::new();
+    let mut frontend = Frontend::start(&dir, &[]);
+    let (mut client, conn) = frontend.connect();
+    client.write_all(&frame(b"a")).unwrap();
+    assert_eq!(frontend.next().kind, FRAME);
+    client.write_all(&[0]).unwrap();
+    expect_close(&mut frontend, conn);
+    assert_closed(&mut client);
+}
+
+fn peak_kib(frontend: &Frontend) -> u64 {
+    let status = fs::read_to_string(format!("/proc/{}/status", frontend.child.id())).unwrap();
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmHWM:"))
+        .and_then(|value| value.trim().strip_suffix("kB"))
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap()
+}
+
+#[test]
+fn forwards_a_16_mib_request_holding_one_copy_of_it() {
+    if skip_without_peer_pidfd() {
+        return;
+    }
+    let dir = TempDir::new();
+    let mut frontend = Frontend::start(&dir, &[]);
+    let (client, conn) = frontend.connect();
+    let before = peak_kib(&frontend);
+    let writer = {
+        let mut client = client.try_clone().unwrap();
+        thread::spawn(move || client.write_all(&frame(&vec![0x61u8; MAX_FRAME])).unwrap())
+    };
+    let event = frontend.next();
+    writer.join().unwrap();
+    assert_eq!(
+        (event.kind, event.conn, event.payload.len()),
+        (FRAME, conn, MAX_FRAME)
+    );
+    let grown = peak_kib(&frontend) - before;
+    assert!(grown < 24 << 10, "the frontend grew by {grown} KiB");
+}
+
+#[test]
 fn takes_frames_of_1_byte_to_16_mib_and_drops_a_client_that_sends_another() {
     if skip_without_peer_pidfd() {
         return;

@@ -22,7 +22,10 @@ use std::{
     },
     path::{Path, PathBuf},
     process,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -55,7 +58,8 @@ enum Command {
 }
 
 enum Incoming {
-    Frame(Vec<u8>),
+    /// A request, already framed as the FRAME message that carries it to the parent.
+    Request(Vec<u8>),
     End,
 }
 
@@ -86,7 +90,11 @@ struct Shared {
 
 impl Shared {
     async fn emit(&self, kind: u8, conn: u64, payload: &[u8]) {
-        if self.out.send(message(kind, conn, payload)).await.is_err() {
+        self.send(message(kind, conn, payload)).await;
+    }
+
+    async fn send(&self, message: Vec<u8>) {
+        if self.out.send(message).await.is_err() {
             self.exit(0);
         }
     }
@@ -140,12 +148,18 @@ impl Drop for Slot {
     }
 }
 
+fn header(kind: u8, conn: u64, payload_len: u32) -> [u8; 13] {
+    let mut header = [0u8; 13];
+    header[..4].copy_from_slice(&(9 + payload_len).to_be_bytes());
+    header[4] = kind;
+    header[5..].copy_from_slice(&conn.to_be_bytes());
+    header
+}
+
 // The Windows sidecar's emit(), byte for byte.
 fn message(kind: u8, conn: u64, payload: &[u8]) -> Vec<u8> {
     let mut message = Vec::with_capacity(13 + payload.len());
-    message.extend_from_slice(&(9 + payload.len() as u32).to_be_bytes());
-    message.push(kind);
-    message.extend_from_slice(&conn.to_be_bytes());
+    message.extend_from_slice(&header(kind, conn, payload.len() as u32));
     message.extend_from_slice(payload);
     message
 }
@@ -456,36 +470,46 @@ fn finish(fd: OwnedFd, socket: &SocketFile, mode: u32) -> Result<StdUnixListener
     Ok(listener)
 }
 
-async fn read_frames(mut reader: OwnedReadHalf, frames: mpsc::Sender<Incoming>) {
+// Reads each request straight into the FRAME message that carries it, and nothing more until it is
+// answered: a byte that arrives first starts a second request in flight, which ends the connection
+// unread. A client may end its side only between requests.
+async fn read_requests(
+    mut reader: OwnedReadHalf,
+    conn: u64,
+    in_flight: Arc<AtomicBool>,
+    requests: mpsc::Sender<Incoming>,
+) {
     loop {
-        let mut header = [0u8; 4];
-        // A client may end its side only between frames.
-        match reader.read(&mut header[..1]).await {
+        let mut length = [0u8; 4];
+        match reader.read(&mut length[..1]).await {
             Ok(0) => {
-                frames.send(Incoming::End).await.ok();
+                requests.send(Incoming::End).await.ok();
                 return;
             }
-            Ok(_) => {}
-            Err(_) => return,
+            Ok(_) if !in_flight.load(Ordering::SeqCst) => {}
+            _ => return,
         }
-        if reader.read_exact(&mut header[1..]).await.is_err() {
+        if reader.read_exact(&mut length[1..]).await.is_err() {
             return;
         }
-        let length = u32::from_be_bytes(header);
+        let length = u32::from_be_bytes(length);
         if length == 0 || length > MAX_FRAME {
             return;
         }
-        // Grows with the bytes that arrive, so an announced length costs nothing until it is sent.
-        let mut body = Vec::new();
-        match (&mut reader)
-            .take(u64::from(length))
-            .read_to_end(&mut body)
-            .await
-        {
-            Ok(read) if read == length as usize => {}
-            _ => return,
+        let total = 13 + length as usize;
+        let mut message = Vec::with_capacity(total);
+        message.extend_from_slice(&header(FRAME, conn, length));
+        // read_buf fills the spare capacity without zeroing it first, so the pages an announced
+        // length reserves are touched only as its bytes arrive.
+        while message.len() < total {
+            let remaining = (total - message.len()) as u64;
+            match (&mut reader).take(remaining).read_buf(&mut message).await {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {}
+            }
         }
-        if frames.send(Incoming::Frame(body)).await.is_err() {
+        in_flight.store(true, Ordering::SeqCst);
+        if requests.send(Incoming::Request(message)).await.is_err() {
             return;
         }
     }
@@ -505,23 +529,25 @@ async fn serve(stream: UnixStream, conn: u64, shared: Arc<Shared>) {
     shared.emit(OPEN, conn, &open).await;
 
     let (reader, mut writer) = stream.into_split();
-    let (frames_tx, mut frames) = mpsc::channel(1);
-    let reading = tokio::spawn(read_frames(reader, frames_tx));
+    let in_flight = Arc::new(AtomicBool::new(false));
+    let (requests_tx, mut requests) = mpsc::channel(1);
+    let reading = tokio::spawn(read_requests(
+        reader,
+        conn,
+        Arc::clone(&in_flight),
+        requests_tx,
+    ));
     let mut deadline = Instant::now() + shared.idle;
-    let (mut in_flight, mut ending) = (false, false);
+    let mut ending = false;
     loop {
         tokio::select! {
-            incoming = frames.recv(), if !ending => match incoming {
-                Some(Incoming::Frame(body)) if !in_flight => {
-                    in_flight = true;
-                    shared.emit(FRAME, conn, &body).await;
-                }
-                Some(Incoming::End) if in_flight => ending = true,
+            incoming = requests.recv(), if !ending => match incoming {
+                Some(Incoming::Request(message)) => shared.send(message).await,
+                Some(Incoming::End) if in_flight.load(Ordering::SeqCst) => ending = true,
                 _ => break,
             },
             command = commands.recv() => match command {
-                Some(Command::Frame(response)) if in_flight => {
-                    in_flight = false;
+                Some(Command::Frame(response)) if in_flight.swap(false, Ordering::SeqCst) => {
                     let mut framed = (response.len() as u32).to_be_bytes().to_vec();
                     framed.extend_from_slice(&response);
                     if !matches!(timeout(shared.idle, writer.write_all(&framed)).await, Ok(Ok(()))) || ending {
@@ -531,7 +557,7 @@ async fn serve(stream: UnixStream, conn: u64, shared: Arc<Shared>) {
                 }
                 _ => break,
             },
-            () = sleep_until(deadline), if !in_flight => break,
+            () = sleep_until(deadline), if !in_flight.load(Ordering::SeqCst) => break,
         }
     }
     reading.abort();
