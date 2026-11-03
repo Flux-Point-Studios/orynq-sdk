@@ -88,8 +88,8 @@ struct SocketFile {
 }
 
 impl SocketFile {
-    // Device and inode name a file only while it exists; once it is gone the number can return on
-    // another file, which a socket's type tells apart from it.
+    // Device and inode name the socket bind() made only while it exists; a regular file that takes
+    // the number once it is gone is told apart by its type.
     fn present(&self) -> bool {
         fs::symlink_metadata(&self.path).is_ok_and(|meta| {
             meta.file_type().is_socket() && meta.dev() == self.dev && meta.ino() == self.ino
@@ -116,7 +116,7 @@ struct Shared {
 struct Limits {
     max_connections: usize,
     admitted: Mutex<Admitted>,
-    budget: Arc<Semaphore>,
+    total_budget: Arc<Semaphore>,
 }
 
 #[derive(Default)]
@@ -133,7 +133,7 @@ impl Limits {
         Arc::new(Limits {
             max_connections,
             admitted: Mutex::default(),
-            budget: Arc::new(Semaphore::new(TOTAL_BUDGET as usize)),
+            total_budget: Arc::new(Semaphore::new(TOTAL_BUDGET as usize)),
         })
     }
 
@@ -163,7 +163,7 @@ impl Limits {
                     .entry(uid)
                     .or_insert_with(|| Arc::new(Semaphore::new(UID_BUDGET as usize))),
             ),
-            total: Arc::clone(&self.budget),
+            total: Arc::clone(&self.total_budget),
         };
         Some(Slot {
             limits: Arc::clone(self),
