@@ -132,6 +132,21 @@ describe("parseStrictJson", () => {
     expect(code(wide, LIMIT, 200_000)).toBe("JSON_VALUES");
   });
 
+  it.each([Number.NaN, -1, 1.5, Number.NEGATIVE_INFINITY, "16", 16n, null])(
+    "refuses a limit of %s, which would otherwise bound nothing",
+    limit => {
+      const bad = limit as unknown as number;
+      expect(() => parseStrictJson("0", bad)).toThrow(new TypeError("maxBytes must be a non-negative integer or Infinity"));
+      expect(() => parseStrictJson("0", LIMIT, bad)).toThrow(new TypeError("maxValues must be a non-negative integer or Infinity"));
+    },
+  );
+
+  it("takes 0 and Infinity as limits", () => {
+    expect(code("0", 0)).toBe("JSON_TOO_LARGE");
+    expect(code("0", LIMIT, 0)).toBe("JSON_VALUES");
+    expect(parseStrictJson("[0]", Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY)).toEqual([0]);
+  });
+
   it("judges values before syntax, so a wide text is refused without being parsed", () => {
     expect(code("[" + "0,".repeat(10), LIMIT, 5)).toBe("JSON_VALUES");
     expect(code("[" + "0,".repeat(3), LIMIT, 5)).toBe("JSON_SYNTAX");

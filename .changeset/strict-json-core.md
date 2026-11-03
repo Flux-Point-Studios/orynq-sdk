@@ -13,7 +13,9 @@ Nesting is judged before `JSON.parse` runs, so a deeply nested text is refused
 without being built and reports `JSON_DEPTH` even when it is also malformed.
 An optional third argument, `maxValues`, bounds the values a text may hold
 (every container, string, number and literal; keys do not count) in the same
-scan, so a wide text over it is refused unbuilt as `JSON_VALUES`.
+scan, so a wide text over it is refused unbuilt as `JSON_VALUES`. Both
+limits must be non-negative integers or `Infinity`; any other value, `NaN`
+included, throws `TypeError` instead of bounding nothing.
 Refusals throw `StrictJsonError` with a `code` and a fixed message that never
 quotes the input.
 
