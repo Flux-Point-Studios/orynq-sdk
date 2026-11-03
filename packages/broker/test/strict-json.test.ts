@@ -1,7 +1,7 @@
 import { StrictJsonError, type StrictJsonErrorCode } from "@fluxpointstudios/orynq-sdk-core/utils";
 import { describe, expect, it } from "vitest";
 import { RpcError } from "../src/errors.js";
-import { parseJsonPayload } from "../src/strict-json.js";
+import { MAX_REQUEST_VALUES, parseJsonPayload } from "../src/strict-json.js";
 
 const utf8 = (text: string) => new TextEncoder().encode(text);
 
@@ -70,6 +70,17 @@ describe("parseJsonPayload", () => {
     expect((error.cause as StrictJsonError).code).toBe("JSON_DEPTH");
     expect(process.memoryUsage().rss - rss).toBeLessThan(64 * 1024 * 1024);
     expect(elapsed).toBeLessThan(400);
+  });
+
+  it("refuses a payload holding more than 65,536 values with -32700, before parsing it", () => {
+    expect(MAX_REQUEST_VALUES).toBe(65_536);
+    const zeros = (n: number) => utf8(`[${Array(n).fill("0").join(",")}]`);
+    expect(parseJsonPayload(zeros(65_535))).toHaveLength(65_535);
+    for (const payload of [zeros(65_536), utf8(`[${"{},".repeat(65_536)}`)]) {
+      const error = refusal(payload);
+      expect(error.code).toBe(-32700);
+      expect((error.cause as StrictJsonError).code).toBe("JSON_VALUES");
+    }
   });
 
   it("keeps the input out of the error message", () => {

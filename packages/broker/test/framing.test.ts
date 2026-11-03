@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { Duplex, PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { jsonToCbor } from "../src/dcbor.js";
@@ -518,6 +519,39 @@ describe("serveConnection over a Unix domain socket", () => {
     socket.end();
     await closed;
     await vi.waitFor(() => expect(reasons).toEqual(["end"]));
+  });
+
+  // Before the value bound, one such request stalled the event loop for about 1.5 s and grew
+  // peak RSS by about 640 MiB, and eight stalled it for 8.6 s in turn.
+  it.each([
+    ["empty objects", "[", (i: number) => (i < 0 ? "]" : "{}")],
+    ["object members", "{", (i: number) => (i < 0 ? "}" : `"k${i}":0`)],
+  ])("answers 16 MiB requests of %s from 8 clients with -32700 without stalling the event loop", async (_, open, part) => {
+    const { path, reasons } = await listen();
+    const parts = [`{"jsonrpc":"2.0","id":1,"method":"broker.hello","params":${open}`];
+    for (let i = 0, size = parts[0]!.length + 2; size + 32 < MAX_FRAME_BYTES; i++) {
+      parts.push(`${i === 0 ? "" : ","}${part(i)}`);
+      size += parts[i + 1]!.length;
+    }
+    const frame = encodeFrame(utf8(`${parts.join("")}${part(-1)}}`));
+    expect(frame.length).toBeGreaterThan(MAX_FRAME_BYTES - 64);
+    const clients = await Promise.all(Array.from({ length: 8 }, () => connect(path)));
+    try {
+      const delay = monitorEventLoopDelay({ resolution: 10 });
+      delay.enable();
+      for (const { socket } of clients) socket.write(frame);
+      await vi.waitFor(() => expect(clients.every(client => client.replies.length === 1)).toBe(true), { timeout: 60_000, interval: 20 });
+      delay.disable();
+      expect(delay.max / 1e6).toBeLessThan(400);
+      for (const { replies } of clients) {
+        expect(decoded(replies)).toEqual([{ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }]);
+      }
+      for (const { socket } of clients) socket.end();
+      await Promise.all(clients.map(client => client.closed));
+      await vi.waitFor(() => expect(reasons).toEqual(Array(8).fill("end")));
+    } finally {
+      for (const { socket } of clients) socket.destroy();
+    }
   });
 
   it("drops a client that sends a zero-length frame", async () => {

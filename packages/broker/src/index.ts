@@ -14,4 +14,4 @@ export {
 export type { CloseReason, FrameErrorCode, RequestHandler, RequestId, RpcRequest } from "./framing.js";
 export { METHOD_PARAMS, SCHEMA_RULES, schemaRules } from "./schema.js";
 export type { EffectKind } from "./schema.js";
-export { parseJsonPayload } from "./strict-json.js";
+export { MAX_REQUEST_VALUES, parseJsonPayload } from "./strict-json.js";

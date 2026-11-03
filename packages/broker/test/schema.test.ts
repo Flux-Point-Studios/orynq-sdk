@@ -5,8 +5,9 @@ import { actionDigestHex, bytesToHex, cborDecode, cborEncode } from "@fluxpoints
 import { describe, expect, it } from "vitest";
 import { bytes, jsonToCbor, jsonToDcbor, map, text, type Shape } from "../src/dcbor.js";
 import { RpcError } from "../src/errors.js";
+import { decodeRequest } from "../src/framing.js";
 import { METHOD_PARAMS, SCHEMA_RULES, schemaRules, type EffectKind } from "../src/schema.js";
-import { parseJsonPayload } from "../src/strict-json.js";
+import { MAX_REQUEST_VALUES, parseJsonPayload } from "../src/strict-json.js";
 
 // The CDDL in docs/ is normative and @cbortech/cbor judges it; src/schema.ts is its runtime
 // form. Every vector, and every bound probe generated below, must get one verdict from both.
@@ -385,6 +386,52 @@ describe("runtime schema", () => {
     Object.values(schemaRules(TEST_EFFECTS)).forEach(walk);
     expect(patterns.size).toBeGreaterThanOrEqual(9);
     for (const pattern of patterns) expect(CDDL_SOURCE).toContain(`.regexp ${JSON.stringify(pattern)}`);
+  });
+
+  // Counted as the strict JSON parser counts: every container and scalar, keys excluded. The
+  // request envelope adds the object and its jsonrpc, id and method values.
+  const valuesAtMost = (shape: Shape): number => {
+    switch (shape.type) {
+      case "array":
+        return 1 + shape.max * valuesAtMost(shape.items);
+      case "map":
+        return 1 + [...shape.fields.values()].reduce((sum, field) => sum + valuesAtMost(field.shape), 0);
+      case "choice":
+        return Math.max(0, ...shape.options.map(valuesAtMost));
+      default:
+        return 1;
+    }
+  };
+  const valuesIn = (json: unknown): number =>
+    json === null || typeof json !== "object"
+      ? 1
+      : 1 + (Array.isArray(json) ? json : Object.values(json)).reduce((sum: number, item) => sum + valuesIn(item), 0);
+
+  it("holds the largest params of every method, in a request, within MAX_REQUEST_VALUES", () => {
+    for (const rules of [SCHEMA_RULES, schemaRules(TEST_EFFECTS)]) {
+      for (const rule of Object.values(METHOD_PARAMS)) {
+        expect(4 + valuesAtMost(rules[rule])).toBeLessThanOrEqual(MAX_REQUEST_VALUES);
+      }
+    }
+  });
+
+  it("decodes the largest release.commit: 8 mandates of 258 steps with every optional member", () => {
+    const rules = schemaRules(TEST_EFFECTS);
+    const [, release] = FILES.find(([name]) => name === "release")!;
+    const vector = release.valid.find(v => v.name === "committee release over two mandates with a proof and instanceSig")!;
+    const params = vector.json as { mandates: { steps: { proof?: unknown }[] }[] };
+    const mandate = params.mandates[0]!;
+    const step = params.mandates.flatMap(m => m.steps).find(s => s.proof !== undefined)!;
+    const largest = {
+      ...params,
+      kind: "test.echo",
+      effect: { message: "m" },
+      mandates: Array(8).fill({ ...mandate, steps: Array(258).fill(step) }),
+    };
+    const request = decodeRequest(wire({ jsonrpc: "2.0", id: 1, method: "release.commit", params: largest }));
+    expect(() => jsonToCbor(request.params, rules["release-request"])).not.toThrow();
+    expect(valuesIn(request.params)).toBe(valuesAtMost(rules["release-request"]));
+    expect(4 + valuesIn(request.params)).toBeGreaterThan(49_000);
   });
 
   it("refuses every effect while no effect kind is registered", () => {

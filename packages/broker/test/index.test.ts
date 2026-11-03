@@ -7,6 +7,7 @@ it("exports the framing, decoding and schema surface and nothing else", () => {
     "FrameError",
     "IDLE_TIMEOUT_MS",
     "MAX_FRAME_BYTES",
+    "MAX_REQUEST_VALUES",
     "METHOD_PARAMS",
     "RpcError",
     "SCHEMA_RULES",
