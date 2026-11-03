@@ -1,6 +1,14 @@
 import { readFileSync } from "node:fs";
 import { CBOR } from "@cbortech/cbor";
-import { CDDL, type CddlSchema } from "@cbortech/cbor/cddl";
+import {
+  CDDL,
+  type CddlGroup,
+  type CddlGroupEntry,
+  type CddlSchema,
+  type CddlType,
+  type CddlType1,
+  type CddlType2,
+} from "@cbortech/cbor/cddl";
 import { actionDigestHex, bytesToHex, cborDecode, cborEncode } from "@fluxpointstudios/orynq-sdk-conduct";
 import { describe, expect, it } from "vitest";
 import { bytes, jsonToCbor, jsonToDcbor, map, text, type Shape } from "../src/dcbor.js";
@@ -124,7 +132,11 @@ for (const [name, file] of FILES) {
 // member removed; an unknown member added; every literal changed. The probes run on the vectors'
 // valid instances. A member or choice no vector reaches gets an instance built from the runtime
 // shape (every optional member present, the choices on its path taken), which both sides must
-// accept before it is probed, so no node of any rule goes unprobed.
+// accept before it is probed, so no runtime node goes unprobed. In the other direction, every
+// alternative of every choice the CDDL's rules reach (type choices, group choices and socket
+// extensions) gets an instance built from the CDDL the same way, which both sides must accept,
+// so an alternative, literal or optional member that only the CDDL has, or that the runtime
+// lacks, fails the suite.
 describe("CDDL and runtime agree at every bound", () => {
   const extension = FILES.find(([, file]) => file.extension !== undefined)?.[1].extension;
   const schema = compile(extension);
@@ -229,6 +241,143 @@ describe("CDDL and runtime agree at every bound", () => {
     }
   }
 
+  // A choice the CDDL offers: a rule's alternatives, its /= and //= extensions included, keyed by
+  // the rule's name, or an inline type's or group's, keyed by its offset. `picks` maps a key to
+  // the option taken (otherwise the first); `seen` collects the choices a build passes through.
+  interface Choice<T> { readonly key: string; readonly options: readonly T[] }
+  interface Picks { readonly picks: ReadonlyMap<string, number>; readonly seen: Map<string, number> }
+  const U64_MAX = 2n ** 64n - 1n;
+  const typeChoice = (type: CddlType): Choice<CddlType1> => ({ key: `type@${type.start}`, options: type.alternatives });
+  const groupChoice = (group: CddlGroup): Choice<CddlGroupEntry[]> => ({ key: `group@${group.start}`, options: group.choices });
+
+  function ruleType(name: string): Choice<CddlType1> {
+    const types = (schema.rules.get(name) ?? []).map(({ body }) => {
+      if (body.kind !== "entry" || body.memberKey || body.occur) throw new Error(`${name} is not a type rule`);
+      return body.value;
+    });
+    if (types.length === 0) throw new Error(`the CDDL defines no rule ${name}`);
+    return { key: name, options: types.flatMap(type => type.alternatives) };
+  }
+
+  function ruleGroup(name: string): Choice<CddlGroupEntry[]> {
+    const groups = (schema.rules.get(name) ?? []).map(({ body }) => {
+      if (body.kind !== "entry-group") throw new Error(`${name} is not a group rule`);
+      return body.group;
+    });
+    if (groups.length === 0) throw new Error(`the CDDL defines no group ${name}`);
+    return { key: name, options: groups.flatMap(group => group.choices) };
+  }
+
+  function take<T>(choice: Choice<T>, { picks, seen }: Picks): T {
+    if (choice.options.length > 1) seen.set(choice.key, choice.options.length);
+    const option = choice.options[picks.get(choice.key) ?? 0];
+    if (option === undefined) throw new Error(`${choice.key} offers no option ${picks.get(choice.key) ?? 0}`);
+    return option;
+  }
+
+  const uintInstance = (value: bigint, max: bigint): Instance => ({ json: max <= 2n ** 53n ? Number(value) : value.toString(), cbor: value });
+  const intValue = (node: CddlType2): bigint => {
+    if (node.kind !== "value" || node.type !== "int") throw new Error(`expected an integer at ${node.start}`);
+    return BigInt(node.value);
+  };
+  // The smallest size a .size controller allows: `n` or `(min..max)`.
+  const minimumSize = (controller: CddlType2): number => {
+    if (controller.kind === "paren" && controller.type.alternatives.length === 1) {
+      const [range] = controller.type.alternatives;
+      if (range!.op?.kind === "range") return Number(intValue(range!.target));
+    }
+    return Number(intValue(controller));
+  };
+
+  function fromType1(node: CddlType1, state: Picks): Instance {
+    if (!node.op) return fromType2(node.target, state);
+    const ref = node.target.kind === "ref" ? node.target.name : undefined;
+    const controller = node.controller as CddlType2;
+    const op = node.op.kind === "ctl" ? node.op.name : "range";
+    if (op === "size" && (ref === "text" || ref === "tstr")) return { json: "a".repeat(minimumSize(controller)), cbor: "a".repeat(minimumSize(controller)) };
+    if (op === "size" && (ref === "bytes" || ref === "bstr")) return { json: "00".repeat(minimumSize(controller)), cbor: new Uint8Array(minimumSize(controller)) };
+    if (op === "regexp" && (ref === "text" || ref === "tstr") && controller.kind === "value" && controller.type === "text") {
+      const sample = patternSamples.get(new RegExp(`^(?:${controller.value})$`, "u").source);
+      if (sample === undefined) throw new Error(`no vector holds a text matching ${controller.value}`);
+      return { json: sample, cbor: sample };
+    }
+    if (op === "le" && ref === "uint") return uintInstance(0n, intValue(controller));
+    if (op === "ge" && ref === "uint") return uintInstance(intValue(controller), U64_MAX);
+    // The CDDL's own verdict on the whole instance checks the controller.
+    if (op === "and") return fromType2(node.target, state);
+    throw new Error(`no instance builder for .${op} at ${node.start}`);
+  }
+
+  function fromType2(node: CddlType2, state: Picks): Instance {
+    switch (node.kind) {
+      case "value":
+        if (node.type === "text") return { json: node.value, cbor: node.value };
+        if (node.type === "int") return { json: Number(node.value), cbor: BigInt(node.value) };
+        break;
+      case "ref":
+        if (node.name === "uint") return uintInstance(0n, U64_MAX);
+        if (node.name === "text" || node.name === "tstr") return { json: "", cbor: "" };
+        if (node.name === "bytes" || node.name === "bstr") return { json: "", cbor: new Uint8Array(0) };
+        return fromType1(take(ruleType(node.name), state), state);
+      case "paren":
+        return fromType1(take(typeChoice(node.type), state), state);
+      case "map": {
+        const members = fromEntries(take(groupChoice(node.group), state), state);
+        return {
+          json: Object.fromEntries(members.map(([name, member]) => [name, member.json])),
+          cbor: Object.fromEntries(members.map(([name, member]) => [name, member.cbor])),
+        };
+      }
+      case "array": {
+        const items = take(groupChoice(node.group), state).flatMap(entry => {
+          if (entry.kind !== "entry" || entry.memberKey) throw new Error(`unsupported array entry at ${entry.start}`);
+          const occur = entry.occur;
+          const count = !occur ? 1 : occur.marker === "+" ? 1 : Math.max(occur.min ?? 0, (occur.max ?? 1) > 0 ? 1 : 0);
+          const item = fromType1(take(typeChoice(entry.value), state), state);
+          return Array<Instance>(count).fill(item);
+        });
+        return { json: items.map(item => item.json), cbor: items.map(item => item.cbor) };
+      }
+    }
+    throw new Error(`no instance builder for a ${node.kind} at ${node.start}`);
+  }
+
+  // Map members, with every optional member present and group references inlined.
+  function fromEntries(entries: readonly CddlGroupEntry[], state: Picks): (readonly [string, Instance])[] {
+    return entries.flatMap(entry => {
+      if (entry.kind === "entry-group") return fromEntries(take(groupChoice(entry.group), state), state);
+      const key = entry.memberKey;
+      if (key?.kind === "bareword") return [[key.key, fromType1(take(typeChoice(entry.value), state), state)] as const];
+      if (key?.kind === "value" && key.key.type === "text") return [[key.key.value, fromType1(take(typeChoice(entry.value), state), state)] as const];
+      const [reference] = entry.value.alternatives;
+      if (key || entry.value.alternatives.length !== 1 || reference!.op || reference!.target.kind !== "ref") {
+        throw new Error(`unsupported map entry at ${entry.start}`);
+      }
+      return fromEntries(take(ruleGroup(reference!.target.name), state), state);
+    });
+  }
+
+  // From each rule, one build per option of every choice a build reaches, each taking the
+  // options on its path.
+  const cddlBases: Base[] = [];
+  for (const rule of Object.keys(rules)) {
+    const queued = new Set<string>();
+    const queue: ReadonlyMap<string, number>[] = [new Map()];
+    for (let picks = queue.shift(); picks; picks = queue.shift()) {
+      const seen = new Map<string, number>();
+      const built = fromType1(take(ruleType(rule), { picks, seen }), { picks, seen });
+      const label = [...picks].map(([key, k]) => `${key}=${k}`).join(", ");
+      cddlBases.push({ name: `CDDL-built ${rule}${label ? ` with ${label}` : ""}`, rule, ...built });
+      for (const [key, count] of seen) {
+        for (let k = 0; k < count; k++) {
+          if (queued.has(`${key}#${k}`)) continue;
+          queued.add(`${key}#${k}`);
+          if ((picks.get(key) ?? 0) !== k) queue.push(new Map([...picks, [key, k]]));
+        }
+      }
+    }
+  }
+
   const window = (bound: number) => Array.from({ length: 9 }, (_, i) => bound - 4 + i).filter(n => n >= 0);
   const fill = (seed: string, size: number) => (size <= seed.length ? seed.slice(0, size) : seed + (seed.at(-1) ?? "a").repeat(size - seed.length));
 
@@ -298,6 +447,14 @@ describe("CDDL and runtime agree at every bound", () => {
       .map(base => ({ name: base.name, runtime: runtimeAccepts(base.json, base.rule), cddl: cddlAccepts(base.cbor, base.rule) }))
       .filter(verdict => !verdict.runtime || !verdict.cddl);
     expect(refused).toEqual([]);
+  });
+
+  it("accepts on both sides an instance built from the CDDL for every option of every choice", () => {
+    const refused = cddlBases
+      .map(base => ({ name: base.name, runtime: runtimeAccepts(base.json, base.rule), cddl: cddlAccepts(base.cbor, base.rule) }))
+      .filter(verdict => !verdict.runtime || !verdict.cddl);
+    expect(refused).toEqual([]);
+    expect(cddlBases.length).toBeGreaterThan(Object.keys(rules).length);
   });
 
   it.each(Object.keys(rules))("%s: the CDDL and the runtime give every probe one verdict", rule => {
