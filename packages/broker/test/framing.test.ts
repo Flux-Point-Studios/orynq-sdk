@@ -300,6 +300,21 @@ describe("serveConnection", () => {
     expect(server.destroyed).toBe(true);
   });
 
+  it.each([
+    ["a string naming a close reason", "end"],
+    ["undefined", undefined],
+    ["a number", 42],
+  ])("rejects with an Error when the handler throws %s, so a failure never reads as a close", async (_, thrown) => {
+    const { server, send } = pair();
+    const closed = serveConnection(server, async () => {
+      throw thrown;
+    });
+    send(encodeFrame(request(1)));
+    await expect(closed).rejects.toThrow(new Error("request handling failed with a value that is not an Error"));
+    await expect(closed).rejects.toHaveProperty("cause", thrown);
+    expect(server.destroyed).toBe(true);
+  });
+
   it("rejects a stream that carries text instead of bytes, before decoding", async () => {
     const { server, send } = pair();
     server.setEncoding("utf8");

@@ -152,7 +152,8 @@ export type CloseReason = "end" | "idle" | "frame" | "concurrent" | "reset";
 // closes the connection after IDLE_TIMEOUT_MS. Partial frames do not restart it. A client FIN
 // ends the connection once a request already dispatched has been answered, which needs a
 // half-open stream (net.createServer({ allowHalfOpen: true })); any other stream is refused.
-// Settles once the stream is destroyed; it rejects only for a handler failure or a misused stream.
+// Settles once the stream is destroyed; it rejects only for a handler failure or a misused stream,
+// and always with an Error: a thrown value that is not one becomes the cause of one.
 export function serveConnection(stream: Duplex, handle: RequestHandler): Promise<CloseReason> {
   return new Promise<CloseReason>((resolve, reject) => {
     const decoder = new FrameDecoder();
@@ -161,15 +162,18 @@ export function serveConnection(stream: Duplex, handle: RequestHandler): Promise
     let settled = false;
     let idle: ReturnType<typeof setTimeout> | undefined;
 
-    const finish = (outcome: CloseReason | Error) => {
+    const settle = (outcome: { reason: CloseReason } | { error: unknown }) => {
       if (settled) return;
       settled = true;
       clearTimeout(idle);
       stream.off("data", onData);
       stream.destroy();
-      if (outcome instanceof Error) reject(outcome);
-      else resolve(outcome);
+      if ("reason" in outcome) resolve(outcome.reason);
+      else if (outcome.error instanceof Error) reject(outcome.error);
+      else reject(new Error("request handling failed with a value that is not an Error", { cause: outcome.error }));
     };
+    const finish = (reason: CloseReason) => settle({ reason });
+    const fail = (error: unknown) => settle({ error });
     const arm = () => {
       clearTimeout(idle);
       idle = setTimeout(() => finish("idle"), IDLE_TIMEOUT_MS);
@@ -199,13 +203,13 @@ export function serveConnection(stream: Duplex, handle: RequestHandler): Promise
       return send(payload);
     };
     function onData(chunk: unknown) {
-      if (!(chunk instanceof Uint8Array)) return finish(new TypeError("the stream must carry bytes"));
+      if (!(chunk instanceof Uint8Array)) return fail(new TypeError("the stream must carry bytes"));
       if (busy) return finish("concurrent");
       let frames: Uint8Array[];
       try {
         frames = decoder.push(chunk);
       } catch (error) {
-        return finish(error instanceof FrameError ? "frame" : (error as Error));
+        return error instanceof FrameError ? finish("frame") : fail(error);
       }
       if (frames.length === 0) return;
       if (frames.length > 1 || decoder.buffered > 0) return finish("concurrent");
@@ -215,12 +219,12 @@ export function serveConnection(stream: Duplex, handle: RequestHandler): Promise
         busy = false;
         if (ending) finish("end");
         else if (!settled) arm();
-      }, finish);
+      }, fail);
     }
 
     stream.on("error", () => finish("reset"));
     if (!stream.allowHalfOpen) {
-      finish(new TypeError("the stream must allow half-open so a reply can follow the client's FIN"));
+      fail(new TypeError("the stream must allow half-open so a reply can follow the client's FIN"));
       return;
     }
     stream.on("data", onData);
