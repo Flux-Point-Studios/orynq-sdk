@@ -98,7 +98,7 @@
                 },
                 "traceMeta": {
                   "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
-                  "seq": "4",
+                  "seq": "9",
                   "timestamp": "2026-10-26T08:53:20.001Z"
                 },
                 "proof": {
@@ -129,7 +129,7 @@
                   "seq": "17",
                   "timestamp": "1793000000",
                   "enforcedAt": "1793000001",
-                  "mandateCommitment": "1111111111111111111111111111111111111111111111111111111111111111",
+                  "mandateCommitment": "2222222222222222222222222222222222222222222222222222222222222222",
                   "actionDigest": "f29ffd3ac0081ea14536e5a8b8074447c56d8282b054899006138342b20a808d",
                   "actionKind": "payment",
                   "action": {
@@ -141,8 +141,8 @@
                   }
                 },
                 "traceMeta": {
-                  "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
-                  "seq": "17",
+                  "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+                  "seq": "30",
                   "timestamp": "2026-10-26T08:53:20.001Z"
                 }
               },
@@ -152,20 +152,20 @@
                   "seq": "18",
                   "timestamp": "1793000000",
                   "enforcedAt": "1793000001",
-                  "mandateCommitment": "1111111111111111111111111111111111111111111111111111111111111111",
-                  "actionDigest": "f29ffd3ac0081ea14536e5a8b8074447c56d8282b054899006138342b20a808d",
+                  "mandateCommitment": "2222222222222222222222222222222222222222222222222222222222222222",
+                  "actionDigest": "749863224fd4e3422707fd072eb3ebc40d43bc1ea628f6032a46047eb12ec72e",
                   "actionKind": "payment",
                   "action": {
                     "kind": "payment",
                     "asset": "lovelace",
-                    "amount": "2500000",
-                    "counterparty": "ca1:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+                    "amount": "180000",
+                    "counterparty": "oc1:fefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe",
                     "timestamp": "1793000000"
                   }
                 },
                 "traceMeta": {
-                  "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
-                  "seq": "18",
+                  "id": "16fd2706-8baf-433b-82eb-8c7fada847da",
+                  "seq": "31",
                   "timestamp": "2026-10-26T08:53:20.001Z"
                 }
               }
@@ -174,7 +174,7 @@
         ],
         "instanceSig": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
       },
-      "cdn": "{\"v\": 1, \"kind\": \"test.raw\", \"alias\": \"test:treasury\", \"effect\": h'84a400818258200000', \"mandates\": [{\"C\": h'1111111111111111111111111111111111111111111111111111111111111111', \"head\": {\"trace\": {\"seq\": 9, \"roll\": h'e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2'}, \"guardLog\": {\"hash\": h'e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1', \"count\": 4}}, \"steps\": [{\"event\": {\"seq\": 4, \"type\": \"orynq.conduct.guard.action.v1\", \"action\": {\"kind\": \"payment\", \"asset\": \"orynq:call\", \"amount\": 1, \"timestamp\": 1793000000, \"counterparty\": \"oc1:abababababababababababababababababababababababababababababab\"}, \"timestamp\": 1793000000, \"actionKind\": \"payment\", \"enforcedAt\": 1793000001, \"actionDigest\": h'4cfd32035fef90d6d059be4ec4dee26a29e30a884e2cb35799589ee7226d7bec', \"mandateCommitment\": h'1111111111111111111111111111111111111111111111111111111111111111'}, \"proof\": {\"classId\": \"broker.k18:v1\", \"circuitId\": \"conduct-step\", \"transactionBase64\": \"AAECAwQFBgc=\", \"referenceStateBase64\": \"q83v\"}, \"traceMeta\": {\"id\": \"0f8fad5b-d9cb-469f-a165-70867728950e\", \"seq\": 4, \"timestamp\": \"2026-10-26T08:53:20.001Z\"}}]}, {\"C\": h'2222222222222222222222222222222222222222222222222222222222222222', \"head\": {\"trace\": {\"seq\": 30, \"roll\": h'e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2'}, \"guardLog\": {\"hash\": h'e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1', \"count\": 17}}, \"steps\": [{\"event\": {\"seq\": 17, \"type\": \"orynq.conduct.guard.action.v1\", \"action\": {\"kind\": \"payment\", \"asset\": \"lovelace\", \"amount\": 2500000, \"timestamp\": 1793000000, \"counterparty\": \"ca1:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"}, \"timestamp\": 1793000000, \"actionKind\": \"payment\", \"enforcedAt\": 1793000001, \"actionDigest\": h'f29ffd3ac0081ea14536e5a8b8074447c56d8282b054899006138342b20a808d', \"mandateCommitment\": h'1111111111111111111111111111111111111111111111111111111111111111'}, \"traceMeta\": {\"id\": \"0f8fad5b-d9cb-469f-a165-70867728950e\", \"seq\": 17, \"timestamp\": \"2026-10-26T08:53:20.001Z\"}}, {\"event\": {\"seq\": 18, \"type\": \"orynq.conduct.guard.action.v1\", \"action\": {\"kind\": \"payment\", \"asset\": \"lovelace\", \"amount\": 2500000, \"timestamp\": 1793000000, \"counterparty\": \"ca1:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"}, \"timestamp\": 1793000000, \"actionKind\": \"payment\", \"enforcedAt\": 1793000001, \"actionDigest\": h'f29ffd3ac0081ea14536e5a8b8074447c56d8282b054899006138342b20a808d', \"mandateCommitment\": h'1111111111111111111111111111111111111111111111111111111111111111'}, \"traceMeta\": {\"id\": \"0f8fad5b-d9cb-469f-a165-70867728950e\", \"seq\": 18, \"timestamp\": \"2026-10-26T08:53:20.001Z\"}}]}], \"intentHash\": h'f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1', \"instanceSig\": h'5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a'}"
+      "cdn": "{\"v\": 1, \"kind\": \"test.raw\", \"alias\": \"test:treasury\", \"effect\": h'84a400818258200000', \"mandates\": [{\"C\": h'1111111111111111111111111111111111111111111111111111111111111111', \"head\": {\"trace\": {\"seq\": 9, \"roll\": h'e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2'}, \"guardLog\": {\"hash\": h'e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1', \"count\": 4}}, \"steps\": [{\"event\": {\"seq\": 4, \"type\": \"orynq.conduct.guard.action.v1\", \"action\": {\"kind\": \"payment\", \"asset\": \"orynq:call\", \"amount\": 1, \"timestamp\": 1793000000, \"counterparty\": \"oc1:abababababababababababababababababababababababababababababab\"}, \"timestamp\": 1793000000, \"actionKind\": \"payment\", \"enforcedAt\": 1793000001, \"actionDigest\": h'4cfd32035fef90d6d059be4ec4dee26a29e30a884e2cb35799589ee7226d7bec', \"mandateCommitment\": h'1111111111111111111111111111111111111111111111111111111111111111'}, \"proof\": {\"classId\": \"broker.k18:v1\", \"circuitId\": \"conduct-step\", \"transactionBase64\": \"AAECAwQFBgc=\", \"referenceStateBase64\": \"q83v\"}, \"traceMeta\": {\"id\": \"0f8fad5b-d9cb-469f-a165-70867728950e\", \"seq\": 9, \"timestamp\": \"2026-10-26T08:53:20.001Z\"}}]}, {\"C\": h'2222222222222222222222222222222222222222222222222222222222222222', \"head\": {\"trace\": {\"seq\": 30, \"roll\": h'e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2'}, \"guardLog\": {\"hash\": h'e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1', \"count\": 17}}, \"steps\": [{\"event\": {\"seq\": 17, \"type\": \"orynq.conduct.guard.action.v1\", \"action\": {\"kind\": \"payment\", \"asset\": \"lovelace\", \"amount\": 2500000, \"timestamp\": 1793000000, \"counterparty\": \"ca1:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"}, \"timestamp\": 1793000000, \"actionKind\": \"payment\", \"enforcedAt\": 1793000001, \"actionDigest\": h'f29ffd3ac0081ea14536e5a8b8074447c56d8282b054899006138342b20a808d', \"mandateCommitment\": h'2222222222222222222222222222222222222222222222222222222222222222'}, \"traceMeta\": {\"id\": \"7c9e6679-7425-40de-944b-e07fc1f90ae7\", \"seq\": 30, \"timestamp\": \"2026-10-26T08:53:20.001Z\"}}, {\"event\": {\"seq\": 18, \"type\": \"orynq.conduct.guard.action.v1\", \"action\": {\"kind\": \"payment\", \"asset\": \"lovelace\", \"amount\": 180000, \"timestamp\": 1793000000, \"counterparty\": \"oc1:fefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe\"}, \"timestamp\": 1793000000, \"actionKind\": \"payment\", \"enforcedAt\": 1793000001, \"actionDigest\": h'749863224fd4e3422707fd072eb3ebc40d43bc1ea628f6032a46047eb12ec72e', \"mandateCommitment\": h'2222222222222222222222222222222222222222222222222222222222222222'}, \"traceMeta\": {\"id\": \"16fd2706-8baf-433b-82eb-8c7fada847da\", \"seq\": 31, \"timestamp\": \"2026-10-26T08:53:20.001Z\"}}]}], \"intentHash\": h'f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1', \"instanceSig\": h'5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a'}"
     },
     {
       "name": "approved out-of-mandate release",

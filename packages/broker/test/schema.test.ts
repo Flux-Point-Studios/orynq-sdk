@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { CBOR } from "@cbortech/cbor";
 import { CDDL, type CddlSchema } from "@cbortech/cbor/cddl";
-import { bytesToHex, cborDecode, cborEncode } from "@fluxpointstudios/orynq-sdk-conduct";
+import { actionDigestHex, bytesToHex, cborDecode, cborEncode } from "@fluxpointstudios/orynq-sdk-conduct";
 import { describe, expect, it } from "vitest";
 import { bytes, jsonToCbor, jsonToDcbor, map, text, type Shape } from "../src/dcbor.js";
 import { RpcError } from "../src/errors.js";
@@ -316,6 +316,40 @@ describe("CDDL and runtime agree at every bound", () => {
     expect(disagreements).toEqual([]);
     expect(count).toBeGreaterThan(0);
   }, 120_000);
+});
+
+// The schema cannot see these, but the release vectors are the golden inputs verifyRelease will
+// replay (§3.2, §4.1, §4.4), so each must also be a release an honest B could send.
+describe("release vectors replay as honest releases", () => {
+  interface WireAction { readonly kind: "payment"; readonly asset: string; readonly amount: string; readonly counterparty: string; readonly timestamp: string }
+  interface WireStep {
+    readonly event: { readonly seq: string; readonly mandateCommitment: string; readonly actionDigest: string; readonly action: WireAction };
+    readonly traceMeta: { readonly id: string; readonly seq: string };
+  }
+  interface WireMandate { readonly C: string; readonly head: { readonly guardLog: { readonly count: string }; readonly trace: { readonly seq: string } }; readonly steps: readonly WireStep[] }
+
+  const [, release] = FILES.find(([name]) => name === "release")!;
+  const requests = release.valid.filter(v => v.rule === "release-request" && (v.json as { mandates: unknown[] }).mandates.length > 0);
+
+  it.each(requests.map(v => [v.name, v.json as { mandates: readonly WireMandate[] }] as const))("%s", (_, request) => {
+    const mandates = request.mandates;
+    expect(mandates.map(m => m.C)).toEqual(mandates.map(m => m.C).sort());
+    const steps = mandates.flatMap(m => m.steps);
+    for (const m of mandates) {
+      expect(new Set(m.steps.map(step => step.event.action.asset)).size).toBe(1);
+      m.steps.forEach((step, i) => {
+        expect(step.event.mandateCommitment).toBe(m.C);
+        expect(BigInt(step.event.seq)).toBe(BigInt(m.head.guardLog.count) + BigInt(i));
+        expect(BigInt(step.traceMeta.seq)).toBe(BigInt(m.head.trace.seq) + BigInt(i));
+      });
+    }
+    for (const { event: { action, actionDigest } } of steps) {
+      expect(actionDigest).toBe(actionDigestHex({ ...action, amount: BigInt(action.amount), timestamp: BigInt(action.timestamp) }));
+    }
+    // Outflows are summed per counterparty, so no counterparty appears twice in one intent.
+    expect(new Set(steps.map(step => step.event.action.counterparty)).size).toBe(steps.length);
+    expect(new Set(steps.map(step => step.traceMeta.id)).size).toBe(steps.length);
+  });
 });
 
 describe("runtime schema", () => {
