@@ -25,11 +25,22 @@ import {
 } from "./schemes.js";
 import { hashToolPayload } from "./record.js";
 
-/** A verifier for a single receipt scheme. */
-export type ToolReceiptSchemeVerifier = (
-  event: ToolReceiptEvent,
-  ctx?: ToolReceiptVerifyContext
-) => Promise<boolean>;
+/**
+ * A verifier for a single receipt scheme. A scheme outside the built-in set
+ * verifies only when its verifier also carries `responseCommitment`: a valid
+ * signature that does not cover the recorded response proves nothing about it.
+ */
+export interface ToolReceiptSchemeVerifier {
+  (event: ToolReceiptEvent, ctx?: ToolReceiptVerifyContext): Promise<boolean>;
+  /**
+   * The hex digest the scheme's signed content commits to, compared against
+   * `response.hash` (so the response must be hashed as {@link hashToolPayload}
+   * hashes it), or `null` when this receipt's signed bytes do not bind the
+   * response. Replaces the built-in commitment for the scheme it is registered
+   * under. Read only as the verifier's own property.
+   */
+  responseCommitment?: (event: ToolReceiptEvent) => Promise<string | null>;
+}
 
 /** Built-in verifiers keyed by `receipt.scheme`. */
 export const BUILTIN_TOOL_RECEIPT_VERIFIERS: Record<string, ToolReceiptSchemeVerifier> = {
@@ -72,7 +83,11 @@ function hexEq(a: string, b: string): boolean {
 
 /** Context for {@link verifyToolReceipts}; extends key resolution with custom schemes. */
 export interface VerifyToolReceiptsContext extends ToolReceiptVerifyContext {
-  /** Register or override scheme verifiers (e.g. a custom/internal scheme). */
+  /**
+   * Register or override scheme verifiers (e.g. a custom/internal scheme). A
+   * custom scheme's verifier must carry `responseCommitment`, or its receipts
+   * fail with `response-not-bound`.
+   */
   verifiers?: Record<string, ToolReceiptSchemeVerifier>;
   /**
    * The enclosing trace's run id. Self-signed JWS receipts commit to it (and to
@@ -130,7 +145,14 @@ export async function verifyToolReceipt(
     // A valid signature is necessary but NOT sufficient: the signed content
     // must commit to the recorded response, else a genuine receipt for output
     // A can be paired with a fabricated response B (issue #60's core guarantee).
-    const commit = await responseCommitmentHash(event);
+    // Own property only: a polluted Object.prototype must not hand every
+    // verifier, built-ins included, a commitment of its choosing.
+    const ownCommitment = Object.hasOwn(verifier, "responseCommitment")
+      ? verifier.responseCommitment
+      : undefined;
+    const commit = ownCommitment
+      ? await ownCommitment(event)
+      : await responseCommitmentHash(event);
     if (commit === null) {
       return { ...base, callBound, verified: false, reason: "response-not-bound" };
     }
