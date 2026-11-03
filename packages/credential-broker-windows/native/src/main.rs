@@ -48,6 +48,8 @@ const FRAME: u8 = 2;
 const CLOSE: u8 = 3;
 const MAX_FRAME: u32 = 16 << 20;
 const MAX_PER_PEER: usize = 32;
+// Each connection's deadline is Instant::now() + idle, which panics past the clock's range.
+const MAX_IDLE_SECS: u64 = 86_400;
 // Read/write data, read attributes, READ_CONTROL, SYNCHRONIZE. Never FILE_CREATE_PIPE_INSTANCE (0x4):
 // a client holding it could create instances of this pipe and answer other clients.
 const CLIENT_RIGHTS: &str = "0x120083";
@@ -268,11 +270,13 @@ fn parse_args() -> Result<Config, String> {
             "--pipe" => pipe = Some(value),
             "--admit" => admit.push(value),
             "--idle-secs" => {
-                idle = Duration::from_secs(
-                    value
-                        .parse()
-                        .map_err(|_| "--idle-secs must be a whole number")?,
-                )
+                let seconds: u64 = value
+                    .parse()
+                    .map_err(|_| "--idle-secs must be a whole number")?;
+                if !(1..=MAX_IDLE_SECS).contains(&seconds) {
+                    return Err(format!("--idle-secs must be 1 to {MAX_IDLE_SECS}"));
+                }
+                idle = Duration::from_secs(seconds);
             }
             _ => return Err(format!("unknown flag {flag}")),
         }

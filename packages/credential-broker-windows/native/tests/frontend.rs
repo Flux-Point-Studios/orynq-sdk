@@ -433,6 +433,27 @@ fn closes_idle_connections() {
 }
 
 #[test]
+fn refuses_an_idle_period_outside_one_second_to_a_day() {
+    for idle in ["0", "86401", "18446744073709551615"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_orynq-pipe-frontend"))
+            .args(["--pipe", &unique_pipe(), "--idle-secs", idle])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "started with --idle-secs {idle}");
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("--idle-secs"));
+    }
+    let mut frontend = Frontend::start(&["--idle-secs", "86400"]);
+    let mut client = frontend.connect();
+    client.write_all(&frame(b"{}")).unwrap();
+    let open = frontend.next();
+    frontend.next();
+    frontend.send(FRAME, open.conn, b"{}");
+    assert_eq!(read_frame(&mut client), b"{}");
+}
+
+#[test]
 fn closes_a_connection_when_the_parent_says_so() {
     let mut frontend = Frontend::start(&[]);
     let mut client = frontend.connect();
