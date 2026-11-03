@@ -16,8 +16,8 @@ export {
   serveConnection,
 } from "./framing.js";
 export type { CloseReason, FrameErrorCode, RequestHandler, RequestId, RpcRequest } from "./framing.js";
-export { serveMux, startLinuxFrontend } from "./host.js";
-export type { LinuxFrontend, LinuxFrontendOptions, MuxHost } from "./host.js";
+export { serveMux, startLinuxFrontend, startWindowsFrontend } from "./host.js";
+export type { LinuxFrontend, LinuxFrontendOptions, MuxHost, WindowsFrontend, WindowsFrontendOptions } from "./host.js";
 export type { LinuxService, Principal, PrincipalConfig, WindowsService } from "./principals.js";
 export { METHOD_PARAMS, SCHEMA_RULES, schemaRules } from "./schema.js";
 export type { EffectKind } from "./schema.js";

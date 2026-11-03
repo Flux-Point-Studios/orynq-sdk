@@ -11,11 +11,13 @@ import {
   type Peer,
   type WindowsPeer,
 } from "@fluxpointstudios/orynq-sdk-core/broker-wire";
+import { type BrokerConnection, connectBroker } from "@fluxpointstudios/orynq-sdk-credential-broker-windows";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { describe, expect, it, vi } from "vitest";
-import { Broker } from "../src/broker.js";
-import { serveMux, startLinuxFrontend } from "../src/host.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { frontendExecutable, ownSid, pipeName } from "../../credential-broker-windows/tests/sidecar.js";
+import { Broker, type BrokerOptions } from "../src/broker.js";
+import { serveMux, startLinuxFrontend, startWindowsFrontend, type WindowsFrontend } from "../src/host.js";
 
 const OPERATOR = 1000;
 const AGENT = 1500;
@@ -23,10 +25,12 @@ const SLICE = "/orynq.slice/orynq-agents.slice";
 const C = "11".repeat(32);
 const utf8 = (text: string) => new TextEncoder().encode(text);
 const linux = (uid: number, cgroup = "/user.slice"): LinuxPeer => ({ os: "linux", uid, gid: uid, pidHint: 1, cgroup });
+const onLinux = process.platform === "linux";
+const onWindows = process.platform === "win32";
 
-function broker(): Broker {
+function broker(principals: BrokerOptions["principals"] = { operatorUid: OPERATOR, agent: { uid: AGENT, slice: SLICE } }): Broker {
   return new Broker({
-    principals: { operatorUid: OPERATOR, agent: { uid: AGENT, slice: SLICE } },
+    principals,
     receiptKey: Uint8Array.of(1, 2, 3),
     policy: Uint8Array.of(0xa0),
     registeredMandates: new Set([C]),
@@ -274,16 +278,104 @@ describe("startLinuxFrontend", () => {
       await expect(started).rejects.toThrow("idleSeconds must be a whole number of seconds from 1 to 86400");
     }
   });
+});
+
+describe("startWindowsFrontend", () => {
+  it.each([
+    ["a pipe outside \\\\.\\pipe\\", { pipe: "orynq-broker" }],
+    ["an admitted SID that is not a user or service account", { admit: ["S-1-5-18"] }],
+    ["an idle period outside 1 second to a day", { idleSeconds: 86_401 }],
+  ])("refuses %s before spawning anything", async (_, refused) => {
+    const started = startWindowsFrontend({ executable: "/nonexistent/orynq-pipe-frontend.exe", pipe: "\\\\.\\pipe\\orynq-broker", broker: broker(), ...refused });
+    await expect(started).rejects.toThrow(RangeError);
+  });
+});
+
+// These spawn a POSIX executable and a script in the frontend's place, which Windows cannot.
+describe.runIf(onLinux).each([
+  [
+    "startLinuxFrontend",
+    "orynq-socket-frontend",
+    (executable: string, onError: (error: unknown) => void) => startLinuxFrontend({ executable, socket: "/unused/broker.sock", broker: broker(), onError }),
+  ],
+  [
+    "startWindowsFrontend",
+    "orynq-pipe-frontend",
+    (executable: string, onError: (error: unknown) => void) => startWindowsFrontend({ executable, pipe: "\\\\.\\pipe\\unused", broker: broker(), onError }),
+  ],
+])("%s with a stand-in frontend", (_, name, start) => {
+  it("rejects with the frontend's name and exit code when it exits before READY without a reason", async () => {
+    await expect(start("/bin/false", () => undefined)).rejects.toThrow(`${name} exited with code 1`);
+  });
 
   it("kills a frontend that breaks the protocol after READY, and reports why", async () => {
     const errors: unknown[] = [];
-    const frontend = await startLinuxFrontend({
-      executable: join(import.meta.dirname, "fixtures", "broken-frontend.mjs"),
-      socket: "/unused/broker.sock",
-      broker: broker(),
-      onError: error => errors.push(error),
-    });
+    const frontend = await start(join(import.meta.dirname, "fixtures", "broken-frontend.mjs"), error => errors.push(error));
     await vi.waitFor(() => expect(() => process.kill(frontend.pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" })), { timeout: 5_000 });
     expect(errors[0]).toMatchObject({ name: "BrokerWireError", code: "MUX_KIND" });
+  });
+});
+
+describe.runIf(onWindows)("startWindowsFrontend with the real sidecar", { timeout: 30_000 }, () => {
+  const frontends: WindowsFrontend[] = [];
+  const clients: BrokerConnection[] = [];
+  afterEach(async () => {
+    await Promise.all(clients.splice(0).map(client => client.close()));
+    await Promise.all(frontends.splice(0).map(frontend => frontend.close()));
+  });
+
+  const start = async (errors: unknown[] = []) => {
+    const b = broker({ operatorSid: ownSid() });
+    const frontend = await startWindowsFrontend({ executable: frontendExecutable(), pipe: pipeName(), broker: b, onError: error => errors.push(error) });
+    frontends.push(frontend);
+    return { b, frontend };
+  };
+  const connect = async (frontend: WindowsFrontend) => {
+    const client = await connectBroker(frontend.pipe, ownSid());
+    clients.push(client);
+    return client;
+  };
+  const request = (id: number, params?: unknown) => utf8(JSON.stringify({ jsonrpc: "2.0", id, method: "broker.hello", ...(params === undefined ? {} : { params }) }));
+  const reply = async (pending: Promise<Buffer>) => JSON.parse((await pending).toString("utf8")) as Record<string, unknown>;
+
+  it("relays each request on a connection to the broker and its reply back to the client", async () => {
+    const { b, frontend } = await start();
+    vi.spyOn(b, "handle").mockImplementation(async ({ id, params }) => utf8(JSON.stringify({ jsonrpc: "2.0", id, result: params })));
+    const client = await connect(frontend);
+    expect(await reply(client.request(request(1, { echo: "ping" })))).toEqual({ jsonrpc: "2.0", id: 1, result: { echo: "ping" } });
+    expect(await reply(client.request(request(2, { echo: "again" })))).toEqual({ jsonrpc: "2.0", id: 2, result: { echo: "again" } });
+  });
+
+  it("maps the caller's Windows account, a peer with exactly the contract's keys, to its principal", async () => {
+    const { b, frontend } = await start();
+    const principalOf = vi.spyOn(b, "principalOf");
+    const client = await connect(frontend);
+    expect(await reply(client.request(request(1)))).toMatchObject({ id: 1, result: { principal: "operator" } });
+    expect(principalOf).toHaveBeenCalledTimes(1);
+    const [peer] = principalOf.mock.calls[0]!;
+    expect(peer).toMatchObject({ os: "windows", sid: ownSid(), pidHint: process.pid });
+    expect(Object.keys(peer ?? {}).sort()).toEqual(["integrityRid", "logonLuid", "os", "pidHint", "sid", "tsSessionId"]);
+  });
+
+  it("closes only the connection whose request failed in the broker, and reports the failure", async () => {
+    const errors: unknown[] = [];
+    const { b, frontend } = await start(errors);
+    const failure = new Error("handler bug");
+    vi.spyOn(b, "handle").mockRejectedValueOnce(failure);
+    const failing = await connect(frontend);
+    const healthy = await connect(frontend);
+    await expect(failing.request(request(1))).rejects.toThrow(/closed/);
+    expect(await reply(healthy.request(request(2)))).toMatchObject({ id: 2, result: { principal: "operator" } });
+    expect(errors).toEqual([failure]);
+  });
+
+  it("cancels a request the broker is still running when the client closes", async () => {
+    const { b, frontend } = await start();
+    const handle = vi.spyOn(b, "handle").mockReturnValueOnce(new Promise(() => undefined));
+    const client = await connect(frontend);
+    const pending = client.request(request(1));
+    await vi.waitFor(() => expect(handle).toHaveBeenCalledTimes(1));
+    await client.close();
+    await expect(pending).rejects.toThrow(/closed/);
   });
 });
