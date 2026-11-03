@@ -251,6 +251,15 @@ describe.runIf(hasCgroupIds && refusedDelegation === undefined)("with a session 
     expect(await code(outside.request("broker.hello"))).toBe(-32001);
   });
 
+  it("refuses the 33rd connection of an account without a principal in the broker, from any cgroup", async () => {
+    const { broker, frontend } = await start({ operatorUid: UID + 1 });
+    const own = await Promise.all(Array.from({ length: 32 }, () => connect(frontend)));
+    for (const client of own) expect(await code(client.request("broker.hello"))).toBe(-32001);
+    const refused = await inCgroup(`orynq-other-${process.pid}`, async () => code((await connect(frontend)).request("broker.hello")));
+    expect(refused).toBe("the broker connection is closed");
+    expect(broker.peers).toHaveLength(33);
+  });
+
   it("refuses an operator's 33rd connection in the broker when the frontend counts it as another peer", async () => {
     const { frontend } = await start({ operatorUid: UID });
     const own = await Promise.all(Array.from({ length: 32 }, () => connect(frontend)));
