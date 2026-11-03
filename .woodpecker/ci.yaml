@@ -25,8 +25,8 @@ steps:
       MIDNIGHT_PP: /woodpecker/orynq-midnight-tools/zk-params
     commands:
       - corepack enable
-      - mkdir -p /woodpecker/orynq-midnight-tools
-      - chown -R node:node . /woodpecker/orynq-midnight-tools
+      - mkdir -p /woodpecker/orynq-midnight-tools /woodpecker/orynq-broker-tools
+      - chown -R node:node . /woodpecker/orynq-midnight-tools /woodpecker/orynq-broker-tools
       - |
         su node -s /bin/bash -c '
           set -e
@@ -61,6 +61,29 @@ steps:
       - cargo +1.99.0 clippy --release --locked --manifest-path packages/midnight-prover/native/Cargo.toml --all-targets -- -D warnings
       - cargo +1.99.0 build --release --locked --manifest-path packages/midnight-prover/native/Cargo.toml
       - cargo +1.99.0 test --release --locked --manifest-path packages/midnight-prover/native/Cargo.toml
+
+  # The Linux socket frontend: its tests run the binary against real sockets as uid 1000, and the
+  # release build is kept for the broker's socket suite.
+  - name: broker-native
+    image: rust:1.99.0-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6
+    depends_on: [build-test]
+    backend_options:
+      docker:
+        user: '1000:1000'
+    environment:
+      CARGO_BUILD_JOBS: '4'
+      CARGO_HOME: /tmp/orynq-broker-cargo
+      CARGO_TARGET_DIR: /tmp/orynq-broker-target
+    commands:
+      - test "$(id -u)" = 1000
+      - rustup component add --toolchain 1.99.0 rustfmt clippy
+      - cargo +1.99.0 install cargo-audit --version 0.22.2 --locked
+      - cargo +1.99.0 audit --file packages/broker/native/Cargo.lock --deny warnings
+      - cargo +1.99.0 fmt --manifest-path packages/broker/native/Cargo.toml -- --check
+      - cargo +1.99.0 clippy --release --locked --manifest-path packages/broker/native/Cargo.toml --all-targets -- -D warnings
+      - cargo +1.99.0 build --release --locked --manifest-path packages/broker/native/Cargo.toml
+      - cargo +1.99.0 test --release --locked --manifest-path packages/broker/native/Cargo.toml
+      - install -m 0755 /tmp/orynq-broker-target/release/orynq-socket-frontend /woodpecker/orynq-broker-tools/orynq-socket-frontend
 
   - name: midnight-real-proofs
     image: node:24-bookworm@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
