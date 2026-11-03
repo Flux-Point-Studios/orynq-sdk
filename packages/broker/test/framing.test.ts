@@ -483,6 +483,38 @@ describe("serveConnection over a Unix domain socket", () => {
     socket.destroy();
   });
 
+  it(`restarts the idle clock when a slow reader drains its reply, then closes ${IDLE_TIMEOUT_MS / 1000} s later`, async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const slow = 200_000;
+    let answered = false;
+    const { path, reasons, sockets } = await listen(async req => {
+      answered = true;
+      return bigReply(req);
+    });
+    const { socket, replies } = await connect(path);
+    socket.pause();
+    socket.write(encodeFrame(request(1)));
+    while (!answered) await turns(1);
+    await turns(10);
+    const [server] = sockets;
+    expect(server!.writableLength).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(slow);
+    socket.resume();
+    while (replies.length === 0 || server!.writableLength > 0) await turns(1);
+    await turns(10);
+    await vi.advanceTimersByTimeAsync(IDLE_TIMEOUT_MS - slow);
+    await turns(10);
+    expect(reasons).toEqual([]);
+    await vi.advanceTimersByTimeAsync(slow - 1);
+    await turns(10);
+    expect(reasons).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    await turns(10);
+    expect(reasons).toEqual(["idle"]);
+    expect(server!.destroyed).toBe(true);
+    socket.destroy();
+  });
+
   it("answers a request whose client half-closes after sending it, then closes", async () => {
     const handle = vi.fn(async (req: RpcRequest) => {
       await new Promise(resolve => setTimeout(resolve, 100));
