@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcessByStdio, spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import {
   BrokerWireError,
@@ -12,6 +12,7 @@ import {
   type MuxMessage,
   type Peer,
 } from "@fluxpointstudios/orynq-sdk-core/broker-wire";
+import { type PipeFrontendOptions, spawnPipeFrontend } from "@fluxpointstudios/orynq-sdk-credential-broker-windows/frontend";
 import type { Broker } from "./broker.js";
 import { answer } from "./framing.js";
 import type { Principal } from "./principals.js";
@@ -143,40 +144,43 @@ export function serveMux(input: Readable, output: Writable, broker: Serves, repo
 // The frontend refuses a longer --idle-secs; this refuses it before spawning one.
 const MAX_IDLE_SECONDS = 86_400;
 
-export interface LinuxFrontendOptions {
+interface HostOptions {
+  readonly broker: Broker;
+  readonly onError?: (error: unknown) => void;
+}
+
+interface Frontend {
+  /** The frontend's process id, for a supervisor's logs and signals. */
+  readonly pid: number;
+  /** Ends the frontend's stdin; it removes its socket or pipe and exits. */
+  close(): Promise<void>;
+}
+
+export interface LinuxFrontendOptions extends HostOptions {
   /** Path to the orynq-socket-frontend binary. */
   readonly executable: string;
   /** Absolute path of the socket the frontend creates. */
   readonly socket: string;
-  readonly broker: Broker;
   /** The socket's mode, 0o600 (owner only) unless given; read and write bits only. */
   readonly mode?: number;
   /** Seconds without a request before a connection closes, 1 to 86,400; the frontend defaults to 300. */
   readonly idleSeconds?: number;
-  readonly onError?: (error: unknown) => void;
 }
 
-export interface LinuxFrontend {
+export interface LinuxFrontend extends Frontend {
   readonly socket: string;
-  /** The frontend's process id, for a supervisor's logs and signals. */
-  readonly pid: number;
-  /** Ends the frontend's stdin; it removes its socket and exits. */
-  close(): Promise<void>;
 }
 
-// Spawns the Linux frontend and serves the broker over its mux. Rejects with the frontend's own
-// message if it exits before READY, as it does for a squatted path or a kernel that cannot report a
-// peer's cgroup id. A frontend that breaks the protocol is reported and killed.
-export function startLinuxFrontend(options: LinuxFrontendOptions): Promise<LinuxFrontend> {
-  const { idleSeconds } = options;
-  if (idleSeconds !== undefined && !(Number.isInteger(idleSeconds) && idleSeconds >= 1 && idleSeconds <= MAX_IDLE_SECONDS)) {
-    return Promise.reject(new RangeError(`idleSeconds must be a whole number of seconds from 1 to ${MAX_IDLE_SECONDS}`));
-  }
+export interface WindowsFrontendOptions extends PipeFrontendOptions, HostOptions {}
+
+export interface WindowsFrontend extends Frontend {
+  readonly pipe: string;
+}
+
+// Serves the broker over a spawned frontend's mux. Rejects with the frontend's own message if it
+// exits before READY. A frontend that breaks the protocol is reported and killed.
+function serveFrontend(child: ChildProcessByStdio<Writable, Readable, Readable>, name: string, options: HostOptions): Promise<Frontend> {
   const report = options.onError ?? ((error: unknown) => process.emitWarning(error instanceof Error ? error : String(error)));
-  const args = ["--socket", options.socket];
-  if (options.mode !== undefined) args.push("--mode", options.mode.toString(8));
-  if (idleSeconds !== undefined) args.push("--idle-secs", String(idleSeconds));
-  const child = spawn(options.executable, args, { stdio: ["pipe", "pipe", "pipe"] });
   const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
   let stderr = "";
   let started = false;
@@ -193,14 +197,13 @@ export function startLinuxFrontend(options: LinuxFrontendOptions): Promise<Linux
   return new Promise((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", code => {
-      const reason = new Error(stderr.trim() || `orynq-socket-frontend exited with code ${code}`);
+      const reason = new Error(stderr.trim() || `${name} exited with code ${code}`);
       if (!started) reject(reason);
       else if (!closing) report(reason);
     });
     void host.ready.then(() => {
       started = true;
       resolve({
-        socket: options.socket,
         pid: child.pid!,
         async close() {
           closing = true;
@@ -210,4 +213,25 @@ export function startLinuxFrontend(options: LinuxFrontendOptions): Promise<Linux
       });
     });
   });
+}
+
+// Spawns the Linux frontend and serves the broker over its mux. It exits before READY for a
+// squatted path or a kernel that cannot report a peer's cgroup id.
+export async function startLinuxFrontend(options: LinuxFrontendOptions): Promise<LinuxFrontend> {
+  const { idleSeconds } = options;
+  if (idleSeconds !== undefined && !(Number.isInteger(idleSeconds) && idleSeconds >= 1 && idleSeconds <= MAX_IDLE_SECONDS)) {
+    throw new RangeError(`idleSeconds must be a whole number of seconds from 1 to ${MAX_IDLE_SECONDS}`);
+  }
+  const args = ["--socket", options.socket];
+  if (options.mode !== undefined) args.push("--mode", options.mode.toString(8));
+  if (idleSeconds !== undefined) args.push("--idle-secs", String(idleSeconds));
+  const frontend = await serveFrontend(spawn(options.executable, args, { stdio: ["pipe", "pipe", "pipe"] }), "orynq-socket-frontend", options);
+  return { ...frontend, socket: options.socket };
+}
+
+// Spawns the Windows sidecar and serves the broker over its mux. Options the sidecar would refuse
+// reject before it spawns; it exits before READY when another process serves the pipe.
+export async function startWindowsFrontend(options: WindowsFrontendOptions): Promise<WindowsFrontend> {
+  const frontend = await serveFrontend(spawnPipeFrontend(options), "orynq-pipe-frontend", options);
+  return { ...frontend, pipe: options.pipe };
 }

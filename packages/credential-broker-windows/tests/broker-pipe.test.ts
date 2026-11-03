@@ -1,5 +1,4 @@
-import { type ChildProcessByStdio, execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import type { ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import {
   decodeOpenPayload,
@@ -14,15 +13,11 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { type BrokerConnection, connectBroker } from "../src/client.js";
 import { type PipeFrontendOptions, spawnPipeFrontend } from "../src/frontend.js";
-import { frontendExecutable } from "./frontend-executable.js";
 import { openWithGenericRights, whileRestrictedTo } from "./restricted-token.js";
+import { frontendExecutable, ownSid, pipeName } from "./sidecar.js";
 
 type Sidecar = ChildProcessByStdio<Writable, Readable, Readable>;
 
-const whoami = (...args: string[]) =>
-  execFileSync(`${process.env.SystemRoot ?? "C:\\Windows"}\\System32\\whoami.exe`, args, { encoding: "utf8" });
-const ownSid = () => whoami("/user", "/fo", "csv", "/nh").trim().split(",")[1].replaceAll('"', "");
-const pipeName = () => `\\\\.\\pipe\\orynq-broker-test-${randomBytes(6).toString("hex")}`;
 const text = (value: string) => Buffer.from(value, "utf8");
 const utf8 = (bytes: Uint8Array) => Buffer.from(bytes).toString("utf8");
 // "close" rather than "exit", so stderr has been read in full.

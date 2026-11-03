@@ -425,7 +425,7 @@ describe("serveConnection", () => {
   });
 });
 
-describe("serveConnection over a Unix domain socket", () => {
+describe.runIf(process.platform === "linux")("serveConnection over a Unix domain socket", () => {
   let dir: string | undefined;
   let listener: Server | undefined;
 
