@@ -10,17 +10,17 @@ import * as root from "../index.js";
 
 const LIMIT = 1024 * 1024;
 
-function refusal(text: string, maxBytes = LIMIT): StrictJsonError {
+function refusal(text: string, maxBytes = LIMIT, maxValues?: number): StrictJsonError {
   try {
-    parseStrictJson(text, maxBytes);
+    parseStrictJson(text, maxBytes, maxValues);
   } catch (error) {
     expect(error).toBeInstanceOf(StrictJsonError);
     return error as StrictJsonError;
   }
-  throw new Error(`accepted ${JSON.stringify(text)}`);
+  throw new Error(`accepted ${JSON.stringify(text.slice(0, 80))}`);
 }
 
-const code = (text: string, maxBytes = LIMIT): StrictJsonErrorCode => refusal(text, maxBytes).code;
+const code = (text: string, maxBytes = LIMIT, maxValues?: number): StrictJsonErrorCode => refusal(text, maxBytes, maxValues).code;
 
 describe("parseStrictJson", () => {
   it("returns what JSON.parse returns for an unambiguous document", () => {
@@ -102,6 +102,68 @@ describe("parseStrictJson", () => {
     const rss = process.memoryUsage().rss;
     const start = performance.now();
     expect(code(text, 2 * half)).toBe("JSON_DEPTH");
+    const elapsed = performance.now() - start;
+    expect(process.memoryUsage().rss - rss).toBeLessThan(64 * 1024 * 1024);
+    expect(elapsed).toBeLessThan(400);
+  });
+
+  it("counts each container, scalar and member value, but not keys, against maxValues", () => {
+    for (const [text, values] of [
+      ["0", 1],
+      ['"x"', 1],
+      ["{}", 1],
+      ["[0,0]", 3],
+      ["[true,false,null]", 4],
+      ['{"a":0,"b":[]}', 3],
+      ['{"a:b":"c:d,[{"}', 2],
+      ['[ -1.25e-3 , 2.5E-1 ,"\\"" ]', 4],
+      ["[[[]],{}]", 4],
+    ] as const) {
+      expect(parseStrictJson(text, LIMIT, values)).toEqual(JSON.parse(text));
+      expect(code(text, LIMIT, values - 1)).toBe("JSON_VALUES");
+    }
+    expect(refusal("[0,0]", LIMIT, 2).message).toBe("JSON exceeds its value limit");
+  });
+
+  it("leaves values unbounded unless the caller bounds them", () => {
+    const wide = `[${Array(200_000).fill("0").join(",")}]`;
+    expect(parseStrictJson(wide, LIMIT)).toHaveLength(200_000);
+    expect(parseStrictJson(wide, LIMIT, 200_001)).toHaveLength(200_000);
+    expect(code(wide, LIMIT, 200_000)).toBe("JSON_VALUES");
+  });
+
+  it("judges values before syntax, so a wide text is refused without being parsed", () => {
+    expect(code("[" + "0,".repeat(10), LIMIT, 5)).toBe("JSON_VALUES");
+    expect(code("[" + "0,".repeat(3), LIMIT, 5)).toBe("JSON_SYNTAX");
+  });
+
+  // The shapes that cost JSON.parse the most per byte: at 16 MiB, about a second and hundreds of
+  // MiB each.
+  const FRAME = 16 * 1024 * 1024;
+  const wide = (unit: string) => `[${Array(Math.floor((FRAME - 1) / (unit.length + 1))).fill(unit).join(",")}]`;
+  const members = () => {
+    const parts: string[] = [];
+    for (let i = 0, size = 2; size + 16 < FRAME; i++) {
+      parts.push(`"k${i}":0`);
+      size += parts[i]!.length + 1;
+    }
+    return `{${parts.join(",")}}`;
+  };
+  it.each([
+    ["empty objects", () => wide("{}")],
+    ["empty arrays", () => wide("[]")],
+    ["32-deep arrays", () => wide("[".repeat(31) + "0" + "]".repeat(31))],
+    ["zeros", () => wide("0")],
+    ["fractions", () => wide("1.5")],
+    ["escaped strings", () => wide('"\\u0061"')],
+    ["object members", members],
+  ])("refuses a 16 MiB text of %s without building it", (_, make) => {
+    const text = make();
+    expect(text.length).toBeGreaterThan(FRAME - 64);
+    expect(text.length).toBeLessThanOrEqual(FRAME);
+    const rss = process.memoryUsage().rss;
+    const start = performance.now();
+    expect(code(text, FRAME, 65_536)).toBe("JSON_VALUES");
     const elapsed = performance.now() - start;
     expect(process.memoryUsage().rss - rss).toBeLessThan(64 * 1024 * 1024);
     expect(elapsed).toBeLessThan(400);

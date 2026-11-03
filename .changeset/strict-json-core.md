@@ -11,6 +11,9 @@ more than 32 containers (the top-level value is enclosed by none), integers
 beyond ±2^53 and integers spelled with a fraction, exponent or minus zero.
 Nesting is judged before `JSON.parse` runs, so a deeply nested text is refused
 without being built and reports `JSON_DEPTH` even when it is also malformed.
+An optional third argument, `maxValues`, bounds the values a text may hold
+(every container, string, number and literal; keys do not count) in the same
+scan, so a wide text over it is refused unbuilt as `JSON_VALUES`.
 Refusals throw `StrictJsonError` with a `code` and a fixed message that never
 quotes the input.
 

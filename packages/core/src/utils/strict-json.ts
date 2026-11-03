@@ -10,6 +10,7 @@ export const STRICT_JSON_MAX_DEPTH = 32;
 
 export type StrictJsonErrorCode =
   | "JSON_TOO_LARGE"
+  | "JSON_VALUES"
   | "JSON_SYNTAX"
   | "JSON_DEPTH"
   | "JSON_DUPLICATE_KEY"
@@ -19,6 +20,7 @@ export type StrictJsonErrorCode =
 // Messages never quote the input, which may hold secrets.
 const MESSAGES: Readonly<Record<StrictJsonErrorCode, string>> = {
   JSON_TOO_LARGE: "JSON exceeds its byte limit",
+  JSON_VALUES: "JSON exceeds its value limit",
   JSON_SYNTAX: "Document is not valid JSON",
   JSON_DEPTH: "JSON exceeds the nesting limit",
   JSON_DUPLICATE_KEY: "JSON contains a duplicate object key",
@@ -63,6 +65,9 @@ const CLOSE_OBJECT = 0x7d;
 
 const isWhitespace = (unit: number) => unit === SPACE || unit === LF || unit === CR || unit === TAB;
 const isDigit = (unit: number) => unit >= ZERO && unit <= NINE;
+const isDelimiter = (unit: number) =>
+  isWhitespace(unit) || unit === COMMA || unit === COLON || unit === QUOTE ||
+  unit === OPEN_ARRAY || unit === CLOSE_ARRAY || unit === OPEN_OBJECT || unit === CLOSE_OBJECT;
 
 // What TextEncoder would write (a lone surrogate becomes U+FFFD), without allocating it.
 function utf8Length(text: string): number {
@@ -79,23 +84,33 @@ function utf8Length(text: string): number {
   return bytes;
 }
 
-// Runs before JSON.parse, on text not yet known to be JSON, so a nesting bomb is refused before
-// any of it is built.
-function checkDepth(text: string): void {
+// Runs before JSON.parse, on text not yet known to be JSON, so a deep or wide text is refused
+// before any of it is built. Every container, string and scalar counts as a value and every
+// colon takes one back, its string having been a key. Over the prefix JSON.parse accepts that is
+// exactly the values it builds, and it builds nothing past that prefix.
+function checkShape(text: string, maxValues: number): void {
   let open = 0;
+  let values = 0;
   for (let at = 0; at < text.length; at++) {
     const unit = text.charCodeAt(at);
     if (unit === CLOSE_ARRAY || unit === CLOSE_OBJECT) {
       if (open > 0) open--;
       continue;
     }
-    if (isWhitespace(unit) || unit === COMMA || unit === COLON) continue;
+    if (unit === COLON) {
+      values--;
+      continue;
+    }
+    if (isWhitespace(unit) || unit === COMMA) continue;
     if (open > STRICT_JSON_MAX_DEPTH) throw new StrictJsonError("JSON_DEPTH");
+    if (++values > maxValues) throw new StrictJsonError("JSON_VALUES");
     if (unit === OPEN_ARRAY || unit === OPEN_OBJECT) {
       open++;
     } else if (unit === QUOTE) {
       at++;
       while (at < text.length && text.charCodeAt(at) !== QUOTE) at += text.charCodeAt(at) === BACKSLASH ? 2 : 1;
+    } else {
+      while (at + 1 < text.length && !isDelimiter(text.charCodeAt(at + 1))) at++;
     }
   }
 }
@@ -191,10 +206,12 @@ function fitsBytes(text: string, maxBytes: number): boolean {
   return utf8Length(text) <= maxBytes;
 }
 
-// Nesting is judged first, so a deep text is refused as JSON_DEPTH even when it is also invalid.
-export function parseStrictJson(text: string, maxBytes: number): unknown {
+// A value is a container, a string, a number or a literal: `{"a":[1]}` holds three. Nesting and
+// values are judged first, so a deep or wide text is refused as JSON_DEPTH or JSON_VALUES even
+// when it is also invalid.
+export function parseStrictJson(text: string, maxBytes: number, maxValues = Number.POSITIVE_INFINITY): unknown {
   if (!fitsBytes(text, maxBytes)) throw new StrictJsonError("JSON_TOO_LARGE");
-  checkDepth(text);
+  checkShape(text, maxValues);
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
