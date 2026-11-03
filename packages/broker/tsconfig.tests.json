@@ -6,6 +6,6 @@
     "declaration": false,
     "declarationMap": false
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts", "test-socket/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

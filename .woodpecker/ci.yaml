@@ -85,6 +85,17 @@ steps:
       - cargo +1.99.0 test --release --locked --manifest-path packages/broker/native/Cargo.toml
       - install -m 0755 /tmp/orynq-broker-target/release/orynq-socket-frontend /woodpecker/orynq-broker-tools/orynq-socket-frontend
 
+  # The broker's real-socket suite: the frontend binary, the Node host and the client, run as an
+  # unprivileged user so the peer the kernel reports is that user.
+  - name: broker-socket
+    image: node:24-bookworm@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
+    depends_on: [broker-native]
+    environment:
+      ORYNQ_SOCKET_FRONTEND: /woodpecker/orynq-broker-tools/orynq-socket-frontend
+    commands:
+      - corepack enable
+      - su node -s /bin/bash -c 'pnpm --filter @fluxpointstudios/orynq-sdk-broker test:socket'
+
   - name: midnight-real-proofs
     image: node:24-bookworm@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
     depends_on: [midnight-native]

@@ -20,6 +20,7 @@
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
+    "test:socket": "vitest run -c vitest.socket.config.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.tests.json",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
