@@ -1,19 +1,23 @@
 import { expect, it } from "vitest";
 import * as broker from "../src/index.js";
 
-it("exports the framing, decoding and schema surface and nothing else", () => {
+it("exports the broker, host, client, framing, decoding and schema surface and nothing else", () => {
   expect(Object.keys(broker).sort()).toEqual([
+    "Broker",
+    "BrokerReplyError",
     "FrameDecoder",
     "FrameError",
     "IDLE_TIMEOUT_MS",
     "MAX_FRAME_BYTES",
     "MAX_REQUEST_VALUES",
     "METHOD_PARAMS",
+    "RPC_ERRORS",
     "RpcError",
     "SCHEMA_RULES",
     "array",
     "bytes",
     "choice",
+    "connectBroker",
     "decodeRequest",
     "encodeFrame",
     "jsonToCbor",
@@ -24,6 +28,8 @@ it("exports the framing, decoding and schema surface and nothing else", () => {
     "parseJsonPayload",
     "schemaRules",
     "serveConnection",
+    "serveMux",
+    "startLinuxFrontend",
     "text",
     "uint",
   ]);

@@ -3,8 +3,9 @@ import { RpcError } from "./errors.js";
 import { parseJsonPayload } from "./strict-json.js";
 
 // Spec §6.1: a frame is a uint32 big-endian length N (1 <= N <= 16 MiB) and N bytes holding one
-// JSON-RPC 2.0 request. The Unix sockets are Node Duplexes served by serveConnection; on Windows a
-// sidecar does the length framing and hands each frame's payload to decodeRequest.
+// JSON-RPC 2.0 request. serveConnection serves a socket Node owns as a Duplex. B's own sockets and
+// pipes belong to an OS frontend (orynq-socket-frontend on Linux, the sidecar on Windows) that does
+// the length framing; serveMux answers each payload it hands over through answer.
 
 export const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 export const IDLE_TIMEOUT_MS = 300_000;
@@ -143,6 +144,24 @@ function errorPayload(id: RequestId | null, error: RpcError): Uint8Array {
 // table, anything else closes the connection and rejects.
 export type RequestHandler = (request: RpcRequest) => Promise<Uint8Array>;
 
+// The reply to one request payload: the handler's, or the error table's for an RpcError, with id
+// null when the request is undecodable. Any other failure propagates.
+export async function answer(payload: Uint8Array, handle: RequestHandler): Promise<Uint8Array> {
+  let request: RpcRequest;
+  try {
+    request = decodeRequest(payload);
+  } catch (error) {
+    if (error instanceof RpcError) return errorPayload(null, error);
+    throw error;
+  }
+  try {
+    return await handle(request);
+  } catch (error) {
+    if (error instanceof RpcError) return errorPayload(request.id, error);
+    throw error;
+  }
+}
+
 // "reset" is any stream error, such as a client that disconnects while its reply is written.
 export type CloseReason = "end" | "idle" | "frame" | "concurrent" | "reset";
 
@@ -185,23 +204,7 @@ export function serveConnection(stream: Duplex, handle: RequestHandler): Promise
         stream.write(encodeFrame(payload), () => done());
         arm();
       });
-    const respond = async (frame: Uint8Array) => {
-      let request: RpcRequest;
-      try {
-        request = decodeRequest(frame);
-      } catch (error) {
-        if (error instanceof RpcError) return send(errorPayload(null, error));
-        throw error;
-      }
-      let payload: Uint8Array;
-      try {
-        payload = await handle(request);
-      } catch (error) {
-        if (error instanceof RpcError) return send(errorPayload(request.id, error));
-        throw error;
-      }
-      return send(payload);
-    };
+    const respond = async (frame: Uint8Array) => send(await answer(frame, handle));
     function onData(chunk: unknown) {
       if (!(chunk instanceof Uint8Array)) return fail(new TypeError("the stream must carry bytes"));
       if (busy) return finish("concurrent");
