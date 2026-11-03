@@ -43,6 +43,12 @@ const FRAME: u8 = 2;
 const CLOSE: u8 = 3;
 const MAX_FRAME: u32 = 16 << 20;
 const MAX_PER_PEER: usize = 32;
+// Across a uid's gids and cgroups, both of which the account can multiply.
+const MAX_PER_UID: usize = 128;
+const MAX_CONNECTIONS: usize = 1024;
+// Descriptors kept back from connections: stdio, the runtime's and the listener's, and the pidfd
+// and /proc file each identification opens.
+const RESERVED_FDS: libc::rlim_t = 64;
 const BACKLOG: libc::c_int = 128;
 const CGROUP_ROOT: &str = "/sys/fs/cgroup";
 
@@ -83,9 +89,82 @@ impl SocketFile {
 struct Shared {
     out: mpsc::Sender<Vec<u8>>,
     conns: Mutex<HashMap<u64, mpsc::Sender<Command>>>,
-    per_peer: Mutex<HashMap<String, usize>>,
+    limits: Arc<Limits>,
     idle: Duration,
     socket: SocketFile,
+}
+
+/// The connections admitted, counted per peer (every unidentified client together is one), per
+/// uid (None for the unidentified) and in all.
+struct Limits {
+    max_connections: usize,
+    admitted: Mutex<Admitted>,
+}
+
+#[derive(Default)]
+struct Admitted {
+    peers: HashMap<String, usize>,
+    uids: HashMap<Option<u32>, usize>,
+    total: usize,
+}
+
+impl Limits {
+    fn new(max_connections: usize) -> Arc<Limits> {
+        Arc::new(Limits {
+            max_connections,
+            admitted: Mutex::default(),
+        })
+    }
+
+    fn admitted(&self) -> std::sync::MutexGuard<'_, Admitted> {
+        self.admitted
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn claim(self: &Arc<Self>, peer: Option<&Peer>) -> Option<Slot> {
+        let key = peer.map_or_else(String::new, Peer::key);
+        let uid = peer.map(|peer| peer.uid);
+        let mut admitted = self.admitted();
+        if admitted.total >= self.max_connections
+            || admitted.peers.get(&key).is_some_and(|&n| n >= MAX_PER_PEER)
+            || admitted.uids.get(&uid).is_some_and(|&n| n >= MAX_PER_UID)
+        {
+            return None;
+        }
+        admitted.total += 1;
+        *admitted.peers.entry(key.clone()).or_default() += 1;
+        *admitted.uids.entry(uid).or_default() += 1;
+        Some(Slot {
+            limits: Arc::clone(self),
+            key,
+            uid,
+        })
+    }
+}
+
+struct Slot {
+    limits: Arc<Limits>,
+    key: String,
+    uid: Option<u32>,
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        let mut admitted = self.limits.admitted();
+        admitted.total -= 1;
+        release(&mut admitted.peers, &self.key);
+        release(&mut admitted.uids, &self.uid);
+    }
+}
+
+fn release<K: Eq + std::hash::Hash>(counts: &mut HashMap<K, usize>, key: &K) {
+    if let Some(count) = counts.get_mut(key) {
+        *count -= 1;
+        if *count == 0 {
+            counts.remove(key);
+        }
+    }
 }
 
 impl Shared {
@@ -104,47 +183,10 @@ impl Shared {
         process::exit(code);
     }
 
-    fn claim(self: &Arc<Self>, peer: String) -> Option<Slot> {
-        let mut counts = self
-            .per_peer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let count = counts.entry(peer.clone()).or_insert(0);
-        if *count >= MAX_PER_PEER {
-            return None;
-        }
-        *count += 1;
-        Some(Slot {
-            shared: Arc::clone(self),
-            peer,
-        })
-    }
-
     fn connections(&self) -> std::sync::MutexGuard<'_, HashMap<u64, mpsc::Sender<Command>>> {
         self.conns
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}
-
-struct Slot {
-    shared: Arc<Shared>,
-    peer: String,
-}
-
-impl Drop for Slot {
-    fn drop(&mut self) {
-        let mut counts = self
-            .shared
-            .per_peer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(count) = counts.get_mut(&self.peer) {
-            *count -= 1;
-            if *count == 0 {
-                counts.remove(&self.peer);
-            }
-        }
     }
 }
 
@@ -309,6 +351,30 @@ fn identify(fd: RawFd) -> Option<Peer> {
         pid,
         cgroup,
     })
+}
+
+// As many connections as the descriptor limit leaves room for, up to MAX_CONNECTIONS: a uid's
+// ceiling cannot bound an account that owns subordinate uids.
+fn connection_ceiling() -> Result<usize, String> {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
+        return Err(format!(
+            "cannot read RLIMIT_NOFILE: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    match limit.rlim_cur.checked_sub(RESERVED_FDS) {
+        Some(spare) if spare > 0 => {
+            Ok(usize::try_from(spare).map_or(MAX_CONNECTIONS, |spare| spare.min(MAX_CONNECTIONS)))
+        }
+        _ => Err(format!(
+            "RLIMIT_NOFILE is {}, which leaves no descriptor for a connection beyond the {RESERVED_FDS} this process keeps",
+            limit.rlim_cur
+        )),
+    }
 }
 
 fn check_kernel() -> Result<(), String> {
@@ -519,8 +585,7 @@ async fn read_requests(
 // drained; a reply that does not drain within the idle period closes the connection too.
 async fn serve(stream: UnixStream, conn: u64, shared: Arc<Shared>) {
     let peer = identify(stream.as_raw_fd());
-    let key = peer.as_ref().map_or_else(String::new, Peer::key);
-    let Some(_slot) = shared.claim(key) else {
+    let Some(_slot) = shared.limits.claim(peer.as_ref()) else {
         return;
     };
     let (commands_tx, mut commands) = mpsc::channel(4);
@@ -594,7 +659,12 @@ async fn route_commands(shared: Arc<Shared>) {
     }
 }
 
-async fn run(listener: StdUnixListener, socket: SocketFile, idle: Duration) -> Result<(), String> {
+async fn run(
+    listener: StdUnixListener,
+    socket: SocketFile,
+    idle: Duration,
+    max_connections: usize,
+) -> Result<(), String> {
     let listener = match UnixListener::from_std(listener) {
         Ok(listener) => listener,
         Err(error) => {
@@ -606,7 +676,7 @@ async fn run(listener: StdUnixListener, socket: SocketFile, idle: Duration) -> R
     let shared = Arc::new(Shared {
         out,
         conns: Mutex::default(),
-        per_peer: Mutex::default(),
+        limits: Limits::new(max_connections),
         idle,
         socket,
     });
@@ -645,6 +715,7 @@ async fn run(listener: StdUnixListener, socket: SocketFile, idle: Duration) -> R
 
 fn start() -> Result<(), String> {
     let config = parse_args()?;
+    let max_connections = connection_ceiling()?;
     check_kernel()?;
     let (listener, socket) = open_socket(&config)?;
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -657,7 +728,7 @@ fn start() -> Result<(), String> {
             return Err(format!("cannot start the runtime: {error}"));
         }
     };
-    runtime.block_on(run(listener, socket, config.idle))
+    runtime.block_on(run(listener, socket, config.idle, max_connections))
 }
 
 fn main() {
@@ -744,6 +815,54 @@ mod tests {
         assert!(
             valid_length(9 + MAX_FRAME) && !valid_length(9 + MAX_FRAME + 1) && !valid_length(8)
         );
+    }
+
+    fn peer(uid: u32, gid: u32, cgroup: &str) -> Peer {
+        Peer {
+            uid,
+            gid,
+            pid: 1,
+            cgroup: cgroup.into(),
+        }
+    }
+
+    #[test]
+    fn admits_32_connections_per_peer_and_128_per_uid_however_many_gids_and_cgroups_it_spreads_over()
+     {
+        let limits = Limits::new(MAX_CONNECTIONS);
+        let mut slots = Vec::new();
+        for n in 0..MAX_PER_UID as u32 {
+            let spread = peer(1000, n % 2, &format!("/cg/{}", n / 32));
+            slots.push(limits.claim(Some(&spread)).unwrap());
+        }
+        assert!(limits.claim(Some(&peer(1000, 7, "/cg/new"))).is_none());
+        assert!(limits.claim(Some(&peer(1001, 7, "/cg/new"))).is_some());
+        slots.pop();
+        assert!(limits.claim(Some(&peer(1000, 7, "/cg/new"))).is_some());
+
+        let one = peer(2000, 2000, "/one");
+        let _peer_slots: Vec<Slot> = (0..MAX_PER_PEER)
+            .map(|_| limits.claim(Some(&one)).unwrap())
+            .collect();
+        assert!(limits.claim(Some(&one)).is_none());
+        let _unidentified: Vec<Slot> = (0..MAX_PER_PEER)
+            .map(|_| limits.claim(None).unwrap())
+            .collect();
+        assert!(limits.claim(None).is_none());
+    }
+
+    #[test]
+    fn admits_no_more_connections_in_all_than_its_ceiling() {
+        let limits = Limits::new(3);
+        let slots: Vec<Slot> = (0..3)
+            .map(|uid| limits.claim(Some(&peer(uid, uid, "/"))).unwrap())
+            .collect();
+        assert!(limits.claim(Some(&peer(9, 9, "/"))).is_none());
+        assert!(limits.claim(None).is_none());
+        drop(slots);
+        assert_eq!(limits.admitted().total, 0);
+        assert!(limits.admitted().peers.is_empty() && limits.admitted().uids.is_empty());
+        assert!(limits.claim(None).is_some());
     }
 
     fn pair() -> [OwnedFd; 2] {

@@ -1,11 +1,16 @@
 use std::{
+    ffi::CString,
     fs,
     io::{ErrorKind, Read, Write},
     net::Shutdown,
-    os::unix::{
-        fs::{FileTypeExt, MetadataExt, PermissionsExt, symlink},
-        net::{UnixListener, UnixStream},
-        process::CommandExt,
+    os::{
+        fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
+        unix::{
+            ffi::{OsStrExt, OsStringExt},
+            fs::{FileTypeExt, MetadataExt, PermissionsExt, symlink},
+            net::{UnixListener, UnixStream},
+            process::CommandExt,
+        },
     },
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, ExitStatus, Stdio},
@@ -24,6 +29,7 @@ const CLOSE: u8 = 3;
 const MAX_FRAME: usize = 16 << 20;
 const WAIT: Duration = Duration::from_secs(20);
 const QUIET: Duration = Duration::from_millis(500);
+const CGROUP_ROOT: &str = "/sys/fs/cgroup";
 
 struct Event {
     kind: u8,
@@ -82,13 +88,41 @@ fn command(socket: &Path, args: &[&str], umask: u32) -> Command {
     command
 }
 
+// The descriptor limit the frontend sizes its connection ceiling by, set in the child alone.
+fn limit_descriptors(command: &mut Command, descriptors: libc::rlim_t) {
+    unsafe {
+        command.pre_exec(move || {
+            let limit = libc::rlimit {
+                rlim_cur: descriptors,
+                rlim_max: descriptors,
+            };
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &limit) == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+}
+
 impl Frontend {
     fn start(dir: &TempDir, args: &[&str]) -> Frontend {
         Frontend::start_on(&dir.0.join("b.sock"), args, 0o022)
     }
 
     fn start_on(socket: &Path, args: &[&str], umask: u32) -> Frontend {
-        let mut child = command(socket, args, umask).spawn().unwrap();
+        Frontend::spawn(command(socket, args, umask), socket)
+    }
+
+    fn start_with_descriptors(dir: &TempDir, descriptors: libc::rlim_t) -> Frontend {
+        let socket = dir.0.join("b.sock");
+        let mut command = command(&socket, &[], 0o022);
+        limit_descriptors(&mut command, descriptors);
+        Frontend::spawn(command, &socket)
+    }
+
+    fn spawn(mut command: Command, socket: &Path) -> Frontend {
+        let mut child = command.spawn().unwrap();
         let stdin = child.stdin.take();
         let mut stdout = child.stdout.take().unwrap();
         let (tx, events) = mpsc::channel();
@@ -258,6 +292,130 @@ fn own_cgroup() -> String {
         .to_string()
 }
 
+fn cgroup_dir(cgroup: &str) -> PathBuf {
+    Path::new(CGROUP_ROOT).join(cgroup.trim_start_matches('/'))
+}
+
+/// A child process killed and reaped on drop.
+struct Connector(Child);
+
+impl Drop for Connector {
+    fn drop(&mut self) {
+        self.0.kill().ok();
+        self.0.wait().ok();
+    }
+}
+
+// Connects `count` clients from a child process that first joins `cgroup`, when one is given, and
+// then execs `program`. Each connection's peer is that child, and once it has exec'd only this test
+// holds the client ends, since every descriptor here is close-on-exec.
+fn connect_from_child(
+    socket: &Path,
+    count: usize,
+    cgroup: Option<&Path>,
+    program: &[&str],
+) -> (Connector, Vec<UnixStream>) {
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    for (slot, byte) in address
+        .sun_path
+        .iter_mut()
+        .zip(socket.as_os_str().as_bytes())
+    {
+        *slot = *byte as libc::c_char;
+    }
+    let clients: Vec<OwnedFd> = (0..count)
+        .map(|_| {
+            let fd =
+                unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
+            assert!(fd >= 0);
+            unsafe { OwnedFd::from_raw_fd(fd) }
+        })
+        .collect();
+    let fds: Vec<RawFd> = clients.iter().map(AsRawFd::as_raw_fd).collect();
+    let procs = cgroup.map(|cgroup| {
+        CString::new(cgroup.join("cgroup.procs").into_os_string().into_vec()).unwrap()
+    });
+    let mut command = Command::new(program[0]);
+    command
+        .args(&program[1..])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // Only async-signal-safe calls between fork and exec.
+    unsafe {
+        command.pre_exec(move || {
+            if let Some(procs) = &procs {
+                // Writing 0 moves the writing process.
+                let fd = libc::open(procs.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
+                if fd < 0 || libc::write(fd, b"0".as_ptr().cast(), 1) != 1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                libc::close(fd);
+            }
+            for &fd in &fds {
+                let size = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+                if libc::connect(fd, (&raw const address).cast(), size) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        });
+    }
+    let child = Connector(command.spawn().unwrap());
+    (child, clients.into_iter().map(UnixStream::from).collect())
+}
+
+/// Child cgroups of this test's own cgroup, removed on drop once their processes are gone.
+struct Cgroups(Vec<PathBuf>);
+
+impl Drop for Cgroups {
+    fn drop(&mut self) {
+        for path in &self.0 {
+            fs::remove_dir(path).ok();
+        }
+    }
+}
+
+// An unprivileged account can create a cgroup only under one delegated to it (a systemd user
+// session's); elsewhere mkdir is refused, which is the only skip, and it is checked as such.
+fn cgroups_or_skip(count: usize) -> Option<Cgroups> {
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let own = cgroup_dir(&own_cgroup());
+    let mut cgroups = Cgroups(Vec::new());
+    for _ in 0..count {
+        let path = own.join(format!(
+            "orynq-sf-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        if let Err(error) = fs::create_dir(&path) {
+            assert!(
+                matches!(
+                    error.raw_os_error(),
+                    Some(libc::EROFS | libc::EACCES | libc::EPERM)
+                ),
+                "{error}"
+            );
+            eprintln!("skipped: no cgroup is delegated to this account ({error})");
+            return None;
+        }
+        cgroups.0.push(path);
+    }
+    Some(cgroups)
+}
+
+fn is_closed(mut client: &UnixStream) -> bool {
+    client.set_nonblocking(true).unwrap();
+    let mut byte = [0u8; 1];
+    match client.read(&mut byte) {
+        Ok(0) => true,
+        Err(error) if error.kind() == ErrorKind::ConnectionReset => true,
+        Err(error) if error.kind() == ErrorKind::WouldBlock => false,
+        other => panic!("unexpected read: {other:?}"),
+    }
+}
+
 fn exit_with(socket: &Path, args: &[&str]) -> (ExitStatus, String) {
     let output = command(socket, args, 0o022)
         .stdin(Stdio::null())
@@ -295,35 +453,112 @@ fn opens_with_null_when_the_connecting_process_is_gone() {
     }
     let dir = TempDir::new();
     let mut frontend = Frontend::start(&dir, &[]);
-    let socket = std::ffi::CString::new(frontend.socket.to_str().unwrap()).unwrap();
-    let pid = frontend.child.id() as libc::pid_t;
-    // Stopped, the frontend cannot accept until the connecting process has exited and been reaped.
-    assert_eq!(unsafe { libc::kill(pid, libc::SIGSTOP) }, 0);
-    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
-    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
-    for (slot, byte) in address.sun_path.iter_mut().zip(socket.as_bytes()) {
-        *slot = *byte as libc::c_char;
-    }
-    let child = unsafe { libc::fork() };
-    if child == 0 {
-        // Only async-signal-safe calls between fork and _exit.
-        unsafe {
-            let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
-            let size = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
-            let connected = libc::connect(fd, (&raw const address).cast(), size);
-            libc::_exit(if connected == 0 { 0 } else { 1 });
-        }
-    }
-    let mut status = 0;
-    assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
-    assert!(libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0);
-    assert_eq!(unsafe { libc::kill(pid, libc::SIGCONT) }, 0);
+    let clients = connect_and_vanish(&mut frontend, 1);
     let open = frontend.next();
     assert_eq!(
         (open.kind, open.payload.as_slice()),
         (OPEN, b"null".as_slice())
     );
+    drop(clients);
     expect_close(&mut frontend, open.conn);
+}
+
+// Connects `count` clients from a child that exits and is reaped before the frontend, stopped
+// meanwhile, can accept them and ask who connected.
+fn connect_and_vanish(frontend: &mut Frontend, count: usize) -> Vec<UnixStream> {
+    let pid = frontend.child.id() as libc::pid_t;
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGSTOP) }, 0);
+    let (mut connector, clients) = connect_from_child(&frontend.socket, count, None, &["true"]);
+    assert!(connector.0.wait().unwrap().success());
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGCONT) }, 0);
+    clients
+}
+
+#[test]
+fn admits_at_most_32_unidentified_connections() {
+    if skip_without_peer_pidfd() {
+        return;
+    }
+    let dir = TempDir::new();
+    let mut frontend = Frontend::start(&dir, &[]);
+    let clients = connect_and_vanish(&mut frontend, 33);
+    for _ in 0..32 {
+        let open = frontend.next();
+        assert_eq!(
+            (open.kind, open.payload.as_slice()),
+            (OPEN, b"null".as_slice())
+        );
+    }
+    assert!(frontend.quiet());
+    assert_eq!(clients.iter().filter(|c| is_closed(c)).count(), 1);
+}
+
+#[test]
+fn admits_at_most_128_connections_per_uid_across_its_cgroups() {
+    if skip_without_peer_pidfd() {
+        return;
+    }
+    let Some(cgroups) = cgroups_or_skip(5) else {
+        return;
+    };
+    let dir = TempDir::new();
+    let mut frontend = Frontend::start(&dir, &[]);
+    let expect_opens = |frontend: &mut Frontend, connector: &Connector, cgroup: &Path, count| {
+        for _ in 0..count {
+            let open = frontend.next();
+            assert_eq!(open.kind, OPEN);
+            let peer: serde_json::Value = serde_json::from_slice(&open.payload).unwrap();
+            assert_eq!(peer["pidHint"], connector.0.id());
+            assert_eq!(cgroup_dir(peer["cgroup"].as_str().unwrap()), cgroup);
+        }
+    };
+    let mut held = Vec::new();
+    for cgroup in &cgroups.0[..4] {
+        let (connector, clients) =
+            connect_from_child(&frontend.socket, 32, Some(cgroup), &["sleep", "600"]);
+        expect_opens(&mut frontend, &connector, cgroup, 32);
+        held.push((connector, clients));
+    }
+    let fifth = &cgroups.0[4];
+    let (_refused_by, mut refused) =
+        connect_from_child(&frontend.socket, 1, Some(fifth), &["sleep", "600"]);
+    assert_closed(&mut refused[0]);
+    assert!(frontend.quiet());
+    drop(held[0].1.pop());
+    assert_eq!(frontend.next().kind, CLOSE);
+    let (admitter, _admitted) =
+        connect_from_child(&frontend.socket, 1, Some(fifth), &["sleep", "600"]);
+    expect_opens(&mut frontend, &admitter, fifth, 1);
+}
+
+#[test]
+fn admits_no_more_connections_than_its_descriptors_allow() {
+    if skip_without_peer_pidfd() {
+        return;
+    }
+    let dir = TempDir::new();
+    // The frontend keeps 64 descriptors for itself, which leaves three for connections.
+    let mut frontend = Frontend::start_with_descriptors(&dir, 67);
+    let mut clients: Vec<(UnixStream, u64)> = (0..3).map(|_| frontend.connect()).collect();
+    let mut refused = UnixStream::connect(&frontend.socket).unwrap();
+    assert_closed(&mut refused);
+    assert!(frontend.quiet());
+    let (client, conn) = clients.pop().unwrap();
+    drop(client);
+    expect_close(&mut frontend, conn);
+    let (_again, _) = frontend.connect();
+}
+
+#[test]
+fn refuses_to_start_without_a_descriptor_for_a_connection() {
+    let dir = TempDir::new();
+    let mut command = command(&dir.0.join("b.sock"), &[], 0o022);
+    limit_descriptors(&mut command, 64);
+    let output = command.stdin(Stdio::null()).output().unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("RLIMIT_NOFILE"), "{stderr}");
+    assert!(!dir.0.join("b.sock").exists());
 }
 
 #[test]
