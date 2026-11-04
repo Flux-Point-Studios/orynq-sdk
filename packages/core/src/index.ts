@@ -28,6 +28,7 @@
  * - @fluxpointstudios/orynq-sdk-core/types - Type definitions only
  * - @fluxpointstudios/orynq-sdk-core/chains - Chain utilities only
  * - @fluxpointstudios/orynq-sdk-core/utils - Utility functions only
+ * - @fluxpointstudios/orynq-sdk-core/broker-wire - Credential broker peer contract and frontend mux codec
  */
 
 // ---------------------------------------------------------------------------
@@ -203,6 +204,11 @@ export {
   sortObjectKeys,
   isCanonical,
 } from "./utils/canonical-json.js";
+
+// Strict JSON
+export type { StrictJsonErrorCode } from "./utils/strict-json.js";
+
+export { parseStrictJson, StrictJsonError, STRICT_JSON_MAX_DEPTH } from "./utils/strict-json.js";
 
 // Hash utilities
 export type { IdempotencyKeyOptions } from "./utils/hash.js";

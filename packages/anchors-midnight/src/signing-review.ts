@@ -1,13 +1,13 @@
 import { checkpointFromJson, verifyCheckpointAdvance, type CheckpointAdvance } from "./checkpoint-advance.js";
 import { auditCheckpoints, checkpointId } from "./checkpoints.js";
-import { knownAuthorsSigningSummary, type KnownAuthors, type KnownAuthorsDocument } from "./known-authors.js";
-import { parseStrictJson } from "./strict-json.js";
+import { parseStrictJson } from "@fluxpointstudios/orynq-sdk-core/utils";
+import { knownAuthorsSigningSummary, MAX_POLICY_JSON_BYTES, type KnownAuthors, type KnownAuthorsDocument } from "./known-authors.js";
 
 // A signing operator cannot introduce a prepared authority set on the strength of its JSON.
 // Existing pins remain a prefix; every append is replayed from its pinned predecessor.
 export async function reviewCheckpointSigning(document: string, evidence: unknown, policy: KnownAuthors): Promise<void> {
   knownAuthorsSigningSummary(document);
-  const parsed = parseStrictJson(document) as KnownAuthorsDocument;
+  const parsed = parseStrictJson(document, MAX_POLICY_JSON_BYTES) as KnownAuthorsDocument;
   if (!Array.isArray(evidence) || evidence.length > 64) throw new Error("Checkpoint signing evidence must be a bounded list");
   const unused = new Set(evidence.map((_, index) => index));
   for (const network of ["mainnet", "preprod"] as const) {

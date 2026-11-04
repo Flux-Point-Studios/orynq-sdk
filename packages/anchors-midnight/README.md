@@ -276,9 +276,11 @@ GRANDPA checkpoints it trusts, come from a KNOWN_AUTHORS document (`orynq-known-
 signed with Ed25519 by a pinned policy-root key over `"orynq-known-authors/v1\n" ‖ document`.
 The document is shipped as the exact string that was signed, in `known-authors.json`, so no
 JSON canonicalization sits between a signature and what it covers. Parsing is strict: unknown
-fields, networks and roles, malformed keys, overlapping windows for one key, and duplicate
-JSON object keys at every depth (including escaped aliases) are refused. Policy documents are
-bounded to 2 MiB and 64 nesting levels.
+fields, networks and roles, malformed keys, overlapping windows for one key, duplicate JSON
+object keys at every depth (including escaped aliases), lone surrogates, and integers spelled
+with a fraction, an exponent or a minus zero or beyond ±2^53 are refused (core's
+`parseStrictJson`). Policy documents are bounded to 2 MiB, and no value may sit inside more
+than 32 containers.
 Each signature check refuses with its own message, so a caller can tell which one failed: `the
 known-authors document carries no signature by a trust root` when no signature names one,
 `... is not 64 bytes of lowercase hex` when every trust-root signature is malformed, and `... does
@@ -326,8 +328,8 @@ author-only update with unchanged checkpoints omits `--checkpoint-proofs`. Unuse
 evidence, tampered authorities, rollback and a new-network bootstrap without an independently
 reviewed pinned predecessor all refuse before signing. Onboarding a new trust root/checkpoint
 remains an independent operator/root-review operation; the production CLI cannot silently
-promote caller-prepared genesis authority JSON. Low-level `signKnownAuthors` is an API for
-already-reviewed custom trust domains and test fixtures, not a substitute for root review.
+promote caller-prepared genesis authority JSON. Low-level `signKnownAuthors` serves
+already-reviewed custom trust domains and test fixtures; root review still decides what it signs.
 
 Default `knownAuthors()` strictly verifies every shipped document. Explicit `trustRoots`
 select a separate trust domain: only shipped documents naming one of those roots are included,

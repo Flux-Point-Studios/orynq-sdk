@@ -8,7 +8,7 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/types/index.ts", "src/chains.ts", "src/utils/index.ts", "src/checkpoint.ts"],
+  entry: ["src/index.ts", "src/types/index.ts", "src/chains.ts", "src/utils/index.ts", "src/checkpoint.ts", "src/broker-wire/index.ts"],
   format: ["esm", "cjs"],
   dts: true,
   clean: true,

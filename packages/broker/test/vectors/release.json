@@ -1,0 +1,1092 @@
+{
+  "description": "release.cddl vectors (read with params.cddl and mandate-draft.cddl). Valid release requests and records appear in wire JSON and as the dCBOR they map to (CBOR diagnostic notation, canonical key order); each invalid case patches a valid one at one path and names who must refuse it: the JSON-to-dCBOR profile (-32602), the CDDL, or both. `extension` adds test-only effect kinds to both.",
+  "extension": "; Test-only effect kinds; production effect kinds add themselves with their handlers.\n$$intent-effect //= (kind: \"test.echo\", params: { message: text .size (1..64) })\n$$release-effect //= (kind: \"test.echo\", effect: { message: text .size (1..64) })\n$$intent-effect //= (kind: \"test.raw\", params: { tx: bytes .size (1..16384) })\n$$release-effect //= (kind: \"test.raw\", effect: bytes .size (1..16384))",
+  "valid": [
+    {
+      "name": "in-mandate release with one call step",
+      "rule": "release-request",
+      "json": {
+        "v": 1,
+        "intentHash": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "kind": "test.echo",
+        "effect": {
+          "message": "hello"
+        },
+        "alias": "ci-deploy",
+        "mandates": [
+          {
+            "C": "1111111111111111111111111111111111111111111111111111111111111111",
+            "head": {
+              "guardLog": {
+                "count": "0",
+                "hash": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+              },
+              "trace": {
+                "roll": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+                "seq": "0"
+              }
+            },
+            "steps": [
+              {
+                "event": {
+                  "type": "orynq.conduct.guard.action.v1",
+                  "seq": "0",
+                  "timestamp": "1793000000",
+                  "enforcedAt": "1793000001",
+                  "mandateCommitment": "1111111111111111111111111111111111111111111111111111111111111111",
+                  "actionDigest": "4cfd32035fef90d6d059be4ec4dee26a29e30a884e2cb35799589ee7226d7bec",
+                  "actionKind": "payment",
+                  "action": {
+                    "kind": "payment",
+                    "asset": "orynq:call",
+                    "amount": "1",
+                    "counterparty": "oc1:abababababababababababababababababababababababababababababab",
+                    "timestamp": "1793000000"
+                  }
+                },
+                "traceMeta": {
+                  "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+                  "seq": "0",
+                  "timestamp": "2026-10-26T08:53:20.001Z"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "cdn": "{\"v\": 1, \"kind\": \"test.echo\", \"alias\": \"ci-deploy\", \"effect\": {\"message\": \"hello\"}, \"mandates\": [{\"C\": h'1111111111111111111111111111111111111111111111111111111111111111', \"head\": {\"trace\": {\"seq\": 0, \"roll\": h'e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2'}, \"guardLog\": {\"hash\": h'e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1', \"count\": 0}}, \"steps\": [{\"event\": {\"seq\": 0, \"type\": \"orynq.conduct.guard.action.v1\", \"action\": {\"kind\": \"payment\", \"asset\": \"orynq:call\", \"amount\": 1, \"timestamp\": 1793000000, \"counterparty\": \"oc1:abababababababababababababababababababababababababababababab\"}, \"timestamp\": 1793000000, \"actionKind\": \"payment\", \"enforcedAt\": 1793000001, \"actionDigest\": h'4cfd32035fef90d6d059be4ec4dee26a29e30a884e2cb35799589ee7226d7bec', \"mandateCommitment\": h'1111111111111111111111111111111111111111111111111111111111111111'}, \"traceMeta\": {\"id\": \"0f8fad5b-d9cb-469f-a165-70867728950e\", \"seq\": 0, \"timestamp\": \"2026-10-26T08:53:20.001Z\"}}]}], \"intentHash\": h'f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0'}"
+    },
+    {
+      "name": "committee release over two mandates with a proof and instanceSig",
+      "rule": "release-request",
+      "json": {
+        "v": 1,
+        "intentHash": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+        "kind": "test.raw",
+        "effect": "84a400818258200000",
+        "alias": "test:treasury",
+        "mandates": [
+          {
+            "C": "1111111111111111111111111111111111111111111111111111111111111111",
+            "head": {
+              "guardLog": {
+                "count": "4",
+                "hash": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+              },
+              "trace": {
+                "roll": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+                "seq": "9"
+              }
+            },
+            "steps": [
+              {
+                "event": {
+                  "type": "orynq.conduct.guard.action.v1",
+                  "seq": "4",
+                  "timestamp": "1793000000",
+                  "enforcedAt": "1793000001",
+                  "mandateCommitment": "1111111111111111111111111111111111111111111111111111111111111111",
+                  "actionDigest": "4cfd32035fef90d6d059be4ec4dee26a29e30a884e2cb35799589ee7226d7bec",
+                  "actionKind": "payment",
+                  "action": {
+                    "kind": "payment",
+                    "asset": "orynq:call",
+                    "amount": "1",
+                    "counterparty": "oc1:abababababababababababababababababababababababababababababab",
+                    "timestamp": "1793000000"
+                  }
+                },
+                "traceMeta": {
+                  "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+                  "seq": "9",
+                  "timestamp": "2026-10-26T08:53:20.001Z"
+                },
+                "proof": {
+                  "circuitId": "conduct-step",
+                  "classId": "broker.k18:v1",
+                  "transactionBase64": "AAECAwQFBgc=",
+                  "referenceStateBase64": "q83v"
+                }
+              }
+            ]
+          },
+          {
+            "C": "2222222222222222222222222222222222222222222222222222222222222222",
+            "head": {
+              "guardLog": {
+                "count": "17",
+                "hash": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+              },
+              "trace": {
+                "roll": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+                "seq": "30"
+              }
+            },
+            "steps": [
+              {
+                "event": {
+                  "type": "orynq.conduct.guard.action.v1",
+                  "seq": "17",
+                  "timestamp": "1793000000",
+                  "enforcedAt": "1793000001",
+                  "mandateCommitment": "2222222222222222222222222222222222222222222222222222222222222222",
+                  "actionDigest": "f29ffd3ac0081ea14536e5a8b8074447c56d8282b054899006138342b20a808d",
+                  "actionKind": "payment",
+                  "action": {
+                    "kind": "payment",
+                    "asset": "lovelace",
+                    "amount": "2500000",
+                    "counterparty": "ca1:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+                    "timestamp": "1793000000"
+                  }
+                },
+                "traceMeta": {
+                  "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+                  "seq": "30",
+                  "timestamp": "2026-10-26T08:53:20.001Z"
+                }
+              },
+              {
+                "event": {
+                  "type": "orynq.conduct.guard.action.v1",
+                  "seq": "18",
+                  "timestamp": "1793000000",
+                  "enforcedAt": "1793000001",
+                  "mandateCommitment": "2222222222222222222222222222222222222222222222222222222222222222",
+                  "actionDigest": "749863224fd4e3422707fd072eb3ebc40d43bc1ea628f6032a46047eb12ec72e",
+                  "actionKind": "payment",
+                  "action": {
+                    "kind": "payment",
+                    "asset": "lovelace",
+                    "amount": "180000",
+                    "counterparty": "oc1:fefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe",
+                    "timestamp": "1793000000"
+                  }
+                },
+                "traceMeta": {
+                  "id": "16fd2706-8baf-433b-82eb-8c7fada847da",
+                  "seq": "31",
+                  "timestamp": "2026-10-26T08:53:20.001Z"
+                }
+              }
+            ]
+          }
+        ],
+        "instanceSig": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+      },
+      "cdn": "{\"v\": 1, \"kind\": \"test.raw\", \"alias\": \"test:treasury\", \"effect\": h'84a400818258200000', \"mandates\": [{\"C\": h'1111111111111111111111111111111111111111111111111111111111111111', \"head\": {\"trace\": {\"seq\": 9, \"roll\": h'e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2'}, \"guardLog\": {\"hash\": h'e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1', \"count\": 4}}, \"steps\": [{\"event\": {\"seq\": 4, \"type\": \"orynq.conduct.guard.action.v1\", \"action\": {\"kind\": \"payment\", \"asset\": \"orynq:call\", \"amount\": 1, \"timestamp\": 1793000000, \"counterparty\": \"oc1:abababababababababababababababababababababababababababababab\"}, \"timestamp\": 1793000000, \"actionKind\": \"payment\", \"enforcedAt\": 1793000001, \"actionDigest\": h'4cfd32035fef90d6d059be4ec4dee26a29e30a884e2cb35799589ee7226d7bec', \"mandateCommitment\": h'1111111111111111111111111111111111111111111111111111111111111111'}, \"proof\": {\"classId\": \"broker.k18:v1\", \"circuitId\": \"conduct-step\", \"transactionBase64\": \"AAECAwQFBgc=\", \"referenceStateBase64\": \"q83v\"}, \"traceMeta\": {\"id\": \"0f8fad5b-d9cb-469f-a165-70867728950e\", \"seq\": 9, \"timestamp\": \"2026-10-26T08:53:20.001Z\"}}]}, {\"C\": h'2222222222222222222222222222222222222222222222222222222222222222', \"head\": {\"trace\": {\"seq\": 30, \"roll\": h'e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2'}, \"guardLog\": {\"hash\": h'e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1', \"count\": 17}}, \"steps\": [{\"event\": {\"seq\": 17, \"type\": \"orynq.conduct.guard.action.v1\", \"action\": {\"kind\": \"payment\", \"asset\": \"lovelace\", \"amount\": 2500000, \"timestamp\": 1793000000, \"counterparty\": \"ca1:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"}, \"timestamp\": 1793000000, \"actionKind\": \"payment\", \"enforcedAt\": 1793000001, \"actionDigest\": h'f29ffd3ac0081ea14536e5a8b8074447c56d8282b054899006138342b20a808d', \"mandateCommitment\": h'2222222222222222222222222222222222222222222222222222222222222222'}, \"traceMeta\": {\"id\": \"7c9e6679-7425-40de-944b-e07fc1f90ae7\", \"seq\": 30, \"timestamp\": \"2026-10-26T08:53:20.001Z\"}}, {\"event\": {\"seq\": 18, \"type\": \"orynq.conduct.guard.action.v1\", \"action\": {\"kind\": \"payment\", \"asset\": \"lovelace\", \"amount\": 180000, \"timestamp\": 1793000000, \"counterparty\": \"oc1:fefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe\"}, \"timestamp\": 1793000000, \"actionKind\": \"payment\", \"enforcedAt\": 1793000001, \"actionDigest\": h'749863224fd4e3422707fd072eb3ebc40d43bc1ea628f6032a46047eb12ec72e', \"mandateCommitment\": h'2222222222222222222222222222222222222222222222222222222222222222'}, \"traceMeta\": {\"id\": \"16fd2706-8baf-433b-82eb-8c7fada847da\", \"seq\": 31, \"timestamp\": \"2026-10-26T08:53:20.001Z\"}}]}], \"intentHash\": h'f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1', \"instanceSig\": h'5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a'}"
+    },
+    {
+      "name": "approved out-of-mandate release",
+      "rule": "release-request",
+      "json": {
+        "v": 1,
+        "intentHash": "f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2",
+        "kind": "test.raw",
+        "effect": "84a400818258200001",
+        "alias": "test:treasury",
+        "mandates": [],
+        "approval": {
+          "nonce": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+          "assertion": {
+            "type": "ctap2",
+            "credentialId": "77777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777",
+            "authenticatorData": "88888888888888888888888888888888888888888888888888888888888888888888888888",
+            "signature": "99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999"
+          }
+        }
+      },
+      "cdn": "{\"v\": 1, \"kind\": \"test.raw\", \"alias\": \"test:treasury\", \"effect\": h'84a400818258200001', \"approval\": {\"nonce\": h'0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a', \"assertion\": {\"type\": \"ctap2\", \"signature\": h'99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999', \"credentialId\": h'77777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777', \"authenticatorData\": h'88888888888888888888888888888888888888888888888888888888888888888888888888'}}, \"mandates\": [], \"intentHash\": h'f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2'}"
+    },
+    {
+      "name": "release record with proof references",
+      "rule": "release-record",
+      "json": {
+        "intentHash": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+        "effectDigest": "fefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe",
+        "heads": [
+          {
+            "C": "1111111111111111111111111111111111111111111111111111111111111111",
+            "prev": {
+              "guardLog": {
+                "count": "4",
+                "hash": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+              },
+              "trace": {
+                "roll": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+                "seq": "9"
+              }
+            },
+            "next": {
+              "guardLog": {
+                "count": "5",
+                "hash": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+              },
+              "trace": {
+                "roll": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+                "seq": "10"
+              }
+            }
+          }
+        ],
+        "notAfter": "1793000030",
+        "mode": "replay+zk-shadow",
+        "proofRefs": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "cdn": "{\"mode\": \"replay+zk-shadow\", \"heads\": [{\"C\": h'1111111111111111111111111111111111111111111111111111111111111111', \"next\": {\"trace\": {\"seq\": 10, \"roll\": h'e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2'}, \"guardLog\": {\"hash\": h'e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1', \"count\": 5}}, \"prev\": {\"trace\": {\"seq\": 9, \"roll\": h'e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2'}, \"guardLog\": {\"hash\": h'e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1', \"count\": 4}}}], \"notAfter\": 1793000030, \"proofRefs\": [h'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'], \"intentHash\": h'f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1', \"effectDigest\": h'fefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe'}"
+    },
+    {
+      "name": "replay release record over two mandates",
+      "rule": "release-record",
+      "json": {
+        "intentHash": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "effectDigest": "fdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfd",
+        "heads": [
+          {
+            "C": "1111111111111111111111111111111111111111111111111111111111111111",
+            "prev": {
+              "guardLog": {
+                "count": "0",
+                "hash": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+              },
+              "trace": {
+                "roll": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+                "seq": "0"
+              }
+            },
+            "next": {
+              "guardLog": {
+                "count": "1",
+                "hash": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+              },
+              "trace": {
+                "roll": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+                "seq": "1"
+              }
+            }
+          },
+          {
+            "C": "2222222222222222222222222222222222222222222222222222222222222222",
+            "prev": {
+              "guardLog": {
+                "count": "7",
+                "hash": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+              },
+              "trace": {
+                "roll": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+                "seq": "7"
+              }
+            },
+            "next": {
+              "guardLog": {
+                "count": "8",
+                "hash": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+              },
+              "trace": {
+                "roll": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+                "seq": "8"
+              }
+            }
+          }
+        ],
+        "notAfter": "1793000030",
+        "mode": "replay"
+      },
+      "cdn": "{\"mode\": \"replay\", \"heads\": [{\"C\": h'1111111111111111111111111111111111111111111111111111111111111111', \"next\": {\"trace\": {\"seq\": 1, \"roll\": h'e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2'}, \"guardLog\": {\"hash\": h'e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1', \"count\": 1}}, \"prev\": {\"trace\": {\"seq\": 0, \"roll\": h'e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2'}, \"guardLog\": {\"hash\": h'e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1', \"count\": 0}}}, {\"C\": h'2222222222222222222222222222222222222222222222222222222222222222', \"next\": {\"trace\": {\"seq\": 8, \"roll\": h'e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2'}, \"guardLog\": {\"hash\": h'e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1', \"count\": 8}}, \"prev\": {\"trace\": {\"seq\": 7, \"roll\": h'e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2'}, \"guardLog\": {\"hash\": h'e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1', \"count\": 7}}}], \"notAfter\": 1793000030, \"intentHash\": h'f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0', \"effectDigest\": h'fdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfd'}"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "version is 2",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "v"
+          ],
+          "json": 2,
+          "cdn": "2"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "version is a string",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "v"
+          ],
+          "json": "1"
+        }
+      ],
+      "refusedBy": [
+        "profile"
+      ]
+    },
+    {
+      "name": "intentHash is 31 bytes",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "intentHash"
+          ],
+          "json": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "cdn": "h'f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "kind has no registered effect",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "kind"
+          ],
+          "json": "http.request",
+          "cdn": "\"http.request\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "effect is tx bytes for a params kind",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "effect"
+          ],
+          "json": "84a4",
+          "cdn": "h'84a4'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "raw effect is empty",
+      "base": "approved out-of-mandate release",
+      "patch": [
+        {
+          "path": [
+            "effect"
+          ],
+          "json": "",
+          "cdn": "h''"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "alias is not an alias name",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "alias"
+          ],
+          "json": "Ci Deploy",
+          "cdn": "\"Ci Deploy\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "no mandate and no approval",
+      "base": "approved out-of-mandate release",
+      "patch": [
+        {
+          "path": [
+            "approval"
+          ],
+          "remove": true
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "an approved release omits its empty mandates",
+      "base": "approved out-of-mandate release",
+      "patch": [
+        {
+          "path": [
+            "mandates"
+          ],
+          "remove": true
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "mandate steps and an approval",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "approval"
+          ],
+          "json": {
+            "nonce": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+            "assertion": {
+              "type": "ctap2",
+              "credentialId": "77777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777",
+              "authenticatorData": "88888888888888888888888888888888888888888888888888888888888888888888888888",
+              "signature": "99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999"
+            }
+          },
+          "cdn": "{\"nonce\": h'0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a', \"assertion\": {\"type\": \"ctap2\", \"signature\": h'99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999', \"credentialId\": h'77777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777', \"authenticatorData\": h'88888888888888888888888888888888888888888888888888888888888888888888888888'}}"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "approval nonce is 15 bytes",
+      "base": "approved out-of-mandate release",
+      "patch": [
+        {
+          "path": [
+            "approval",
+            "nonce"
+          ],
+          "json": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+          "cdn": "h'0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "approval assertion type is unknown",
+      "base": "approved out-of-mandate release",
+      "patch": [
+        {
+          "path": [
+            "approval",
+            "assertion",
+            "type"
+          ],
+          "json": "passkey",
+          "cdn": "\"passkey\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "a mandate has no steps",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps"
+          ],
+          "json": [],
+          "cdn": "[]"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "mandate key is lower-case c",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "C"
+          ],
+          "remove": true
+        },
+        {
+          "path": [
+            "mandates",
+            0,
+            "c"
+          ],
+          "json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "cdn": "h'1111111111111111111111111111111111111111111111111111111111111111'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "head lacks its trace",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "head",
+            "trace"
+          ],
+          "remove": true
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "guard log count is a JSON number",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "head",
+            "guardLog",
+            "count"
+          ],
+          "json": 0
+        }
+      ],
+      "refusedBy": [
+        "profile"
+      ]
+    },
+    {
+      "name": "guard log hash is hex text in CBOR",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "head",
+            "guardLog",
+            "hash"
+          ],
+          "cdn": "\"e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1\""
+        }
+      ],
+      "refusedBy": [
+        "cddl"
+      ]
+    },
+    {
+      "name": "event is a denial",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps",
+            0,
+            "event",
+            "type"
+          ],
+          "json": "orynq.conduct.guard.denial.v1",
+          "cdn": "\"orynq.conduct.guard.denial.v1\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "event is egress",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps",
+            0,
+            "event",
+            "actionKind"
+          ],
+          "json": "egress",
+          "cdn": "\"egress\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "event carries a denial reason",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps",
+            0,
+            "event",
+            "reason"
+          ],
+          "json": "COUNTERPARTY_NOT_ALLOWED",
+          "cdn": "\"COUNTERPARTY_NOT_ALLOWED\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "event mandateCommitment is 31 bytes",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps",
+            0,
+            "event",
+            "mandateCommitment"
+          ],
+          "json": "11111111111111111111111111111111111111111111111111111111111111",
+          "cdn": "h'11111111111111111111111111111111111111111111111111111111111111'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "event enforcedAt is negative",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps",
+            0,
+            "event",
+            "enforcedAt"
+          ],
+          "json": -1,
+          "cdn": "-1"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "action asset is tdust",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps",
+            0,
+            "event",
+            "action",
+            "asset"
+          ],
+          "json": "tdust",
+          "cdn": "\"tdust\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "action amount is zero",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps",
+            0,
+            "event",
+            "action",
+            "amount"
+          ],
+          "json": "0",
+          "cdn": "0"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "action counterparty has an unknown prefix",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps",
+            0,
+            "event",
+            "action",
+            "counterparty"
+          ],
+          "json": "xx1:abababababababababababababababababababababababababababababab",
+          "cdn": "\"xx1:abababababababababababababababababababababababababababababab\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "action counterparty is upper-case",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps",
+            0,
+            "event",
+            "action",
+            "counterparty"
+          ],
+          "json": "oc1:ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB",
+          "cdn": "\"oc1:ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "action counterparty is 59 hex digits",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps",
+            0,
+            "event",
+            "action",
+            "counterparty"
+          ],
+          "json": "oc1:abababababababababababababababababababababababababababababa",
+          "cdn": "\"oc1:abababababababababababababababababababababababababababababa\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "trace event id is upper-case",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps",
+            0,
+            "traceMeta",
+            "id"
+          ],
+          "json": "0F8FAD5B-D9CB-469F-A165-70867728950E",
+          "cdn": "\"0F8FAD5B-D9CB-469F-A165-70867728950E\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "trace time lacks milliseconds",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps",
+            0,
+            "traceMeta",
+            "timestamp"
+          ],
+          "json": "2026-10-26T08:53:20Z",
+          "cdn": "\"2026-10-26T08:53:20Z\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "trace time has an offset",
+      "base": "in-mandate release with one call step",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps",
+            0,
+            "traceMeta",
+            "timestamp"
+          ],
+          "json": "2026-10-26T08:53:20.001+00:00",
+          "cdn": "\"2026-10-26T08:53:20.001+00:00\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "proof transaction is not base64",
+      "base": "committee release over two mandates with a proof and instanceSig",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps",
+            0,
+            "proof",
+            "transactionBase64"
+          ],
+          "json": "AAECAwQFBgc",
+          "cdn": "\"AAECAwQFBgc\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "proof reference state is shorter than one quantum",
+      "base": "committee release over two mandates with a proof and instanceSig",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps",
+            0,
+            "proof",
+            "referenceStateBase64"
+          ],
+          "json": "",
+          "cdn": "\"\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "proof classId is empty",
+      "base": "committee release over two mandates with a proof and instanceSig",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0,
+            "steps",
+            0,
+            "proof",
+            "classId"
+          ],
+          "json": "",
+          "cdn": "\"\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "instanceSig is 63 bytes",
+      "base": "committee release over two mandates with a proof and instanceSig",
+      "patch": [
+        {
+          "path": [
+            "instanceSig"
+          ],
+          "json": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "cdn": "h'5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "record mode is not a verify mode",
+      "base": "release record with proof references",
+      "patch": [
+        {
+          "path": [
+            "mode"
+          ],
+          "json": "approved",
+          "cdn": "\"approved\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "record has no heads",
+      "base": "release record with proof references",
+      "patch": [
+        {
+          "path": [
+            "heads"
+          ],
+          "json": [],
+          "cdn": "[]"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "record proofRefs is empty",
+      "base": "release record with proof references",
+      "patch": [
+        {
+          "path": [
+            "proofRefs"
+          ],
+          "json": [],
+          "cdn": "[]"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "record lacks effectDigest",
+      "base": "release record with proof references",
+      "patch": [
+        {
+          "path": [
+            "effectDigest"
+          ],
+          "remove": true
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "record head lacks next",
+      "base": "release record with proof references",
+      "patch": [
+        {
+          "path": [
+            "heads",
+            0,
+            "next"
+          ],
+          "remove": true
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "record notAfter is a float",
+      "base": "release record with proof references",
+      "patch": [
+        {
+          "path": [
+            "notAfter"
+          ],
+          "json": 1793000030.5,
+          "cdn": "1793000030.5"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    }
+  ]
+}

@@ -27,6 +27,14 @@ export {
 } from "./canonical-json.js";
 
 // ---------------------------------------------------------------------------
+// Strict JSON
+// ---------------------------------------------------------------------------
+
+export type { StrictJsonErrorCode } from "./strict-json.js";
+
+export { parseStrictJson, StrictJsonError, STRICT_JSON_MAX_DEPTH } from "./strict-json.js";
+
+// ---------------------------------------------------------------------------
 // Hash Utilities
 // ---------------------------------------------------------------------------
 

@@ -4,7 +4,7 @@ import type { MidnightNetwork } from "./registries.js";
 import { fromHex, toHex } from "./scale.js";
 import shipped from "../known-authors.json" with { type: "json" };
 import { auditCheckpoints } from "./checkpoints.js";
-import { MAX_POLICY_JSON_BYTES, parseStrictJson } from "./strict-json.js";
+import { parseStrictJson } from "@fluxpointstudios/orynq-sdk-core/utils";
 import { createHash } from "node:crypto";
 
 // The authors a verifier recognizes, and the GRANDPA checkpoints it trusts, as a JSON document
@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 // closes a key's window, so no verifier scans the permissionless registry to learn of one.
 export const KNOWN_AUTHORS_FORMAT = "orynq-known-authors/v1";
 const SIGNING_DOMAIN = `${KNOWN_AUTHORS_FORMAT}\n`;
+export const MAX_POLICY_JSON_BYTES = 2 * 1024 * 1024;
 const NETWORKS: readonly MidnightNetwork[] = ["mainnet", "preprod"];
 const ROLES = ["relay", "batch"] as const;
 
@@ -112,7 +113,7 @@ function parseCheckpoint(v: unknown, at: string): FinalityCheckpoint {
 }
 
 function parseDocument(text: string): { serial: number; issued: string; networks: Map<MidnightNetwork, { authors: KnownAuthor[]; checkpoints: FinalityCheckpoint[] }> } {
-  const d = exactKeys(parseStrictJson(text), ["format", "serial", "issued", "networks"], "document");
+  const d = exactKeys(parseStrictJson(text, MAX_POLICY_JSON_BYTES), ["format", "serial", "issued", "networks"], "document");
   if (d.format !== KNOWN_AUTHORS_FORMAT) throw new Error(`document format must be ${KNOWN_AUTHORS_FORMAT}`);
   if (!Number.isSafeInteger(d.serial) || (d.serial as number) < 1) throw new Error("document serial must be an integer from 1");
   if (typeof d.issued !== "string" || Number.isNaN(Date.parse(d.issued))) throw new Error("document issued must be a date");

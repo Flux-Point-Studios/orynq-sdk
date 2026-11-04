@@ -56,6 +56,16 @@
         "types": "./dist/checkpoint.d.cts",
         "default": "./dist/checkpoint.cjs"
       }
+    },
+    "./broker-wire": {
+      "import": {
+        "types": "./dist/broker-wire/index.d.ts",
+        "default": "./dist/broker-wire/index.js"
+      },
+      "require": {
+        "types": "./dist/broker-wire/index.d.cts",
+        "default": "./dist/broker-wire/index.cjs"
+      }
     }
   },
   "files": [

@@ -1,0 +1,121 @@
+{
+  "description": "Golden vectors for the broker frontend stdio mux: u32 big-endian length | u8 kind | u64 big-endian conn | payload, where length counts kind, conn and payload. Each valid hex is what emit() in the Windows sidecar (packages/credential-broker-windows/native/src/main.rs) writes for its kind, conn and payload; peer payloads use serde_json's sorted key order. The large vector is a header followed by payloadBytes bytes of fill. Each invalid hex is the shortest prefix from which the codec must refuse.",
+  "valid": [
+    {
+      "name": "READY",
+      "kind": 0,
+      "conn": "0",
+      "payloadUtf8": "",
+      "hex": "00000009000000000000000000"
+    },
+    {
+      "name": "OPEN of a Windows peer",
+      "kind": 1,
+      "conn": "1",
+      "payloadUtf8": "{\"integrityRid\":8192,\"logonLuid\":\"999\",\"os\":\"windows\",\"pidHint\":4242,\"sid\":\"S-1-5-21-1004336348-1177238915-682003330-1001\",\"tsSessionId\":1}",
+      "hex": "000000940100000000000000017b22696e74656772697479526964223a383139322c226c6f676f6e4c756964223a22393939222c226f73223a2277696e646f7773222c2270696448696e74223a343234322c22736964223a22532d312d352d32312d313030343333363334382d313137373233383931352d3638323030333333302d31303031222c22747353657373696f6e4964223a317d"
+    },
+    {
+      "name": "OPEN of a Linux peer",
+      "kind": 1,
+      "conn": "2",
+      "payloadUtf8": "{\"cgroup\":\"/orynq.slice/orynq-agents.slice/orynq-agent-00112233445566778899aabbccddeeff.service\",\"gid\":1001,\"os\":\"linux\",\"pidHint\":null,\"uid\":1001}",
+      "hex": "0000009c0100000000000000027b226367726f7570223a222f6f72796e712e736c6963652f6f72796e712d6167656e74732e736c6963652f6f72796e712d6167656e742d30303131323233333434353536363737383839396161626263636464656566662e73657276696365222c22676964223a313030312c226f73223a226c696e7578222c2270696448696e74223a6e756c6c2c22756964223a313030317d"
+    },
+    {
+      "name": "OPEN of an anonymous client",
+      "kind": 1,
+      "conn": "3",
+      "payloadUtf8": "null",
+      "hex": "0000000d0100000000000000036e756c6c"
+    },
+    {
+      "name": "FRAME of one byte",
+      "kind": 2,
+      "conn": "1",
+      "payloadUtf8": "{",
+      "hex": "0000000a0200000000000000017b"
+    },
+    {
+      "name": "FRAME of a request",
+      "kind": 2,
+      "conn": "2",
+      "payloadUtf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"broker.hello\"}",
+      "hex": "000000390200000000000000027b226a736f6e727063223a22322e30222c226964223a312c226d6574686f64223a2262726f6b65722e68656c6c6f227d"
+    },
+    {
+      "name": "FRAME on the largest conn",
+      "kind": 2,
+      "conn": "18446744073709551615",
+      "payloadUtf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"broker.hello\"}",
+      "hex": "0000003902ffffffffffffffff7b226a736f6e727063223a22322e30222c226964223a312c226d6574686f64223a2262726f6b65722e68656c6c6f227d"
+    },
+    {
+      "name": "CLOSE",
+      "kind": 3,
+      "conn": "4294967296",
+      "payloadUtf8": "",
+      "hex": "00000009030000000100000000"
+    }
+  ],
+  "large": {
+    "name": "FRAME of exactly 16 MiB",
+    "kind": 2,
+    "conn": "5",
+    "payloadBytes": 16777216,
+    "fill": 120,
+    "headerHex": "01000009020000000000000005"
+  },
+  "invalid": [
+    {
+      "name": "a length of 0",
+      "hex": "00000000",
+      "code": "MUX_LENGTH"
+    },
+    {
+      "name": "a length of 8, short of kind and conn",
+      "hex": "00000008",
+      "code": "MUX_LENGTH"
+    },
+    {
+      "name": "a length of 9 + 16 MiB + 1",
+      "hex": "0100000a",
+      "code": "MUX_LENGTH"
+    },
+    {
+      "name": "a length of 2^32 - 1",
+      "hex": "ffffffff",
+      "code": "MUX_LENGTH"
+    },
+    {
+      "name": "kind 4",
+      "hex": "0000000904",
+      "code": "MUX_KIND"
+    },
+    {
+      "name": "kind 255",
+      "hex": "00000009ff",
+      "code": "MUX_KIND"
+    },
+    {
+      "name": "READY on conn 1",
+      "hex": "00000009000000000000000001",
+      "code": "MUX_READY"
+    },
+    {
+      "name": "READY with a payload",
+      "hex": "0000000a000000000000000000",
+      "code": "MUX_READY"
+    },
+    {
+      "name": "an empty FRAME",
+      "hex": "00000009020000000000000001",
+      "code": "MUX_FRAME"
+    },
+    {
+      "name": "CLOSE with a payload",
+      "hex": "0000000a030000000000000001",
+      "code": "MUX_CLOSE"
+    }
+  ]
+}

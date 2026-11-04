@@ -3,11 +3,11 @@
 //   new-root-key SEED_FILE        writes a fresh owner-only Ed25519 seed, prints its public key
 //   sign DOCUMENT_FILE SEED_FILE  prints the signed document as known-authors.json holds it
 import { readFileSync } from "node:fs";
+import { parseStrictJson } from "@fluxpointstudios/orynq-sdk-core/utils";
 import { ed25519PublicKey } from "../src/ed25519.js";
 import { knownAuthors, knownAuthorsSigningSummary, signKnownAuthors } from "../src/known-authors.js";
 import { createSecretFile, readPrivateFile } from "../src/private-file.js";
 import { fromHex, toHex } from "../src/scale.js";
-import { parseStrictJson } from "../src/strict-json.js";
 import { reviewCheckpointSigning } from "../src/signing-review.js";
 
 const [command, ...args] = process.argv.slice(2);
