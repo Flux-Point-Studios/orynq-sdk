@@ -66,6 +66,28 @@ alongside a GitHub receipt, the verifier holds it to the same tolerance window.
 Self-signed `jws` receipts additionally bind `{runId, requestHash}`, so lifting
 one into a different trace/request fails (`call-binding-mismatch`).
 
+### Custom schemes
+
+Register a scheme outside the table above through `verifiers`. Its verifier
+checks the signature; its `responseCommitment` returns the digest the signed
+bytes commit to, which must equal the recorded `response.hash`. A scheme without
+`responseCommitment` never verifies (`response-not-bound`), since a valid
+signature that does not cover the response proves nothing about it.
+
+```ts
+import {
+  hashToolPayload,
+  verifyTrace,
+  type ToolReceiptSchemeVerifier,
+} from "@fluxpointstudios/orynq-sdk-tool-receipts";
+
+const acme: ToolReceiptSchemeVerifier = async (event, ctx) => verifyAcmeSignature(event, ctx);
+// Acme signs the raw response body, so the signed bytes are the response.
+acme.responseCommitment = async (event) => hashToolPayload(event.receipt.signedPayload);
+
+await verifyTrace(bundle, { keys, verifiers: { "acme-signature": acme } });
+```
+
 ## Signing-proxy pattern (for tools that don't sign natively)
 
 Wrap an unsigned tool in a TEE/HSM-signed envelope. Same trust pattern as Materios

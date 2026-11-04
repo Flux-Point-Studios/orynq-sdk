@@ -12,8 +12,10 @@ import { describe, it, expect } from "vitest";
 import {
   createHash,
   createHmac,
+  createPublicKey,
   generateKeyPairSync,
   sign as cryptoSign,
+  verify as cryptoVerify,
 } from "node:crypto";
 import {
   createTrace,
@@ -25,10 +27,12 @@ import type { TraceRun, TraceBundle, ToolReceiptEvent } from "@fluxpointstudios/
 import {
   addToolReceipt,
   hashToolPayload,
+  verifyJwsReceipt,
   verifyToolReceipts,
   verifyTrace,
   createSigningProxy,
 } from "../index.js";
+import type { ToolReceiptSchemeVerifier, ToolReceiptVerifyContext } from "../index.js";
 
 /** Record a receipt whose recorded response is `responsePayload`. */
 async function traceWithReceipt(
@@ -292,5 +296,161 @@ describe("verifyTrace integration", () => {
     const outcome = await verifyToolReceipts(bundle);
     expect(outcome.results[0]!.verified).toBe(false);
     expect(outcome.results[0]!.error).toMatch(/no verifier/i);
+  });
+});
+
+describe("externally registered schemes", () => {
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const keys = { "acme:pricing": pem(publicKey) };
+  const signedBody = JSON.stringify({ price: 4200, currency: "usd" });
+
+  /** A detached ed25519 signature whose signed bytes are the raw response body. */
+  const detachedReceipt = (body: string): ToolReceiptEvent["receipt"] => ({
+    scheme: "detached-ed25519",
+    signer: "acme:pricing",
+    signature: cryptoSign(null, Buffer.from(body), privateKey).toString("base64"),
+    signedPayload: body,
+  });
+
+  const detachedEd25519: ToolReceiptSchemeVerifier = async (
+    event: ToolReceiptEvent,
+    ctx?: ToolReceiptVerifyContext
+  ) => {
+    const key = ctx?.keys?.[event.receipt.signer];
+    if (key === undefined) throw new Error("detached-ed25519: signer key not configured");
+    return cryptoVerify(
+      null,
+      Buffer.from(event.receipt.signedPayload),
+      createPublicKey(key),
+      Buffer.from(event.receipt.signature, "base64")
+    );
+  };
+  detachedEd25519.responseCommitment = async (event) => hashToolPayload(event.receipt.signedPayload);
+
+  it("verifies a receipt whose registered scheme commits to the recorded response", async () => {
+    const bundle = await traceWithReceipt(detachedReceipt(signedBody), signedBody);
+    const result = await verifyTrace(bundle, {
+      keys,
+      verifiers: { "detached-ed25519": detachedEd25519 },
+    });
+    expect(result.toolReceipts.results[0]!.reason).toBeUndefined();
+    expect(result.toolReceipts.results[0]!.verified).toBe(true);
+    expect(result.toolReceipts.results[0]!.callBound).toBe(false);
+    expect(result.valid).toBe(true);
+  });
+
+  it("rejects a genuine custom-scheme signature paired with a fabricated response", async () => {
+    const bundle = await traceWithReceipt(
+      detachedReceipt(signedBody),
+      JSON.stringify({ price: 1, currency: "usd" })
+    );
+    const outcome = await verifyToolReceipts(bundle, {
+      keys,
+      verifiers: { "detached-ed25519": detachedEd25519 },
+    });
+    expect(outcome.results[0]!.reason).toBe("response-binding-mismatch");
+    expect(outcome.results[0]!.verified).toBe(false);
+  });
+
+  it("fails closed when a scheme accepts every signature but registers no response commitment", async () => {
+    const bundle = await traceWithReceipt(detachedReceipt(signedBody), signedBody);
+    const outcome = await verifyToolReceipts(bundle, {
+      verifiers: { "detached-ed25519": async () => true },
+    });
+    expect(outcome.results[0]!.reason).toBe("response-not-bound");
+    expect(outcome.results[0]!.verified).toBe(false);
+  });
+
+  it("fails closed when a scheme's response commitment reports the receipt unbound", async () => {
+    const unbound: ToolReceiptSchemeVerifier = async () => true;
+    unbound.responseCommitment = async () => null;
+    const bundle = await traceWithReceipt(detachedReceipt(signedBody), signedBody);
+    const outcome = await verifyToolReceipts(bundle, {
+      verifiers: { "detached-ed25519": unbound },
+    });
+    expect(outcome.results[0]!.reason).toBe("response-not-bound");
+    expect(outcome.results[0]!.verified).toBe(false);
+  });
+
+  it("keeps the built-in response binding when a built-in scheme is overridden without a commitment", async () => {
+    const { privateKey: jwsKey, publicKey: jwsPub } = generateKeyPairSync("ed25519");
+    const proxy = createSigningProxy({ signer: "tee://oracle", alg: "EdDSA", privateKey: jwsKey });
+    const bundle = await traceWithReceipt(proxy.sign({ price: 100 }), { price: 1 });
+    const outcome = await verifyToolReceipts(bundle, {
+      keys: { "tee://oracle": pem(jwsPub) },
+      verifiers: { jws: (event, ctx) => verifyJwsReceipt(event, ctx) },
+    });
+    expect(outcome.results[0]!.reason).toBe("response-binding-mismatch");
+    expect(outcome.results[0]!.verified).toBe(false);
+  });
+
+  it("lets an overriding scheme's unbound commitment replace the built-in one", async () => {
+    const { privateKey: jwsKey, publicKey: jwsPub } = generateKeyPairSync("ed25519");
+    const proxy = createSigningProxy({ signer: "tee://oracle", alg: "EdDSA", privateKey: jwsKey });
+    const bundle = await traceWithReceipt(proxy.sign({ price: 100 }), { price: 100 });
+    const jwsKeys = { "tee://oracle": pem(jwsPub) };
+    const builtin = await verifyToolReceipts(bundle, { keys: jwsKeys });
+    expect(builtin.results[0]!.verified).toBe(true);
+
+    const override: ToolReceiptSchemeVerifier = (event, ctx) => verifyJwsReceipt(event, ctx);
+    override.responseCommitment = async () => null;
+    const outcome = await verifyToolReceipts(bundle, { keys: jwsKeys, verifiers: { jws: override } });
+    expect(outcome.results[0]!.reason).toBe("response-not-bound");
+    expect(outcome.results[0]!.verified).toBe(false);
+  });
+
+  it("finds no verifier for a scheme that only a polluted Object.prototype supplies", async () => {
+    const bundle = await traceWithReceipt(
+      { scheme: "planted-scheme", signer: "s", signature: "AA", signedPayload: "anything" },
+      { price: 1 }
+    );
+    const planted: ToolReceiptSchemeVerifier = async () => true;
+    planted.responseCommitment = async (event) => event.response.hash;
+    Object.defineProperty(Object.prototype, "planted-scheme", { configurable: true, value: planted });
+    try {
+      for (const ctx of [undefined, { verifiers: {} }]) {
+        const outcome = await verifyToolReceipts(bundle, ctx);
+        expect(outcome.results[0]).toMatchObject({ verified: false, error: expect.stringMatching(/no verifier/i) });
+      }
+    } finally {
+      delete (Object.prototype as Record<string, unknown>)["planted-scheme"];
+    }
+  });
+
+  it("finds no verifier for a scheme named after an Object.prototype member", async () => {
+    for (const scheme of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+      const bundle = await traceWithReceipt({ scheme, signer: "s", signature: "AA", signedPayload: "x" }, "x");
+      for (const ctx of [undefined, { verifiers: {} }]) {
+        const outcome = await verifyToolReceipts(bundle, ctx);
+        expect(outcome.results[0], scheme).toMatchObject({
+          verified: false,
+          error: expect.stringMatching(/no verifier/i),
+        });
+      }
+    }
+  });
+
+  it("fails closed instead of throwing when a JavaScript caller passes a null registry", async () => {
+    const bundle = await traceWithReceipt({ scheme: "custom", signer: "s", signature: "AA", signedPayload: "x" }, "x");
+    const ctx = { verifiers: null } as unknown as ToolReceiptVerifyContext;
+    const outcome = await verifyToolReceipts(bundle, ctx);
+    expect(outcome.results[0]).toMatchObject({ verified: false, error: expect.stringMatching(/no verifier/i) });
+  });
+
+  it("ignores a response commitment inherited from a polluted Object.prototype", async () => {
+    const { privateKey: jwsKey, publicKey: jwsPub } = generateKeyPairSync("ed25519");
+    const proxy = createSigningProxy({ signer: "tee://oracle", alg: "EdDSA", privateKey: jwsKey });
+    const bundle = await traceWithReceipt(proxy.sign({ price: 100 }), { price: 1 });
+    Object.defineProperty(Object.prototype, "responseCommitment", {
+      configurable: true,
+      value: async (event: ToolReceiptEvent) => event.response.hash,
+    });
+    try {
+      const outcome = await verifyToolReceipts(bundle, { keys: { "tee://oracle": pem(jwsPub) } });
+      expect(outcome.results[0]!.reason).toBe("response-binding-mismatch");
+      expect(outcome.results[0]!.verified).toBe(false);
+    } finally {
+      delete (Object.prototype as { responseCommitment?: unknown }).responseCommitment;
+    }
   });
 });
