@@ -7,6 +7,14 @@ export type MidnightNetwork = "mainnet" | "preprod";
 // registry generation and a decoder that knows it.
 export const KNOWN_RUNTIME_SPEC_VERSIONS = [1000300] as const;
 
+// A runtime a registry generation runs under, from block `fromHeight` through `toHeight`
+// (null while it is the current runtime).
+export interface RuntimeSpan {
+  specVersion: number;
+  fromHeight: number;
+  toHeight: number | null;
+}
+
 export interface RegistryInfo {
   generation: number;
   address: string;
@@ -14,6 +22,7 @@ export interface RegistryInfo {
   deployHeight: number;
   deployBlockHash?: string;
   runtimeSpecVersion: number;
+  runtimes?: readonly RuntimeSpan[];
   circuits: Record<RegistryCircuit, { vkSha256: string }>;
 }
 
@@ -62,4 +71,9 @@ export function assertRegistryGenerations(generations: readonly RegistryInfo[]):
       }
     }
   });
+}
+
+// Whether a block at `height` running `specVersion` lies in one of `info`'s runtime spans.
+export function registryRuntimeAllows(_info: RegistryInfo, _specVersion: number, _height: number): boolean {
+  throw new Error("registryRuntimeAllows is not implemented");
 }

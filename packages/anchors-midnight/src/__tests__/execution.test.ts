@@ -3,12 +3,14 @@ import { replaceProofValue } from "./proof-node.js";
 import fixture from "./fixtures/storage-proof-mainnet.json";
 import { provedValue } from "../storage-proof.js";
 import { verifyExecution, verifyBlockEffects } from "../execution.js";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { metadata, unifyMetadata } from "@polkadot-api/substrate-bindings";
 import { getDynamicBuilder, getLookupFn } from "@polkadot-api/metadata-builders";
-import { headerFromRpc, headerHash } from "../substrate.js";
+import { headerFromRpc, headerHash, type RpcHeader } from "../substrate.js";
 import { fromHex, toHex } from "../scale.js";
-import type { MidnightSource } from "../source.js";
+import { SourceConflict, type MidnightSource } from "../source.js";
+import { CODE_KEYS, FORK, PENDING_CODE_KEYS, SYSTEM_EVENTS, eventsCodec, forkBlock, forkNode, forkSends, recorded } from "./fork-chain.js";
 
 const request = { blockHash: fixture.hash.slice(2), header: headerFromRpc(fixture.header), extrinsicIndex: 4, txHash: "e273d480e57b3315937c8929fbc3c11ab798d42b4ff6c0b88172856dec6b7d58" };
 const node = (change: (answers: unknown[]) => void = () => {}): MidnightSource["node"] => ({
@@ -150,4 +152,75 @@ it("holds on authenticated applications outside the body-bound send list", async
   expect(() => effects.assertApplications(sends.slice(1))).toThrow(/unmatched|application/i);
   expect(() => effects.assertApplications(sends.map((send, i) => i ? send : { ...send, txHash: "aa".repeat(32) }))).toThrow(/unmatched|application/i);
   expect(() => effects.assertApplications([...sends, sends[0]!])).toThrow();
+});
+
+describe("authenticated execution across the Ledger 9 runtime upgrade (mainnet, recorded)", () => {
+  const codeHash2001100 = "87d0c023b954ad788bba2c065320fe19f172f374adbe86ebc0a99bc1ce3fe1de";
+
+  it("pins the 2001100 metadata the post-upgrade events decode under, and the 1000300 codec cannot read them", () => {
+    const bytes = readFileSync(new URL("../../runtime/2001100.scale", import.meta.url));
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe("452359103e3598e3720d28b0537f0bb89f1b8614de816928f4a3fc8732650afb");
+    const { blockHash } = forkBlock(FORK.firstLedger9);
+    const proof = recorded<{ proof: string[] }>("state_getReadProof", [[SYSTEM_EVENTS, "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb"], `0x${blockHash}`]);
+    const events = provedValue(`0x${toHex(forkBlock(FORK.firstLedger9).header.stateRoot)}`, SYSTEM_EVENTS, proof.proof);
+    const names = (eventsCodec(2001100).dec(events) as any[]).map(({ event }) => `${event.type}.${event.value.type}`);
+    expect(names).toEqual(expect.arrayContaining(["CNightObservation.DustReapplyStarted", "MultiBlockMigrations.UpgradeStarted"]));
+    expect(() => eventsCodec(1000300).dec(events)).toThrow();
+  });
+
+  it("executes the set_code block 3346138 under 1000300, with every body-bound send applied", async () => {
+    const effects = await verifyBlockEffects(forkNode().node, forkBlock(FORK.setCode));
+    expect(effects.runtimeSpecVersion).toBe(1000300);
+    expect(forkSends(FORK.setCode)).toHaveLength(7);
+    expect(() => effects.assertApplications(forkSends(FORK.setCode))).not.toThrow();
+  });
+
+  it("executes 3346139 under 2001100, the code its parent holds as :pending_code, and decodes its events", async () => {
+    const effects = await verifyBlockEffects(forkNode().node, forkBlock(FORK.firstLedger9));
+    expect(effects.runtimeSpecVersion).toBe(2001100);
+    expect(effects.timestamp).toBe(Date.parse("2026-11-06T20:51:24Z"));
+    expect(() => effects.assertApplications([])).not.toThrow();
+  });
+
+  it("executes 3346140 under 2001100, the code its parent holds as :code", async () => {
+    const effects = await verifyBlockEffects(forkNode().node, forkBlock(FORK.firstLedger9 + 1));
+    expect(effects.runtimeSpecVersion).toBe(2001100);
+    expect(effects.timestamp).toBe(Date.parse("2026-11-06T20:51:30Z"));
+  });
+
+  it("refuses a parent witness that omits :pending_code, so 3346139 cannot pass as a 1000300 block", async () => {
+    const parent = forkBlock(FORK.setCode).blockHash;
+    const codeOnly = recorded<{ at: string; proof: string[] }>("state_getReadProof", [[CODE_KEYS], `0x${parent}`]);
+    const { node } = forkNode((method, params, answer) => method === "state_getReadProof" && params[1] === `0x${parent}` ? codeOnly : answer);
+    await expect(verifyBlockEffects(node, forkBlock(FORK.firstLedger9))).rejects.toThrow(SourceConflict);
+  });
+
+  it("refuses executing code outside the runtime table, as it refuses any runtime without an entry", async () => {
+    const child = forkBlock(FORK.firstLedger9 + 1), parentHash = child.rpcHeader.parentHash;
+    const parent = recorded<RpcHeader>("chain_getHeader", [parentHash]);
+    const forged = new Map<string, { root: string; nodes: string[] }>();
+    const forge = (keys: string[]) => {
+      const id = JSON.stringify(keys);
+      if (!forged.has(id)) {
+        const { proof } = recorded<{ proof: string[] }>("state_getReadProof", [keys, parentHash]);
+        const node = proof.find(value => value.includes(codeHash2001100))!;
+        forged.set(id, replaceProofValue(proof, parent.stateRoot, node, node.replace(codeHash2001100, "aa".repeat(32))));
+      }
+      return forged.get(id)!;
+    };
+    const forgedParent = { ...parent, stateRoot: forge([CODE_KEYS, PENDING_CODE_KEYS]).root };
+    const forgedParentHash = `0x${toHex(headerHash(headerFromRpc(forgedParent)))}`;
+    const header = headerFromRpc({ ...child.rpcHeader, parentHash: forgedParentHash });
+    const blockHash = toHex(headerHash(header));
+    const { node } = forkNode((method, params, answer) => {
+      if (method === "chain_getHeader" && params[0] === forgedParentHash) return forgedParent;
+      if (method === "state_getReadProof" && params[1] === forgedParentHash) {
+        const proof = forge(params[0] as string[]);
+        return proof.root === forgedParent.stateRoot ? { at: forgedParentHash, proof: proof.nodes } : undefined;
+      }
+      if (method === "state_getReadProof" && params[1] === `0x${blockHash}`) return { ...recorded<object>(method, [params[0], `0x${child.blockHash}`]), at: `0x${blockHash}` };
+      return answer;
+    });
+    await expect(verifyBlockEffects(node, { blockHash, header })).rejects.toThrow(/runtime code is not supported/);
+  });
 });

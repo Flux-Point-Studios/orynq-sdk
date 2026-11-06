@@ -78,6 +78,13 @@ export function assertRegistryState(state: L.ContractState, verifierKeys: Verifi
   if (schema !== REGISTRY_SCHEMA) throw new Error(`schema must be ${REGISTRY_SCHEMA}, got ${schema}`);
 }
 
+// The sha256 of each registry circuit's verifier key in a serialized contract state, which must be
+// the immutable registry's: midnight:contract-state[v6] read with ledger 8, [v8] with ledger 9,
+// any other tag refused.
+export function registryVerifierKeysIn(_state: Uint8Array): Record<RegistryCircuit, string> {
+  throw new Error("registryVerifierKeysIn is not implemented");
+}
+
 const refuseWitness = (name: string) => () => {
   throw new Error(`witness ${name} is not available while constructing the registry`);
 };

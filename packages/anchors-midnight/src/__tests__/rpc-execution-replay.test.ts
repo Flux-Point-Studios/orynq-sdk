@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import fixture from "./fixtures/rpc-mainnet-execution.json";
 import { rpcOnlySource } from "../rpc-source.js";
 import { verifyMidnightAnchor, type VerifyRequest } from "../verify.js";
-import type { FinalityCheckpoint } from "../grandpa.js";
-import type { MidnightSource } from "../source.js";
+import { verifyBlockEffects } from "../execution.js";
+import { verifyFinality, type FinalityCheckpoint } from "../grandpa.js";
+import { toHex } from "../scale.js";
+import { finalityRpc, type MidnightSource } from "../source.js";
+import { headerHash } from "../substrate.js";
+import { FORK, forkBlock, forkCheckpoint, forkNode, forkSends } from "./fork-chain.js";
 
 const checkpoint: FinalityCheckpoint = { ...fixture.checkpoint, setId: BigInt(fixture.checkpoint.setId), authorities: fixture.checkpoint.authorities.map((author) => ({ ...author, weight: BigInt(author.weight) })) };
 const request = fixture.request as VerifyRequest;
@@ -53,5 +57,30 @@ describe("public RPC-only verification replays real finalized mainnet execution"
       });
       expect((await verifyMidnightAnchor(request, opts)).status).toBe("conflict");
     }
+  });
+});
+
+describe("public RPC-only verification replays the recorded mainnet Ledger 9 fork range 3346131-3346145", () => {
+  it("finalizes the range under set 11197 and authenticates every block's execution, 1000300 through 3346138 and 2001100 from 3346139", async () => {
+    const { node, calls } = forkNode();
+    const source = rpcOnlySource({ network: "mainnet", node, hints: [] });
+    const finality = await verifyFinality({ rpc: finalityRpc(source), block: FORK.end, checkpoints: [forkCheckpoint] });
+    expect(finality.finalized).toBe(true);
+    const runtimes: number[] = [];
+    let child = forkBlock(FORK.end.height);
+    expect(child.blockHash).toBe(FORK.end.hash);
+    for (let height = FORK.end.height; height > FORK.after.height; height--) {
+      const block = forkBlock(height);
+      expect(block.header.number).toBe(height);
+      if (height < FORK.end.height) expect(toHex(headerHash(block.header))).toBe(toHex(child.header.parentHash));
+      const applied = await verifyBlockEffects(source.node, block);
+      applied.assertApplications(forkSends(height));
+      runtimes.unshift(applied.runtimeSpecVersion);
+      child = block;
+    }
+    expect(toHex(child.header.parentHash)).toBe(FORK.after.hash);
+    expect(runtimes).toEqual([...Array(FORK.setCode - FORK.after.height).fill(1000300), ...Array(FORK.end.height - FORK.setCode).fill(2001100)]);
+    expect(calls).not.toContain("state_getMetadata");
+    expect(calls).not.toContain("state_getRuntimeVersion");
   });
 });

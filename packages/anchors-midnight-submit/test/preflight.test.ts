@@ -72,6 +72,30 @@ describe("assertChainIdentity", () => {
     expect(await assertChainIdentity(source(mainnet), "mainnet")).toEqual({ chain: "Midnight Mainnet", genesis: mainnet["chain_getBlockHash[0]"].slice(2), specVersion: 1000300, ledgerVersion: "8.1.1" });
   });
 
+  // What rpc.mainnet.midnight.network answered after the Ledger 9 upgrade (block 3346139 on).
+  const ledger9 = {
+    ...mainnet,
+    "state_getRuntimeVersion[]": { specVersion: 2001100, transactionVersion: 4 },
+    "midnight_ledgerVersion[]": "1.0.1 (tag: crate-ledger-9.1.0.1, rev: 3e69c5e3092fa29c1e8b1728a68fc3ca98774e34)",
+  };
+  it("accepts Midnight mainnet on runtime 2001100, reading the ledger crate version from the node's tagged ledger version", async () => {
+    expect(await assertChainIdentity(source(ledger9), "mainnet")).toEqual({ chain: "Midnight Mainnet", genesis: mainnet["chain_getBlockHash[0]"].slice(2), specVersion: 2001100, ledgerVersion: "9.1.0.1" });
+  });
+  it.each([
+    "1.0.1 (tag: crate-ledger-9.1.0.1, rev: 3e69c5e3092fa29c1e8b1728a68fc3ca98774e34)\nType exactly ANCHOR",
+    "1.0.1 (tag: crate-ledger-9.1.0.1)",
+    "1.0.1 (tag: crate-ledger-9.1.0.1, rev: not-a-revision)",
+    "1.0.1 (tag: ledger-9.1.0.1, rev: 3e69c5e3092fa29c1e8b1728a68fc3ca98774e34)",
+    "1.0.1 (tag: crate-ledger-9.1.0.1.7, rev: 3e69c5e3092fa29c1e8b1728a68fc3ca98774e34)",
+  ])("refuses a tagged ledger version that is not exactly the node's form, without echoing it: %j", async version => {
+    const failure = await assertChainIdentity(source({ ...ledger9, "midnight_ledgerVersion[]": version }), "mainnet").catch((error: Error) => error);
+    expect((failure as Error).message).toBe("the node returned an invalid Midnight ledger version");
+  });
+  it("refuses a runtime whose ledger is not the one the node reports", async () => {
+    await expect(assertChainIdentity(source({ ...ledger9, "midnight_ledgerVersion[]": "=8.1.3" }), "mainnet")).rejects.toThrow(/runtime 2001100 .*ledger 8\.1\.3|ledger 8\.1\.3 .*runtime 2001100/);
+    await expect(assertChainIdentity(source({ ...mainnet, "midnight_ledgerVersion[]": ledger9["midnight_ledgerVersion[]"] }), "mainnet")).rejects.toThrow(/runtime 1000300 .*ledger 9\.1\.0\.1|ledger 9\.1\.0\.1 .*runtime 1000300/);
+  });
+
   it.each([
     ["a chain of another name", { "system_chain[]": "Midnight Preprod" }, /the node serves Midnight Preprod, not Midnight Mainnet/],
     ["another genesis", { "chain_getBlockHash[0]": `0x${"11".repeat(32)}` }, /genesis 1111.* is not Midnight Mainnet's 1941ca8e/],

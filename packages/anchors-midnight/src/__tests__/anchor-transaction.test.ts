@@ -6,6 +6,8 @@ import { pureCircuits } from "../../contract/managed/contract/index.js";
 import { fromHex } from "../scale.js";
 import { midnightTransactionIn } from "../substrate.js";
 import { NETWORK, deployedRegistry, finalBytes, hex, random32, unprovenRegistryCall } from "./registry-call.js";
+import { eventsCodec } from "./fork-chain.js";
+import ledger9Block from "./fixtures/mainnet-ledger9-block.json";
 
 const failure = (f: () => unknown) => {
   try {
@@ -189,5 +191,42 @@ describe("golden: registry transactions proven in-process with the committed pro
 
   it("reports the registry's own deploy as a deploy aimed at the registry, and anchors in none of it", () => {
     expect(decode(f.registry.tx)).toEqual({ txHash: f.registry.txHash, calls: [], touches: [{ action: "deploy", address: f.registry.address }] });
+  });
+});
+
+describe("decodeAnchorTransaction chooses the ledger by the transaction's header tag", () => {
+  const extrinsic = fromHex(ledger9Block.extrinsics[3]!, "extrinsic");
+  const v12 = midnightTransactionIn(extrinsic)!;
+  const tag = (bytes: Uint8Array) => Buffer.from(bytes.subarray(0, bytes.indexOf(0x28))).toString("latin1");
+  const retagged = (bytes: Uint8Array, from: string, to: string) => {
+    const text = Buffer.from(bytes).toString("latin1");
+    expect(from.length).toBe(to.length);
+    return new Uint8Array(Buffer.from(text.replace(from, to), "latin1"));
+  };
+  const deployed = "12981fb62370529be5e7b73acb905d3b5326307fbea4e705b3d94e7d3f2bac7c";
+
+  it("reads mainnet 3346954's ledger 9 transaction[v12] with ledger 9, hashed as its TxApplied event names it", () => {
+    expect(tag(v12)).toBe("midnight:transaction[v12]");
+    const events = eventsCodec(2001100).dec(ledger9Block.events) as any[];
+    const applied = events.filter(row => row.phase.type === "ApplyExtrinsic" && row.phase.value === 3 && row.event.type === "Midnight" && row.event.value.type === "TxApplied");
+    expect(applied.map(row => row.event.value.value)).toEqual(["0x655fe3d8bd2c06494e2dc95c82883d1b7d235969b905939e6f57533b18dd84b8"]);
+    expect(decodeAnchorTransaction(v12, ["438b1ea134e760e8b4e87409d663f36561f15341880c118dc41e4fc2b224c736", deployed])).toEqual({
+      txHash: "655fe3d8bd2c06494e2dc95c82883d1b7d235969b905939e6f57533b18dd84b8", calls: [], touches: [{ action: "deploy", address: deployed }],
+    });
+  });
+
+  it("still reads a ledger 8 transaction[v9] with ledger 8", async () => {
+    const registry = deployedRegistry();
+    const bytes = await finalBytes(unprovenRegistryCall({ ...registry, call: { circuit: "anchor", args: [random32(), 1n] }, witnesses: { authorSecret: random32() } }).tx);
+    expect(tag(bytes)).toBe("midnight:transaction[v9]");
+    expect(decodeAnchorTransaction(bytes, [registry.address]).txHash).toBe(L.Transaction.deserialize("signature", "proof", "binding", bytes).transactionHash());
+  });
+
+  it.each(["v10", "v11", "v13", "v99"])("fails closed on a transaction tagged %s, which neither ledger defines", next => {
+    expect(failure(() => decodeAnchorTransaction(retagged(v12, "transaction[v12]", `transaction[${next}]`), []))).toMatch(new RegExp(`transaction header midnight:transaction\\[${next}\\] is not one this decoder knows`));
+  });
+
+  it("fails closed on bytes with no Midnight transaction header", () => {
+    expect(failure(() => decodeAnchorTransaction(retagged(v12, "midnight:", "midnyght:"), []))).toMatch(/transaction header .* is not one this decoder knows/);
   });
 });
