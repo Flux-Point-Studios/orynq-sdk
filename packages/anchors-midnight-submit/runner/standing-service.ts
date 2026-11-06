@@ -56,6 +56,35 @@ export function parseStandingConfig(value: unknown) {
     wallet: { mnemonic: path(wallet.mnemonic), record: path(wallet.record), state: path(wallet.state), blockfrost: path(wallet.blockfrost), zk: path(wallet.zk), author: path(wallet.author) }, stores } as const;
 }
 
+// The service's errors name files and checks, never what a file holds. Provider text can ride in a
+// cause, so each link is one line without control characters, URL credentials, query strings or a
+// Blockfrost project id (it travels in a header an upstream may echo), at most 512 long. A thrown
+// non-Error names only its type, since nothing bounds what it carries.
+export function errorChain(error: unknown): { name: string; message: string }[] {
+  const clean = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
+    .replace(/\b((?:https?|wss?):\/\/)(?:[^\s/@]*@)?([^\s?#]*)(?:[?#]\S*)?/g, "$1$2")
+    .replace(/\b[a-z]{1,32}[A-Za-z0-9]{32}\b/g, "[redacted]").slice(0, 512);
+  const chain: { name: string; message: string }[] = [];
+  for (let cause: unknown = error; chain.length < 8 && cause !== undefined;) {
+    if (!(cause instanceof Error)) {
+      chain.push({ name: typeof cause === "object" && cause ? clean(cause.constructor?.name || "object").slice(0, 64) : typeof cause, message: "" });
+      break;
+    }
+    chain.push({ name: clean(cause.name === "Error" ? cause.constructor.name : cause.name).slice(0, 64), message: clean(cause.message) });
+    cause = cause.cause;
+  }
+  return chain;
+}
+
+export function holdLine(event: "standing-hold" | "standing-startup-hold", loop: "follower" | "controller", reason: string, error: unknown) {
+  return JSON.stringify({ event, loop, reason, causes: errorChain(error) });
+}
+
+export function printChanges(write: (line: string) => void) {
+  let previous = "";
+  return (line: string) => { if (line !== previous) { write(line); previous = line; } };
+}
+
 export async function runStandingLoops(options: {
   catchup: { turn(): Promise<{ state: string }> }; controller?: { turn(): Promise<unknown> } | undefined;
   abort: AbortController; publish(progress: string, result: unknown, loop: "follower" | "controller", phase: "start" | "success"): void; hold(error: unknown, loop: "follower" | "controller"): void;
@@ -154,11 +183,12 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
     status = openStandingStatus(config.stateRoot, { ...follower.scope(), mode: config.mode });
     const catchup = openFollowerCatchup({ state: follower, node: config.midnightReadRpcUrl, authors, signal: abort.signal,
       startupDiagnostic: event => console.log(JSON.stringify({ event: "standing-startup", ...event })) });
+    const print = printChanges(line => console.log(line));
     const startup = () => startStandingFollower({ catchup, signal: abort.signal, hold: error => {
       const message = error instanceof Error ? error.message : "";
       const reason = /policy|author|checkpoint/i.test(message) ? "policy" : /clock|stale/i.test(message) ? "warmup" : "source";
       status!.hold("follower", reason);
-      console.log(JSON.stringify({ event: "standing-startup-hold", reason }));
+      print(holdLine("standing-startup-hold", "follower", reason, error));
     } });
     let controller: ReturnType<typeof openStandingController> | undefined;
     if (config.mode === "anchor") {
@@ -181,7 +211,6 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
       controller = openStandingController({ census, follower, session, delivery, journal, operator, readCensus: censusReader, publication,
         verify: hints => ({ source: rpcOnlySource({ network: config.network, node: config.midnightReadRpcUrl, hints, signal: abort.signal, httpBudget: { requests: 256, bytes: 64 * 1024 * 1024, abort: new AbortController() } }), knownAuthors: authors() }) });
     } else await startup();
-    let previous = "";
     const sample = () => {
       status!.sample(follower!.coverage());
     };
@@ -190,14 +219,14 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
         status!.record(loop, phase, loop === "follower" ? { progress, head: follower!.head()?.hash } : result);
         if (phase === "start") return;
         status!.phase(progress === "idle" ? "running" : "catchup"); sample();
-        const message = JSON.stringify({ event: "standing-progress", loop, progress, coverage: follower!.coverage(), result }); if (message !== previous) { console.log(message); previous = message; }
+        print(JSON.stringify({ event: "standing-progress", loop, progress, coverage: follower!.coverage(), result }));
       }, hold: (error, loop) => {
         const message = error instanceof Error ? error.message : "";
         let cause = error, capped = false;
         for (let depth = 0; depth < 8 && cause instanceof Error; depth++) { if (cause instanceof StandingFeeCap) capped = true; cause = cause.cause; }
         const reason = capped ? "dust-cap" : /warmup|twenty|margin/i.test(message) ? "warmup" : /policy|author/i.test(message) ? "policy" : /history|floor|retained|coverage/i.test(message) ? "history" : "source";
         status!.hold(loop, reason); sample();
-        if (reason !== previous) { console.log(JSON.stringify({ event: "standing-hold", loop, reason })); previous = reason; }
+        print(holdLine("standing-hold", loop, reason, error));
       } });
   } catch (error) { failure = error; throw error; }
   finally {
@@ -216,11 +245,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (process.argv.length !== 4 || process.argv[2] !== "--config") throw new Error("Expected --config with an owner-only configuration file");
     await runStandingService(parseStandingConfig(readPrivateJson(process.argv[3]!, "Standing configuration")));
   };
-  // The service's errors name files and checks, never what a file holds. Provider text can ride
-  // in a cause, so each message prints on one line, without control characters, at most 512 long.
   run().catch(error => {
-    const reasons: string[] = [];
-    for (let cause: unknown = error; cause instanceof Error && reasons.length < 8; cause = cause.cause) reasons.push(cause.message.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").slice(0, 512));
+    const reasons = errorChain(error).map(link => link.message).filter(Boolean);
     console.error(reasons.join(": ") || "Standing service stopped before completion"); process.exitCode = 1;
   });
 }

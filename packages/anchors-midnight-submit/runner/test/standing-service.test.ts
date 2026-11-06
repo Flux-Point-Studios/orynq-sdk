@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, closeSync, existsSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseStandingConfig, runStandingLoops } from "../standing-service.js";
+import { errorChain, holdLine, parseStandingConfig, printChanges, runStandingLoops } from "../standing-service.js";
+import { StandingFeeCap } from "../standing-budget.js";
 
 const roots: string[] = [];
 const config = () => ({ mode: "observe", network: "mainnet", genesis: "01".repeat(32), registry: "438b1ea134e760e8b4e87409d663f36561f15341880c118dc41e4fc2b224c736", author: "02".repeat(32),
@@ -129,4 +130,39 @@ it("records a fatal controller hold before draining and preserves its typed caus
   const rejected=expect(running).rejects.toBe(fatal);
   try {await vi.advanceTimersByTimeAsync(15_001);await rejected;expect(held).toContainEqual([fatal,"controller"]);}
   finally{abort.abort();vi.useRealTimers();}
+});
+
+it("logs a source hold with every message and type in its cause chain", () => {
+  const refused = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:443"), { code: "ECONNREFUSED" });
+  const error = new Error("Standing reservation failed", { cause: new TypeError("fetch failed", { cause: new StandingFeeCap("fixture cap", { cause: refused }) }) });
+  expect(JSON.parse(holdLine("standing-hold", "controller", "source", error))).toEqual({ event: "standing-hold", loop: "controller", reason: "source", causes: [
+    { name: "Error", message: "Standing reservation failed" }, { name: "TypeError", message: "fetch failed" },
+    { name: "StandingFeeCap", message: "fixture cap" }, { name: "Error", message: "connect ECONNREFUSED 127.0.0.1:443" }] });
+  expect(JSON.parse(holdLine("standing-startup-hold", "follower", "source", "a thrown string"))).toEqual({ event: "standing-startup-hold", loop: "follower", reason: "source", causes: [{ name: "string", message: "" }] });
+});
+
+it("keeps credentials, query strings and project ids out of a logged cause chain", () => {
+  const projectId = "mainnet" + "Q7".repeat(16), hash = "0a".repeat(32);
+  const error = new Error(`upstream https://name:secret@rpc.example/v0/blocks?api_key=hidden#frag refused ${hash}`,
+    { cause: new Error(`headers {"project_id":"${projectId}"}\nforged line`, { cause: Object.assign(new Event("error"), { message: "socket text" }) }) });
+  const chain = errorChain(error), printed = JSON.stringify(chain);
+  expect(chain).toEqual([{ name: "Error", message: `upstream https://rpc.example/v0/blocks refused ${hash}` },
+    { name: "Error", message: 'headers {"project_id":"[redacted]"} forged line' }, { name: "Event", message: "" }]);
+  for (const secret of ["secret", "name:", "hidden", "frag", projectId, "socket text"]) expect(printed).not.toContain(secret);
+});
+
+it("bounds a logged cause chain to eight links of 512 characters", () => {
+  let error: Error = new Error("x".repeat(2000));
+  for (let depth = 0; depth < 12; depth++) error = new Error(`link ${depth}`, { cause: error });
+  const chain = errorChain(error);
+  expect(chain).toHaveLength(8); expect(chain[0]!.message).toBe("link 11");
+  const long = errorChain(new Error("y".repeat(2000)))[0]!;
+  expect(long.message).toHaveLength(512);
+});
+
+it("prints a line once per change, and again after a different line", () => {
+  const lines: string[] = [], print = printChanges(line => lines.push(line));
+  const held = (message: string) => holdLine("standing-hold", "controller", "source", new Error(message));
+  print(held("first")); print(held("first")); print(held("second")); print("progress"); print(held("second"));
+  expect(lines).toEqual([held("first"), held("second"), "progress", held("second")]);
 });
