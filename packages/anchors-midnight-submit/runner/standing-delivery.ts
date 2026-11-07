@@ -1,3 +1,4 @@
+import { assertTransactionRuntime } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import type { Journal, JournalRow } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { finalTransaction } from "../src/submission.js";
 import { nodeRefusal } from "../src/broadcast.js";
@@ -15,6 +16,8 @@ export function openStandingDelivery(options: {
   census: ReturnType<typeof openCensusState>; journal: Journal;
   readCensus: () => Promise<Census>; publication: PublicationOptions;
   clock?: () => { wallTime: number; monotonicMillis: number };
+  // The runtime the node runs now, refused unless the submitter builds for it.
+  runtime: () => Promise<number>;
 }) {
   const { wallet, follower, session, census, journal } = options, scope = follower.scope(), payer = wallet.addresses.unshielded;
   const rawSubmit = wallet.submit.bind(wallet), save = wallet.saveState.bind(wallet), readCensus = options.readCensus;
@@ -55,6 +58,11 @@ export function openStandingDelivery(options: {
     const expires = permittedAt.monotonicMillis + 30_000;
     await session.reserve(exact, request.commitment);
     const transaction = finalTransaction(exact);
+    // The follower's newest verified block may trail the node: bytes of another ledger than the
+    // node now executes never leave, and stay journalled with their DUST held.
+    const specVersion = await options.runtime();
+    try { assertTransactionRuntime(exact, specVersion); }
+    catch (error) { throw new Error(`the standing bytes cannot land: ${(error as Error).message}; they were retained and nothing was sent`, { cause: error }); }
     const admitted = session.reserveNow(exact, request.commitment), time = clock();
     try { assertStandingHostClock(admitted.checkedAt, time); }
     catch (error) { hold("Standing host-clock continuity failed at delivery", error); }
