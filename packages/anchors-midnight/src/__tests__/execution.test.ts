@@ -192,7 +192,9 @@ describe("authenticated execution across the Ledger 9 runtime upgrade (mainnet, 
     const parent = forkBlock(FORK.setCode).blockHash;
     const codeOnly = recorded<{ at: string; proof: string[] }>("state_getReadProof", [[CODE_KEYS], `0x${parent}`]);
     const { node } = forkNode((method, params, answer) => method === "state_getReadProof" && params[1] === `0x${parent}` ? codeOnly : answer);
-    await expect(verifyBlockEffects(node, forkBlock(FORK.firstLedger9))).rejects.toThrow(SourceConflict);
+    const refusal = await verifyBlockEffects(node, forkBlock(FORK.firstLedger9)).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(SourceConflict);
+    expect((refusal as Error).message).toMatch(/lacks the requested path/);
   });
 
   it("refuses executing code outside the runtime table, as it refuses any runtime without an entry", async () => {

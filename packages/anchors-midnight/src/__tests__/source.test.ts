@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as L9 from "@midnightntwrk/ledger-v9";
 import { verifyFinality } from "../grandpa.js";
 import { toHex } from "../scale.js";
 import { blockfrostEndpoints, contractStateOnNode, finalityRpc, midnightSource, sourceEndpoints } from "../source.js";
@@ -455,6 +456,15 @@ describe("midnightSource's indexer subscription", () => {
     expect(await src().indexer.latestAction("ef".repeat(32))).toEqual({ height: 70, transactionId: 9 });
     handler = () => ({ json: { data: { contract: null } } });
     expect(await src().indexer.latestAction("ef".repeat(32))).toBeNull();
+  });
+
+  it("reads the ledger parameters of the indexer's head block, which a ledger 9 call is partitioned with", async () => {
+    const parameters = toHex(L9.LedgerParameters.initialParameters().serialize());
+    handler = () => ({ json: { data: { block: { height: 99, hash: "ab".repeat(32), ledgerParameters: parameters } } } });
+    expect(await src().indexer.ledgerParameters!()).toEqual({ height: 99, hash: "ab".repeat(32), parameters });
+    expect(seen.at(-1)!.body).toEqual({ query: "query LedgerParameters { block { height hash ledgerParameters } }", variables: {} });
+    handler = () => ({ json: { data: { block: { height: 99, hash: "ab".repeat(32), ledgerParameters: "zz" } } } });
+    await expect(src().indexer.ledgerParameters!()).rejects.toThrow("test indexer: the head block's ledger parameters are not hex");
   });
 });
 

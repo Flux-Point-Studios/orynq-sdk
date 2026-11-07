@@ -1,6 +1,6 @@
-import * as L from "@midnight-ntwrk/ledger-v8";
 import { verifyExecution } from "./execution.js";
 import { verifyFinality, type FinalityCheckpoint } from "./grandpa.js";
+import { assertTransactionRuntime, decodeTransaction } from "./ledgers.js";
 import { fromHex, toHex } from "./scale.js";
 import { finalityRpc, type MidnightSource } from "./source.js";
 import { headerFromRpc, headerHash, includedTransactionIndex, orderedTrieRoot, type RpcHeader } from "./substrate.js";
@@ -15,7 +15,7 @@ export async function verifyFinalizedTransaction(txHash: string, { source, check
   if (found.length !== 1) throw new Error("Expected exactly one located transaction");
   const located = found[0]!;
   const bytes = fromHex(located.raw, "transaction");
-  const tx = L.Transaction.deserialize("signature", "proof", "binding", bytes);
+  const { tx } = decodeTransaction(bytes);
   if (tx.transactionHash() !== txHash || toHex(tx.serialize()) !== toHex(bytes)) throw new Error("Transaction bytes differ from their hash or canonical encoding");
   const block = { height: located.block.height, hash: located.block.hash };
   if (!/^[0-9a-f]{64}$/.test(block.hash) || !Number.isSafeInteger(block.height) || block.height < 0) throw new Error("Invalid block locator");
@@ -29,5 +29,6 @@ export async function verifyFinalizedTransaction(txHash: string, { source, check
   const finality = await verifyFinality({ rpc: finalityRpc(source), block, checkpoints: trustedCheckpoints });
   if (!finality.finalized) throw new Error(`Unverified finality: ${finality.reason}`);
   const execution = await verifyExecution(source.node, { blockHash: block.hash, header, extrinsicIndex, txHash });
-  return { bytes, block, finality, timestamp: execution.timestamp, extrinsicIndex };
+  assertTransactionRuntime(bytes, execution.runtimeSpecVersion);
+  return { bytes, block, finality, timestamp: execution.timestamp, extrinsicIndex, runtimeSpecVersion: execution.runtimeSpecVersion };
 }

@@ -1,0 +1,17 @@
+{
+  "name": "midnight-js-oracle",
+  "private": true,
+  "type": "module",
+  "description": "Records how midnight-js 5 builds a ledger 9 call to a ledger 8 contract, as the reference anchors-midnight's registry-call oracle test compares against",
+  "scripts": {
+    "record": "node record.mjs"
+  },
+  "dependencies": {
+    "@midnight-ntwrk/compact-runtime": "0.16.0",
+    "@midnight-ntwrk/midnight-js-contracts": "5.0.0",
+    "@midnight-ntwrk/midnight-js-node-zk-config-provider": "5.0.0",
+    "@midnight-ntwrk/midnight-js-protocol": "5.0.0",
+    "@midnight-ntwrk/midnight-js-types": "5.0.0",
+    "@midnightntwrk/ledger-v9": "1.0.0"
+  }
+}

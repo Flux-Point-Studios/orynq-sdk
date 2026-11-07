@@ -48,7 +48,9 @@ export type { BlockHeader, RpcHeader, WeightedAuthority } from "./substrate.js";
 export { KNOWN_AUTHORS_FORMAT, KNOWN_AUTHORS_TRUST_ROOTS, SHIPPED_KNOWN_AUTHORS, knownAuthors, openKnownAuthors, signKnownAuthors, knownAuthorsSigningSummary, authorStatusAt } from "./known-authors.js";
 export type { AuthorStatus, CheckpointJson, KnownAuthor, KnownAuthors, KnownAuthorsDocument, SignedKnownAuthors } from "./known-authors.js";
 export { readPrivateFile, writePrivateFile } from "./private-file.js";
-export { KNOWN_RUNTIME_SPEC_VERSIONS, MIDNIGHT_REGISTRIES, assertRegistryGenerations } from "./registries.js";
+export { KNOWN_RUNTIME_SPEC_VERSIONS, MIDNIGHT_REGISTRIES, assertRegistryGenerations, registryRuntimeAllows } from "./registries.js";
+export { assertTransactionRuntime, decodeTransaction, ledgerParametersIn, runtimeLedger } from "./ledgers.js";
+export type { FinalTransaction, Ledger } from "./ledgers.js";
 export type { MidnightNetwork, RegistryInfo } from "./registries.js";
 export {
   REGISTRY_CIRCUITS,
@@ -62,10 +64,11 @@ export {
   compiledContractFile,
   compiledVerifierKeys,
   registryInitialState,
+  registryState,
 } from "./registry.js";
 export type { DeployStage, RegistryCircuit, VerifierKeys } from "./registry.js";
 export { unprovenRegistryCall } from "./registry-call.js";
-export type { HiddenEntry, RegistryCallArgs, RegistryWitnesses } from "./registry-call.js";
+export type { HiddenEntry, Ledger8RegistryCall, Ledger9RegistryCall, RegistryCallArgs, RegistryWitnesses } from "./registry-call.js";
 export { BatchSetCache, BATCH_PROOF_FORMAT, parseBatchSet, verifyBatchProof, verifyBatchSet } from "./batch-proof.js";
 export type { BatchProofOptions, BatchProofResult, BatchSetFacts, BatchSetResult } from "./batch-proof.js";
 export { auditCheckpoints, checkpointId } from "./checkpoints.js";
