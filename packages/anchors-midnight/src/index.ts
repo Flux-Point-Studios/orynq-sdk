@@ -77,7 +77,7 @@ export type { CheckpointAdvance } from "./checkpoint-advance.js";
 export { ed25519Verify } from "./ed25519.js";
 export { rpcOnlySource } from "./rpc-source.js";
 export type { BlockHint } from "./rpc-source.js";
-export { verifyBlockEffects } from "./execution.js";
+export { runtimeAfter, verifyBlockEffects } from "./execution.js";
 export type { BlockEffects, ExecutionOutcome, ExecutionRequest } from "./execution.js";
 export { discoverReceiptProof } from "./discovery.js";
 export type { DiscoveryContinuation, ReceiptDiscoveryOptions, ReceiptDiscoveryResult, ReceiptProofQuery } from "./discovery.js";

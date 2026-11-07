@@ -9,6 +9,8 @@ import { SyncProgress } from "@midnight-ntwrk/wallet-sdk-abstractions";
 import { assertTransactionRuntime, buildRegistryDeploy, decodeTransaction, registryInitialState, headerHash, midnightExtrinsic, midnightTransactionIn, orderedTrieRoot, type BlockHeader, type IndexedTransaction, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import ledger9Block from "../../anchors-midnight/src/__tests__/fixtures/mainnet-ledger9-block.json";
 import { batchOver, ledgerNode, type NodeVersion } from "../../anchors-midnight/src/__tests__/ledger-node.js";
+import { CODE_KEYS, PENDING_CODE_KEYS } from "../../anchors-midnight/src/__tests__/fork-chain.js";
+import { runtimeState } from "./runtime-state.js";
 import { prover } from "./prover.js";
 
 export const dir = mkdtempSync(join(tmpdir(), "orynq-submit-"));
@@ -82,9 +84,10 @@ export const recordedDustSpend = (() => {
 // transaction's block at its height and an anchorless block at every other; `reorg` moves a
 // landed transaction to another block, or off the chain, as a reorg that orphans its block does.
 // The indexer reports the head block's ledger parameters, ledger 9's initial ones unless
-// `parameters` names others (null: an indexer that serves none). `upgrade` changes the runtime
-// the node runs from its newest block on, and the node refuses bytes of another ledger than it
-// executes.
+// `parameters` names others (null: an indexer that serves none). `upgrade` adds a head whose
+// state holds the code of another runtime, which the node reports and runs from there on; each
+// block's state root is that of a recorded mainnet block holding its runtime's code, read proof
+// and all, and the node refuses bytes of another ledger than it executes.
 export function chain({ spec: initialSpec = 1000300, state = deployed.state, node = "2.1.0", network = "preprod", parameters = L9.LedgerParameters.initialParameters() }: { spec?: number; state?: L.ContractState | L9.ContractState; node?: NodeVersion; network?: "mainnet" | "preprod"; parameters?: L.LedgerParameters | L9.LedgerParameters | null } = {}) {
   // The runtime each block from `from` on ran; the newest entry is the one the node runs now.
   const runtimes = [{ from: 0, spec: initialSpec }];
@@ -101,7 +104,7 @@ export function chain({ spec: initialSpec = 1000300, state = deployed.state, nod
     for (let height = 499; height <= tip; height++) {
       const txs = [...landed.values()].filter(tx => tx.block.height === height);
       const extrinsics = txs.map(tx => midnightExtrinsic(Buffer.from(tx.raw, "hex")));
-      const header: BlockHeader = { parentHash: Buffer.from(parent, "hex"), number: height, stateRoot: Buffer.alloc(32, height % 251), extrinsicsRoot: orderedTrieRoot(extrinsics), digest: [] };
+      const header: BlockHeader = { parentHash: Buffer.from(parent, "hex"), number: height, stateRoot: runtimeState(specAt(height)).root, extrinsicsRoot: orderedTrieRoot(extrinsics), digest: [] };
       const hash = hex(headerHash(header)); blocks.set(height, { hash, header, extrinsics }); parent = hash;
     }
   };
@@ -124,7 +127,13 @@ export function chain({ spec: initialSpec = 1000300, state = deployed.state, nod
     if (method === "chain_getBlockHash" && params[0] === 0) return network === "mainnet" ? "0x1941ca8e2bb88146c14dea084d3be7eb6e96ca7135429c543848b628124f2854" : "0xdf831b09a8baa92badf47762ce5ac439b7e47e3ed3d39600cfdd44fad552361b";
     if (method === "chain_getBlockHash") { rebuild(); const block = blocks.get(params[0] as number); return block ? `0x${block.hash}` : null; }
     if (method === "chain_getFinalizedHead") return `0x${blockAt(tip).hash}`;
+    if (method === "chain_getHeader" && !params.length) return rpcHeader(blockAt(tip).header);
     if (method === "chain_getHeader") { const h = heightOf(params[0]); return lags || h === undefined ? null : rpcHeader(blockAt(h).header); }
+    if (method === "state_getReadProof" && JSON.stringify(params[0]) === JSON.stringify([CODE_KEYS, PENDING_CODE_KEYS])) {
+      const h = heightOf(params[1]);
+      if (h === undefined) throw new Error("missing synthetic block");
+      return { at: params[1], proof: runtimeState(specAt(h)).proof };
+    }
     if (method === "chain_getBlock") { const h = heightOf(params[0]); if (h === undefined) throw new Error("missing synthetic block"); const block = blockAt(h); return { block: { header: rpcHeader(block.header), extrinsics: block.extrinsics.map(raw => `0x${hex(raw)}`) } }; }
     if (method === "state_getStorage" && params[0] === TIMESTAMP_NOW && heldAt(params.slice(1))) {
       const now = Buffer.alloc(8); now.writeBigUInt64LE(BigInt(times.get(heightOf(params[1])!) ?? Date.now())); return `0x${now.toString("hex")}`;
@@ -182,8 +191,11 @@ export function chain({ spec: initialSpec = 1000300, state = deployed.state, nod
     else landed.delete(txHash);
     blocks = new Map();
   };
-  // The node runs `to` from its newest block on.
-  const upgrade = (to: number) => void runtimes.push({ from: tip, spec: to });
+  // A new head whose state holds code running `to`, as the block after a set_code does.
+  const upgrade = (to: number) => {
+    runtimes.push({ from: tip + 1, spec: to });
+    pushHead(tip + 1);
+  };
   return { source, land, advance, lag, reorg, upgrade, blockHash: (height: number) => blockAt(height).hash };
 }
 
