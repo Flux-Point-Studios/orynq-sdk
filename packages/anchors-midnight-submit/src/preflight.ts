@@ -4,7 +4,7 @@ import { batchAnchorCommitment, type BatchAnchorData } from "./batch-plan.js";
 import { agentDriven } from "./custody.js";
 import type { PreparedDeploy } from "./deployer.js";
 import type { PreparedAnchor } from "./operator.js";
-import { assertKnownRuntime, type PreparedBytes } from "./submission.js";
+import { runtimeAt, type PreparedBytes } from "./submission.js";
 
 // The chain each network name must be: its node's system_chain and genesis block hash.
 export const NETWORK_IDENTITY: Readonly<Record<MidnightNetwork, { chain: string; genesis: string }>> = {
@@ -45,7 +45,9 @@ export async function assertChainIdentity(source: MidnightSource, network: Midni
   if (typeof rawGenesis !== "string" || !/^(?:0x)?[0-9a-f]{64}$/.test(rawGenesis)) throw new Error("the node returned an invalid genesis hash");
   const genesis = rawGenesis.replace(/^0x/, "");
   if (genesis !== want.genesis) throw new Error(`genesis ${genesis} is not ${want.chain}'s ${want.genesis}`);
-  const specVersion = await assertKnownRuntime(source, network, KNOWN_RUNTIME_SPEC_VERSIONS);
+  // What the node reports of itself; a send boundary reads the next block's runtime instead.
+  const specVersion = await runtimeAt(source);
+  if (!(KNOWN_RUNTIME_SPEC_VERSIONS as readonly number[]).includes(specVersion)) throw new Error(`the ${network} node runs runtime ${specVersion}, which is not one this submitter knows (${KNOWN_RUNTIME_SPEC_VERSIONS.join(", ")})`);
   const ledgerVersion = checkedLedgerVersion(await source.node.call<unknown>("midnight_ledgerVersion"));
   const ledger = RUNTIME_LEDGER[specVersion];
   if (Number(ledgerVersion.split(".")[0]) !== ledger) throw new Error(`the ${network} node runs runtime ${specVersion} with ledger ${ledgerVersion}, not ledger ${ledger}`);

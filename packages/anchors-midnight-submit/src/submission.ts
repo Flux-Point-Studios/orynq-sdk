@@ -7,7 +7,7 @@ import {
   contractStateOnNode,
   decodeTransaction,
   headerFromRpc,
-  headerHash,
+  runtimeAfter,
   registryRuntimeAllows,
   registryState,
   type FinalTransaction,
@@ -54,21 +54,21 @@ export async function runtimeAt(source: MidnightSource, at?: string): Promise<nu
   return specVersion;
 }
 
-// Refuses to build anything for a runtime outside `known`, the runtimes the caller has builders
-// for: checked before every submission, so a runtime upgrade stops the submitter instead of
-// producing transactions the chain or a verifier cannot place. With a pinned `registry`, the
-// runtime must also be the one its generation runs at the node's best block, read at that block.
+// The runtime of the block a transaction sent now can land in, the block after the node's best,
+// refused outside `known`, the runtimes the caller has builders for: checked before every
+// submission and at every send boundary, so a runtime upgrade stops the submitter instead of
+// producing transactions the chain or a verifier cannot place. It is read from the code in the
+// best block's own state (runtimeAfter), since the node's runtime version reports :code alone and
+// so names the old runtime at a set_code block. With a pinned `registry`, the runtime must also be
+// the one its generation runs at that next block.
 export async function assertKnownRuntime(source: MidnightSource, network: MidnightNetwork, known: readonly number[], registry?: string): Promise<number> {
   if (!known?.length) throw new Error("the caller names no runtime it builds for, so it builds nothing");
-  const pinned = registry !== undefined && MIDNIGHT_REGISTRIES[network].some((info) => info.address === registry);
-  const best = pinned ? headerFromRpc(await source.node.call<RpcHeader>("chain_getHeader")) : null;
-  const specVersion = await runtimeAt(source, best ? `0x${Buffer.from(headerHash(best)).toString("hex")}` : undefined);
-  if (!known.includes(specVersion)) {
-    throw new Error(`the ${network} node runs runtime ${specVersion}, which is not one this submitter knows (${known.join(", ")})`);
-  }
-  if (best && registry !== undefined) {
-    const { allowed, generation } = runtimeAllowedAt(network, registry, specVersion, best.number);
-    if (!allowed) throw new Error(`the ${network} node runs runtime ${specVersion} at block ${best.number}, which registry generation ${generation} does not run there`);
+  const best = headerFromRpc(await source.node.call<RpcHeader>("chain_getHeader"));
+  const specVersion = await runtimeAfter(source.node, best);
+  if (!known.includes(specVersion)) throw new Error(`the ${network} node runs runtime ${specVersion}, which is not one this submitter knows (${known.join(", ")})`);
+  if (registry !== undefined && MIDNIGHT_REGISTRIES[network].some((info) => info.address === registry)) {
+    const { allowed, generation } = runtimeAllowedAt(network, registry, specVersion, best.number + 1);
+    if (!allowed) throw new Error(`the ${network} node runs runtime ${specVersion} at block ${best.number + 1}, which registry generation ${generation} does not run there`);
   }
   return specVersion;
 }

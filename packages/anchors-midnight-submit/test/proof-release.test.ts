@@ -36,7 +36,7 @@ describe("proof release journal", () => {
     const pending = new Promise<void>(resolve => { entered = resolve; });
     const gate = new Promise<void>(resolve => { release = resolve; });
     net.source.node.call = async <T>(method: string, params: unknown[] = []): Promise<T> => {
-      if (method === "state_getRuntimeVersion") { entered(); await gate; }
+      if (method === "state_getReadProof") { entered(); await gate; }
       return call<T>(method, params);
     };
     try {

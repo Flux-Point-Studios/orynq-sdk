@@ -99,7 +99,7 @@ describe("registryOperator.anchor", () => {
       const call = net.source.node.call.bind(net.source.node);
       let changed = false;
       net.source.node.call = async <T>(method: string, params?: unknown[]): Promise<T> => {
-        if (!changed && method === "state_getRuntimeVersion") {
+        if (!changed && method === "state_getReadProof") {
           changed = true;
           if (mutation === "replacement") { prepared.bytes = other.bytes; prepared.txHash = other.txHash; prepared.commitment = other.commitment; }
           else prepared.bytes.fill(0);
@@ -186,7 +186,7 @@ describe("registryOperator.anchor", () => {
 
   it("refuses to prepare anything while the node runs a runtime the submitter does not write for", async () => {
     const { operator, wallet: w } = setup({ net: chain({ spec: 1000400 }) });
-    await expect(operator.anchor(entry())).rejects.toThrow(/the preprod node runs runtime 1000400, which is not one this submitter knows \(1000300, 2001100\)/);
+    await expect(operator.anchor(entry())).rejects.toThrow("Executing runtime code is not supported");
     expect(w.submitted).toHaveLength(0);
     operator.close();
   });

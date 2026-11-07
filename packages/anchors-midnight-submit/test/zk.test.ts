@@ -4,7 +4,8 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, 
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { compiledContractFile } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { ZK_PINS, keyMaterial } from "../src/zk.js";
+import * as L9 from "@midnightntwrk/ledger-v9";
+import { ZK_PINS, keyMaterial, provingService } from "../src/zk.js";
 
 // tools/compactc/install.sh installs the parameters and the DUST spend keys into MIDNIGHT_PP.
 const zkDir = process.env.MIDNIGHT_PP;
@@ -56,5 +57,12 @@ describe("the key material an operator proves with", () => {
     writeFileSync(join(tampered, "dust/9/spend.prover"), prover);
     await expect(keyMaterial(tampered).lookupKey("midnight/dust/spend")).rejects.toThrow(/dust\/9\/spend\.prover hashes to [0-9a-f]{64}, pinned 996602da/);
     expect(sha256(await keyMaterial(tampered).getParams(13))).toBe(ZK_PINS.bls_midnight_2p13);
+  });
+});
+
+describe("the operator's prover", () => {
+  it("proves no ledger 9 transaction, which wallet-sdk 1.x neither pays for nor sends", async () => {
+    const tx = L9.Transaction.fromParts("preprod", undefined, undefined, L9.Intent.new(new Date(Date.now() + 600e3)));
+    await expect(provingService("/nonexistent").prove(tx)).rejects.toThrow("wallet-sdk 1.x proves no ledger 9 transaction; nothing was proven");
   });
 });

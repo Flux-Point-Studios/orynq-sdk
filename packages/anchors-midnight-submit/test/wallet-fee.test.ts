@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L9 from "@midnightntwrk/ledger-v9";
 import { WalletFacade } from "@midnight-ntwrk/wallet-sdk-facade";
 import { BehaviorSubject } from "rxjs";
 import { createWalletMnemonicFile } from "../src/keys.js";
@@ -99,5 +100,27 @@ describe("the wallet's sync progress", () => {
       dust: { applied: 5n, highest: 7n, connected: true },
       synced: false,
     });
+  });
+});
+
+// wallet-sdk 1.x reads the chain and pays with ledger 8 only: a ledger 9 transaction is neither
+// balanced, sent nor freed, whichever way it reaches the wallet.
+describe("a ledger 9 transaction", () => {
+  const ledger9 = () => L9.Transaction.fromParts("preprod", undefined, undefined, L9.Intent.new(new Date(Date.now() + 15 * 60_000))).mockProve();
+  const REFUSAL = "wallet-sdk 1.x pays, sends and frees no ledger 9 transaction; nothing was paid or sent";
+
+  it("is not paid for", async () => {
+    const { wallet, balanced } = await walletSyncedTo(facadeSyncedTo(7n, 7n));
+    await expect(wallet.payFee(ledger9() as never, new Date(Date.now() + 15 * 60_000))).rejects.toThrow(REFUSAL);
+    expect(balanced).not.toHaveBeenCalled();
+  });
+
+  it("is neither sent nor freed", async () => {
+    const reverted = vi.spyOn(WalletFacade.prototype, "revert");
+    const { wallet } = await walletSyncedTo(facadeSyncedTo(7n, 7n));
+    const bound = ledger9().bind();
+    await expect(wallet.submit(bound)).rejects.toThrow(REFUSAL);
+    await expect(wallet.discard(bound)).rejects.toThrow(REFUSAL);
+    expect(reverted).not.toHaveBeenCalled();
   });
 });

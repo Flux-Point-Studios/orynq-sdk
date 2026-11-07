@@ -19,13 +19,14 @@ import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import * as L9 from "@midnightntwrk/ledger-v9";
-import { decodeAnchorTransaction, midnightSource, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints, type VerifyResult } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { decodeAnchorTransaction, headerHash, midnightSource, orderedTrieRoot, type BlockHeader, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints, type VerifyResult } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { ledgerNode } from "../../anchors-midnight/src/__tests__/ledger-node.js";
 import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS } from "../src/custody.js";
 import { NETWORK_IDENTITY, type OperatorWallet, type StateSave, type WalletOptions } from "../src/index.js";
 import { registryStateOnNode as realRegistryStateOnNode } from "../src/submission.js";
 import { costParametersOf } from "../src/wallet.js";
 import { prover } from "./prover.js";
+import { runtimeState } from "./runtime-state.js";
 import { offlineBlocks, offlineHeight, offlineRpcHeader } from "./offline-blocks.js";
 import { registryDeployer as realRegistryDeployer, type DeployerOptions } from "../src/deployer.js";
 import { registryOperator as realRegistryOperator, type OperatorOptions, type PreparedAnchor, type AnchorReceipt } from "../src/operator.js";
@@ -120,6 +121,11 @@ function nodeAnswer(method: string, params: unknown[] = []) {
     return { result: chain.nodeLags ? null : (blocks.get(Number(params[0])) ? `0x${blocks.get(Number(params[0]))!.hash}` : null) };
   }
   if (method === "chain_getFinalizedHead") return { result: `0x${blocks.get(tip)!.hash}` };
+  // The node's best block, one past its finalized head, whose state holds 1000300's code.
+  const best: BlockHeader = { parentHash: Buffer.from(blocks.get(offlineHeight(chain))!.hash, "hex"), number: offlineHeight(chain) + 1, stateRoot: runtimeState(1000300).root, extrinsicsRoot: orderedTrieRoot([]), digest: [] };
+  const bestHash = `0x${hex(headerHash(best))}`;
+  if (method === "chain_getHeader" && !params.length) return { result: offlineRpcHeader(best) };
+  if (method === "state_getReadProof" && params[1] === bestHash) return { result: { at: bestHash, proof: runtimeState(1000300).proof } };
   if (method === "chain_getHeader") { const height = heightAt(params[0]); return { result: chain.nodeLags || height === undefined ? null : offlineRpcHeader(blocks.get(height)!.header) }; }
   if (method === "chain_getBlock") {
     const height = heightAt(params[0]);

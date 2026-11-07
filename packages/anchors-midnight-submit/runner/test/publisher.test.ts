@@ -187,6 +187,8 @@ describe("standing delivery after retained publication", () => {
   let follower: ReturnType<typeof openFollowerState>, journal: ReturnType<typeof openJournal>, session: ReturnType<typeof openStandingSession>;
   let delivery: ReturnType<typeof openStandingDelivery>, clock: { wallTime: number; monotonicMillis: number }, policy: ReturnType<typeof batchAuthors>, currentCensus: Census;
   let submit: ReturnType<typeof vi.fn<OperatorWallet["submit"]>>, save: ReturnType<typeof vi.fn<OperatorWallet["saveState"]>>;
+  // The runtime the node runs now, which may be ahead of the follower's newest verified block.
+  let nodeRuntime: () => Promise<number>;
   const block = (height: number, timestamp: number): FollowerBlock => ({ network: "preprod", policyDigest: followerPolicyDigest([]), block: { height, hash: h(height) }, parentHash: h(height - 1), timestamp, runtimeSpecVersion: 1000300, sends: [] });
   const bytes = () => batchBytes({ commitment: state.currentPlan()!.commitment, ttl: clock.wallTime + 10 * minute });
   function controller() {
@@ -207,7 +209,8 @@ describe("standing delivery after retained publication", () => {
     session = openStandingSession({ state: follower, verifiedStart: block(11, start), authors: () => policy, clock: () => ({ ...clock }) });
     clock.wallTime += 20 * minute + 1000; clock.monotonicMillis += 20 * minute + 1000; follower.recordVerifiedBlock(block(12, clock.wallTime));
     journal = openJournal(join(directory, "attempts.sqlite")); submit = vi.fn<OperatorWallet["submit"]>(async () => {}); save = vi.fn<OperatorWallet["saveState"]>(async () => ({ saved: true as const }));
-    delivery = openStandingDelivery({ wallet: { network: "preprod", addresses: { unshielded: "fixture-payer", shielded: "fixture-shielded", dust: "fixture-dust" }, submit, saveState: save }, follower, session, census: state, journal, readCensus: async () => currentCensus, publication: options(), clock: () => ({ ...clock }) });
+    nodeRuntime = async () => 1000300;
+    delivery = openStandingDelivery({ wallet: { network: "preprod", addresses: { unshielded: "fixture-payer", shielded: "fixture-shielded", dust: "fixture-dust" }, submit, saveState: save }, follower, session, census: state, journal, readCensus: async () => currentCensus, publication: options(), clock: () => ({ ...clock }), runtime: () => nodeRuntime() });
   });
   afterEach(() => { journal?.close(); follower?.close(); vi.restoreAllMocks(); });
 
@@ -420,5 +423,39 @@ describe("standing delivery after retained publication", () => {
     await expect(loop.turn()).rejects.toThrow(/journalled|restart/i);
     await expect(loop.turn()).rejects.toThrow(/restart/i);
     expect(prepare).toHaveBeenCalledTimes(1); expect(journal.pending()).toEqual([]); expect(submit).not.toHaveBeenCalled(); send.mockRestore();
+  });
+
+  // The follower's newest verified block may trail the node by up to the freshness bound, so the
+  // node's own runtime decides at the send boundary whether the bytes can land.
+  const CANNOT_LAND = /the standing bytes cannot land: transaction header midnight:transaction\[v9\] is not one runtime 2001100 executes; they were retained and nothing was sent/;
+
+  it("never hands a pre-fork row nobody sent to a node that already runs 2001100, while the follower still trails at 1000300", async () => {
+    const raw = await bytes(), commitment = state.currentPlan()!.commitment; rejectSecond = true;
+    await expect(delivery.submit(raw, commitment)).rejects.toThrow(/store|publication/i);
+    expect(journal.pending()[0]!.broadcasts).toBe(0);
+    rejectSecond = false;
+    nodeRuntime = async () => 2001100;
+    const recovered = journal.live({ ...batchScope, commitment, kind: 3, attribute: "00".repeat(32) })!;
+    await expect(delivery.submit(recovered.bytes, commitment)).rejects.toThrow(CANNOT_LAND);
+    expect(submit).not.toHaveBeenCalled();
+    expect(journal.pending()).toEqual([expect.objectContaining({ txHash: recovered.txHash, broadcasts: 0 })]);
+  });
+
+  it("leaves a pre-fork row unsent when the controller's next turn crosses the fork ahead of a lagging follower", async () => {
+    submit.mockRejectedValueOnce(new Error("transport: connection reset"));
+    const { prepare, loop } = controller();
+    await expect(loop.turn()).rejects.toThrow(/transport or wallet delivery remains unresolved/);
+    expect(journal.pending()[0]!.broadcasts).toBe(0);
+    nodeRuntime = async () => 2001100;
+    await expect(loop.turn()).rejects.toThrow(CANNOT_LAND);
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(journal.pending()[0]!.broadcasts).toBe(0);
+  });
+
+  it("sends nothing when the node's runtime cannot be read", async () => {
+    nodeRuntime = async () => { throw new Error("the preprod node runs runtime 1000400, which is not one this submitter knows (1000300, 2001100)"); };
+    await expect(delivery.submit(await bytes(), state.currentPlan()!.commitment)).rejects.toThrow(/runtime 1000400/);
+    expect(submit).not.toHaveBeenCalled();
   });
 });

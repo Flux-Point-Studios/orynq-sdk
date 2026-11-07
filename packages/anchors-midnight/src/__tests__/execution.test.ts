@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { replaceProofValue } from "./proof-node.js";
 import fixture from "./fixtures/storage-proof-mainnet.json";
 import { provedValue } from "../storage-proof.js";
-import { verifyExecution, verifyBlockEffects } from "../execution.js";
+import { runtimeAfter, verifyExecution, verifyBlockEffects } from "../execution.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { metadata, unifyMetadata } from "@polkadot-api/substrate-bindings";
@@ -224,5 +224,49 @@ describe("authenticated execution across the Ledger 9 runtime upgrade (mainnet, 
       return answer;
     });
     await expect(verifyBlockEffects(node, { blockHash, header })).rejects.toThrow(/runtime code is not supported/);
+  });
+});
+
+// A transaction sent while the node's best block is `header` lands at the earliest in its child,
+// which the code in `header`'s state executes: :pending_code when set_code left one, else :code.
+describe("the runtime that executes the block after a node's best block", () => {
+  const codeHash2001100 = "87d0c023b954ad788bba2c065320fe19f172f374adbe86ebc0a99bc1ce3fe1de", codeHash1000300 = "39568eeb0802fa59d74ac0bc5c7ab62fc05c23ea947937458a4b011558516138";
+  it.each([[FORK.setCode - 1, 1000300], [FORK.setCode, 2001100], [FORK.firstLedger9, 2001100]])("after block %i is %i", async (height, specVersion) => {
+    await expect(runtimeAfter(forkNode().node, forkBlock(height).header)).resolves.toBe(specVersion);
+  });
+
+  it("is read from the best block's own state, never from the node's runtime version, which reports :code alone", async () => {
+    const { node, calls } = forkNode();
+    await runtimeAfter(node, forkBlock(FORK.setCode).header);
+    expect(calls).toEqual(["state_getReadProof"]);
+  });
+
+  it("refuses code outside the runtime table, whether it is :code or :pending_code", async () => {
+    const setCode = forkBlock(FORK.setCode);
+    const { proof } = recorded<{ proof: string[] }>("state_getReadProof", [[CODE_KEYS, PENDING_CODE_KEYS], `0x${setCode.blockHash}`]);
+    const pending = proof.find((value) => value.includes(codeHash2001100))!;
+    const forged = replaceProofValue(proof, `0x${toHex(setCode.header.stateRoot)}`, pending, pending.replace(codeHash2001100, "aa".repeat(32)));
+    const header = { ...setCode.header, stateRoot: fromHex(forged.root, "state root") };
+    const at = `0x${toHex(headerHash(header))}`;
+    const { node } = forkNode((method, params, answer) => (method === "state_getReadProof" && params[1] === at ? { at, proof: forged.nodes } : answer));
+    await expect(runtimeAfter(node, header)).rejects.toThrow("Executing runtime code is not supported");
+    const before = forkBlock(FORK.setCode - 1);
+    const { proof: codeProof } = recorded<{ proof: string[] }>("state_getReadProof", [[CODE_KEYS, PENDING_CODE_KEYS], `0x${before.blockHash}`]);
+    const code = codeProof.find((value) => value.includes(codeHash1000300))!;
+    const forgedCode = replaceProofValue(codeProof, `0x${toHex(before.header.stateRoot)}`, code, code.replace(codeHash1000300, "bb".repeat(32)));
+    const codeHeader = { ...before.header, stateRoot: fromHex(forgedCode.root, "state root") };
+    const codeAt = `0x${toHex(headerHash(codeHeader))}`;
+    const { node: codeNode } = forkNode((method, params, answer) => (method === "state_getReadProof" && params[1] === codeAt ? { at: codeAt, proof: forgedCode.nodes } : answer));
+    await expect(runtimeAfter(codeNode, codeHeader)).rejects.toThrow("Executing runtime code is not supported");
+  });
+
+  it("refuses a proof of another block, or one that omits :pending_code", async () => {
+    const setCode = forkBlock(FORK.setCode), other = forkBlock(FORK.setCode - 1);
+    const at = `0x${setCode.blockHash}`;
+    const foreign = forkNode((method, params, answer) => (method === "state_getReadProof" ? recorded("state_getReadProof", [[CODE_KEYS, PENDING_CODE_KEYS], `0x${other.blockHash}`]) : answer));
+    await expect(runtimeAfter(foreign.node, setCode.header)).rejects.toThrow("the runtime proof identifies another block than the node's best");
+    const codeOnly = recorded<{ at: string; proof: string[] }>("state_getReadProof", [[CODE_KEYS], at]);
+    const { node } = forkNode((method, _params, answer) => (method === "state_getReadProof" ? codeOnly : answer));
+    await expect(runtimeAfter(node, setCode.header)).rejects.toThrow(/lacks the requested path/);
   });
 });

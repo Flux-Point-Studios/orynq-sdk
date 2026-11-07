@@ -54,6 +54,17 @@ function executingRuntime(parentRoot: string, proof: readonly string[]) {
 }
 
 interface ReadProof { at: string; proof: string[] }
+
+// The runtime that executes the child of `header`, the earliest block a transaction sent while
+// `header` is the node's best can land in: the code in `header`'s own state, read through a read
+// proof of the same keys execution is verified with. The node's runtime version reports :code
+// alone, so at a set_code block it names the runtime the child no longer runs.
+export async function runtimeAfter(node: MidnightSource["node"], header: BlockHeader): Promise<number> {
+  const at = `0x${toHex(headerHash(header))}`;
+  const proof = await node.call<ReadProof>("state_getReadProof", [[`${CODE}00`, `${PENDING_CODE}00`], at]);
+  if (proof?.at !== at || !Array.isArray(proof.proof)) throw new Error("the runtime proof identifies another block than the node's best");
+  return executingRuntime(`0x${toHex(header.stateRoot)}`, proof.proof).specVersion;
+}
 interface EventRecord { phase: { type: string; value: number }; event: { type: string; value: { type: string; value: unknown } } }
 const terminal = ({ event }: EventRecord) => event.type === "Midnight" && ["TxApplied", "TxPartialSuccess"].includes(event.value.type);
 function validateTarget(extrinsicIndex: number, txHash: string) {

@@ -10,7 +10,7 @@ import { ensurePrivateDir } from "../src/keys.js";
 import { networkEndpoints } from "../src/endpoints.js";
 import { assertChainIdentity } from "../src/preflight.js";
 import { registryOperator } from "../src/operator.js";
-import { registryStateOnNode } from "../src/submission.js";
+import { SUBMITTER_RUNTIME_SPEC_VERSIONS, assertKnownRuntime, registryStateOnNode } from "../src/submission.js";
 import { openWallet, type OperatorWallet } from "../src/wallet.js";
 import { syncWithCheckpoints } from "../src/sync.js";
 import { provingService } from "../src/zk.js";
@@ -288,7 +288,7 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
       operator = registryOperator({ network: config.network, wallet, source, prover: provingService(config.wallet.zk), journalPath: join(config.stateRoot, "attempts.sqlite"), chain: follower.chainView(), authorKeyFile: config.wallet.author, authorRole: "batch", registry: config.registry, ttlMinutes: 10 });
       if (operator.authorKey !== config.author) throw new Error("Standing author file differs from the policy scope");
       const censusReader = () => readCensus({ rpcUrl: config.materiosRpcUrl, genesis: config.genesis, signal: abort.signal });
-      const delivery = openStandingDelivery({ wallet, follower, session, census, journal, readCensus: censusReader, publication });
+      const delivery = openStandingDelivery({ wallet, follower, session, census, journal, readCensus: censusReader, publication, runtime: () => assertKnownRuntime(source, config.network, SUBMITTER_RUNTIME_SPEC_VERSIONS, config.registry) });
       controller = openStandingController({ census, follower, session, delivery, journal, operator, readCensus: censusReader, publication,
         verify: hints => ({ source: rpcOnlySource({ network: config.network, node: config.midnightReadRpcUrl, hints, signal: abort.signal, httpBudget: { requests: 256, bytes: 64 * 1024 * 1024, abort: new AbortController() } }), knownAuthors: authors() }) });
     } else await startup();

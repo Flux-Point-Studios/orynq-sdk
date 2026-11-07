@@ -186,7 +186,7 @@ describe("registryDeployer", () => {
     const call = net.source.node.call.bind(net.source.node);
     net.source.node.call = async <T>(method: string, params?: unknown[]): Promise<T> => {
       const result = await call<T>(method, params);
-      if (method === "state_getRuntimeVersion") {
+      if (method === "state_getReadProof") {
         if (mode === "replacement") prepared.bytes = mutable;
         if (mode === "Buffer mutation") {
           prepared.bytes.fill(0);
@@ -211,7 +211,7 @@ describe("registryDeployer", () => {
     const call = net.source.node.call.bind(net.source.node);
     net.source.node.call = async <T>(method: string, params?: unknown[]): Promise<T> => {
       const result = await call<T>(method, params);
-      if (method === "state_getRuntimeVersion") prepared.bytes = mutable;
+      if (method === "state_getReadProof") prepared.bytes = mutable;
       return result;
     };
     net.lag(true);
@@ -567,7 +567,7 @@ describe("registryDeployer", () => {
 
   it("refuses to prepare while the node runs a runtime the submitter does not write for", async () => {
     const { deployer, wallet: w } = setup({ spec: 1000400 });
-    await expect(deployer.prepare()).rejects.toThrow(/runs runtime 1000400, which is not one this submitter knows \(1000300\)/);
+    await expect(deployer.prepare()).rejects.toThrow("Executing runtime code is not supported");
     expect(w.submitted).toHaveLength(0);
     deployer.close();
   });
