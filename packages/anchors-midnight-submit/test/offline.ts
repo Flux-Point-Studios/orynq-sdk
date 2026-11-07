@@ -17,11 +17,12 @@
 // keys, when it pins any.
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import * as L9 from "@midnightntwrk/ledger-v9";
 import { decodeAnchorTransaction, headerHash, midnightSource, orderedTrieRoot, type BlockHeader, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints, type VerifyResult } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { ledgerNode } from "../../anchors-midnight/src/__tests__/ledger-node.js";
 import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS } from "../src/custody.js";
+import type { UnboundTransaction } from "../src/submission.js";
 import { NETWORK_IDENTITY, type OperatorWallet, type StateSave, type WalletOptions } from "../src/index.js";
 import { registryStateOnNode as realRegistryStateOnNode } from "../src/submission.js";
 import { costParametersOf } from "../src/wallet.js";
@@ -241,9 +242,9 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     async registerNightForDust() {
       return null;
     },
-    async payFee(tx: Parameters<OperatorWallet["payFee"]>[0]) {
+    async payFee(tx: UnboundTransaction): Promise<never> {
       if (tx instanceof L9.Transaction) throw new Error("the offline wallet pays no ledger 9 fee");
-      return tx.bind();
+      return tx.bind() as never;
     },
     async submit(tx) {
       const chain = view();

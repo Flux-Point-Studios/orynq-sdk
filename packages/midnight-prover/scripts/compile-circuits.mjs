@@ -3,7 +3,7 @@ import { readFile, writeFile, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as runtime from "@midnight-ntwrk/compact-runtime";
-import * as ledger from "@midnight-ntwrk/ledger-v8";
+import * as ledger from "@midnightntwrk/ledger-v8";
 import { assertArtifactPins } from "./artifact-pins.mjs";
 
 const directory = resolve(dirname(fileURLToPath(import.meta.url)), "..");

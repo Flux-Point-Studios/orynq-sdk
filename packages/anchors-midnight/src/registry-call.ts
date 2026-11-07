@@ -1,5 +1,5 @@
 import * as rt from "@midnight-ntwrk/compact-runtime";
-import * as L8 from "@midnight-ntwrk/ledger-v8";
+import * as L8 from "@midnightntwrk/ledger-v8";
 import * as L9 from "@midnightntwrk/ledger-v9";
 import { Contract, ledger, type HiddenEntry, type Ledger } from "../contract/managed/contract/index.js";
 

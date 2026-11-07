@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { createAuthorKeyFile, createSaltKeyFile, readAuthorSecret, registryInitialState } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { registryDeployer } from "../src/deployer.js";
 import { chain, fresh, hex, wallet } from "./fakes.js";

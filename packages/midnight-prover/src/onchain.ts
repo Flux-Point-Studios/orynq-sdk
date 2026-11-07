@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import * as rt from "@midnight-ntwrk/compact-runtime";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { contractStateOnNode, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { Contract, ledger, pureCircuits, type Presentation } from "../onchain/managed/contract/index.js";
 

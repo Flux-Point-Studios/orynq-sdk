@@ -13,10 +13,10 @@ import { promisify } from "node:util";
 const exec = promisify(execFile);
 
 export const SINGLETONS = [
-  "@midnight-ntwrk/ledger-v8",
+  "@midnightntwrk/ledger-v8",
   "@midnight-ntwrk/onchain-runtime-v3",
   "@midnight-ntwrk/compact-runtime",
-  "@midnight-ntwrk/zkir-v2",
+  "@midnightntwrk/zkir-v2",
   "@midnightntwrk/ledger-v9",
 ];
 

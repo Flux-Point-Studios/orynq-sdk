@@ -29,8 +29,8 @@ test('the wallet prover shares an Effect runtime that satisfies its platform pee
     return realpathSync(file);
   };
   const submit = new URL('../packages/anchors-midnight-submit/package.json', import.meta.url);
-  const capabilities = dependencyManifest(submit, '@midnight-ntwrk/wallet-sdk-capabilities');
-  const prover = dependencyManifest(capabilities, '@midnight-ntwrk/wallet-sdk-prover-client');
+  const capabilities = dependencyManifest(submit, '@midnightntwrk/wallet-sdk-capabilities');
+  const prover = dependencyManifest(capabilities, '@midnightntwrk/wallet-sdk-prover-client');
   const platform = dependencyManifest(prover, '@effect/platform');
   const manifest = JSON.parse(readFileSync(platform, 'utf8'));
   const resolvedVersion = createRequire(platform)('effect/package.json').version;

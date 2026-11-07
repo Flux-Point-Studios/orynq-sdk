@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { type MidnightNetwork, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { chainView, openJournal, type AnchorKey } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { assertProofDeploy, assertPostedProof, buildProofDeploy, buildProofCall, proofStateOnNode, proofProvider, PROOF_PINS, type ProofStatement } from "@fluxpointstudios/orynq-sdk-midnight-prover";

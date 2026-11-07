@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { chmodSync, copyFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import {
   authorKey,
   batchSetCommitment,

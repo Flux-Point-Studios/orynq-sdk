@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import * as ledger from "@midnight-ntwrk/ledger-v8";
+import * as ledger from "@midnightntwrk/ledger-v8";
 import type { CircuitProof } from "../src/real-prover.js";
 
 function firstIntent(transaction: Buffer) {

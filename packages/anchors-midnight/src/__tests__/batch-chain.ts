@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { censusBatch, decodeReceiptRecord, memberSnapshot, merklePath } from "@fluxpointstudios/orynq-sdk-core/checkpoint";
 import { metadata, unifyMetadata } from "@polkadot-api/substrate-bindings";
 import { getDynamicBuilder, getLookupFn } from "@polkadot-api/metadata-builders";

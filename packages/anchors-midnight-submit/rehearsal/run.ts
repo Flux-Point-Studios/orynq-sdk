@@ -4,7 +4,7 @@
 //   node --import tsx run.ts PHASE...   phases: chain funding deploy kind1 kind2 sameblock negatives rotation
 // Run under nice 19. Each phase resumes from evidence/raw.json and skips work already recorded.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { assertRegistryState, compiledVerifierKeys, createAuthorKeyFile, midnightSource, readAuthorSecret, authorKey } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import {
   DEFAULT_COST_PARAMETERS,
@@ -358,7 +358,7 @@ const phases: Record<string, () => Promise<void>> = {
       }
       const ttl = new Date(Date.now() + 15 * 60_000);
       const tx = L.Transaction.fromParts("preprod", undefined, undefined, L.Intent.new(ttl).addMaintenanceUpdate(update()));
-      const final = await w.payFee(await prover.prove(tx), ttl);
+      const final = await w.payFee((await prover.prove(tx)) as L.Transaction<L.SignatureEnabled, L.Proof, L.PreBinding>, ttl);
       const txHash = final.transactionHash();
       try {
         await w.submit(final);

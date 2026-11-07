@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { provingProvider } from "@midnight-ntwrk/zkir-v2";
+import { provingProvider } from "@midnightntwrk/zkir-v2";
 import { PROOF_CIRCUITS, proofArtifact } from "./onchain.js";
 
 const PARAMS: Readonly<Record<number, string>> = {

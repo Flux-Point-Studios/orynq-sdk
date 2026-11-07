@@ -38,7 +38,7 @@ const jobs: Job[] = [
   kind1("git-log", "git", ["log", "--oneline", "-12"]),
   kind1("commitment-suite", "npx", ["vitest", "run", "src/__tests__/commitment.test.ts"], A),
   kind1("node-version", "node", ["--version"]),
-  kind1("pnpm-lock-midnight", "grep", ["-c", "@midnight-ntwrk/", "pnpm-lock.yaml"]),
+  kind1("pnpm-lock-midnight", "grep", ["-cE", "@midnight-?ntwrk/", "pnpm-lock.yaml"]),
   kind1("uname", "uname", ["-srm"]),
   ...rounds.flatMap((n) => [kind1(`same-block-a-${n}`, "date", ["-u", "+%Y-%m-%dT%H:%M:%S.%NZ"]), kind1(`same-block-b-${n}`, "date", ["-u", "+%s%N"])]),
   kind1("crash-before-broadcast", "git", ["status", "--short", "--branch"]),

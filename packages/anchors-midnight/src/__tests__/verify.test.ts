@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { verifyMidnightAnchor, type VerifyRequest, type VerifyResult } from "../verify.js";
 import { buildRegistryDeploy, registryInitialState } from "../registry.js";
 import { concatBytes, encodeCompact, fromHex, toHex, u32le, u64le } from "../scale.js";

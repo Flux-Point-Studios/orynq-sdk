@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import * as L from "@midnight-ntwrk/ledger-v8";
-import { provingProvider } from "@midnight-ntwrk/zkir-v2";
+import * as L from "@midnightntwrk/ledger-v8";
+import { provingProvider } from "@midnightntwrk/zkir-v2";
 import { pureCircuits } from "../contract/managed/contract/index.js";
 import { registryInitialState } from "../src/registry.js";
 import { encodedWindows, windowHits } from "../src/__tests__/privacy-scan.js";

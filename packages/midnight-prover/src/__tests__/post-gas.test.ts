@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { post } from "../post.js";
 import { buildProofDeploy } from "../onchain.js";
 import { proofProvider } from "../proof-material.js";

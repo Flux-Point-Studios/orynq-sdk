@@ -1,4 +1,4 @@
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { nodeRefusal, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { assertProofWitness, buildProofCall, proofStateOnNode, type ProofNetwork, type ProofStatement, type ProofWitness } from "./onchain.js";
 import { assertPostedProof } from "./posted.js";

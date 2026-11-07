@@ -25,9 +25,9 @@ export function installedPins() {
   return {
     compactc: compiler,
     compactcPinSource: "tools/compactc/install.sh",
-    ledger: version("@midnight-ntwrk/ledger-v8"),
-    walletFacade: version("@midnight-ntwrk/wallet-sdk-facade"),
-    dustWallet: version("@midnight-ntwrk/wallet-sdk-dust-wallet"),
-    zkir: version("@midnight-ntwrk/zkir-v2"),
+    ledger: version("@midnightntwrk/ledger-v8"),
+    walletFacade: version("@midnightntwrk/wallet-sdk-facade"),
+    dustWallet: version("@midnightntwrk/wallet-sdk-dust-wallet"),
+    zkir: version("@midnightntwrk/zkir-v2"),
   };
 }

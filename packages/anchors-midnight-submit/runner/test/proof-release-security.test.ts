@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { openJournal } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { buildProofDeploy, proofProvider, PROOF_PINS } from "@fluxpointstudios/orynq-sdk-midnight-prover";
 import { withFixtureProof } from "../../../midnight-prover/tests/fixture-prover.js";

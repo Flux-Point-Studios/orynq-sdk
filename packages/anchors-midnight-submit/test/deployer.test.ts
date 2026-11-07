@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { REGISTRY_VERIFIER_KEY_SHA256, buildRegistryDeploy, createAuthorKeyFile, registryInitialState, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { assertFpsRegistry, registryDeployer } from "../src/deployer.js";
 import { registryOperator } from "../src/operator.js";

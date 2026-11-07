@@ -5,7 +5,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import {
   REGISTRY_VERIFIER_KEY_SHA256,
   buildRegistryDeploy,

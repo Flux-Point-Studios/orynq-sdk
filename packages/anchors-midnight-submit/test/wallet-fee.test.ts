@@ -2,13 +2,18 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import * as L from "@midnight-ntwrk/ledger-v8";
-import * as L9 from "@midnightntwrk/ledger-v9";
-import { WalletFacade } from "@midnight-ntwrk/wallet-sdk-facade";
+import * as L from "@midnightntwrk/ledger-v8";
+import { WalletFacade } from "@midnightntwrk/wallet-sdk-facade";
 import { BehaviorSubject } from "rxjs";
 import { createWalletMnemonicFile } from "../src/keys.js";
-import { DEFAULT_COST_PARAMETERS, costParametersOf, openWallet, type OperatorWallet } from "../src/wallet.js";
-import { facadeSyncedTo } from "./fakes.js";
+import { DEFAULT_COST_PARAMETERS, costParametersOf, largestCoinFirst, openWallet, type OperatorWallet } from "../src/wallet.js";
+import { V1Builder } from "@midnightntwrk/wallet-sdk-dust-wallet/v1";
+import { V2Builder } from "@midnightntwrk/wallet-sdk-dust-wallet/v2";
+import { facadeSyncedTo, liveSource } from "./fakes.js";
+import type { MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import * as L9 from "@midnightntwrk/ledger-v9";
+import { ProtocolVersion, WalletTransaction } from "@midnightntwrk/wallet-sdk-abstractions";
+import { Either } from "effect";
 
 const dir = mkdtempSync(join(tmpdir(), "orynq-wallet-fee-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -21,12 +26,30 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-// Unpatched, wallet-sdk-dust-wallet 4.2.0 pays a fee by selecting DUST until it covers the fee its
-// dry run computes. For a transaction whose computed fee is 0 it selects nothing, and every later
-// round reads the fee of its dry run as a surplus and selects nothing again: the synchronous loop
-// never ends, and its ledger allocations grow the wasm heap until the ledger traps. On preprod the
-// same balancing of a maintenance update, stuck that way, finished in one round with 1 SPECK of
-// overhead. With the workspace's patch, the overhead keeps a DUST spend on every fee.
+// test/dust-fees.test.ts measures the order on the SDK's ledger 9 simulator.
+describe("the wallet's DUST coin order", () => {
+  it("is largest first under either ledger", async () => {
+    const v1 = vi.spyOn(V1Builder.prototype, "withCoinSelection");
+    const v2 = vi.spyOn(V2Builder.prototype, "withCoinSelection");
+    const mnemonicFile = join(dir, "coin-order.mnemonic");
+    createWalletMnemonicFile(mnemonicFile);
+    opened.push(await openWallet({ network: "preprod", mnemonicFile, endpoints: OFFLINE, source: undefined as never, zkDir: "/nonexistent" }));
+    for (const spy of [v1, v2]) {
+      const selections = spy.mock.calls.map(([coinSelection]) => (coinSelection as (config: never, context: never) => unknown)({} as never, (() => ({})) as never));
+      expect(selections.at(-1)).toBe(largestCoinFirst);
+    }
+  });
+
+  it("picks the largest coin with any value", () => {
+    const coin = (value: bigint) => ({ value }) as never;
+    const [small, large, empty] = [coin(5n), coin(9n), coin(0n)];
+    expect(largestCoinFirst([small, large, empty])).toBe(large);
+    expect(largestCoinFirst([empty])).toBeUndefined();
+  });
+});
+
+// A fee computed as 0 is balanced with no DUST spend, which pays nothing once the node prices the
+// transaction above 0; 1 SPECK of overhead keeps a DUST spend on every fee.
 describe("the wallet's fee overhead", () => {
   it("is 1 SPECK unless the caller sets more", () => {
     expect(DEFAULT_COST_PARAMETERS.additionalFeeOverhead).toBe(1n);
@@ -35,7 +58,7 @@ describe("the wallet's fee overhead", () => {
   });
 
   it("is refused at 0, before the wallet reads its mnemonic", async () => {
-    expect(() => costParametersOf({ additionalFeeOverhead: 0n, feeBlocksMargin: 5 })).toThrow(/additionalFeeOverhead must be at least 1 SPECK/);
+    expect(() => costParametersOf({ additionalFeeOverhead: 0n, feeBlocksMargin: 5 })).toThrow(/additionalFeeOverhead must be at least 1 SPECK, not 0: a fee computed as 0 carries no DUST spend and pays nothing/);
     await expect(
       openWallet({ network: "preprod", mnemonicFile: "/nonexistent/wallet.mnemonic", endpoints: undefined as never, source: undefined as never, zkDir: "/nonexistent", costParameters: { additionalFeeOverhead: 0n, feeBlocksMargin: 5 } }),
     ).rejects.toThrow(/additionalFeeOverhead must be at least 1 SPECK/);
@@ -43,19 +66,23 @@ describe("the wallet's fee overhead", () => {
 });
 
 // A wallet over no indexer whose facade reports `states` and balances every fee as nothing.
-async function walletSyncedTo(initial: ReturnType<typeof facadeSyncedTo>) {
+async function walletSyncedTo(initial: ReturnType<typeof facadeSyncedTo>, source: MidnightSource = liveSource()) {
   const mnemonicFile = join(dir, `${opened.length}-${Math.random().toString(16).slice(2)}.mnemonic`);
   createWalletMnemonicFile(mnemonicFile);
   const states = new BehaviorSubject(initial);
   vi.spyOn(WalletFacade.prototype, "state").mockReturnValue(states as never);
-  const balanced = vi.spyOn(WalletFacade.prototype, "balanceUnboundTransaction").mockImplementation(async (tx) => ({ type: "UNBOUND_TRANSACTION", baseTransaction: tx, balancingTransaction: undefined }));
-  const wallet = await openWallet({ network: "preprod", mnemonicFile, endpoints: OFFLINE, source: undefined as never, zkDir: "/nonexistent" });
+  const balanced = vi.spyOn(WalletFacade.prototype, "balanceUnboundTransaction").mockImplementation(async (tx) => ({ type: "UNBOUND_TRANSACTION", protocolVersion: tx.protocolVersion, baseTransaction: tx, balancingTransaction: undefined }));
+  const wallet = await openWallet({ network: "preprod", mnemonicFile, endpoints: OFFLINE, source, zkDir: "/nonexistent" });
   opened.push(wallet);
   const pay = () => {
     const ttl = new Date(Date.now() + 15 * 60_000);
     return wallet.payFee(L.Transaction.fromParts("preprod", undefined, undefined, L.Intent.new(ttl)).mockProve() as never, ttl);
   };
-  return { wallet, states, balanced, pay };
+  const pay9 = () => {
+    const ttl = new Date(Date.now() + 15 * 60_000);
+    return wallet.payFee(L9.Transaction.fromParts("preprod", undefined, undefined, L9.Intent.new(ttl)).mockProve() as never, ttl);
+  };
+  return { wallet, states, balanced, pay, pay9 };
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -91,6 +118,49 @@ describe("paying a fee", () => {
   });
 });
 
+// The wallet SDK's own liveness check would dial a node without the credential, so the wallet
+// names none to it and checks the indexer itself, through the credentialed reads, before a fee.
+describe("paying a fee against the indexer", () => {
+  it("pays while the indexer's head stands within 10 blocks of the node's finalized head", async () => {
+    const { balanced, pay } = await walletSyncedTo(facadeSyncedTo(7n, 7n), liveSource({ indexed: 110, finalized: 100 }));
+    await expect(pay()).resolves.toBeInstanceOf(L.Transaction);
+    expect(balanced).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([[89, 100], [111, 100]])("refuses, paying nothing, an indexer at block %i against a finalized head at %i", async (indexed, finalized) => {
+    const { balanced, pay } = await walletSyncedTo(facadeSyncedTo(7n, 7n), liveSource({ indexed, finalized }));
+    await expect(pay()).rejects.toThrow(`the preprod indexer stands at block ${indexed} and the node's finalized head at ${finalized}, more than 10 blocks apart; no fee was paid`);
+    expect(balanced).not.toHaveBeenCalled();
+  });
+
+  it("refuses, paying nothing, an indexer whose finalized block is not the node's", async () => {
+    const { balanced, pay } = await walletSyncedTo(facadeSyncedTo(7n, 7n), liveSource({ indexed: 95, finalized: 100, indexedHash: "ee".repeat(32) }));
+    await expect(pay()).rejects.toThrow("the preprod indexer's block 95 is not the node's finalized block there; no fee was paid");
+    expect(balanced).not.toHaveBeenCalled();
+  });
+});
+
+// Below the ledger 9 fork the wallets read the chain with ledger 8 and pay ledger 8 fees; from it,
+// ledger 9's. A transaction of the other ledger can be neither balanced nor included.
+describe("paying a fee for a transaction of either ledger", () => {
+  it("pays only for a transaction of the ledger the wallets act at", async () => {
+    const before = await walletSyncedTo(facadeSyncedTo(7n, 7n));
+    await expect(before.pay9()).rejects.toThrow("the preprod wallet acts at protocol version 0, ledger 8, and pays no fee for a ledger 9 transaction; no fee was paid");
+    await expect(before.pay()).resolves.toBeInstanceOf(L.Transaction);
+    vi.restoreAllMocks();
+    const after = await walletSyncedTo(facadeSyncedTo(7n, 7n, true, 2001100n));
+    // The offline sub-wallets stay below the fork, where the facade finalizes no ledger 9 recipe;
+    // binding it here stands in for a facade whose wallets crossed.
+    vi.spyOn(WalletFacade.prototype, "finalizeRecipe").mockImplementation(async (recipe) => {
+      const base = Either.getOrThrow(WalletTransaction.unwrapWithin<L9.Transaction<L9.SignatureEnabled, L9.Proof, L9.PreBinding>>((recipe as { baseTransaction: WalletTransaction }).baseTransaction, [ProtocolVersion.MinSupportedVersion, ProtocolVersion.MaxSupportedVersion]));
+      return WalletTransaction.adopt("Finalized", base.bind(), recipe.protocolVersion);
+    });
+    await expect(after.pay()).rejects.toThrow("the preprod wallet acts at protocol version 2001100, ledger 9, and pays no fee for a ledger 8 transaction; no fee was paid");
+    await expect(after.pay9()).resolves.toBeInstanceOf(L9.Transaction);
+    expect(after.balanced.mock.calls.map(([handle]) => handle.protocolVersion)).toEqual([2001100n]);
+  });
+});
+
 describe("the wallet's sync progress", () => {
   it("names, for the shielded and DUST sync, the newest event the indexer announced", async () => {
     const { wallet } = await walletSyncedTo(facadeSyncedTo(5n, 7n));
@@ -103,24 +173,3 @@ describe("the wallet's sync progress", () => {
   });
 });
 
-// wallet-sdk 1.x reads the chain and pays with ledger 8 only: a ledger 9 transaction is neither
-// balanced, sent nor freed, whichever way it reaches the wallet.
-describe("a ledger 9 transaction", () => {
-  const ledger9 = () => L9.Transaction.fromParts("preprod", undefined, undefined, L9.Intent.new(new Date(Date.now() + 15 * 60_000))).mockProve();
-  const REFUSAL = "wallet-sdk 1.x pays, sends and frees no ledger 9 transaction; nothing was paid or sent";
-
-  it("is not paid for", async () => {
-    const { wallet, balanced } = await walletSyncedTo(facadeSyncedTo(7n, 7n));
-    await expect(wallet.payFee(ledger9() as never, new Date(Date.now() + 15 * 60_000))).rejects.toThrow(REFUSAL);
-    expect(balanced).not.toHaveBeenCalled();
-  });
-
-  it("is neither sent nor freed", async () => {
-    const reverted = vi.spyOn(WalletFacade.prototype, "revert");
-    const { wallet } = await walletSyncedTo(facadeSyncedTo(7n, 7n));
-    const bound = ledger9().bind();
-    await expect(wallet.submit(bound)).rejects.toThrow(REFUSAL);
-    await expect(wallet.discard(bound)).rejects.toThrow(REFUSAL);
-    expect(reverted).not.toHaveBeenCalled();
-  });
-});

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, expect, it, vi } from "vitest";
-import { WalletFacade } from "@midnight-ntwrk/wallet-sdk-facade";
+import { WalletFacade } from "@midnightntwrk/wallet-sdk-facade";
 import { BehaviorSubject } from "rxjs";
 import { createWalletMnemonicFile } from "../src/keys.js";
 import { openWallet } from "../src/wallet.js";

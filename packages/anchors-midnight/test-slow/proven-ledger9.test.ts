@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import * as L9 from "@midnightntwrk/ledger-v9";
-import { provingProvider } from "@midnight-ntwrk/zkir-v2";
+import { provingProvider } from "@midnightntwrk/zkir-v2";
 import { decodeAnchorTransaction } from "../src/anchor-transaction.js";
 import { unprovenRegistryCall } from "../src/registry-call.js";
 import { deployedRegistry9, finalBytes9, ledger9Strictness, random32 } from "../src/__tests__/registry-call.js";

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import * as ledger from "@midnight-ntwrk/ledger-v8";
+import * as ledger from "@midnightntwrk/ledger-v8";
 import { RealMidnightProver, type CircuitProof } from "../src/real-prover.js";
 import { withCorruptedProof, withTtl } from "./tampering.js";
 

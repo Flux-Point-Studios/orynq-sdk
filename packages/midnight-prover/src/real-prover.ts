@@ -4,8 +4,8 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import * as runtime from "@midnight-ntwrk/compact-runtime";
-import * as ledger from "@midnight-ntwrk/ledger-v8";
-import { provingProvider } from "@midnight-ntwrk/zkir-v2";
+import * as ledger from "@midnightntwrk/ledger-v8";
+import { provingProvider } from "@midnightntwrk/zkir-v2";
 import type { Contract } from "../managed/contract/index.js";
 
 const HASH = /^[0-9a-f]{64}$/;

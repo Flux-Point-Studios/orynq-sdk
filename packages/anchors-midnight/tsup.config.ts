@@ -8,7 +8,7 @@ export default defineConfig({
   sourcemap: true,
   target: "es2022",
   outDir: "dist",
-  external: ["@midnight-ntwrk/compact-runtime", "@midnight-ntwrk/ledger-v8"],
+  external: ["@midnight-ntwrk/compact-runtime", "@midnightntwrk/ledger-v8"],
   // node:sqlite exists only under its node: name.
   removeNodeProtocol: false,
 });

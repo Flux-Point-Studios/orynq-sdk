@@ -1,20 +1,20 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Chunk, Effect, Stream, type Scope } from "effect";
-import * as L from "@midnight-ntwrk/ledger-v8";
-import { CoreWallet, SyncService as DustSync } from "@midnight-ntwrk/wallet-sdk-dust-wallet/v1";
-import { Sync as ShieldedSync } from "@midnight-ntwrk/wallet-sdk-shielded/v1";
+import * as L from "@midnightntwrk/ledger-v9";
+import { ProtocolVersion } from "@midnightntwrk/wallet-sdk-abstractions";
+import { CoreWallet, SyncService as DustSync, Serialization } from "@midnightntwrk/wallet-sdk-dust-wallet/v2";
+import { Sync as ShieldedSync } from "@midnightntwrk/wallet-sdk-shielded/v2";
 import { NIGHT, dustOnSimulator, run, closeSimulators } from "./simulator.js";
 
 // #199: exercise the installed SDK rather than inferring grouping from its configuration.
 // Only transport is substituted; the SDK's default batch spacing is retained. Explicit
 // 100/1000ms candidates here do not change openWallet's production timeout. These synthetic
 // arrivals and simulator fees establish neither hosted throughput nor a production latency SLA.
-const sdkEntry = import.meta.resolve("@midnight-ntwrk/wallet-sdk-dust-wallet");
+const sdkEntry = import.meta.resolve("@midnightntwrk/wallet-sdk-dust-wallet");
 const indexer = await import(new URL("../../wallet-sdk-indexer-client/dist/index.js", sdkEntry).href);
-const { makeDefaultV1SerializationCapability } = await import(new URL("./v1/Serialization.js", sdkEntry).href);
 const { withBackpressure } = await import(new URL("../../wallet-sdk-indexer-client/dist/effect/Backpressure.js", sdkEntry).href);
 type Kind = "dust" | "shielded";
-type Row = { dustLedgerEvents: { id: number; maxId: number; raw: string } } | { zswapLedgerEvents: { id: number; maxId: number; raw: string; protocolVersion: number } };
+type Row = { dustLedgerEvents: { id: number; maxId: number; raw: string; protocolVersion: number } } | { zswapLedgerEvents: { id: number; maxId: number; raw: string; protocolVersion: number } };
 type Update = { updates: ReadonlyArray<{ id: number; maxId: number }> };
 let rawEvents: string[], secretKey: L.DustSecretKey, timestamp: Date;
 let fixture: Awaited<ReturnType<typeof dustOnSimulator>>;
@@ -33,18 +33,25 @@ afterAll(async () => {
 });
 afterEach(() => vi.restoreAllMocks());
 
+// Ledger 9's protocol version on mainnet, which every event below carries.
+const LEDGER9 = 2001100;
+const ACTIVE = [ProtocolVersion.MinSupportedVersion, ProtocolVersion.MaxSupportedVersion] as never;
+const events = (updates: ReadonlyArray<{ id: number; maxId: number; raw: string; protocolVersion: number }>) => ({ _tag: "Events" as const, updates: [...updates], secretKey, timestamp });
 const service = (kind: Kind, timeout: number) => {
   const config = { networkId: "undeployed" as const, indexerClientConnection: { indexerHttpUrl: "http://127.0.0.1:9/graphql", indexerWsUrl: "ws://127.0.0.1:9/graphql/ws" }, batchUpdates: { size: 1000, timeout } };
   return kind === "dust" ? DustSync.makeDefaultSyncService(config) : ShieldedSync.makeEventsSyncService(config);
 };
 const row = (kind: Kind, id: number, maxId: number): Row => kind === "dust"
-  ? { dustLedgerEvents: { id, maxId, raw: rawEvents[0]! } }
-  : { zswapLedgerEvents: { id, maxId, raw: rawEvents[0]!, protocolVersion: 1 } };
+  ? { dustLedgerEvents: { id, maxId, raw: rawEvents[0]!, protocolVersion: LEDGER9 } }
+  : { zswapLedgerEvents: { id, maxId, raw: rawEvents[0]!, protocolVersion: LEDGER9 } };
 const stub = (kind: Kind, stream: Stream.Stream<Row>) => {
   vi.spyOn(kind === "dust" ? indexer.DustLedgerEvents : indexer.ZswapEvents, "runWithBackpressure").mockReturnValue(stream);
 };
+// The event batches of a service's updates; the SDK merges in its chain-version watch, whose
+// signals carry no events.
+const eventsOf = (stream: Stream.Stream<unknown, unknown, Scope.Scope>) => stream.pipe(Stream.filter((update): update is Update => Array.isArray((update as { updates?: unknown }).updates)));
 const updates = (kind: Kind, timeout: number): Stream.Stream<Update, unknown, Scope.Scope> =>
-  service(kind, timeout).updates({ progress: { appliedIndex: 0n } } as never, secretKey as never);
+  eventsOf((service(kind, timeout) as { updates(state: never, keys: never): Stream.Stream<unknown, unknown, Scope.Scope> }).updates({ progress: { appliedIndex: 0n }, protocolVersion: BigInt(LEDGER9) } as never, secretKey as never));
 const collect = <A, E>(stream: Stream.Stream<A, E, Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(Stream.runCollect(stream)).pipe(Effect.timeout("10 seconds"))).then(Chunk.toReadonlyArray);
 
@@ -87,8 +94,8 @@ describe("DUST replay and backlog bounds", () => {
       const capability = DustSync.makeDefaultSyncCapability();
       let offset = 0;
       for (const size of sizes) {
-        const chunk = rawEvents.slice(offset, offset + size).map((raw, i) => ({ id: offset + i + 1, maxId: rawEvents.length, raw: L.Event.deserialize(Buffer.from(raw, "hex")) }));
-        [wallet] = capability.applyUpdate(wallet, { updates: chunk, secretKey, timestamp }); offset += size;
+        const chunk = rawEvents.slice(offset, offset + size).map((raw, i) => ({ id: offset + i + 1, maxId: rawEvents.length, raw, protocolVersion: LEDGER9 }));
+        [wallet] = capability.applyUpdate(wallet, events(chunk), ACTIVE); offset += size;
       }
       expect(offset).toBe(rawEvents.length);
       return { bytes: Buffer.from(wallet.state.serialize()).toString("hex"), applied: wallet.progress.appliedIndex, highest: wallet.progress.highestRelevantWalletIndex, connected: wallet.progress.isConnected };
@@ -102,19 +109,19 @@ describe("DUST replay and backlog bounds", () => {
   it.each([100, 1000])("measures an offline fee after the last outstanding event flushes at %ims", async timeout => {
     const capability = DustSync.makeDefaultSyncCapability();
     let state = CoreWallet.initEmpty(L.LedgerParameters.initialParameters().dust, secretKey, "undeployed");
-    const prefix = rawEvents.slice(0, -1).map((raw, i) => ({ id: i + 1, maxId: rawEvents.length, raw: L.Event.deserialize(Buffer.from(raw, "hex")) }));
-    [state] = capability.applyUpdate(state, { updates: prefix, secretKey, timestamp });
+    const prefix = rawEvents.slice(0, -1).map((raw, i) => ({ id: i + 1, maxId: rawEvents.length, raw, protocolVersion: LEDGER9 }));
+    [state] = capability.applyUpdate(state, events(prefix), ACTIVE);
     expect(state.progress.isStrictlyComplete()).toBe(false);
     let arrival = 0;
-    stub("dust", Stream.make({ dustLedgerEvents: { id: rawEvents.length, maxId: rawEvents.length, raw: rawEvents.at(-1)! } }).pipe(Stream.tap(() => Effect.sync(() => { arrival = performance.now(); })), Stream.concat(Stream.never)));
-    const stream = DustSync.makeDefaultSyncService({ networkId: "undeployed", indexerClientConnection: { indexerHttpUrl: "http://127.0.0.1:9/graphql", indexerWsUrl: "ws://127.0.0.1:9/graphql/ws" }, batchUpdates: { size: 1000, timeout } }).updates(state, secretKey);
+    stub("dust", Stream.make({ dustLedgerEvents: { id: rawEvents.length, maxId: rawEvents.length, raw: rawEvents.at(-1)!, protocolVersion: LEDGER9 } }).pipe(Stream.tap(() => Effect.sync(() => { arrival = performance.now(); })), Stream.concat(Stream.never)));
+    const stream = eventsOf(DustSync.makeDefaultSyncService({ networkId: "undeployed", indexerClientConnection: { indexerHttpUrl: "http://127.0.0.1:9/graphql", indexerWsUrl: "ws://127.0.0.1:9/graphql/ws" }, batchUpdates: { size: 1000, timeout } }).updates(state, secretKey));
     const [last] = await collect(stream.pipe(Stream.take(1)));
-    [state] = capability.applyUpdate(state, { ...last!, timestamp });
+    [state] = capability.applyUpdate(state, { ...(last as object), timestamp } as never, ACTIVE);
     expect(state.progress.isStrictlyComplete()).toBe(true);
     const synchronized = performance.now();
-    // Real patched SDK fee selection/balancing and simulator proving, with fresh ephemeral keys.
+    // Real SDK fee selection/balancing and simulator proving, with fresh ephemeral keys.
     // This excludes hosted transport/prover latency and does not send to any external chain.
-    const wallet = fixture.restored(makeDefaultV1SerializationCapability().serialize(state));
+    const wallet = await fixture.restored(Serialization.makeDefaultV2SerializationCapability().serialize(state));
     const fee = await fixture.balanced(wallet);
     expect([...fee.intents!.values()].some(intent => (intent.dustActions?.spends.length ?? 0) > 0)).toBe(true);
     metrics.push({ scenario: "dust-steady-state-simulator-fee", timeout, gateMs: Math.round(synchronized - arrival), balanceAndProveMs: Math.round(performance.now() - synchronized), totalMs: Math.round(performance.now() - arrival) });
