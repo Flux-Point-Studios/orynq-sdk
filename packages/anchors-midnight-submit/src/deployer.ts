@@ -7,13 +7,12 @@ import {
   assertRegistryDeployBytes,
   buildRegistryDeploy,
   registryInitialState,
-  runtimeLedger,
   type MidnightNetwork,
   type MidnightSource,
   type RegistryCircuit,
 } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { chainView, openJournal, type AnchorKey, type JournalRow } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
-import { assertConfirmedHash, assertKnownRuntime, confirmedSends, declaredFee, finalTransaction, finalizeChecked, type FeeWallet, type PreparedBytes, type Prover } from "./submission.js";
+import { LEDGER8_RUNTIMES, assertBuiltFor, assertConfirmedHash, assertKnownRuntime, confirmedSends, declaredFee, finalTransaction, finalizeChecked, type FeeWallet, type PreparedBytes, type Prover } from "./submission.js";
 
 // A registry deploy as it will be sent: the exact final bytes and what they do, for a human to
 // read before anything leaves.
@@ -115,16 +114,16 @@ export function registryDeployer(options: DeployerOptions) {
 
   // A deploy row fails only when the chain has carried it past its TTL plus the margin unseen,
   // with no contract at its address.
-  const confirmed = confirmedSends({ journal, chain, wallet, network, pollMillis: options.pollMillis ?? 3_000, ...(options.settleTimeoutMillis === undefined ? {} : { settleTimeoutMillis: options.settleTimeoutMillis }) }, key, "deploy", "a registry deploy");
+  const runtime = () => assertKnownRuntime(source, network, LEDGER8_RUNTIMES);
+  const confirmed = confirmedSends({ journal, chain, wallet, network, runtime, pollMillis: options.pollMillis ?? 3_000, ...(options.settleTimeoutMillis === undefined ? {} : { settleTimeoutMillis: options.settleTimeoutMillis }) }, key, "deploy", "a registry deploy");
 
   return {
     async prepare(): Promise<PreparedDeploy> {
-      const runtime = await assertKnownRuntime(source, network);
-      if (runtimeLedger(runtime) !== L) throw new Error(`ledger8-deploy-on-ledger9-network: the ${network} node runs runtime ${runtime}, which executes ledger 9 and deploys no ledger 8 contract; nothing was prepared`);
+      const specVersion = await runtime();
       const ttl = new Date(Date.now() + ttlMillis);
       const { tx } = buildRegistryDeploy({ networkId: network, ttl });
       const { bytes } = await finalizeChecked(wallet, prover, tx, ttl, (b) => void assertRegistryDeployBytes(b, "final"));
-      return describe(bytes, ttl, runtime, wallet.addresses.unshielded);
+      return describe(bytes, ttl, specVersion, wallet.addresses.unshielded);
     },
 
     // The deploy the journal still holds live once settled from the chain, rebuilt from its
@@ -134,7 +133,7 @@ export function registryDeployer(options: DeployerOptions) {
     async journalled(): Promise<PreparedDeploy | null> {
       const row = await confirmed.held();
       if (!row) return null;
-      return describe(row.bytes, row.ttl, await assertKnownRuntime(source, network), row.payer, { state: row.state, broadcasts: row.broadcasts, expired: row.expired });
+      return describe(row.bytes, row.ttl, await runtime(), row.payer, { state: row.state, broadcasts: row.broadcasts, expired: row.expired });
     },
 
     async submit(prepared: PreparedDeploy): Promise<Deployment> {
@@ -156,7 +155,7 @@ export function registryDeployer(options: DeployerOptions) {
       const deploys = assertRegistryDeployBytes(bytes, "final");
       assertConfirmedHash(snapshot);
       if (deploys !== confirmedAddress) throw new Error(`the bytes deploy ${deploys}, not the confirmed ${confirmedAddress}; nothing was sent`);
-      await assertKnownRuntime(source, network);
+      assertBuiltFor(bytes, await runtime());
       const submitted = await confirmed.submit(snapshot);
       const relocated = await journal.relocate(submitted.txHash, chain);
       if (relocated.state !== "landed" || relocated.height === undefined || relocated.blockHash === undefined) {

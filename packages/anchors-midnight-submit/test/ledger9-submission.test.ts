@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as L8 from "@midnight-ntwrk/ledger-v8";
 import * as L9 from "@midnightntwrk/ledger-v9";
 import { MIDNIGHT_REGISTRIES, headerFromRpc, headerHash, unprovenRegistryCall, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { TimeToDismissError, assertDismissable, assertKnownRuntime, registryStateOnNode } from "../src/submission.js";
+import { SUBMITTER_RUNTIME_SPEC_VERSIONS, TimeToDismissError, assertDismissable, assertKnownRuntime, registryStateOnNode } from "../src/submission.js";
 import { chain, deployed, deployed9, issue838Parameters, recordedDustSpend } from "./fakes.js";
 import { prover } from "./prover.js";
 
@@ -25,24 +25,24 @@ describe("assertKnownRuntime binds the runtime to the registry generation's span
   it("accepts 1000300 through block 3346138 and 2001100 from block 3346139 for generation 1", async () => {
     for (const [height, spec] of [[3346138, 1000300], [3346139, 2001100], [3400000, 2001100]] as const) {
       const { source } = mainnetNode(height, spec);
-      await expect(assertKnownRuntime(source, "mainnet", undefined, GENERATION_1.address)).resolves.toBe(spec);
+      await expect(assertKnownRuntime(source, "mainnet", SUBMITTER_RUNTIME_SPEC_VERSIONS, GENERATION_1.address)).resolves.toBe(spec);
     }
   });
 
   it("reads the runtime at the best block it names", async () => {
     const { source, calls, hash } = mainnetNode(3346139, 2001100);
-    await assertKnownRuntime(source, "mainnet", undefined, GENERATION_1.address);
+    await assertKnownRuntime(source, "mainnet", SUBMITTER_RUNTIME_SPEC_VERSIONS, GENERATION_1.address);
     expect(calls).toEqual([["chain_getHeader"], ["state_getRuntimeVersion", hash]]);
   });
 
   it.each([[3346138, 2001100], [3346139, 1000300], [3113818, 1000300]] as const)("refuses runtime %i's height %i outside generation 1's span for it", async (height, spec) => {
     const { source } = mainnetNode(height, spec);
-    await expect(assertKnownRuntime(source, "mainnet", undefined, GENERATION_1.address)).rejects.toThrow(`the mainnet node runs runtime ${spec} at block ${height}, which registry generation 1 does not run there`);
+    await expect(assertKnownRuntime(source, "mainnet", SUBMITTER_RUNTIME_SPEC_VERSIONS, GENERATION_1.address)).rejects.toThrow(`the mainnet node runs runtime ${spec} at block ${height}, which registry generation 1 does not run there`);
   });
 
   it("refuses a runtime the submitter does not write for before reading any height", async () => {
     const { source, calls } = mainnetNode(3346139, 1000400);
-    await expect(assertKnownRuntime(source, "mainnet")).rejects.toThrow("the mainnet node runs runtime 1000400, which is not one this submitter knows (1000300, 2001100)");
+    await expect(assertKnownRuntime(source, "mainnet", SUBMITTER_RUNTIME_SPEC_VERSIONS)).rejects.toThrow("the mainnet node runs runtime 1000400, which is not one this submitter knows (1000300, 2001100)");
     expect(calls).toEqual([["state_getRuntimeVersion"]]);
   });
 });

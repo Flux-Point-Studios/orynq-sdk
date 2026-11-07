@@ -34,6 +34,8 @@ export const finalTransaction = (bytes: Uint8Array): FinalTransaction => decodeT
 // The runtimes this submitter builds transactions for: ledger 8's transaction[v9] under 1000300,
 // ledger 9's transaction[v12] under 2001100.
 export const SUBMITTER_RUNTIME_SPEC_VERSIONS = [1000300, 2001100] as const;
+// The runtime a caller with only ledger 8 builders builds for.
+export const LEDGER8_RUNTIMES = [1000300] as const;
 
 // Whether a block at `height` running `specVersion` may carry a call to `registry`: within the
 // pinned generation's runtime spans, or, for a registry no generation pins, a runtime the decoder
@@ -44,16 +46,23 @@ export function runtimeAllowedAt(network: MidnightNetwork, registry: string, spe
   return { allowed: (KNOWN_RUNTIME_SPEC_VERSIONS as readonly number[]).includes(specVersion), generation: null };
 }
 
-// Refuses to build anything for a runtime outside `known`: checked before every submission, so a
-// runtime upgrade stops the submitter instead of producing transactions the chain or a verifier
-// cannot place. With a pinned `registry`, the runtime must also be the one its generation runs at
-// the node's best block, read at that block.
-export async function assertKnownRuntime(source: MidnightSource, network: MidnightNetwork, known: readonly number[] = SUBMITTER_RUNTIME_SPEC_VERSIONS, registry?: string): Promise<number> {
-  const pinned = registry !== undefined && MIDNIGHT_REGISTRIES[network].some((info) => info.address === registry);
-  const best = pinned ? headerFromRpc(await source.node.call<RpcHeader>("chain_getHeader")) : null;
-  const runtime = await source.node.call<unknown>("state_getRuntimeVersion", best ? [`0x${Buffer.from(headerHash(best)).toString("hex")}`] : []);
+// The runtime the node runs at block `at` (0x-prefixed hash), or at its best block.
+export async function runtimeAt(source: MidnightSource, at?: string): Promise<number> {
+  const runtime = await source.node.call<unknown>("state_getRuntimeVersion", at === undefined ? [] : [at]);
   const specVersion = runtime && typeof runtime === "object" ? (runtime as { specVersion?: unknown }).specVersion : undefined;
   if (typeof specVersion !== "number" || !Number.isSafeInteger(specVersion) || specVersion < 0) throw new Error("the node returned an invalid runtime version");
+  return specVersion;
+}
+
+// Refuses to build anything for a runtime outside `known`, the runtimes the caller has builders
+// for: checked before every submission, so a runtime upgrade stops the submitter instead of
+// producing transactions the chain or a verifier cannot place. With a pinned `registry`, the
+// runtime must also be the one its generation runs at the node's best block, read at that block.
+export async function assertKnownRuntime(source: MidnightSource, network: MidnightNetwork, known: readonly number[], registry?: string): Promise<number> {
+  if (!known?.length) throw new Error("the caller names no runtime it builds for, so it builds nothing");
+  const pinned = registry !== undefined && MIDNIGHT_REGISTRIES[network].some((info) => info.address === registry);
+  const best = pinned ? headerFromRpc(await source.node.call<RpcHeader>("chain_getHeader")) : null;
+  const specVersion = await runtimeAt(source, best ? `0x${Buffer.from(headerHash(best)).toString("hex")}` : undefined);
   if (!known.includes(specVersion)) {
     throw new Error(`the ${network} node runs runtime ${specVersion}, which is not one this submitter knows (${known.join(", ")})`);
   }
@@ -128,6 +137,8 @@ export function declaredFee(tx: FinalTransaction): bigint {
 
 interface Journalling {
   journal: Journal;
+  // The runtime the node runs now, refused unless the caller builds for it.
+  runtime: () => Promise<number>;
   chain: ChainView;
   wallet: FeeWallet;
   network: MidnightNetwork;
@@ -140,7 +151,7 @@ interface Journalling {
 // holds already passes their `txHash`, so another attempt's row comes back unsent and the wallet
 // never broadcasts bytes that caller did not prepare.
 export function journalOnce(journalling: Journalling, key: AnchorKey, prepare: () => Promise<Submission>, txHash?: string): Promise<JournalRow> {
-  const { journal, chain, wallet } = journalling;
+  const { journal, chain, wallet, runtime } = journalling;
   const payer = wallet.addresses.unshielded;
   return journal.submitOnce(key, {
     prepare: async () => ({ ...(await prepare()), payer }),
@@ -153,6 +164,14 @@ export function journalOnce(journalling: Journalling, key: AnchorKey, prepare: (
       const ttls = [...(final.intents?.values() ?? [])].map(intent => intent.ttl.getTime());
       if (!ttls.length || ttls.some(ttl => !Number.isFinite(ttl) || Math.max(Date.now(), head.time.getTime()) > ttl)) {
         throw new Error("Finalized chain time passed the transaction TTL; journalled bytes were retained and nothing was sent");
+      }
+      // Bytes journalled before a runtime upgrade are of the ledger they were built for, which
+      // the node may no longer execute.
+      const specVersion = await runtime();
+      try {
+        assertTransactionRuntime(bytes, specVersion);
+      } catch (error) {
+        throw new Error(`the journalled bytes cannot land: ${(error as Error).message}; the journalled bytes were retained and nothing was sent`);
       }
       await wallet.submit(final);
     },

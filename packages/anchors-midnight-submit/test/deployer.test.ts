@@ -567,7 +567,7 @@ describe("registryDeployer", () => {
 
   it("refuses to prepare while the node runs a runtime the submitter does not write for", async () => {
     const { deployer, wallet: w } = setup({ spec: 1000400 });
-    await expect(deployer.prepare()).rejects.toThrow(/runs runtime 1000400, which is not one this submitter knows \(1000300, 2001100\)/);
+    await expect(deployer.prepare()).rejects.toThrow(/runs runtime 1000400, which is not one this submitter knows \(1000300\)/);
     expect(w.submitted).toHaveLength(0);
     deployer.close();
   });
@@ -576,7 +576,7 @@ describe("registryDeployer", () => {
   // network deploys no ledger 8 contract.
   it("refuses to deploy the ledger 8 registry while the node runs ledger 9, before anything is paid", async () => {
     const { deployer, wallet: w } = setup({ spec: 2001100 });
-    await expect(deployer.prepare()).rejects.toThrow("ledger8-deploy-on-ledger9-network: the preprod node runs runtime 2001100, which executes ledger 9 and deploys no ledger 8 contract; nothing was prepared");
+    await expect(deployer.prepare()).rejects.toThrow("the preprod node runs runtime 2001100, which is not one this submitter knows (1000300)");
     expect([w.submitted.length, w.discarded.length]).toEqual([0, 0]);
     deployer.close();
   });

@@ -6,7 +6,7 @@ import { type MidnightNetwork, type MidnightSource } from "@fluxpointstudios/ory
 import { chainView, openJournal, type AnchorKey } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { assertProofDeploy, assertPostedProof, buildProofDeploy, buildProofCall, proofStateOnNode, proofProvider, PROOF_PINS, type ProofStatement } from "@fluxpointstudios/orynq-sdk-midnight-prover";
 import { PROOF_RELEASE_CAPABILITY, PROOF_RELEASE_EVENT, proofReleaseStatements } from "../runner/proof-release-intent.js";
-import { assertConfirmedHash, assertKnownRuntime, confirmedSends, declaredFee, finalTransaction, finalizeChecked, type FeeWallet, type PreparedBytes } from "./submission.js";
+import { LEDGER8_RUNTIMES, assertConfirmedHash, assertKnownRuntime, confirmedSends, declaredFee, finalTransaction, finalizeChecked, type FeeWallet, type PreparedBytes } from "./submission.js";
 
 export const PROOF_RELEASE_LABELS = ["deploy", "proveCapability", "proveRolling1"] as const;
 export type ProofReleaseLabel = typeof PROOF_RELEASE_LABELS[number];
@@ -66,7 +66,8 @@ export function proofReleaseOperator(options: {
     if (!(PROOF_RELEASE_LABELS as readonly string[]).includes(label)) throw new Error("Unknown proof release label");
     return label === "deploy" ? deployKey(network) : callKey(network, address(), label);
   };
-  const sender = (label: ProofReleaseLabel) => confirmedSends({ journal, chain, wallet, network, pollMillis: 3000 }, key(label), label, "a proof release transaction");
+  const runtime = () => assertKnownRuntime(source, network, LEDGER8_RUNTIMES);
+  const sender = (label: ProofReleaseLabel) => confirmedSends({ journal, chain, wallet, network, runtime, pollMillis: 3000 }, key(label), label, "a proof release transaction");
   const describe = (label: ProofReleaseLabel, bytes: Uint8Array, ttl: Date, payer?: string, held?: PreparedBytes["journal"]): PreparedProofRelease => {
     key(label);
     const final = finalTransaction(bytes);
@@ -83,7 +84,7 @@ export function proofReleaseOperator(options: {
     },
     async prepare(label: ProofReleaseLabel): Promise<PreparedProofRelease> {
       key(label);
-      await assertKnownRuntime(source, network);
+      await runtime();
       const notAfter = Math.floor(Math.min(Date.now() + 3540_000, expiresAt) / 1000);
       if (notAfter * 1000 <= Date.now()) throw new Error("Proof release approval has expired");
       const ttl = new Date(notAfter * 1000);
