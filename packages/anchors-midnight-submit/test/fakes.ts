@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L9 from "@midnightntwrk/ledger-v9";
 import { SyncProgress } from "@midnight-ntwrk/wallet-sdk-abstractions";
-import { buildRegistryDeploy, registryInitialState, headerHash, midnightExtrinsic, orderedTrieRoot, type BlockHeader, type IndexedTransaction, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { buildRegistryDeploy, decodeTransaction, registryInitialState, headerHash, midnightExtrinsic, midnightTransactionIn, orderedTrieRoot, type BlockHeader, type IndexedTransaction, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import ledger9Block from "../../anchors-midnight/src/__tests__/fixtures/mainnet-ledger9-block.json";
 import { batchOver, ledgerNode, type NodeVersion } from "../../anchors-midnight/src/__tests__/ledger-node.js";
 import { prover } from "./prover.js";
 
@@ -32,6 +34,43 @@ export const deployed = (() => {
   return { address, state: ([...tx.intents!.values()][0]!.actions[0] as L.ContractDeploy).initialState };
 })();
 
+// The deployed registry's state as a ledger 9 network holds it after the fork translated it: the
+// same data and authority, its operations carrying the same ledger 8 verifier keys.
+export const deployed9 = (() => {
+  const state = new L9.ContractState();
+  state.data = new L9.ChargedState(L9.StateValue.decode(deployed.state.data.state.encode()));
+  for (const name of ["anchor", "anchor_hiding"]) {
+    const op = new L9.ContractOperation();
+    op.verifierKey = deployed.state.operation(name)!.verifierKey;
+    state.setOperation(name, op);
+  }
+  state.maintenanceAuthority = new L9.ContractMaintenanceAuthority([], 1, 0n);
+  return { address: deployed.address, state };
+})();
+
+// Ledger 9's initial parameters with a time-to-dismiss allowance of 100 ns a byte over a 9.4 ms
+// floor. A registry call alone partitions as guaranteed under it, but the call with the one DUST
+// spend a fee adds takes 9.465 ms to dismiss at 8,079 bytes: midnight-ledger#838.
+export function issue838Parameters(): L9.LedgerParameters {
+  const bytes = L9.LedgerParameters.initialParameters().serialize();
+  // time_to_dismiss_per_byte and min_time_to_dismiss, picoseconds as SCALE compact integers in
+  // four-byte and five-byte modes.
+  bytes.set([0x82, 0x1a, 0x06, 0x00], 548);
+  bytes.set([0x00, 0x9e, 0x48, 0x30, 0x02], 553);
+  const parameters = L9.LedgerParameters.deserialize(bytes);
+  const limits = parameters.toString();
+  if (!limits.includes("time_to_dismiss_per_byte: 100.000ns") || !limits.includes("min_time_to_dismiss: 9.400ms")) throw new Error("the ledger 9 parameter layout moved");
+  return parameters;
+}
+
+// The one DUST spend of mainnet block 3346954's transaction, the first after the Ledger 9 upgrade:
+// fakes attach it as the fee a real wallet adds, which makes canonical final-form bytes, not a
+// valid new spend.
+export const recordedDustSpend = (() => {
+  const recorded = decodeTransaction(midnightTransactionIn(Buffer.from(ledger9Block.extrinsics[3]!.slice(2), "hex"))!).tx as L9.FinalizedTransaction;
+  return [...recorded.intents!.values()].find((intent) => intent.dustActions)!.dustActions!.spends[0]!;
+})();
+
 // The chain as the operator sees it: a node that runs `spec`, holds `state` at the registry and
 // every contract a landed deploy created, and answers for an address holding none as
 // midnight-node `node` does; and an indexer that lists every transaction once it has reached the
@@ -42,10 +81,14 @@ export const deployed = (() => {
 // node's finalized chain reaches that newest block, at height 1000, and holds each landed
 // transaction's block at its height and an anchorless block at every other; `reorg` moves a
 // landed transaction to another block, or off the chain, as a reorg that orphans its block does.
-export function chain({ spec = 1000300, state = deployed.state, node = "2.1.0", network = "preprod" }: { spec?: number; state?: L.ContractState; node?: NodeVersion; network?: "mainnet" | "preprod" } = {}) {
+// The indexer reports the head block's ledger parameters, ledger 9's initial ones unless
+// `parameters` names others (null: an indexer that serves none). `upgrade` changes the runtime
+// the node reports.
+export function chain({ spec: initialSpec = 1000300, state = deployed.state, node = "2.1.0", network = "preprod", parameters = L9.LedgerParameters.initialParameters() }: { spec?: number; state?: L.ContractState | L9.ContractState; node?: NodeVersion; network?: "mainnet" | "preprod"; parameters?: L.LedgerParameters | L9.LedgerParameters | null } = {}) {
+  let spec = initialSpec;
   const landed = new Map<string, IndexedTransaction>();
   let lags = false;
-  const contracts = new Map([[deployed.address, state]]);
+  const contracts = new Map<string, L.ContractState | L9.ContractState>([[deployed.address, state]]);
   let tip = 499;
   let blocks = new Map<number, { hash: string; header: BlockHeader; extrinsics: Uint8Array[] }>();
   const times = new Map<number, number>([[499, Date.now()]]);
@@ -93,12 +136,17 @@ export function chain({ spec = 1000300, state = deployed.state, node = "2.1.0", 
       async latestAction() {
         return null;
       },
+      ...(parameters === null ? {} : {
+        async ledgerParameters() {
+          return { height: tip, hash: blockAt(tip).hash, parameters: hex(parameters.serialize()) };
+        },
+      }),
       contractActions() {
         throw new Error("unexpected subscription");
       },
     },
   } as unknown as MidnightSource;
-  const land = (tx: L.FinalizedTransaction) => {
+  const land = (tx: L.FinalizedTransaction | L9.FinalizedTransaction) => {
     if ([...(tx.intents?.values() ?? [])].some((intent) => intent.ttl.getTime() < Date.now())) {
       throw new Error('test node: author_submitExtrinsic failed: {"code":1010,"message":"Invalid Transaction","data":"the TTL is behind the chain\'s time"}');
     }
@@ -120,13 +168,15 @@ export function chain({ spec = 1000300, state = deployed.state, node = "2.1.0", 
     else landed.delete(txHash);
     blocks = new Map();
   };
-  return { source, land, advance, lag, reorg, blockHash: (height: number) => blockAt(height).hash };
+  const upgrade = (to: number) => void (spec = to);
+  return { source, land, advance, lag, reorg, upgrade, blockHash: (height: number) => blockAt(height).hash };
 }
 
 // A wallet named `name` that binds without adding a fee, records what it is asked to submit (and
 // what the journal held at that moment), and lands it on `net`. `tamper` replaces the final bytes.
+type Final = L.FinalizedTransaction | L9.FinalizedTransaction;
 export function wallet(net: ReturnType<typeof chain>, journalPath: () => string, tamper?: (tx: L.FinalizedTransaction) => L.FinalizedTransaction, name = "a") {
-  const submitted: L.FinalizedTransaction[] = [];
+  const submitted: Final[] = [];
   const discarded: string[] = [];
   const rowsAtSubmit: unknown[] = [];
   return {
@@ -134,18 +184,24 @@ export function wallet(net: ReturnType<typeof chain>, journalPath: () => string,
     submitted,
     discarded,
     rowsAtSubmit,
-    async payFee(tx: L.Transaction<L.SignatureEnabled, L.Proof, L.PreBinding>) {
+    async payFee(tx: L.Transaction<L.SignatureEnabled, L.Proof, L.PreBinding> | L9.Transaction<L9.SignatureEnabled, L9.Proof, L9.PreBinding>): Promise<Final> {
+      if (tx instanceof L9.Transaction) {
+        const intents = tx.intents!, intent = intents.get(1)!;
+        intent.dustActions = new L9.DustActions("signature", "proof", new Date(intent.ttl.getTime() - 60_000), [recordedDustSpend], []);
+        tx.intents = intents;
+        return tx.bind();
+      }
       const bound = tx.bind();
       return tamper ? tamper(bound) : bound;
     },
-    async submit(tx: L.FinalizedTransaction) {
+    async submit(tx: Final) {
       const db = new DatabaseSync(journalPath());
       rowsAtSubmit.push(db.prepare("select tx_hash, state from attempts").all());
       db.close();
       submitted.push(tx);
       net.land(tx);
     },
-    async discard(tx: L.FinalizedTransaction) {
+    async discard(tx: Final) {
       discarded.push(tx.transactionHash());
     },
   };

@@ -7,6 +7,7 @@ import {
   assertRegistryDeployBytes,
   buildRegistryDeploy,
   registryInitialState,
+  runtimeLedger,
   type MidnightNetwork,
   type MidnightSource,
   type RegistryCircuit,
@@ -88,7 +89,7 @@ export function registryDeployer(options: DeployerOptions) {
 
   const describe = (bytes: Uint8Array, ttl: Date, runtime: number, payer: string | undefined, journal?: PreparedDeploy["journal"]): PreparedDeploy => {
     const address = assertRegistryDeployBytes(bytes, "final");
-    const final = finalTransaction(bytes);
+    const final = L.Transaction.deserialize<L.SignatureEnabled, L.Proof, L.Binding>("signature", "proof", "binding", bytes);
     const deploy = [...final.intents!.values()].flatMap((intent) => intent.actions).find((a): a is L.ContractDeploy => a instanceof L.ContractDeploy)!;
     const { committee, threshold, counter } = deploy.initialState.maintenanceAuthority;
     const verifierKeys = Object.fromEntries(
@@ -119,6 +120,7 @@ export function registryDeployer(options: DeployerOptions) {
   return {
     async prepare(): Promise<PreparedDeploy> {
       const runtime = await assertKnownRuntime(source, network);
+      if (runtimeLedger(runtime) !== L) throw new Error(`ledger8-deploy-on-ledger9-network: the ${network} node runs runtime ${runtime}, which executes ledger 9 and deploys no ledger 8 contract; nothing was prepared`);
       const ttl = new Date(Date.now() + ttlMillis);
       const { tx } = buildRegistryDeploy({ networkId: network, ttl });
       const { bytes } = await finalizeChecked(wallet, prover, tx, ttl, (b) => void assertRegistryDeployBytes(b, "final"));

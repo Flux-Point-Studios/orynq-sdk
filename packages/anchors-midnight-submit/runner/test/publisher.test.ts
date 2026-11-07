@@ -201,7 +201,7 @@ describe("standing delivery after retained publication", () => {
       readCensus: async () => currentCensus, publication: options(), verify: () => ({ source: rpcOnlySource({ network: "preprod", node: urls[0]!, hints: [] }) }), clock: () => clock.wallTime }) };
   }
   beforeEach(() => {
-    follower = openFollowerState(join(directory, "follower.sqlite"), { network: "preprod", genesis, registry, author: batchScope.author, policyDigest: followerPolicyDigest([]), runtimeSpecVersion: 1000300 });
+    follower = openFollowerState(join(directory, "follower.sqlite"), { network: "preprod", genesis, registry, author: batchScope.author, policyDigest: followerPolicyDigest([]) });
     follower.recordVerifiedBlock(block(10, start - 24 * 60 * minute)); follower.recordVerifiedBlock(block(11, start));
     clock = { wallTime: start, monotonicMillis: 0 }; policy = batchAuthors(); currentCensus = census;
     session = openStandingSession({ state: follower, verifiedStart: block(11, start), authors: () => policy, clock: () => ({ ...clock }) });

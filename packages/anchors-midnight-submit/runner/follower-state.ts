@@ -2,17 +2,17 @@ import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { checkpointAdvanceId, checkpointId, decodeAnchorTransaction, type CheckpointAdvance, type FinalityCheckpoint, type KnownAuthors, type MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { KNOWN_RUNTIME_SPEC_VERSIONS, checkpointAdvanceId, checkpointId, decodeAnchorTransaction, type CheckpointAdvance, type FinalityCheckpoint, type KnownAuthors, type MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { TTL_MARGIN_MILLIS, type ChainView } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
-import { declaredFee, finalTransaction } from "../src/submission.js";
+import { declaredFee, finalTransaction, runtimeAllowedAt } from "../src/submission.js";
 import { followerPolicyDigest, type FollowerBlock } from "./follower-block.js";
 import { assertStandingFeeBudget, type ConfirmedFee, type StandingFeeFacts } from "./standing-budget.js";
 import { assertStandingClock, type StandingClockPoint } from "./standing-clock.js";
 import { assertStandingTransaction } from "./standing-transaction.js";
 import { authenticateCheckpointHistory } from "./checkpoint-history.js";
 
-interface Scope { network: MidnightNetwork; genesis: string; registry: string; author: string; policyDigest: string; runtimeSpecVersion: number }
-interface BlockRow { height: number; hash: string; parent_hash: string; timestamp: number; digest: string }
+interface Scope { network: MidnightNetwork; genesis: string; registry: string; author: string; policyDigest: string }
+interface BlockRow { height: number; hash: string; parent_hash: string; timestamp: number; digest: string; runtime: number }
 interface Observation { height: number; blockHash: string; extrinsicIndex: number; txHash: string; status: "SUCCESS" | "PARTIAL_SUCCESS" | "FAILURE"; fee: bigint; policyKey: boolean }
 interface AttemptRow { tx_hash: string; bytes: Uint8Array; ttl: number; fee: string; commitment: string; boundary_height: number; boundary_hash: string }
 interface Admission { txHash: string; policySerial: number; head: { height: number; hash: string } }
@@ -23,6 +23,8 @@ export class StandingHeadAdvanced extends Error {
   constructor() { super("Standing follower advanced during the check; retry with its new head"); }
 }
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
+// A chain runs the runtimes the decoder knows in the order it lists them.
+const runtimeOrder = (specVersion: number) => (KNOWN_RUNTIME_SPEC_VERSIONS as readonly number[]).indexOf(specVersion);
 const isHash = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 const SCHEMA = `
 create table follower_scope(id integer primary key check(id=1),scope text not null);
@@ -42,11 +44,14 @@ create table follower_policies(id integer primary key check(id=1),serial integer
 const CHECKPOINT_SCHEMA = `
 create table follower_checkpoints(root_id text not null,sequence integer not null check(sequence>0),digest text not null unique,artifact text not null,primary key(root_id,sequence)) without rowid;
 `;
+// Schemas 1 to 3 scoped a follower to runtime 1000300 and recorded only blocks it ran, so each
+// earlier block ran 1000300; schema 4 records each block's runtime instead.
+const RUNTIME_SCHEMA = "alter table follower_blocks add column runtime integer not null default 1000300;";
 
 // The caller records only complete results returned by verifyFollowerBlock.
 export function openFollowerState(path: string, input: Scope) {
-  const scope: Scope = { network: input.network, genesis: input.genesis, registry: input.registry, author: input.author, policyDigest: input.policyDigest, runtimeSpecVersion: input.runtimeSpecVersion };
-  if (!["mainnet", "preprod"].includes(scope.network) || ![scope.genesis, scope.registry, scope.author, scope.policyDigest].every(isHash) || scope.runtimeSpecVersion !== 1000300) throw new Error("Invalid follower scope");
+  const scope: Scope = { network: input.network, genesis: input.genesis, registry: input.registry, author: input.author, policyDigest: input.policyDigest };
+  if (!["mainnet", "preprod"].includes(scope.network) || ![scope.genesis, scope.registry, scope.author, scope.policyDigest].every(isHash)) throw new Error("Invalid follower scope");
   const parent = lstatSync(dirname(path));
   if (!parent.isDirectory() || parent.mode & 0o077 || (process.getuid && parent.uid !== process.getuid())) throw new Error("Follower directory must be private and owned by the caller");
   const guard = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
@@ -63,9 +68,14 @@ export function openFollowerState(path: string, input: Scope) {
     if (version === 0) {
       if (db.prepare("select 1 from sqlite_master where type='table' and name not like 'sqlite_%'").get()) throw new Error("Existing follower database has no schema version");
       db.exec(SCHEMA); db.prepare("insert into follower_scope(id,scope) values(1,?)").run(JSON.stringify(scope));
-    } else if (version !== 1 && version !== 2 && version !== 3) throw new Error("Unsupported follower schema version");
+    } else if (version !== 1 && version !== 2 && version !== 3 && version !== 4) throw new Error("Unsupported follower schema version");
     if (version === 0 || version === 1) { db.exec(ADMISSION_SCHEMA); db.exec("pragma user_version=2"); }
     if (version === 0 || version === 1 || version === 2) { db.exec(CHECKPOINT_SCHEMA); db.exec("pragma user_version=3"); }
+    if (version !== 4) {
+      if (version !== 0 && db.prepare("select scope from follower_scope where id=1").get()?.scope !== JSON.stringify({ ...scope, runtimeSpecVersion: 1000300 })) throw new Error("Follower scope differs");
+      db.prepare("update follower_scope set scope=? where id=1").run(JSON.stringify(scope));
+      db.exec(RUNTIME_SCHEMA); db.exec("pragma user_version=4");
+    }
     const tables = db.prepare("select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name").all().map(row => row.name).join(",");
     if (tables !== "follower_admissions,follower_attempts,follower_batch_calls,follower_blocks,follower_checkpoints,follower_observations,follower_policies,follower_scope") throw new Error("Follower schema tables differ");
     if (db.prepare("select scope from follower_scope where id=1").get()?.scope !== JSON.stringify(scope)) throw new Error("Follower scope differs");
@@ -202,11 +212,14 @@ export function openFollowerState(path: string, input: Scope) {
       return rows.map(row => String(row.commitment));
     },
     assertAdmissionHistory,
+    runtimeAllowedAt: (specVersion: number, height: number) => runtimeAllowedAt(scope.network, scope.registry, specVersion, height).allowed,
     observeStandingPolicy: (authors: KnownAuthors) => retainPolicy(authors),
     rememberStandingPolicy: (authors: KnownAuthors) => retainPolicy(authors, true),
     recordVerifiedBlock(block: FollowerBlock) {
       if (block.network !== scope.network || block.policyDigest !== scope.policyDigest) throw new Error("Verified follower block scope differs from the durable trust policy");
-      if (!Number.isSafeInteger(block.block.height) || block.block.height < 1 || !isHash(block.block.hash) || !isHash(block.parentHash) || !Number.isSafeInteger(block.timestamp) || block.timestamp < 0 || block.runtimeSpecVersion !== scope.runtimeSpecVersion || !Array.isArray(block.sends) || block.sends.length > 65_536) throw new Error("Invalid follower block facts");
+      if (!Number.isSafeInteger(block.block.height) || block.block.height < 1 || !isHash(block.block.hash) || !isHash(block.parentHash) || !Number.isSafeInteger(block.timestamp) || block.timestamp < 0 || !Array.isArray(block.sends) || block.sends.length > 65_536) throw new Error("Invalid follower block facts");
+      const runtime = runtimeAllowedAt(scope.network, scope.registry, block.runtimeSpecVersion, block.block.height);
+      if (!runtime.allowed) throw new Error(runtime.generation === null ? `Follower block ${block.block.height} runs runtime ${block.runtimeSpecVersion}, which the decoder does not know` : `Follower block ${block.block.height} runs runtime ${block.runtimeSpecVersion}, which registry generation ${runtime.generation} does not run there`);
       const indices = new Set<number>();
       const sends = block.sends.map(send => {
         if (!Number.isSafeInteger(send.extrinsicIndex) || send.extrinsicIndex < 0 || send.extrinsicIndex >= 65_536 || indices.has(send.extrinsicIndex) || !["SUCCESS", "PARTIAL_SUCCESS", "FAILURE"].includes(send.status)) throw new Error("Invalid follower send facts");
@@ -227,7 +240,8 @@ export function openFollowerState(path: string, input: Scope) {
         if (existing && (existing.hash !== block.block.hash || existing.digest !== digest)) throw new Error("Verified replay differs from its durable block");
         if (!existing) {
           if (previous && (block.block.height !== previous.height + 1 || block.parentHash !== previous.hash || block.timestamp < previous.timestamp)) throw new Error("Follower block is not contiguous with its durable cursor");
-          db.prepare("insert into follower_blocks(height,hash,parent_hash,timestamp,digest) values(?,?,?,?,?)").run(block.block.height, block.block.hash, block.parentHash, block.timestamp, digest);
+          if (previous && runtimeOrder(block.runtimeSpecVersion) < runtimeOrder(previous.runtime)) throw new Error(`Follower block ${block.block.height} runs runtime ${block.runtimeSpecVersion} after its parent ran ${previous.runtime}`);
+          db.prepare("insert into follower_blocks(height,hash,parent_hash,timestamp,digest,runtime) values(?,?,?,?,?,?)").run(block.block.height, block.block.hash, block.parentHash, block.timestamp, digest, block.runtimeSpecVersion);
           const insert = db.prepare("insert into follower_observations(block_hash,extrinsic_index,tx_hash,status,fee,policy_key) values(?,?,?,?,?,?)");
           for (const send of sends) insert.run(block.block.hash, send.extrinsicIndex, send.txHash, send.status, send.fee.toString(), Number(send.policyKey));
         }
@@ -259,7 +273,7 @@ export function openFollowerState(path: string, input: Scope) {
         }
         assertStandingClock(policy.started, policy.current);
         if (followerPolicyDigest(policy.authors.checkpoints(scope.network)) !== scope.policyDigest) throw new Error("Standing author checkpoints differ from the follower finality policy");
-        const admitted = assertStandingTransaction(bytes, { ...scope, commitment: policy.commitment }, { height: snapshot.height, timestamp: snapshot.timestamp, runtimeSpecVersion: scope.runtimeSpecVersion }, policy.authors);
+        const admitted = assertStandingTransaction(bytes, { ...scope, commitment: policy.commitment }, { height: snapshot.height, timestamp: snapshot.timestamp, runtimeSpecVersion: snapshot.runtime }, policy.authors);
         if (admitted.earliestTtl <= policy.current.wallTime) throw new Error("Standing serialized TTL has passed on the host clock");
         const floor = db.prepare("select height from follower_blocks order by height limit 1").get()!;
         const windows = policy.authors.authors(scope.network).filter(author => author.key === scope.author && author.role === "batch");

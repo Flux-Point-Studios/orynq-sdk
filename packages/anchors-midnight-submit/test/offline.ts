@@ -18,6 +18,7 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L9 from "@midnightntwrk/ledger-v9";
 import { decodeAnchorTransaction, midnightSource, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints, type VerifyResult } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { ledgerNode } from "../../anchors-midnight/src/__tests__/ledger-node.js";
 import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS } from "../src/custody.js";
@@ -234,7 +235,8 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     async registerNightForDust() {
       return null;
     },
-    async payFee(tx) {
+    async payFee(tx: Parameters<OperatorWallet["payFee"]>[0]) {
+      if (tx instanceof L9.Transaction) throw new Error("the offline wallet pays no ledger 9 fee");
       return tx.bind();
     },
     async submit(tx) {
@@ -245,7 +247,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       if ([...tx.intents!.values()].some((intent) => intent.ttl.getTime() < Date.now())) {
         throw new Error('offline node: author_submitExtrinsic failed: {"code":1010,"message":"Invalid Transaction","data":"the TTL is behind the chain\'s time"}');
       }
-      const deploy = [...tx.intents!.values()].flatMap((intent) => intent.actions).find((a): a is L.ContractDeploy => a instanceof L.ContractDeploy);
+      const deploy = [...tx.intents!.values()].flatMap((intent): unknown[] => [...intent.actions]).find((a): a is L.ContractDeploy => a instanceof L.ContractDeploy);
       if (!deploy && FAULTS.has("refuse-anchor")) {
         throw new Error('offline node: author_submitExtrinsic failed: {"code":1010,"message":"Invalid Transaction","data":"Custom error: 170"}');
       }

@@ -1,6 +1,6 @@
-import { decodeAnchorTransaction, MIDNIGHT_REGISTRIES, type KnownAuthors, type MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { assertTransactionRuntime, decodeAnchorTransaction, MIDNIGHT_REGISTRIES, type KnownAuthors, type MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { MAINNET_BATCH_AUTHOR_KEYS, RETIRED_AUTHOR_KEYS } from "../src/custody.js";
-import { declaredFee, finalTransaction } from "../src/submission.js";
+import { declaredFee, finalTransaction, runtimeAllowedAt } from "../src/submission.js";
 
 interface Scope { network: MidnightNetwork; registry: string; author: string; commitment: string }
 interface Head { height: number; timestamp: number; runtimeSpecVersion: number }
@@ -9,8 +9,10 @@ export function assertStandingTransaction(bytes: Uint8Array, scope: Scope, head:
   if (!["mainnet", "preprod"].includes(scope.network) || ![scope.registry, scope.author, scope.commitment].every(value => /^[a-f0-9]{64}$/.test(value))) throw new Error("Invalid standing transaction scope");
   if (scope.network === "mainnet" && scope.registry !== MIDNIGHT_REGISTRIES.mainnet[0]?.address) throw new Error("Standing registry is outside the approved mainnet generation");
   if (!Number.isSafeInteger(head.height) || head.height < 1 || !Number.isSafeInteger(head.timestamp) || head.timestamp < 0) throw new Error("Invalid authenticated standing head");
-  if (head.runtimeSpecVersion !== 1000300) throw new Error("Standing runtime is unsupported");
+  const runtime = runtimeAllowedAt(scope.network, scope.registry, head.runtimeSpecVersion, head.height);
+  if (!runtime.allowed) throw new Error(runtime.generation === null ? "Standing runtime is unsupported" : `Standing runtime ${head.runtimeSpecVersion} at block ${head.height} is outside registry generation ${runtime.generation}'s spans`);
   if (!(bytes instanceof Uint8Array) || !bytes.length || bytes.length > 16 * 1024 * 1024) throw new Error("Invalid standing transaction bytes");
+  assertTransactionRuntime(bytes, head.runtimeSpecVersion);
   const decoded = decodeAnchorTransaction(bytes, [scope.registry]), tx = finalTransaction(bytes), intents = [...(tx.intents?.values() ?? [])], call = decoded.calls[0];
   if (decoded.touches.length || decoded.calls.length !== 1 || call!.entryPoint !== "anchor" || call!.kind !== 3 || call!.author !== scope.author || call!.commitment !== scope.commitment) throw new Error("Transaction is outside the intended standing batch scope");
   if (intents.reduce((count, intent) => count + intent.actions.length, 0) !== 1) throw new Error("Standing transaction contains unrelated contract actions");

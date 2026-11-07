@@ -8,17 +8,18 @@ import unittest
 
 spec=importlib.util.spec_from_file_location('standing_accounting',Path(__file__).parents[1]/'standing_accounting.py')
 accounting=importlib.util.module_from_spec(spec);spec.loader.exec_module(accounting)
-SCOPE=dict(network='preprod',genesis='01'*32,registry='02'*32,author='03'*32,policyDigest='04'*32,runtimeSpecVersion=1000300)
+SCOPE=dict(network='preprod',genesis='01'*32,registry='02'*32,author='03'*32,policyDigest='04'*32)
 NOW=2*86400000
 SCHEMA='''
-pragma user_version=2;
+pragma user_version=4;
 create table follower_scope(id integer primary key,scope text);
-create table follower_blocks(height integer primary key,hash text,parent_hash text,timestamp integer,digest text,batch_indexed integer);
+create table follower_blocks(height integer primary key,hash text,parent_hash text,timestamp integer,digest text,batch_indexed integer,runtime integer);
 create table follower_observations(block_hash text,extrinsic_index integer,tx_hash text,status text,fee text,policy_key integer);
 create table follower_attempts(tx_hash text primary key,bytes blob,ttl integer,fee text,commitment text,boundary_height integer,boundary_hash text);
 create table follower_admissions(tx_hash text,policy_serial integer,head_height integer,head_hash text);
 create table follower_batch_calls(block_hash text,extrinsic_index integer,commitment text,ttl integer);
 create table follower_policies(id integer primary key,serial integer,digest text,conflicted integer);
+create table follower_checkpoints(root_id text,sequence integer,digest text,artifact text);
 '''
 
 class AccountingTests(unittest.TestCase):
@@ -29,7 +30,7 @@ class AccountingTests(unittest.TestCase):
         os.chmod(self.path,0o600)
         self.db.execute('insert into follower_scope values (1,?)',(json.dumps(SCOPE),))
         self.db.execute('insert into follower_policies values (1,1,?,0)',('08'*32,))
-        self.db.executemany('insert into follower_blocks values (?,?,?,?,?,1)',[(1,'05'*32,'00'*32,NOW-86400001,'09'*32),(2,'06'*32,'05'*32,NOW,'09'*32)])
+        self.db.executemany('insert into follower_blocks values (?,?,?,?,?,1,1000300)',[(1,'05'*32,'00'*32,NOW-86400001,'09'*32),(2,'06'*32,'05'*32,NOW,'09'*32)])
         self.db.commit();self.status_head=dict(height=2,hash='06'*32)
     def attempt(self,n,fee='10000000000000',ttl=1):
         self.db.execute('insert into follower_attempts values (?,X\'00\',?,?,?,1,?)',(f'{n:064x}',ttl,fee,'07'*32,'05'*32));self.db.commit()
@@ -64,6 +65,10 @@ class AccountingTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.read()
         self.db.execute('pragma user_version=99');self.db.commit()
         with self.assertRaises(ValueError):self.read()
+    def test_a_follower_from_before_runtimes_were_recorded_is_refused(self):
+        self.assertEqual(self.read()['state'],'ready')
+        self.db.execute('pragma user_version=3');self.db.commit()
+        with self.assertRaisesRegex(ValueError,'unsupported accounting schema'):self.read()
     def test_read_only_snapshot_can_advance_beyond_the_last_status_head(self):
         self.status_head=dict(height=1,hash='05'*32)
         before=self.path.read_bytes();result=self.read();self.assertEqual(result['head']['height'],2);self.assertEqual(before,self.path.read_bytes())

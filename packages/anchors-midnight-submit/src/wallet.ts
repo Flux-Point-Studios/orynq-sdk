@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L9 from "@midnightntwrk/ledger-v9";
+import type { FinalTransaction } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { InMemoryTransactionHistoryStorage } from "@midnight-ntwrk/wallet-sdk-abstractions";
 import { MidnightBech32m, DustAddress } from "@midnight-ntwrk/wallet-sdk-address-format";
 import { PendingTransactions } from "@midnight-ntwrk/wallet-sdk-capabilities";
@@ -86,15 +88,16 @@ export interface OperatorWallet {
   // Registers every unregistered NIGHT UTXO to generate DUST for this wallet; null when none is.
   registerNightForDust(): Promise<string | null>;
   // Pays the transaction's fee from DUST (proving the DUST spend in-process) and binds it: the
-  // final bytes, whose DUST the wallet holds as spent.
+  // final bytes, whose DUST the wallet holds as spent. wallet-sdk 1.x pays ledger 8 fees only.
   payFee(tx: UnboundTransaction, ttl: Date): Promise<L.FinalizedTransaction>;
+  payFee(tx: UnboundTransaction | L9.Transaction<L9.SignatureEnabled, L9.Proof, L9.PreBinding>, ttl: Date): Promise<FinalTransaction>;
   // Hands final bytes to the node. The node's refusal of the first delivery of bytes this wallet
   // balanced frees the DUST they spend, and those bytes are never sent again; any other failure,
   // or a refusal of bytes some delivery may already have left with a node, keeps it held.
-  submit(tx: L.FinalizedTransaction): Promise<void>;
+  submit(tx: FinalTransaction): Promise<void>;
   // Frees the DUST of final bytes this wallet balanced and never handed to a node, which are then
   // never sent; already freed bytes are a no-op, and other bytes are refused.
-  discard(tx: L.FinalizedTransaction): Promise<void>;
+  discard(tx: FinalTransaction): Promise<void>;
   // Stops syncing; a synced wallet with a state file saves first, and returns what that save did.
   close(): Promise<StateSave | null>;
 }
@@ -341,7 +344,12 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     freed.add(tx.transactionHash());
     await facade.revert(tx);
   };
-  const submit = async (tx: L.FinalizedTransaction) => {
+  const ledger8 = <T>(tx: T | L9.Transaction<L9.SignatureEnabled, L9.Proof, L9.Bindingish>): T => {
+    if (tx instanceof L9.Transaction) throw new Error("wallet-sdk 1.x pays, sends and frees no ledger 9 transaction; nothing was paid or sent");
+    return tx;
+  };
+  const submit = async (given: FinalTransaction) => {
+    const tx = ledger8<L.FinalizedTransaction>(given);
     const txHash = tx.transactionHash();
     if (freed.has(txHash)) throw new Error(`transaction ${txHash} was refused or discarded, and the DUST it spent freed; its bytes are never sent again`);
     const first = unsent.delete(txHash);
@@ -434,7 +442,8 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     // the DUST trees as the chain held them then: with only part of a block's events applied, the
     // wallet's trees match no state the chain ever held. So the fee waits until the wallet has
     // applied every event the indexer's last message announced.
-    async payFee(tx, ttl) {
+    async payFee(given: UnboundTransaction | L9.Transaction<L9.SignatureEnabled, L9.Proof, L9.PreBinding>, ttl: Date): Promise<L.FinalizedTransaction> {
+      const tx = ledger8<UnboundTransaction>(given);
       await until(
         (s) => s.dust.progress.isStrictlyComplete(),
         DUST_SYNC_WAIT_MS,
@@ -443,7 +452,8 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
       return finalize(await facade.balanceUnboundTransaction(tx, keys, { ttl, tokenKindsToBalance: ["dust"] }));
     },
     submit,
-    async discard(tx) {
+    async discard(given) {
+      const tx = ledger8<L.FinalizedTransaction>(given);
       const txHash = tx.transactionHash();
       if (freed.has(txHash)) return;
       if (!unsent.delete(txHash)) throw new Error(`transaction ${txHash} was handed to a node, or not balanced by this wallet since it opened, so its DUST stays held until the chain settles it`);

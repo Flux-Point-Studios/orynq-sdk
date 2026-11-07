@@ -6,7 +6,7 @@ import { openStandingStatus } from "../standing-status.js";
 import { syncWithCheckpoints } from "../../src/sync.js";
 import type { OperatorWallet } from "../../src/wallet.js";
 const roots: string[] = [];
-const scope={mode:"anchor" as const,network:"preprod" as const,genesis:"01".repeat(32),registry:"02".repeat(32),author:"03".repeat(32),policyDigest:"04".repeat(32),runtimeSpecVersion:1000300};
+const scope={mode:"anchor" as const,network:"preprod" as const,genesis:"01".repeat(32),registry:"02".repeat(32),author:"03".repeat(32),policyDigest:"04".repeat(32)};
 const root=()=>{const path=mkdtempSync(join(tmpdir(),"standing-status-"));roots.push(path);return path;};
 afterEach(()=>{for(const path of roots.splice(0))rmSync(path,{recursive:true,force:true});});
 it("retains cap episodes across missed polls and service restarts without repeating an active episode",()=>{
@@ -59,3 +59,12 @@ it("keeps lifetime financial history out of bounded process status",()=>{
   expect(()=>Reflect.apply(status.sample,status,[{head:null},historical])).not.toThrow();
   expect(status.read()).not.toHaveProperty("accounting");status.phase("stopped");
 });
+it("keeps the cap history a follower scoped to runtime 1000300 retained, and refuses one retained under any other runtime",()=>{
+  for(const [runtime,opens] of [[1000300,true],[2001100,false]] as const){
+    const directory=root(),status=openStandingStatus(directory,scope,()=>1000);status.hold("controller","dust-cap");
+    const path=join(directory,"status.json"),saved=JSON.parse(readFileSync(path,"utf8"));saved.scope={...saved.scope,runtimeSpecVersion:runtime};writeFileSync(path,JSON.stringify(saved),{mode:0o600});
+    if(opens)expect(openStandingStatus(directory,scope,()=>2000).read()).toMatchObject({scope:{network:scope.network,author:scope.author},cap:{sequence:1}});
+    else expect(()=>openStandingStatus(directory,scope,()=>2000)).toThrow(/scope/);
+  }
+});
+

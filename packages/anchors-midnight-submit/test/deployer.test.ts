@@ -565,10 +565,19 @@ describe("registryDeployer", () => {
     deployer.close();
   });
 
-  it.each([1000400, 2001100])("refuses to prepare while the node runs runtime %i, which the submitter does not write for", async (spec) => {
-    const { deployer, wallet: w } = setup({ spec });
-    await expect(deployer.prepare()).rejects.toThrow(new RegExp(`runs runtime ${spec}, which is not one this submitter knows \\(1000300\\)`));
+  it("refuses to prepare while the node runs a runtime the submitter does not write for", async () => {
+    const { deployer, wallet: w } = setup({ spec: 1000400 });
+    await expect(deployer.prepare()).rejects.toThrow(/runs runtime 1000400, which is not one this submitter knows \(1000300, 2001100\)/);
     expect(w.submitted).toHaveLength(0);
+    deployer.close();
+  });
+
+  // The registry is a ledger 8 contract: its verifier keys are compactc 0.31.1's, and a ledger 9
+  // network deploys no ledger 8 contract.
+  it("refuses to deploy the ledger 8 registry while the node runs ledger 9, before anything is paid", async () => {
+    const { deployer, wallet: w } = setup({ spec: 2001100 });
+    await expect(deployer.prepare()).rejects.toThrow("ledger8-deploy-on-ledger9-network: the preprod node runs runtime 2001100, which executes ledger 9 and deploys no ledger 8 contract; nothing was prepared");
+    expect([w.submitted.length, w.discarded.length]).toEqual([0, 0]);
     deployer.close();
   });
 

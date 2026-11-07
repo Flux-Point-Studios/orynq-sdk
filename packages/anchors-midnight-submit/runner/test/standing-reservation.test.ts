@@ -10,7 +10,7 @@ import { parseDust } from "../../src/preflight.js";
 import { batchAuthors, batchBytes, batchScope } from "./batch-fixture.js";
 
 const h = (n: number) => n.toString(16).padStart(64, "0"), now = 1_800_000_000_000, minute = 60_000, day = 24 * 60 * minute;
-const scope = { ...batchScope, genesis: h(1), policyDigest: followerPolicyDigest([]), runtimeSpecVersion: 1000300 };
+const scope = { ...batchScope, genesis: h(1), policyDigest: followerPolicyDigest([]) };
 const roots: string[] = [], handles: ReturnType<typeof openFollowerState>[] = [];
 const block = (height: number, timestamp: number): FollowerBlock => ({ network: scope.network, policyDigest: scope.policyDigest, block: { height, hash: h(height) }, parentHash: h(height - 1), timestamp, runtimeSpecVersion: 1000300, sends: [] });
 function setup() {
@@ -134,7 +134,8 @@ it("reserves the exact serialized paid fee and rolls back a daily-cap refusal", 
 it("migrates provenance without inventing indexed history or old admissions", async () => {
   const { state, path } = setup(), raw = await batchBytes({ ttl: now + 10 * minute }); state.recordAttempt(raw);
   state.close(); handles.splice(handles.indexOf(state), 1);
-  const db = new DatabaseSync(path); db.exec("drop table follower_admissions; drop table follower_batch_calls; drop table follower_policies; drop table follower_checkpoints; alter table follower_blocks drop column batch_indexed; pragma user_version=1"); db.close();
+  const db = new DatabaseSync(path); db.exec("drop table follower_admissions; drop table follower_batch_calls; drop table follower_policies; drop table follower_checkpoints; alter table follower_blocks drop column batch_indexed; alter table follower_blocks drop column runtime; pragma user_version=1");
+  db.prepare("update follower_scope set scope=? where id=1").run(JSON.stringify({ ...JSON.parse(String(db.prepare("select scope from follower_scope").get()!.scope)), runtimeSpecVersion: 1000300 })); db.close();
   const resumed = openFollowerState(path, scope); handles.push(resumed);
   expect(() => resumed.assertAdmitted(raw)).toThrow(/admi/i);
   expect(() => resumed.reserveStandingAttempt(raw, policy())).toThrow(/history|index/i);
