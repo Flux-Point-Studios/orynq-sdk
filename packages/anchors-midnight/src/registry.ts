@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import * as rt from "@midnight-ntwrk/compact-runtime";
 import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L9 from "@midnightntwrk/ledger-v9";
 import { Contract, ledger } from "../contract/managed/contract/index.js";
+import { taggedLedger, type Ledger } from "./ledgers.js";
 
 export const REGISTRY_SCHEMA = "orynq-anchor-registry:v1";
 export const REGISTRY_CIRCUITS = ["anchor", "anchor_hiding"] as const;
@@ -18,11 +20,12 @@ export const REGISTRY_VERIFIER_KEY_SHA256: Readonly<Record<RegistryCircuit, stri
 
 const managed = new URL("../contract/managed/", import.meta.url);
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");
+const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 export function compiledVerifierKeys(): VerifierKeys {
   const read = (name: RegistryCircuit) => {
     const key = new Uint8Array(readFileSync(new URL(`keys/${name}.verifier`, managed)));
-    const digest = createHash("sha256").update(key).digest("hex");
+    const digest = sha256(key);
     if (digest !== REGISTRY_VERIFIER_KEY_SHA256[name]) {
       throw new Error(`${name}.verifier hashes to ${digest}, pinned ${REGISTRY_VERIFIER_KEY_SHA256[name]}`);
     }
@@ -40,16 +43,16 @@ export function compiledContractFile(path: string): Uint8Array {
   const pin = pins.split("\n").find((line) => line.endsWith(`  ${name}`))?.slice(0, 64);
   if (!pin || path.split("/").includes("..")) throw new Error(`contract/HASHES.txt pins no ${name}`);
   const bytes = new Uint8Array(readFileSync(new URL(path, managed)));
-  const digest = createHash("sha256").update(bytes).digest("hex");
+  const digest = sha256(bytes);
   if (digest !== pin) throw new Error(`${name} hashes to ${digest}, pinned ${pin}`);
   return bytes;
 }
 
-// Parsing through ContractOperation validates the key and yields its canonical encoding
-// (ledger 8.1.3 rejects trailing bytes), so compiler output and on-chain state compare equal
-// exactly when they denote the same key.
-export function canonicalVerifierKey(raw: Uint8Array): string {
-  const op = new L.ContractOperation();
+// Parsing through `ledger`'s ContractOperation validates the key and yields its canonical
+// encoding in that ledger (ledger 8.1.3 rejects trailing bytes), so compiler output and on-chain
+// state of the same ledger compare equal exactly when they denote the same key.
+export function canonicalVerifierKey(raw: Uint8Array, ledger: Ledger = L): string {
+  const op = new ledger.ContractOperation();
   op.verifierKey = raw;
   return hex(op.serialize());
 }
@@ -57,13 +60,15 @@ export function canonicalVerifierKey(raw: Uint8Array): string {
 // With no committee, a MaintenanceUpdate needs `threshold` signatures from committee members,
 // so threshold 1 makes every update impossible, while threshold 0 admits an unsigned one.
 // Counter 0 proves no update ever applied.
-export function assertImmutableAuthority(authority: L.ContractMaintenanceAuthority): void {
+export function assertImmutableAuthority(authority: L.ContractMaintenanceAuthority | L9.ContractMaintenanceAuthority): void {
   if (authority.committee.length !== 0) throw new Error(`committee must be empty, got ${authority.committee.length}`);
   if (authority.threshold !== 1) throw new Error(`threshold must be exactly 1, got ${authority.threshold}`);
   if (authority.counter !== 0n) throw new Error(`counter must be 0, got ${authority.counter}`);
 }
 
-export function assertRegistryState(state: L.ContractState, verifierKeys: VerifierKeys = compiledVerifierKeys()): void {
+// Accepts the state as ledger 8 or ledger 9 reads it.
+export function assertRegistryState(state: L.ContractState | L9.ContractState, verifierKeys: VerifierKeys = compiledVerifierKeys()): void {
+  const stateLedger = state instanceof L9.ContractState ? L9 : L;
   assertImmutableAuthority(state.maintenanceAuthority);
   const ops = state.operations().map((o) => (typeof o === "string" ? o : Buffer.from(o).toString("utf8")));
   if ([...ops].sort().join() !== [...REGISTRY_CIRCUITS].sort().join()) {
@@ -71,9 +76,9 @@ export function assertRegistryState(state: L.ContractState, verifierKeys: Verifi
   }
   for (const name of REGISTRY_CIRCUITS) {
     const op = state.operation(name);
-    if (!op || hex(op.serialize()) !== canonicalVerifierKey(verifierKeys[name])) throw new Error(`verifier key mismatch for ${name}`);
+    if (!op || hex(op.serialize()) !== canonicalVerifierKey(verifierKeys[name], stateLedger)) throw new Error(`verifier key mismatch for ${name}`);
   }
-  const data = ledger(rt.ContractState.deserialize(state.serialize()).data);
+  const data = ledger(rt.StateValue.decode(state.data.state.encode()));
   const schema = Buffer.from(data.schema).toString("utf8").replace(/\0+$/, "");
   if (schema !== REGISTRY_SCHEMA) throw new Error(`schema must be ${REGISTRY_SCHEMA}, got ${schema}`);
 }
@@ -81,8 +86,13 @@ export function assertRegistryState(state: L.ContractState, verifierKeys: Verifi
 // The sha256 of each registry circuit's verifier key in a serialized contract state, which must be
 // the immutable registry's: midnight:contract-state[v6] read with ledger 8, [v8] with ledger 9,
 // any other tag refused.
-export function registryVerifierKeysIn(_state: Uint8Array): Record<RegistryCircuit, string> {
-  throw new Error("registryVerifierKeysIn is not implemented");
+export function registryVerifierKeysIn(bytes: Uint8Array): Record<RegistryCircuit, string> {
+  const { tag, ledger: stateLedger } = taggedLedger(bytes, "contract-state");
+  if (!stateLedger) throw new Error(`contract state header ${tag} is not one this verifier knows`);
+  const state = stateLedger === L9 ? L9.ContractState.deserialize(bytes) : L.ContractState.deserialize(bytes);
+  if (hex(state.serialize()) !== hex(bytes)) throw new Error("the bytes are not the canonical encoding of the contract state they decode to");
+  assertRegistryState(state);
+  return { anchor: sha256(state.operation("anchor")!.verifierKey), anchor_hiding: sha256(state.operation("anchor_hiding")!.verifierKey) };
 }
 
 const refuseWitness = (name: string) => () => {

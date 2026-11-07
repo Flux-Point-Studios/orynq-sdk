@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline";
-import { REGISTRY_CIRCUITS, hash32, type EntryHashes, type MidnightNetwork, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { KNOWN_RUNTIME_SPEC_VERSIONS, REGISTRY_CIRCUITS, hash32, type EntryHashes, type MidnightNetwork, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { batchAnchorCommitment, type BatchAnchorData } from "./batch-plan.js";
 import { agentDriven } from "./custody.js";
 import type { PreparedDeploy } from "./deployer.js";
@@ -19,18 +19,24 @@ export interface ChainFacts {
   ledgerVersion: string;
 }
 
+// The ledger major version each runtime the decoder knows runs.
+const RUNTIME_LEDGER: Readonly<Record<number, number>> = { 1000300: 8, 2001100: 9 };
+
 function checkedLedgerVersion(version: unknown): string {
-  // The RPC uses Cargo exact-version syntax (=8.1.2) on deployed nodes. Normalize only
-  // that recognized marker; everything emitted still has the strict numeric semver grammar.
-  const normalized = typeof version === "string" && version.startsWith("=") ? version.slice(1) : version;
-  if (typeof normalized !== "string" || normalized.length > 32 || !/^\d+\.\d+\.\d+$/.test(normalized)) {
+  // Ledger 8 nodes answer in Cargo exact-version syntax (=8.1.2); ledger 9 nodes with their
+  // crate version and the ledger crate's tag and revision, "1.0.1 (tag: crate-ledger-9.1.0.1,
+  // rev: <40 hex>)". Normalize only those recognized forms to the ledger crate version;
+  // everything emitted still has the strict numeric version grammar.
+  const tagged = typeof version === "string" ? /^\d+\.\d+\.\d+ \(tag: crate-ledger-(\d+\.\d+\.\d+(?:\.\d+)?), rev: [0-9a-f]{40}\)$/.exec(version) : null;
+  const normalized = tagged ? tagged[1] : typeof version === "string" && version.startsWith("=") ? version.slice(1) : version;
+  if (typeof normalized !== "string" || normalized.length > 32 || !/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(normalized)) {
     throw new Error("the node returned an invalid Midnight ledger version");
   }
   return normalized;
 }
 
-// Refuses a node that is not `network`'s chain or runs a runtime the decoder does not know, and
-// returns what it read.
+// Refuses a node that is not `network`'s chain, runs a runtime the decoder does not know or
+// reports a ledger other than its runtime's, and returns what it read.
 export async function assertChainIdentity(source: MidnightSource, network: MidnightNetwork): Promise<ChainFacts> {
   const want = NETWORK_IDENTITY[network];
   const chain = await source.node.call<unknown>("system_chain");
@@ -39,8 +45,10 @@ export async function assertChainIdentity(source: MidnightSource, network: Midni
   if (typeof rawGenesis !== "string" || !/^(?:0x)?[0-9a-f]{64}$/.test(rawGenesis)) throw new Error("the node returned an invalid genesis hash");
   const genesis = rawGenesis.replace(/^0x/, "");
   if (genesis !== want.genesis) throw new Error(`genesis ${genesis} is not ${want.chain}'s ${want.genesis}`);
-  const specVersion = await assertKnownRuntime(source, network);
+  const specVersion = await assertKnownRuntime(source, network, KNOWN_RUNTIME_SPEC_VERSIONS);
   const ledgerVersion = checkedLedgerVersion(await source.node.call<unknown>("midnight_ledgerVersion"));
+  const ledger = RUNTIME_LEDGER[specVersion];
+  if (Number(ledgerVersion.split(".")[0]) !== ledger) throw new Error(`the ${network} node runs runtime ${specVersion} with ledger ${ledgerVersion}, not ledger ${ledger}`);
   return { chain, genesis, specVersion, ledgerVersion };
 }
 

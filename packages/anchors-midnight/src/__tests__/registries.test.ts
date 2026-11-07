@@ -7,8 +7,7 @@ export const registryInfo = (overrides: Partial<RegistryInfo> = {}): RegistryInf
   address: "ab".repeat(32),
   deployTxHash: "cd".repeat(32),
   deployHeight: 100,
-  runtimeSpecVersion: 1000300,
-  runtimes: [{ specVersion: 1000300, fromHeight: 100, toHeight: null }],
+  runtimes: [{ specVersion: 1000300, fromHeight: overrides.deployHeight ?? 100, toHeight: null }],
   circuits: { anchor: { vkSha256: REGISTRY_VERIFIER_KEY_SHA256.anchor }, anchor_hiding: { vkSha256: REGISTRY_VERIFIER_KEY_SHA256.anchor_hiding } },
   ...overrides,
 });

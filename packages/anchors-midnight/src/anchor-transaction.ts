@@ -1,5 +1,9 @@
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L8 from "@midnight-ntwrk/ledger-v8";
+import * as L9 from "@midnightntwrk/ledger-v9";
+import { taggedLedger } from "./ledgers.js";
 import { toHex } from "./scale.js";
+
+type AnyTransaction = L8.Transaction<L8.Signaturish, L8.Proofish, L8.Bindingish> | L9.Transaction<L9.Signaturish, L9.Proofish, L9.Bindingish>;
 
 export interface AnchorCall {
   address: string;
@@ -61,14 +65,14 @@ function matches(actual: unknown, template: unknown, slots: Map<string, Uint8Arr
   return actual === template;
 }
 
-const noEffects = (e: L.Effects) =>
+const noEffects = (e: L8.Effects | L9.Effects) =>
   e.claimedNullifiers.length === 0 &&
   e.claimedShieldedReceives.length === 0 &&
   e.claimedShieldedSpends.length === 0 &&
   e.claimedContractCalls.length === 0 &&
   [e.shieldedMints, e.unshieldedMints, e.unshieldedInputs, e.unshieldedOutputs, e.claimedUnshieldedSpends].every((m) => m.size === 0);
 
-function anchorCall(call: L.ContractCall<L.Proofish>, at: string): AnchorCall {
+function anchorCall(call: L8.ContractCall<L8.Proofish> | L9.ContractCall<L9.Proofish>, at: string): AnchorCall {
   const entryPoint = typeof call.entryPoint === "string" ? call.entryPoint : Buffer.from(call.entryPoint).toString("utf8");
   if (entryPoint !== "anchor" && entryPoint !== "anchor_hiding") throw new Error(`${at}: entry point ${entryPoint} is not anchor or anchor_hiding`);
   if (call.fallibleTranscript !== undefined) throw new Error(`${at} carries a fallible transcript`);
@@ -89,7 +93,7 @@ function anchorCall(call: L.ContractCall<L.Proofish>, at: string): AnchorCall {
 // update it aims at one of them. Every call to a registry must write exactly what a registry
 // circuit writes. It reads proven and unproven transactions alike.
 export function anchorCallsIn(
-  tx: L.Transaction<L.Signaturish, L.Proofish, L.Bindingish>,
+  tx: AnyTransaction,
   registries: readonly string[],
   label: string,
 ): Pick<AnchorTransaction, "calls" | "touches"> {
@@ -99,19 +103,22 @@ export function anchorCallsIn(
     for (const action of intent.actions) {
       const address = String(action.address);
       if (!registries.includes(address)) continue;
-      if (action instanceof L.ContractCall) calls.push(anchorCall(action, `${label}: the call to registry ${address}`));
-      else touches.push({ action: action instanceof L.ContractDeploy ? "deploy" : "maintenance", address });
+      if (action instanceof L8.ContractCall || action instanceof L9.ContractCall) calls.push(anchorCall(action, `${label}: the call to registry ${address}`));
+      else touches.push({ action: action instanceof L8.ContractDeploy || action instanceof L9.ContractDeploy ? "deploy" : "maintenance", address });
     }
   }
   return { calls, touches };
 }
 
 // Decodes a proven, bound Midnight transaction from its exact bytes, which must be the
-// canonical encoding of what they decode to, and returns its hash and anchorCallsIn.
+// canonical encoding of what they decode to, with the ledger its header tag names, and returns
+// its hash and anchorCallsIn.
 export function decodeAnchorTransaction(bytes: Uint8Array, registries: readonly string[]): AnchorTransaction {
-  let tx: L.Transaction<L.SignatureEnabled, L.Proof, L.Binding>;
+  const { tag, ledger } = taggedLedger(bytes, "transaction");
+  if (!ledger) throw new Error(`transaction header ${tag} is not one this decoder knows`);
+  let tx: AnyTransaction;
   try {
-    tx = L.Transaction.deserialize("signature", "proof", "binding", bytes);
+    tx = ledger === L9 ? L9.Transaction.deserialize("signature", "proof", "binding", bytes) : L8.Transaction.deserialize("signature", "proof", "binding", bytes);
   } catch (error) {
     throw new Error(`the bytes are not a Midnight transaction: ${(error as Error).message}`);
   }

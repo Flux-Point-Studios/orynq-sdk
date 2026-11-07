@@ -10,7 +10,8 @@ import { DEPLOY_HEIGHT, HEIGHTS, anchorChain, fixture, sendMnTransaction } from 
 import { NETWORK, finalBytes, unprovenRegistryCall } from "./registry-call.js";
 import { replaySource } from "./recorded-source.js";
 import { knownAuthors } from "../known-authors.js";
-import type { RegistryInfo } from "../registries.js";
+import { MIDNIGHT_REGISTRIES, type RegistryInfo } from "../registries.js";
+import { FORK, contractStateAt } from "./fork-chain.js";
 import type { IndexedTransaction, MidnightSource } from "../source.js";
 
 type Chain = ReturnType<typeof anchorChain>;
@@ -25,6 +26,7 @@ const KIND2 = { kind: 2 as const, attribute: fixture.hiding.attribute };
 const verify = (chain: Chain, req: VerifyRequest, options: Partial<Parameters<typeof verifyMidnightAnchor>[1]> = {}) =>
   verifyMidnightAnchor(req, { source: chain.source, registries: [chain.registry], knownAuthors: chain.authors(), ...options });
 const check = (r: VerifyResult, name: string) => r.checks.find((c) => c.name === name);
+const deployedAt = (registry: RegistryInfo, deployHeight: number): RegistryInfo => ({ ...registry, deployHeight, runtimes: [{ specVersion: 1000300, fromHeight: deployHeight, toHeight: null }] });
 const lines = (r: VerifyResult) => r.checks.map((c) => `${c.ok ? "ok  " : "FAIL"} ${c.name}: ${c.detail}`);
 const withoutPrecommits = (hex: string) => {
   const proof = decodeFinalityProof(fromHex(hex, "proof"));
@@ -194,12 +196,21 @@ describe("the transaction, the registry and its state", () => {
     expect(r.status).toBe("invalid");
   });
 
+  it("refuses an anchor in a block whose runtime its registry generation does not run at that height", async () => {
+    const chain = anchorChain();
+    expect(check(await verify(chain, request("anchor", KIND1)), "registry-runtime")).toBeUndefined();
+    const upgraded = { ...chain.registry, runtimes: [{ specVersion: 1000300, fromHeight: DEPLOY_HEIGHT, toHeight: HEIGHTS.anchor - 1 }, { specVersion: 2001100, fromHeight: HEIGHTS.anchor, toHeight: null }] };
+    const r = await verifyMidnightAnchor(request("anchor", KIND1), { source: chain.source, registries: [upgraded], knownAuthors: chain.authors() });
+    expect(check(r, "registry-runtime")).toMatchObject({ ok: false, detail: `block ${HEIGHTS.anchor} runs runtime 1000300, which registry generation 1 does not run at that height` });
+    expect(r.status).toBe("invalid");
+  });
+
   it("refuses a registry pinned to a genuine registry deploy at another address", async () => {
     const other = buildRegistryDeploy({ networkId: NETWORK, ttl: new Date(Date.UTC(2030, 0, 1)) });
     const bytes = await finalBytes(other.tx);
     const hash = L.Transaction.deserialize("signature", "proof", "binding", bytes).transactionHash();
     const chain = anchorChain({ place: [[1460, "deploy", toHex(bytes), hash]] });
-    const r = await verifyMidnightAnchor(request("anchor", KIND1), { source: chain.source, registries: [{ ...chain.registry, deployTxHash: hash, deployHeight: 1460 }], knownAuthors: chain.authors() });
+    const r = await verifyMidnightAnchor(request("anchor", KIND1), { source: chain.source, registries: [{ ...deployedAt(chain.registry, 1460), deployTxHash: hash }], knownAuthors: chain.authors() });
     expect(other.address).not.toBe(fixture.registry.address);
     expect(check(r, "registry-deploy")).toMatchObject({ ok: false, detail: expect.stringMatching(new RegExp(`it deploys ${other.address}, not ${fixture.registry.address}`)) });
     expect(r.status).toBe("invalid");
@@ -207,7 +218,7 @@ describe("the transaction, the registry and its state", () => {
 
   it("refuses a registry whose pinned deploy is not a deploy of the immutable registry state", async () => {
     const chain = anchorChain();
-    const r = await verifyMidnightAnchor(request("anchor", KIND1), { source: chain.source, registries: [{ ...chain.registry, deployTxHash: fixture.stranger.txHash, deployHeight: HEIGHTS.stranger }], knownAuthors: chain.authors() });
+    const r = await verifyMidnightAnchor(request("anchor", KIND1), { source: chain.source, registries: [{ ...deployedAt(chain.registry, HEIGHTS.stranger), deployTxHash: fixture.stranger.txHash }], knownAuthors: chain.authors() });
     expect(check(r, "registry-deploy")).toMatchObject({ ok: false });
     expect(r.status).toBe("invalid");
   });
@@ -224,6 +235,20 @@ describe("the transaction, the registry and its state", () => {
     const b = await verify(viaNode, request("anchor", KIND1));
     expect(check(b, "node-state")).toMatchObject({ ok: false, detail: expect.stringMatching(/counter must be 0, got 1/) });
     expect(b.status).toBe("conflict");
+  });
+
+  it("reads the registry's state with the ledger its tag names: the gen-1 contract-state[v8] from mainnet 3346145, from the indexer or the node", async () => {
+    const v8 = toHex(contractStateAt(MIDNIGHT_REGISTRIES.mainnet[0]!.address, FORK.end.height));
+    const viaIndexer = anchorChain({ indexer: { [fixture.anchor.txHash]: (h) => h.map((t) => ({ ...t, contractActions: t.contractActions.map((a) => ({ ...a, state: v8 })) })) } });
+    const a = await verify(viaIndexer, request("anchor", KIND1));
+    expect(check(a, "indexer-state")).toMatchObject({ ok: true });
+    expect(a.status).toBe("valid");
+    const viaNode = anchorChain({ node: { midnight_contractState: () => `0x${v8}` } });
+    const b = await verify(viaNode, request("anchor", KIND1));
+    expect(check(b, "node-state")).toMatchObject({ ok: true });
+    expect(b.status).toBe("valid");
+    const unknown = anchorChain({ node: { midnight_contractState: () => `0x${v8.replace(toHex(Buffer.from("[v8]")), toHex(Buffer.from("[v7]")))}` } });
+    expect(check(await verify(unknown, request("anchor", KIND1)), "node-state")).toMatchObject({ ok: false, detail: expect.stringMatching(/contract-state\[v7\] is not one this verifier knows/) });
   });
 
   it("refuses a transaction that also carries a maintenance update aimed at the registry", async () => {
@@ -317,7 +342,7 @@ describe("critique2 (c): authors come from the signed KNOWN_AUTHORS document", (
 
   it("refuses a registry whose pinned deploy height is not where its deploy is", async () => {
     const chain = anchorChain();
-    const r = await verifyMidnightAnchor(request("anchor", KIND1), { source: chain.source, registries: [{ ...chain.registry, deployHeight: DEPLOY_HEIGHT - 10 }], knownAuthors: chain.authors() });
+    const r = await verifyMidnightAnchor(request("anchor", KIND1), { source: chain.source, registries: [deployedAt(chain.registry, DEPLOY_HEIGHT - 10)], knownAuthors: chain.authors() });
     expect(check(r, "registry-deploy")).toMatchObject({ ok: false, detail: expect.stringMatching(/it is in block 1450, not the pinned 1440/) });
     expect(r.status).toBe("invalid");
   });
@@ -329,7 +354,7 @@ describe("critique2 (c): authors come from the signed KNOWN_AUTHORS document", (
 describe.each(["mainnet", "preprod"] as const)("golden: the verifier on a real %s transaction, replayed", (network) => {
   const f = JSON.parse(readFileSync(new URL(`./fixtures/${network}-verify.json`, import.meta.url), "utf8"));
   const checkpoint = { setId: BigInt(f.checkpoint.setId), startsAfter: f.checkpoint.startsAfter, authorities: f.checkpoint.authorities.map((a: { key: string; weight: string }) => ({ key: a.key, weight: BigInt(a.weight) })) };
-  const generation = (address: string): RegistryInfo => ({ ...anchorChain().registry, address, deployTxHash: "cd".repeat(32), deployHeight: 1 });
+  const generation = (address: string): RegistryInfo => ({ ...deployedAt(anchorChain().registry, 1), address, deployTxHash: "cd".repeat(32) });
   const run = (address: string, edit?: Parameters<typeof replaySource>[1]) =>
     verifyMidnightAnchor({ network, txHash: f.txHash, expect: { kind: 1, commitment: "00".repeat(32) } }, { source: replaySource(f.recording, edit), registries: [generation(address)], checkpoints: [checkpoint] });
 

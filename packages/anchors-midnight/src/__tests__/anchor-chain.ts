@@ -119,7 +119,7 @@ export function anchorChain({
     address: fixture.registry.address,
     deployTxHash: fixture.registry.txHash,
     deployHeight: DEPLOY_HEIGHT,
-    runtimeSpecVersion: 1000300,
+    runtimes: [{ specVersion: 1000300, fromHeight: DEPLOY_HEIGHT, toHeight: null }],
     circuits: { anchor: { vkSha256: REGISTRY_VERIFIER_KEY_SHA256.anchor }, anchor_hiding: { vkSha256: REGISTRY_VERIFIER_KEY_SHA256.anchor_hiding } },
   };
   const checkpoint: FinalityCheckpoint = chain.checkpoint(0);

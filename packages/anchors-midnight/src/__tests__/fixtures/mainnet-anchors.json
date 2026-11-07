@@ -624,7 +624,13 @@
      "address": "438b1ea134e760e8b4e87409d663f36561f15341880c118dc41e4fc2b224c737",
      "deployTxHash": "1bb33baad6eff44f9f485fef1a83b7f2200f09174d286936081574a3221535e8",
      "deployHeight": 3113819,
-     "runtimeSpecVersion": 1000300,
+     "runtimes": [
+      {
+       "specVersion": 1000300,
+       "fromHeight": 3113819,
+       "toHeight": null
+      }
+     ],
      "circuits": {
       "anchor": {
        "vkSha256": "85dc57a4269dd3aceb82867ecc6c145ef5f679c6f51767f200250e7c075777c5"

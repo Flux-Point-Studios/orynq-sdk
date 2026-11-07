@@ -36,7 +36,7 @@ describe("authenticated Midnight execution after finalized inclusion", () => {
   it("authenticates the runtime when the transport can return only a compact code-path witness", async () => {
     const original = node(), bounded: MidnightSource["node"] = { ...original, async batch<T>(calls: [string, unknown[]][]) {
       if ((calls[1]![1][0] as string[]).includes("0x3a636f6465")) throw new Error("Raw runtime value exceeds the transport budget");
-      expect(calls[1]![1]).toEqual([["0x3a636f646500"], fixture.header.parentHash]);
+      expect(calls[1]![1]).toEqual([["0x3a636f646500", "0x3a70656e64696e675f636f646500"], fixture.header.parentHash]);
       return original.batch<T>(calls);
     } };
     expect((await verifyExecution(bounded, request)).runtimeSpecVersion).toBe(1000300);

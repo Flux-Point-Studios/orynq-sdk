@@ -565,9 +565,9 @@ describe("registryDeployer", () => {
     deployer.close();
   });
 
-  it("refuses to prepare while the node runs a runtime the decoder does not know", async () => {
-    const { deployer, wallet: w } = setup({ spec: 1000400 });
-    await expect(deployer.prepare()).rejects.toThrow(/runs runtime 1000400, which is not one this submitter knows/);
+  it.each([1000400, 2001100])("refuses to prepare while the node runs runtime %i, which the submitter does not write for", async (spec) => {
+    const { deployer, wallet: w } = setup({ spec });
+    await expect(deployer.prepare()).rejects.toThrow(new RegExp(`runs runtime ${spec}, which is not one this submitter knows \\(1000300\\)`));
     expect(w.submitted).toHaveLength(0);
     deployer.close();
   });

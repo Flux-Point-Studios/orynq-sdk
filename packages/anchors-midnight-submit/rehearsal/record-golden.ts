@@ -28,7 +28,7 @@ const registry = {
   address: raw.deploy.address,
   deployTxHash: raw.deploy.txHash,
   deployHeight: raw.deploy.blockHeight,
-  runtimeSpecVersion: 1000300,
+  runtimes: [{ specVersion: 1000300, fromHeight: raw.deploy.blockHeight, toHeight: null }],
   circuits: { anchor: { vkSha256: REGISTRY_VERIFIER_KEY_SHA256.anchor }, anchor_hiding: { vkSha256: REGISTRY_VERIFIER_KEY_SHA256.anchor_hiding } },
 };
 const { source, recording } = recordingSource(live, "preprod");

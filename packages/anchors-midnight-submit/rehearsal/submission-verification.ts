@@ -29,7 +29,7 @@ export function submissionVerification(secrets: string, source: MidnightSource, 
   for (const file of authorFiles) if (policy.author("preprod", hex(authorKey(readAuthorSecret(file))), deploy.blockHeight).status !== "known") throw new Error("Both fresh rehearsal author keys need signed preprod onboarding before submission");
   const registry: RegistryInfo = {
     generation: 1, address: deploy.address, deployTxHash: deploy.txHash, deployHeight: deploy.blockHeight,
-    deployBlockHash: deploy.blockHash, runtimeSpecVersion: 1000300,
+    deployBlockHash: deploy.blockHash, runtimes: [{ specVersion: 1000300, fromHeight: deploy.blockHeight, toHeight: null }],
     circuits: { anchor: { vkSha256: REGISTRY_VERIFIER_KEY_SHA256.anchor }, anchor_hiding: { vkSha256: REGISTRY_VERIFIER_KEY_SHA256.anchor_hiding } },
   };
   return (request: Parameters<typeof verifyMidnightAnchor>[0], options: Parameters<typeof verifyMidnightAnchor>[1]) => {

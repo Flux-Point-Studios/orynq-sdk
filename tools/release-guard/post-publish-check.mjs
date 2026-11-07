@@ -17,6 +17,7 @@ export const SINGLETONS = [
   "@midnight-ntwrk/onchain-runtime-v3",
   "@midnight-ntwrk/compact-runtime",
   "@midnight-ntwrk/zkir-v2",
+  "@midnightntwrk/ledger-v9",
 ];
 
 export function packedSpecs(dir) {
