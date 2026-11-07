@@ -4,7 +4,7 @@ import { readFile, writeFile, readdir, mkdir, rm, mkdtemp } from "node:fs/promis
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as runtime from "@midnight-ntwrk/compact-runtime";
-import * as ledger from "@midnight-ntwrk/ledger-v8";
+import * as ledger from "@midnightntwrk/ledger-v8";
 import { assertOnchainArtifactPins } from "./onchain-artifact-pins.mjs";
 
 const directory = resolve(dirname(fileURLToPath(import.meta.url)), "../onchain");

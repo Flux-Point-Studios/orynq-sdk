@@ -5,13 +5,19 @@ import { join } from "node:path";
 import { validateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { bech32m } from "@scure/base";
-import { createWalletMnemonicFile, ensurePrivateDir, walletAddresses } from "../src/keys.js";
+import * as L8 from "@midnightntwrk/ledger-v8";
+import * as L9 from "@midnightntwrk/ledger-v9";
+import { createWalletMnemonicFile, ensurePrivateDir, walletAddresses, walletSecrets } from "../src/keys.js";
 
 // The test vector Midnight publishes for HD account 0, index 0 of this mnemonic.
 const VECTOR = "volume kitchen portion ill mix service history renew candy chat pledge million prison gadget injury question song broccoli avocado envelope sugar seminar need picture";
 const VECTOR_UNSHIELDED = "mn_addr1asyme6duwrv8qv7njpyqcxx7wmwqvq9dx5k07z9p0ew0g25tua3szfajwz";
 const VECTOR_SHIELDED =
   "mn_shield-addr1y9j33qvpqxex6v8r676hawmzq4v5ekvltjxk92zhyvu6y0e084cmp2qjvm4z8uswze6fadrnahk7j7kmc8dcnfplv90t5jsm2faj3uqdreptm";
+
+// The DUST address wallet-sdk 1.2.0 (hd 3.0.3, ledger 8) derived for that mnemonic: a wallet opened
+// with wallet-sdk 2.0.0 must keep the addresses the 1.x wallet registered DUST generation to.
+const VECTOR_DUST = "mn_dust1wwh78t5srvqkqjhx2x7fmcwa876yud9zld6sl26u3k43tfhjsug9vx9key3";
 
 const dir = mkdtempSync(join(tmpdir(), "orynq-midnight-keys-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -31,7 +37,16 @@ describe("wallet addresses derived from a mnemonic file", () => {
     const addresses = walletAddresses(vector, "mainnet");
     expect(addresses.unshielded).toBe(VECTOR_UNSHIELDED);
     expect(addresses.shielded).toBe(VECTOR_SHIELDED);
-    expect(addresses.dust).toMatch(/^mn_dust1[02-9ac-hj-np-z]+$/);
+    expect(addresses.dust).toBe(VECTOR_DUST);
+  });
+
+  // wallet-sdk 2.0.0 starts every wallet from its seeds and derives each ledger's keys from them.
+  it("derive one identity under ledger 8 and ledger 9 from the wallet's seeds", () => {
+    const { seeds, zswap, dust } = walletSecrets(vector, "mainnet");
+    expect(zswap).toBeInstanceOf(L9.ZswapSecretKeys);
+    expect(dust).toBeInstanceOf(L9.DustSecretKey);
+    expect(L8.ZswapSecretKeys.fromSeed(seeds.shielded).coinPublicKey).toBe(zswap.coinPublicKey);
+    expect(L8.DustSecretKey.fromSeed(seeds.dust).publicKey).toBe(dust.publicKey);
   });
 
   it("carry the same keys under the preprod prefixes", () => {

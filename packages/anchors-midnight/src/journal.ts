@@ -1,6 +1,6 @@
 import { closeSync, constants, openSync, lstatSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import * as L8 from "@midnight-ntwrk/ledger-v8";
+import * as L8 from "@midnightntwrk/ledger-v8";
 import * as L9 from "@midnightntwrk/ledger-v9";
 import { decodeTransaction } from "./ledgers.js";
 

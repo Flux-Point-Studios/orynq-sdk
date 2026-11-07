@@ -4,8 +4,8 @@ import { readFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import * as runtime from "@midnight-ntwrk/compact-runtime";
-import * as ledger from "@midnight-ntwrk/ledger-v8";
-import { provingProvider } from "@midnight-ntwrk/zkir-v2";
+import * as ledger from "@midnightntwrk/ledger-v8";
+import { provingProvider } from "@midnightntwrk/zkir-v2";
 import { withFixtureProof } from "../fixture-prover.js";
 
 const managed = resolve(import.meta.dirname, "../../conduct-managed");

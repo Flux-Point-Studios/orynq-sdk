@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 const AUTHOR = "02".repeat(32);
 const PROJECT_ID = "preprod" + "Zx".repeat(16), STORE_KEY = "store-key-0123456789", RELAY_PREFIX = "fedcba9876543210".repeat(2);
 const READ_SEGMENT = "capabilityreadsegment", STORE_SEGMENT = "capabilitystoresegment";
-const stub = vi.hoisted(() => ({ starts: [] as unknown[], turns: [] as unknown[], started: 0, turned: 0, statusHolds: [] as string[][] }));
+const stub = vi.hoisted(() => ({ starts: [] as unknown[], turns: [] as unknown[], started: 0, turned: 0, statusHolds: [] as string[][], walletOpens: [] as { journals?: readonly string[] }[] }));
 const next = (queue: unknown[]) => { const step = queue.shift(); return step instanceof Error || typeof step !== "object" || step === null ? Promise.reject(step) : Promise.resolve(step); };
 vi.mock("@fluxpointstudios/orynq-sdk-anchors-midnight", async (original) => ({ ...(await original<object>()),
   knownAuthors: () => ({ authors: () => [{ key: AUTHOR, role: "batch" }], checkpoints: () => [] }), midnightSource: () => ({}) }));
@@ -22,7 +22,7 @@ vi.mock("../follower-catchup.js", async (original) => ({ ...(await original<obje
 vi.mock("../../src/endpoints.js", async (original) => ({ ...(await original<object>()), networkEndpoints: () => ({ headers: { project_id: PROJECT_ID } }) }));
 vi.mock("../../src/preflight.js", async (original) => ({ ...(await original<object>()), assertChainIdentity: async () => ({}) }));
 vi.mock("../../src/submission.js", async (original) => ({ ...(await original<object>()), registryStateOnNode: async () => true }));
-vi.mock("../../src/wallet.js", async (original) => ({ ...(await original<object>()), openWallet: async () => ({ secrets: [RELAY_PREFIX], close: async () => ({ saved: true }) }) }));
+vi.mock("../../src/wallet.js", async (original) => ({ ...(await original<object>()), openWallet: async (options: { journals?: readonly string[] }) => { stub.walletOpens.push(options); return { secrets: [RELAY_PREFIX], close: async () => ({ saved: true }) }; } }));
 vi.mock("../../src/sync.js", async (original) => ({ ...(await original<object>()), syncWithCheckpoints: async () => {} }));
 vi.mock("../publisher.js", async (original) => ({ ...(await original<object>()), readProofStoreKey: () => STORE_KEY }));
 vi.mock("../census-state.js", async (original) => ({ ...(await original<object>()), openCensusState: () => ({ close: () => {} }) }));
@@ -31,7 +31,7 @@ vi.mock("@fluxpointstudios/orynq-sdk-anchors-midnight/journal", async (original)
 const roots: string[] = [];
 let printed: string[] = [];
 beforeEach(() => {
-  stub.starts = []; stub.turns = []; stub.started = 0; stub.turned = 0; stub.statusHolds = []; printed = [];
+  stub.starts = []; stub.turns = []; stub.started = 0; stub.turned = 0; stub.statusHolds = []; stub.walletOpens = []; printed = [];
   vi.spyOn(console, "log").mockImplementation((line: unknown) => { printed.push(String(line)); });
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 });
@@ -52,7 +52,7 @@ async function run(mode: "observe" | "anchor") {
   const stopped = runStandingService(config, secrets).then(() => null, (error: unknown) => error).finally(() => { done = true; });
   for (let waited = 0; waited < 120 && !done; waited++) await vi.advanceTimersByTimeAsync(5_000);
   const error = await stopped;
-  return { error, fatal: fatalLine(error, secrets), holds: printed.filter(line => /"event":"standing-(startup-)?hold"/.test(line)).map(line => JSON.parse(line)) };
+  return { root, error, fatal: fatalLine(error, secrets), holds: printed.filter(line => /"event":"standing-(startup-)?hold"/.test(line)).map(line => JSON.parse(line)) };
 }
 
 it("prints a startup hold and each loop hold with its cause chain, and keeps retrying through a link it cannot read", async () => {
@@ -104,4 +104,10 @@ it("classifies a hold as dust-cap only for a StandingFeeCap in its chain, never 
   const { holds } = await run("observe");
   expect(holds.map(hold => hold.reason)).toEqual(["dust-cap", "source", "source"]);
   expect(stub.statusHolds).toEqual([["follower", "dust-cap"], ["follower", "source"], ["follower", "source"]]);
+});
+
+it("opens the wallet with the journals standingWalletJournals names for its network and state root", async () => {
+  stub.starts = [{ authenticated: true }];
+  const { root } = await run("anchor");
+  expect(stub.walletOpens.map(options => options.journals)).toEqual([[join(root, "state", "attempts.sqlite")]]);
 });

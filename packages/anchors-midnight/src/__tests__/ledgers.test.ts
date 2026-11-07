@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import * as L8 from "@midnight-ntwrk/ledger-v8";
+import * as L8 from "@midnightntwrk/ledger-v8";
 import * as L9 from "@midnightntwrk/ledger-v9";
 import { assertTransactionRuntime, decodeTransaction, ledgerParametersIn, runtimeLedger } from "../ledgers.js";
 import { fromHex } from "../scale.js";

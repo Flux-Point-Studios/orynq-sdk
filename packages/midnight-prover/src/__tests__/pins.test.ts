@@ -22,7 +22,7 @@ function lockedVersions(name: string): string[] {
 describe("JS and native Midnight pins", () => {
   it.each([
     ["@midnight-ntwrk/onchain-runtime-v3", "midnight-onchain-runtime"],
-    ["@midnight-ntwrk/ledger-v8", "midnight-ledger"],
+    ["@midnightntwrk/ledger-v8", "midnight-ledger"],
   ])("%s matches the native verifier's %s", (npmName, crate) => {
     expect(nativeVersion(crate)).toBeDefined();
     expect(manifest.dependencies[npmName]).toBe(nativeVersion(crate));

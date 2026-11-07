@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { registryInitialState } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { MIDNIGHT_REGISTRIES } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { batchAuthors as authors, batchBytes, batchBytes9, batchScope as scope } from "./batch-fixture.js";

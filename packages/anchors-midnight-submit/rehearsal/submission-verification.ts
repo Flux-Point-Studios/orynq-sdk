@@ -1,5 +1,6 @@
 // Live preprod submissions require independently reviewed checkpoint/author onboarding under
 // the shipped policy roots. A test fixture or a freshly made root cannot bootstrap live trust.
+import { existsSync } from "node:fs";
 import {
   authorKey, knownAuthors, readAuthorSecret, readPrivateFile,
   verifyMidnightAnchor, REGISTRY_VERIFIER_KEY_SHA256,
@@ -9,6 +10,14 @@ import {
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");
 export function authorJournalPath(secrets: string, authorFile: string): string {
   return `${secrets}/journal-author-${hex(authorKey(readAuthorSecret(authorFile)))}.sqlite`;
+}
+
+// Every journal a fee of the rehearsal's wallets is recorded in: the deploy's and each relay
+// author key's that exists yet. run.ts and the crash drill share wallet A and its state file, and
+// each opens it with all of them.
+export function rehearsalWalletJournals(secrets: string): string[] {
+  const authors = ["author-relay.key", "author-relay-2.key"].map((key) => `${secrets}/${key}`).filter((key) => existsSync(key));
+  return [`${secrets}/journal-deploy.sqlite`, ...authors.map((key) => authorJournalPath(secrets, key))];
 }
 
 export function submissionConsensusPolicy(secrets: string) {

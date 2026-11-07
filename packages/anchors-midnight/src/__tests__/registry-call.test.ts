@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import * as L9 from "@midnightntwrk/ledger-v9";
 import { decodeAnchorTransaction } from "../anchor-transaction.js";
 import { buildRegistryDeploy } from "../registry.js";

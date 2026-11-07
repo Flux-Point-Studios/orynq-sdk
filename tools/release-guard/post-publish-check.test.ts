@@ -105,12 +105,12 @@ describe("singletonCopies", () => {
   });
 
   it("counts a symlinked package once, at its real path", () => {
-    const dir = install({ "store/@midnight-ntwrk/ledger-v8": "8.1.3" });
-    mkdirSync(join(dir, "node_modules/@midnight-ntwrk"), { recursive: true });
-    symlinkSync(join(dir, "store/@midnight-ntwrk/ledger-v8"), join(dir, "node_modules/@midnight-ntwrk/ledger-v8"));
-    mkdirSync(join(dir, "node_modules/x/node_modules/@midnight-ntwrk"), { recursive: true });
-    symlinkSync(join(dir, "store/@midnight-ntwrk/ledger-v8"), join(dir, "node_modules/x/node_modules/@midnight-ntwrk/ledger-v8"));
-    expect(singletonCopies(dir, ["@midnight-ntwrk/ledger-v8"])).toEqual({ "@midnight-ntwrk/ledger-v8": ["8.1.3"] });
+    const dir = install({ "store/@midnightntwrk/ledger-v8": "8.1.3" });
+    mkdirSync(join(dir, "node_modules/@midnightntwrk"), { recursive: true });
+    symlinkSync(join(dir, "store/@midnightntwrk/ledger-v8"), join(dir, "node_modules/@midnightntwrk/ledger-v8"));
+    mkdirSync(join(dir, "node_modules/x/node_modules/@midnightntwrk"), { recursive: true });
+    symlinkSync(join(dir, "store/@midnightntwrk/ledger-v8"), join(dir, "node_modules/x/node_modules/@midnightntwrk/ledger-v8"));
+    expect(singletonCopies(dir, ["@midnightntwrk/ledger-v8"])).toEqual({ "@midnightntwrk/ledger-v8": ["8.1.3"] });
   });
 
   it("guards every Midnight package the anchors package depends on, in either npm scope", () => {
@@ -135,14 +135,14 @@ describe("checkLayouts against a registry", () => {
   };
 
   beforeAll(async () => {
-    publish("@midnight-ntwrk/ledger-v8", "8.1.3", { "package.json": manifest("@midnight-ntwrk/ledger-v8", "8.1.3", { exports: "./i.js" }), "i.js": "" });
-    publish("@midnight-ntwrk/ledger-v8", "8.1.0", { "package.json": manifest("@midnight-ntwrk/ledger-v8", "8.1.0", { exports: "./i.js" }), "i.js": "" });
+    publish("@midnightntwrk/ledger-v8", "8.1.3", { "package.json": manifest("@midnightntwrk/ledger-v8", "8.1.3", { exports: "./i.js" }), "i.js": "" });
+    publish("@midnightntwrk/ledger-v8", "8.1.0", { "package.json": manifest("@midnightntwrk/ledger-v8", "8.1.0", { exports: "./i.js" }), "i.js": "" });
     publish("@f/good", "1.0.0", {
-      "package.json": manifest("@f/good", "1.0.0", { exports: "./i.js", dependencies: { "@midnight-ntwrk/ledger-v8": "^8.1.0" } }),
-      "i.js": 'import "@midnight-ntwrk/ledger-v8";',
+      "package.json": manifest("@f/good", "1.0.0", { exports: "./i.js", dependencies: { "@midnightntwrk/ledger-v8": "^8.1.0" } }),
+      "i.js": 'import "@midnightntwrk/ledger-v8";',
     });
     publish("@f/pinned-old", "1.0.0", {
-      "package.json": manifest("@f/pinned-old", "1.0.0", { exports: "./i.js", dependencies: { "@midnight-ntwrk/ledger-v8": "8.1.0" } }),
+      "package.json": manifest("@f/pinned-old", "1.0.0", { exports: "./i.js", dependencies: { "@midnightntwrk/ledger-v8": "8.1.0" } }),
       "i.js": "",
     });
     publish("@f/broken", "1.0.0", { "package.json": manifest("@f/broken", "1.0.0", { exports: "./i.js" }), "i.js": 'throw new Error("boom");' });
@@ -185,7 +185,7 @@ describe("checkLayouts against a registry", () => {
   });
   afterAll(() => server.close());
 
-  const options = () => ({ registry: url, singletons: ["@midnight-ntwrk/ledger-v8"], visibility: { attempts: 3, delayMs: 10 } });
+  const options = () => ({ registry: url, singletons: ["@midnightntwrk/ledger-v8"], visibility: { attempts: 3, delayMs: 10 } });
 
   it.each(["ECONNRESET", "UND_ERR_SOCKET"])("retries a transient %s registry read within the visibility budget", async (code) => {
     const original = globalThis.fetch;
@@ -215,7 +215,7 @@ describe("checkLayouts against a registry", () => {
   it("passes a package that installs, imports and resolves one copy of each singleton", async () => {
     expect(await checkLayouts(["@f/good@1.0.0"], options())).toEqual({
       problems: [],
-      layouts: [{ specs: ["@f/good@1.0.0"], copies: { "@midnight-ntwrk/ledger-v8": ["8.1.3"] } }],
+      layouts: [{ specs: ["@f/good@1.0.0"], copies: { "@midnightntwrk/ledger-v8": ["8.1.3"] } }],
     });
   });
 
@@ -240,7 +240,7 @@ describe("checkLayouts against a registry", () => {
 
   it("flags two copies of a singleton when published packages are installed together", async () => {
     const { problems } = await checkLayouts(["@f/good@1.0.0", "@f/pinned-old@1.0.0"], options());
-    expect(problems).toEqual(["@f/good@1.0.0 + @f/pinned-old@1.0.0: @midnight-ntwrk/ledger-v8 has 2 copies (8.1.0, 8.1.3)"]);
+    expect(problems).toEqual(["@f/good@1.0.0 + @f/pinned-old@1.0.0: @midnightntwrk/ledger-v8 has 2 copies (8.1.0, 8.1.3)"]);
   });
 
   it("flags a package whose import throws", async () => {

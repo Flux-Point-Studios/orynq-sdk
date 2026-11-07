@@ -1,10 +1,10 @@
 import { lstatSync, mkdirSync } from "node:fs";
 import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
-import * as L from "@midnight-ntwrk/ledger-v8";
-import { DustAddress, MidnightBech32m, ShieldedAddress, ShieldedCoinPublicKey, ShieldedEncryptionPublicKey } from "@midnight-ntwrk/wallet-sdk-address-format";
-import { HDWallet, Roles } from "@midnight-ntwrk/wallet-sdk-hd";
-import { createKeystore, type UnshieldedKeystore } from "@midnight-ntwrk/wallet-sdk-unshielded-wallet";
+import * as L from "@midnightntwrk/ledger-v9";
+import { DustAddress, MidnightBech32m, ShieldedAddress, ShieldedCoinPublicKey, ShieldedEncryptionPublicKey } from "@midnightntwrk/wallet-sdk-address-format";
+import { WalletSeeds } from "@midnightntwrk/wallet-sdk-hd";
+import { createKeystore, type UnshieldedKeystore } from "@midnightntwrk/wallet-sdk-unshielded-wallet";
 import { readPrivateFile, writePrivateFile, type MidnightNetwork } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 
 export interface WalletAddresses {
@@ -14,8 +14,11 @@ export interface WalletAddresses {
 }
 
 // The secret halves of a wallet: HD account 0, index 0, roles Zswap, NightExternal and Dust,
-// the derivation Midnight's published test vector pins. Callers must never log these objects.
+// the derivation Midnight's published test vector pins. The wallet starts from `seeds`, from which
+// each ledger derives its own keys; `zswap` and `dust` are ledger 9's. Callers must never log these
+// objects.
 export interface WalletSecrets {
+  seeds: WalletSeeds;
   zswap: L.ZswapSecretKeys;
   dust: L.DustSecretKey;
   night: UnshieldedKeystore;
@@ -51,16 +54,18 @@ function seedOf(mnemonicFile: string): Uint8Array {
 // Opens the wallet's secret keys from a mnemonic file only its owner can read. A failure names
 // the file and never what it holds.
 export function walletSecrets(mnemonicFile: string, network: MidnightNetwork): WalletSecrets {
-  const opened = HDWallet.fromSeed(seedOf(mnemonicFile));
-  if (opened.type !== "seedOk") throw new Error(`${mnemonicFile}: its seed does not open an HD wallet`);
-  const derived = opened.hdWallet.selectAccount(0).selectRoles([Roles.Zswap, Roles.NightExternal, Roles.Dust]).deriveKeysAt(0);
-  if (derived.type !== "keysDerived") throw new Error(`${mnemonicFile}: account 0 index 0 cannot be derived`);
-  const keys = derived.keys;
-  opened.hdWallet.clear();
+  let seeds: WalletSeeds;
+  try {
+    seeds = WalletSeeds.fromMasterSeed(seedOf(mnemonicFile));
+  } catch (error) {
+    if ((error as Error).name === "SeedDerivationError") throw new Error(`${mnemonicFile}: account 0 index 0 cannot be derived`);
+    throw error;
+  }
   return {
-    zswap: L.ZswapSecretKeys.fromSeed(keys[Roles.Zswap]),
-    dust: L.DustSecretKey.fromSeed(keys[Roles.Dust]),
-    night: createKeystore(keys[Roles.NightExternal], network),
+    seeds,
+    zswap: L.ZswapSecretKeys.fromSeed(seeds.shielded),
+    dust: L.DustSecretKey.fromSeed(seeds.dust),
+    night: createKeystore({ kind: "schnorr", secret: seeds.unshielded }, network),
   };
 }
 

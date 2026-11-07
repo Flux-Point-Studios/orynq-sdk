@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import execution from "./fixtures/rpc-mainnet-execution.json";
 import { MIDNIGHT_REGISTRIES } from "../registries.js";
-import * as L8 from "@midnight-ntwrk/ledger-v8";
+import * as L8 from "@midnightntwrk/ledger-v8";
 import * as L9 from "@midnightntwrk/ledger-v9";
 import { createHash } from "node:crypto";
 import { REGISTRY_CIRCUITS, REGISTRY_VERIFIER_KEY_SHA256, registryState, registryVerifierKeysIn } from "../registry.js";

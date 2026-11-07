@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import {
   MIDNIGHT_REGISTRIES,
   REGISTRY_CIRCUITS,

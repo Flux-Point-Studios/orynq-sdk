@@ -466,6 +466,19 @@ describe("midnightSource's indexer subscription", () => {
     handler = () => ({ json: { data: { block: { height: 99, hash: "ab".repeat(32), ledgerParameters: "zz" } } } });
     await expect(src().indexer.ledgerParameters!()).rejects.toThrow("test indexer: the head block's ledger parameters are not hex");
   });
+
+  it("reads the hash of the indexer's block at a height, or null where it holds none", async () => {
+    handler = () => ({ json: { data: { block: { height: 98, hash: "cd".repeat(32) } } } });
+    expect(await src().indexer.blockAt!(98)).toEqual({ height: 98, hash: "cd".repeat(32) });
+    expect(seen.at(-1)!.body).toEqual({ query: "query BlockAt($height: Int!) { block(offset: { height: $height }) { height hash } }", variables: { height: 98 } });
+    handler = () => ({ json: { data: { block: null } } });
+    expect(await src().indexer.blockAt!(98)).toBeNull();
+    handler = () => ({ json: { data: { block: { height: 97, hash: "cd".repeat(32) } } } });
+    await expect(src().indexer.blockAt!(98)).rejects.toThrow("test indexer: answered block 97 for height 98");
+    handler = () => ({ json: { data: { block: { height: 98, hash: "CD" } } } });
+    await expect(src().indexer.blockAt!(98)).rejects.toThrow("test indexer: block 98's hash is not 32 bytes of lowercase hex");
+    await expect(src().indexer.blockAt!(-1)).rejects.toThrow("a block height must be a non-negative safe integer");
+  });
 });
 
 it("withholds arbitrary JSON-RPC error data while preserving structured numeric codes", async () => {

@@ -21,7 +21,7 @@ await run(async connect => {
   const expiresAt = Date.parse(option("expires-at"));
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + 24 * 3600_000) throw new Error("Invalid proof release expiry");
   const { source, syncWallet } = await connect();
-  const wallet = await syncWallet();
+  const wallet = await syncWallet(option("journal"));
   if (wallet.addresses.unshielded !== intent.payer) throw new Error("Proof release payer mismatch");
   mkdirSync(dirname(option("journal")), { recursive: true, mode: 0o700 });
   const operator = proofReleaseOperator({ network: "mainnet", source, wallet, paramsDir: option("zk"), journalPath: option("journal"), expiresAt });

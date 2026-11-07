@@ -9,7 +9,8 @@ import { FORK, forkBlock, recorded } from "../../../anchors-midnight/src/__tests
 // step before it is stubbed, the delivery it opens is captured, and its runtime() is asked of a
 // node replaying the recorded fork.
 const AUTHOR = "02".repeat(32), REGISTRY = "438b1ea134e760e8b4e87409d663f36561f15341880c118dc41e4fc2b224c736";
-const stub = vi.hoisted(() => ({ home: "", node: undefined as unknown, delivery: undefined as undefined | { runtime: () => Promise<number> } }));
+// The HOME the service and its shared journal list resolve, fixed before any module reads it.
+const stub = vi.hoisted(() => ({ home: `${process.env.TMPDIR ?? "/tmp"}/standing-service-wiring-home-${process.pid}`, node: undefined as unknown, delivery: undefined as undefined | { runtime: () => Promise<number> } }));
 vi.mock("node:os", async (original) => ({ ...(await original<object>()), homedir: () => stub.home }));
 vi.mock("@fluxpointstudios/orynq-sdk-anchors-midnight", async (original) => ({ ...(await original<object>()),
   knownAuthors: () => ({ authors: () => [{ key: AUTHOR, role: "batch" }], checkpoints: () => [] }), midnightSource: () => ({ operator: "fork", node: { call: (method: string, params?: unknown[]) => (stub.node as MidnightSource["node"]).call(method, params), batch: async () => [] }, indexer: {} }) }));
@@ -49,12 +50,11 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 
 async function deliveryRuntime() {
   const { parseStandingConfig, runStandingService } = await import("../standing-service.js");
-  const root = mkdtempSync(join(tmpdir(), "standing-service-wiring-")); roots.push(root);
-  stub.home = join(root, "home");
+  const root = mkdtempSync(join(tmpdir(), "standing-service-wiring-")); roots.push(root, stub.home);
   const file = (name: string) => join(root, name);
   writeFileSync(file("authors.json"), "[]", { mode: 0o600 });
   writeFileSync(file("record.json"), JSON.stringify({ addresses: { unshielded: "u", shielded: "s", dust: "d" } }), { mode: 0o600 });
-  const config = parseStandingConfig({ mode: "anchor", network: "mainnet", genesis: "01".repeat(32), registry: REGISTRY, author: AUTHOR, stateRoot: file("state"),
+  const config = parseStandingConfig({ mode: "anchor", network: "mainnet", genesis: "01".repeat(32), registry: REGISTRY, author: AUTHOR, stateRoot: join(stub.home, ".local/state/orynq-midnight/standing"),
     materiosRpcUrl: "https://materios.example/rpc", midnightReadRpcUrl: "https://midnight.example/rpc", knownAuthorsFile: file("authors.json"),
     wallet: { mnemonic: file("mnemonic"), record: file("record.json"), state: file("wallet.state"), blockfrost: file("blockfrost"), zk: file("zk"), author: file("author") },
     stores: [{ url: "https://store-a.example/proofs", keyFile: file("store-a") }, { url: "https://store-b.example/proofs", keyFile: file("store-b") }] });
