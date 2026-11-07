@@ -1,10 +1,9 @@
-import * as L from "@midnight-ntwrk/ledger-v8";
 import { decodeAnchorTransaction, type AnchorCall, type AnchorTransaction } from "./anchor-transaction.js";
 import { entryCommitment, hash32, hiddenDigest, hidingCommitment, type EntryHashes, type Hash32 } from "./commitment.js";
 import { verifyFinality, type BlockRef, type FinalityCheckpoint, type FinalityResult } from "./grandpa.js";
 import { knownAuthors as shippedKnownAuthors, authorStatusAt, type AuthorStatus, type KnownAuthors } from "./known-authors.js";
-import { KNOWN_RUNTIME_SPEC_VERSIONS, MIDNIGHT_REGISTRIES, assertRegistryGenerations, type MidnightNetwork, type RegistryInfo } from "./registries.js";
-import { assertRegistryDeployBytes, assertRegistryState } from "./registry.js";
+import { KNOWN_RUNTIME_SPEC_VERSIONS, MIDNIGHT_REGISTRIES, assertRegistryGenerations, registryRuntimeAllows, type MidnightNetwork, type RegistryInfo } from "./registries.js";
+import { assertRegistryDeployBytes, registryVerifierKeysIn } from "./registry.js";
 import { fromHex, toHex } from "./scale.js";
 import { SourceConflict, finalityRpc, type IndexedTransaction, type MidnightSource } from "./source.js";
 import { headerFromRpc, headerHash, includedTransactionIndex, orderedTrieRoot, type RpcHeader } from "./substrate.js";
@@ -238,7 +237,7 @@ async function include(
 const stateCheck = (checks: Checks, name: string, stateHex: string | undefined, where: string) => {
   if (stateHex === undefined) return checks.fail(name, "conflict", `${where} reports no state for the registry`);
   try {
-    assertRegistryState(L.ContractState.deserialize(fromHex(stateHex, "state")));
+    registryVerifierKeysIn(fromHex(stateHex, "state"));
     checks.pass(name, `${where} reports the immutable registry state`);
   } catch (error) {
     checks.fail(name, "conflict", `${where}: ${message(error)}`);
@@ -335,8 +334,8 @@ export async function verifyMidnightAnchor(request: VerifyRequest, options: Veri
   result.anchor = anchor;
   const registry = registries.find((r) => r.address === anchor.address)!;
   result.registry = { generation: registry.generation, address: registry.address };
-  if (indexed.runtime !== null && indexed.runtime !== registry.runtimeSpecVersion) {
-    checks.fail("registry-runtime", "invalid", `block ${indexed.block.height} runs runtime ${indexed.runtime}, not registry generation ${registry.generation}'s ${registry.runtimeSpecVersion}`);
+  if (indexed.runtime !== null && !registryRuntimeAllows(registry, indexed.runtime, indexed.block.height)) {
+    checks.fail("registry-runtime", "invalid", `block ${indexed.block.height} runs runtime ${indexed.runtime}, which registry generation ${registry.generation} does not run at that height`);
   }
 
   if (options.source.verifyExecution) checks.pass("execution-status", "authenticated finalized events prove SUCCESS");

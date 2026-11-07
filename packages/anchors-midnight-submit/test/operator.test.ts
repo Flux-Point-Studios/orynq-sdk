@@ -183,9 +183,10 @@ describe("registryOperator.anchor", () => {
     operator.close();
   });
 
-  it("refuses to prepare anything while the node runs a runtime the decoder does not know", async () => {
-    const { operator, wallet: w } = setup({ net: chain({ spec: 1000400 }) });
-    await expect(operator.anchor(entry())).rejects.toThrow(/the preprod node runs runtime 1000400, which is not one this submitter knows \(1000300\)/);
+  // 2001100 is Ledger 9's runtime: the decoder reads it, but this submitter's transactions are ledger 8's.
+  it.each([1000400, 2001100])("refuses to prepare anything while the node runs runtime %i, which the submitter does not write for", async (spec) => {
+    const { operator, wallet: w } = setup({ net: chain({ spec }) });
+    await expect(operator.anchor(entry())).rejects.toThrow(new RegExp(`the preprod node runs runtime ${spec}, which is not one this submitter knows \\(1000300\\)`));
     expect(w.submitted).toHaveLength(0);
     operator.close();
   });

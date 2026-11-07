@@ -5,7 +5,7 @@ import { metadata, unifyMetadata } from "@polkadot-api/substrate-bindings";
 import { SourceConflict, type MidnightSource } from "./source.js";
 import { headerFromRpc, headerHash, type BlockHeader, type RpcHeader } from "./substrate.js";
 import { toHex } from "./scale.js";
-import { provedValue } from "./storage-proof.js";
+import { provedEntry, provedValue } from "./storage-proof.js";
 
 export const SYSTEM_EVENTS = "0x26aa394eea5630e07c48ae0c9558cef780d41e5e16056765bc8461851072c9d7";
 export const TIMESTAMP_NOW = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
@@ -20,18 +20,37 @@ export interface BlockEffects {
   assertApplications(sends: readonly { extrinsicIndex: number; txHash: string }[]): void;
 }
 
-const CODE_HASH = "0x39568eeb0802fa59d74ac0bc5c7ab62fc05c23ea947937458a4b011558516138";
-const METADATA_SHA256 = "e3e9c651505c98e13f59377f05866b1a554458c5296f2acb0a1756d8ca0cdaa6";
-let eventsCodec: ReturnType<ReturnType<typeof getDynamicBuilder>["buildStorage"]>["value"] | undefined;
-function pinnedEventsCodec() {
-  if (!eventsCodec) {
-    const bytes = readFileSync(new URL("../runtime/1000300.scale", import.meta.url));
-    if (createHash("sha256").update(bytes).digest("hex") !== METADATA_SHA256) throw new Error("Runtime metadata differs from its pin");
+// The runtimes the decoder knows, by the blake2-256 of their Wasm code, each with the sha256 of
+// the metadata (runtime/<specVersion>.scale) its events decode under.
+const RUNTIMES: Readonly<Record<string, { specVersion: number; metadataSha256: string }>> = {
+  "0x39568eeb0802fa59d74ac0bc5c7ab62fc05c23ea947937458a4b011558516138": { specVersion: 1000300, metadataSha256: "e3e9c651505c98e13f59377f05866b1a554458c5296f2acb0a1756d8ca0cdaa6" },
+  "0x87d0c023b954ad788bba2c065320fe19f172f374adbe86ebc0a99bc1ce3fe1de": { specVersion: 2001100, metadataSha256: "452359103e3598e3720d28b0537f0bb89f1b8614de816928f4a3fc8732650afb" },
+};
+const CODE = "0x3a636f6465";
+const PENDING_CODE = "0x3a70656e64696e675f636f6465";
+type EventsCodec = ReturnType<ReturnType<typeof getDynamicBuilder>["buildStorage"]>["value"];
+const eventsCodecs = new Map<number, EventsCodec>();
+function pinnedEventsCodec({ specVersion, metadataSha256 }: { specVersion: number; metadataSha256: string }) {
+  let codec = eventsCodecs.get(specVersion);
+  if (!codec) {
+    const bytes = readFileSync(new URL(`../runtime/${specVersion}.scale`, import.meta.url));
+    if (createHash("sha256").update(bytes).digest("hex") !== metadataSha256) throw new Error("Runtime metadata differs from its pin");
     const storage = getDynamicBuilder(getLookupFn(unifyMetadata(metadata.dec(bytes)))).buildStorage("System", "Events");
     if (storage.keys.enc() !== SYSTEM_EVENTS) throw new Error("Runtime metadata has an unexpected System.Events key");
-    eventsCodec = storage.value;
+    codec = storage.value;
+    eventsCodecs.set(specVersion, codec);
   }
-  return eventsCodec;
+  return codec;
+}
+
+// The runtime that executes the child of the block whose state root is `parentRoot`: set_code
+// stores the new code as :pending_code, and the next block runs it, so the parent's
+// :pending_code when present, its :code otherwise.
+function executingRuntime(parentRoot: string, proof: readonly string[]) {
+  const code = provedEntry(parentRoot, PENDING_CODE, proof, true) ?? provedValue(parentRoot, CODE, proof, true);
+  const runtime = RUNTIMES[code];
+  if (!runtime) throw new Error("Executing runtime code is not supported");
+  return runtime;
 }
 
 interface ReadProof { at: string; proof: string[] }
@@ -50,23 +69,24 @@ export async function verifyBlockEffects(node: MidnightSource["node"], request: 
   const parentAt = `0x${toHex(header.parentHash)}`;
   const [parentJson, parentProof, targetProof] = await node.batch([
     ["chain_getHeader", [parentAt]],
-    // A strict extension exposes the committed code hash without fetching the Wasm value.
-    ["state_getReadProof", [["0x3a636f646500"], parentAt]],
+    // Strict extensions expose the committed code hashes without fetching the Wasm values, and
+    // the absence of :pending_code when no upgrade is pending.
+    ["state_getReadProof", [[`${CODE}00`, `${PENDING_CODE}00`], parentAt]],
     ["state_getReadProof", [[SYSTEM_EVENTS, TIMESTAMP_NOW], at]],
   ]) as [RpcHeader, ReadProof, ReadProof];
   try {
     const parent = headerFromRpc(parentJson);
     if (toHex(headerHash(parent)) !== toHex(header.parentHash) || parent.number + 1 !== header.number) throw new Error("Executing parent header does not match the finalized header");
     if (parentProof.at !== parentAt || targetProof.at !== at) throw new Error("Execution proof identifies another block");
-    if (provedValue(`0x${toHex(parent.stateRoot)}`, "0x3a636f6465", parentProof.proof, true) !== CODE_HASH) throw new Error("Executing runtime code is not supported");
+    const runtime = executingRuntime(`0x${toHex(parent.stateRoot)}`, parentProof.proof);
     const root = `0x${toHex(header.stateRoot)}`;
     const encodedEvents = provedValue(root, SYSTEM_EVENTS, targetProof.proof);
     const time = provedValue(root, TIMESTAMP_NOW, targetProof.proof);
     if (!/^0x[0-9a-f]{16}$/.test(time)) throw new Error("Invalid authenticated timestamp");
     const timestamp = Number(Buffer.from(time.slice(2), "hex").readBigUInt64LE());
     if (!Number.isSafeInteger(timestamp)) throw new Error("Authenticated timestamp exceeds the integer range");
-    const records = pinnedEventsCodec().dec(encodedEvents) as EventRecord[];
-    return { runtimeSpecVersion: 1000300, timestamp, outcome(extrinsicIndex, txHash) {
+    const records = pinnedEventsCodec(runtime).dec(encodedEvents) as EventRecord[];
+    return { runtimeSpecVersion: runtime.specVersion, timestamp, outcome(extrinsicIndex, txHash) {
       validateTarget(extrinsicIndex, txHash);
       const events = records.filter((event) => event.phase.type === "ApplyExtrinsic" && event.phase.value === extrinsicIndex);
       const system = events.filter(({ event }) => event.type === "System" && ["ExtrinsicSuccess", "ExtrinsicFailed"].includes(event.value.type));

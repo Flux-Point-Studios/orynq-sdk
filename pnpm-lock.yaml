@@ -21,6 +21,7 @@ overrides:
   '@midnight-ntwrk/ledger-v8': 8.1.3
   '@midnight-ntwrk/onchain-runtime-v3': 3.1.2
   '@midnight-ntwrk/zkir-v2': 2.1.1
+  '@midnightntwrk/ledger-v9': 1.0.0
   '@midnight-ntwrk/wallet-sdk-indexer-client': 1.2.3
   '@midnight-ntwrk/wallet-sdk-runtime': 1.0.5
   body-parser@1: ^1.20.9
@@ -175,6 +176,9 @@ importers:
       '@midnight-ntwrk/onchain-runtime-v3':
         specifier: 3.1.2
         version: 3.1.2
+      '@midnightntwrk/ledger-v9':
+        specifier: 1.0.0
+        version: 1.0.0
       '@noble/hashes':
         specifier: ^2.4.0
         version: 2.4.0
@@ -2938,6 +2942,10 @@ packages:
 
   /@midnight-ntwrk/zkir-v2@2.1.1:
     resolution: {integrity: sha512-U3sh3kM8bj3BPqWov5o6ewLcq6SJ/tscJD5wATG6LVzqlKWUVudeb7QzUUHXmzeV8XMGgt97+lol/Gnc101Eqw==}
+
+  /@midnightntwrk/ledger-v9@1.0.0:
+    resolution: {integrity: sha512-0o45+ypO1Yo2PRcP6fqp9YgqTwceNEyl+o9X81VIVWVjZNOIbK0z7ztVKxrECiPQq/WgpQWrrVu66GfLvjZZww==}
+    dev: false
 
   /@modelcontextprotocol/sdk@1.32.1(zod@4.6.7):
     resolution: {integrity: sha512-2DdE+SJDtzLEEWzY1ZjY7Q+VcPhcV1KisD3zI4u0XZyktsjHum1mwbMI+JaulUBi2OZk+KJAi2uPXzxichPkdw==}

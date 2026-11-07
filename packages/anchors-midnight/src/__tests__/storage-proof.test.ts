@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import fixture from "./fixtures/storage-proof-mainnet.json";
 import neighbor from "./fixtures/runtime-neighbor-mainnet.json";
-import { provedValue } from "../storage-proof.js";
+import { provedEntry, provedValue } from "../storage-proof.js";
+import { toHex } from "../scale.js";
+import { CODE_KEYS, FORK, PENDING_CODE_KEYS, forkBlock, recorded } from "./fork-chain.js";
 
 const EVENTS = "0x26aa394eea5630e07c48ae0c9558cef780d41e5e16056765bc8461851072c9d7";
 const CODE = "0x3a636f6465";
+const PENDING_CODE = "0x3a70656e64696e675f636f6465";
 const CODE_HASH = "0x39568eeb0802fa59d74ac0bc5c7ab62fc05c23ea947937458a4b011558516138";
 
 describe("authenticated Substrate storage values", () => {
@@ -35,6 +38,21 @@ describe("authenticated Substrate storage values", () => {
       expect(() => provedValue(fixture.header.stateRoot, EVENTS, absent)).toThrow();
       expect(() => provedValue(fixture.header.stateRoot, EVENTS, changed)).toThrow();
     }
+  });
+
+  it("proves a key absent only from the nodes on its path", () => {
+    const parentOf = (height: number) => `0x${forkBlock(height).blockHash}`;
+    const rootOf = (height: number) => `0x${toHex(forkBlock(height).header.stateRoot)}`;
+    const before = recorded<{ proof: string[] }>("state_getReadProof", [[CODE_KEYS, PENDING_CODE_KEYS], parentOf(FORK.setCode - 1)]).proof;
+    expect(provedEntry(rootOf(FORK.setCode - 1), PENDING_CODE, before, true)).toBeNull();
+    expect(() => provedValue(rootOf(FORK.setCode - 1), PENDING_CODE, before, true)).toThrow(/no value/);
+    expect(provedEntry(neighbor.header.stateRoot, PENDING_CODE, neighbor.proof.proof, true)).toBeNull();
+    const pending = recorded<{ proof: string[] }>("state_getReadProof", [[CODE_KEYS, PENDING_CODE_KEYS], parentOf(FORK.setCode)]).proof;
+    expect(provedEntry(rootOf(FORK.setCode), PENDING_CODE, pending, true)).toBe("0x87d0c023b954ad788bba2c065320fe19f172f374adbe86ebc0a99bc1ce3fe1de");
+    expect(provedEntry(rootOf(FORK.setCode), CODE, pending, true)).toBe(CODE_HASH);
+    const codeOnly = recorded<{ proof: string[] }>("state_getReadProof", [[CODE_KEYS], parentOf(FORK.setCode)]).proof;
+    expect(() => provedEntry(rootOf(FORK.setCode), PENDING_CODE, codeOnly, true)).toThrow(/lacks the requested path/);
+    expect(() => provedEntry(`0x${"00".repeat(32)}`, PENDING_CODE, before, true)).toThrow(/root/);
   });
 
   it("bounds proof work before decoding and refuses malformed bytes", () => {

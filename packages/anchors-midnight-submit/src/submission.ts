@@ -1,6 +1,6 @@
 import * as L from "@midnight-ntwrk/ledger-v8";
 import type { ProvingService, UnboundTransaction } from "@midnight-ntwrk/wallet-sdk-capabilities/proving";
-import { KNOWN_RUNTIME_SPEC_VERSIONS, assertRegistryState, contractStateOnNode, type MidnightNetwork, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { assertRegistryState, contractStateOnNode, type MidnightNetwork, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import type { AnchorKey, ChainView, Journal, JournalRow, Submission } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import type { OperatorWallet } from "./wallet.js";
 
@@ -9,15 +9,19 @@ export type Prover = Pick<ProvingService<UnboundTransaction>, "prove">;
 
 export const finalTransaction = (bytes: Uint8Array) => L.Transaction.deserialize("signature", "proof", "binding", bytes) as L.FinalizedTransaction;
 
-// Refuses to build anything for a runtime whose extrinsic layout the decoder does not pin:
-// checked before every submission, so a runtime upgrade stops the submitter instead of
-// producing transactions no verifier can place.
-export async function assertKnownRuntime(source: MidnightSource, network: MidnightNetwork): Promise<number> {
+// The runtimes this submitter builds transactions for. Its transactions are ledger 8's
+// transaction[v9], which runtime 2001100 (ledger 9) does not read.
+export const SUBMITTER_RUNTIME_SPEC_VERSIONS = [1000300] as const;
+
+// Refuses to build anything for a runtime outside `known`: checked before every submission, so a
+// runtime upgrade stops the submitter instead of producing transactions the chain or a verifier
+// cannot place.
+export async function assertKnownRuntime(source: MidnightSource, network: MidnightNetwork, known: readonly number[] = SUBMITTER_RUNTIME_SPEC_VERSIONS): Promise<number> {
   const runtime = await source.node.call<unknown>("state_getRuntimeVersion");
   const specVersion = runtime && typeof runtime === "object" ? (runtime as { specVersion?: unknown }).specVersion : undefined;
   if (typeof specVersion !== "number" || !Number.isSafeInteger(specVersion) || specVersion < 0) throw new Error("the node returned an invalid runtime version");
-  if (!(KNOWN_RUNTIME_SPEC_VERSIONS as readonly number[]).includes(specVersion)) {
-    throw new Error(`the ${network} node runs runtime ${specVersion}, which is not one this submitter knows (${KNOWN_RUNTIME_SPEC_VERSIONS.join(", ")})`);
+  if (!known.includes(specVersion)) {
+    throw new Error(`the ${network} node runs runtime ${specVersion}, which is not one this submitter knows (${known.join(", ")})`);
   }
   return specVersion;
 }

@@ -81,9 +81,13 @@ author key file too, so a tool that anchors with a user's key never takes a serv
 ## Registry generations
 
 `MIDNIGHT_REGISTRIES` lists the deployed registry generations per network. Each entry pins its
-address, deploy transaction and block height, the runtime whose extrinsic layout the decoder
-knows (spec 1000300), and this contract's verifier keys, which `assertRegistryGenerations`
-checks. The verifier accepts an anchor only in a pinned generation, and verifies that
+address, deploy transaction and block height, the runtimes it runs under as contiguous height
+spans from its deploy (each one the decoder knows, the last one open), and this contract's
+verifier keys, which `assertRegistryGenerations` checks. Generation 1 runs spec 1000300
+(ledger 8) for blocks 3113819 through 3346138 and spec 2001100 (ledger 9) from 3346139.
+`registryRuntimeAllows` checks a block's runtime against its height. The verifier accepts an
+anchor only in a pinned generation, in a block whose runtime that generation runs at its
+height, and verifies that
 generation's pinned deploy the way it verifies the anchor.
 
 | Network | Generation | Address | Deploy transaction | Block |
@@ -404,7 +408,7 @@ finalized result returns the set that justified the block as a checkpoint the ca
 Inclusion is a strict decode, never a byte search. `orderedTrieRoot` recomputes a block body's
 `extrinsicsRoot` (trie layout V1, which Midnight's state version 3 selects), and
 `includedTransactionIndex` finds the one extrinsic that is exactly a bare
-`Midnight.send_mn_transaction(tx)` (pallet 5, call 0 in runtime 1000300) with nothing before or
+`Midnight.send_mn_transaction(tx)` (pallet 5, call 0 in runtimes 1000300 and 2001100) with nothing before or
 after the transaction. Only a bare extrinsic counts, because for those the runtime runs the
 ledger's full `well_formed` check, proofs included, in `pre_dispatch`: a block holding one is
 invalid unless the transaction is, so inclusion in a final block means consensus checked the

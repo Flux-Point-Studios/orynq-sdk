@@ -7,7 +7,9 @@ const MIDNIGHT_PINS = {
   "@midnight-ntwrk/ledger-v8": "8.1.3",
   "@midnight-ntwrk/onchain-runtime-v3": "3.1.2",
   "@midnight-ntwrk/zkir-v2": "2.1.1",
+  "@midnightntwrk/ledger-v9": "1.0.0",
 };
+const isMidnight = (name: string) => name.startsWith("@midnight-ntwrk/") || name.startsWith("@midnightntwrk/");
 
 // The wallet SDK 1.2.0 set (ledger 8) the submit package uses, exactly as npm resolves it.
 const WALLET_SDK = {
@@ -32,8 +34,8 @@ describe("toolchain and dependency pins", () => {
     for (const [name, version] of Object.entries(MIDNIGHT_PINS)) expect(pnpm.overrides[name]).toBe(version);
   });
 
-  it("the lockfile resolves one copy of each pinned Midnight package and nothing from ledger 9", () => {
-    const resolved = [...read("../../../../pnpm-lock.yaml").matchAll(/^ {2}\/(@midnight-ntwrk\/[^@\s]+)@([^:(\s]+)/gm)].map(
+  it("the lockfile resolves one copy of each pinned Midnight package, in either npm scope, and nothing else from either", () => {
+    const resolved = [...read("../../../../pnpm-lock.yaml").matchAll(/^ {2}\/(@midnight-?ntwrk\/[^@\s]+)@([^:(\s]+)/gm)].map(
       ([, name, version]) => `${name}@${version}`,
     );
     expect(resolved.sort()).toEqual(Object.entries({ ...MIDNIGHT_PINS, ...WALLET_SDK }).map(([n, v]) => `${n}@${v}`).sort());
@@ -49,7 +51,7 @@ describe("toolchain and dependency pins", () => {
         const manifest: Record<string, Record<string, string> | undefined> = JSON.parse(read(path));
         for (const field of ["dependencies", "devDependencies", "peerDependencies"]) {
           for (const [name, spec] of Object.entries(manifest[field] ?? {})) {
-            if (!name.startsWith("@midnight-ntwrk/")) continue;
+            if (!isMidnight(name)) continue;
             named.push(name);
             expect(spec, `${group}/${dir} ${field} ${name}`).toBe(pinned[name]);
           }
@@ -57,6 +59,7 @@ describe("toolchain and dependency pins", () => {
       }
     }
     expect(named).toContain("@midnight-ntwrk/onchain-runtime-v3");
+    expect(named).toContain("@midnightntwrk/ledger-v9");
   });
 
   it("every Compact build requires the compactc version the installer pins", () => {

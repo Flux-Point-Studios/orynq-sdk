@@ -190,7 +190,7 @@ export function orderedTrieRoot(values: Uint8Array[]): Uint8Array {
   return blake2b256(encodeNode(entries, 0));
 }
 
-// Runtime 1000300: Midnight is pallet 5 and send_mn_transaction(midnight_tx: Vec<u8>) its call 0.
+// Runtimes 1000300 and 2001100: Midnight is pallet 5 and send_mn_transaction(midnight_tx: Vec<u8>) its call 0.
 // Only a bare (unsigned) extrinsic counts: for those the runtime runs the ledger's full
 // well_formed check, proofs included, in pre_dispatch, so a block that holds one is invalid
 // unless the transaction is. Versions 4 and 5 both encode a bare extrinsic as their version byte.

@@ -6,7 +6,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkLayouts, npmInstallFailure, packedSpecs, singletonCopies } from "./post-publish-check.mjs";
+import { SINGLETONS, checkLayouts, npmInstallFailure, packedSpecs, singletonCopies } from "./post-publish-check.mjs";
 
 const scratchDirs: string[] = [];
 const scratch = () => {
@@ -111,6 +111,13 @@ describe("singletonCopies", () => {
     mkdirSync(join(dir, "node_modules/x/node_modules/@midnight-ntwrk"), { recursive: true });
     symlinkSync(join(dir, "store/@midnight-ntwrk/ledger-v8"), join(dir, "node_modules/x/node_modules/@midnight-ntwrk/ledger-v8"));
     expect(singletonCopies(dir, ["@midnight-ntwrk/ledger-v8"])).toEqual({ "@midnight-ntwrk/ledger-v8": ["8.1.3"] });
+  });
+
+  it("guards every Midnight package the anchors package depends on, in either npm scope", () => {
+    const { dependencies } = JSON.parse(readFileSync(new URL("../../packages/anchors-midnight/package.json", import.meta.url), "utf8"));
+    const midnight = Object.keys(dependencies).filter((name) => /^@midnight-?ntwrk\//.test(name));
+    expect(midnight).toContain("@midnightntwrk/ledger-v9");
+    for (const name of midnight) expect(SINGLETONS).toContain(name);
   });
 });
 
