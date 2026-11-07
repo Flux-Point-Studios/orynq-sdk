@@ -609,7 +609,8 @@ describe("a state file wallet-sdk 1.x saved", () => {
     expect(moveLegacyWalletState(file, [held(-6)])).toBe(`${file}.wallet-sdk-1`);
   });
 
-  const journalHolding = (name: string, payer: string, minutes: number) => {
+  // A row written before journals recorded payers names none (null): it may be this wallet's.
+  const journalHolding = (name: string, payer: string | null, minutes: number) => {
     const path = join(dir, `${name}.journal.sqlite`);
     openJournal(path).close();
     const db = new DatabaseSync(path);
@@ -638,6 +639,13 @@ describe("a state file wallet-sdk 1.x saved", () => {
     await expect(openWallet({ network: "preprod", mnemonicFile, endpoints: OFFLINE, source: liveSource(), zkDir: "/nonexistent", stateFile: file, journals: [journal, join(dir, "never-created.sqlite")] })).rejects.toThrow(`while the fee ${"cd".repeat(32)} the wallet paid may still land`);
     expect(readFileSync(file)).toEqual(bytes);
     expect(existsSync(join(dir, "never-created.sqlite"))).toBe(false);
+  });
+
+  it("is not moved while a journal holds a fee in flight that names no payer, which may be this wallet's", async () => {
+    const unnamed = journalHolding("legacy-no-payer", null, 10);
+    const { file, bytes, opening } = await openOver("legacy-no-payer", [unnamed]);
+    await expect(opening).rejects.toThrow(`while the fee ${"cd".repeat(32)} the wallet paid may still land`);
+    expect(readFileSync(file)).toEqual(bytes);
   });
 
   it("opens a wallet that syncs from genesis, and the next save writes a wallet-sdk 2.x state in its place", async () => {

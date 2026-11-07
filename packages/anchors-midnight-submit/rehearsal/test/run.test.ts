@@ -43,6 +43,7 @@ function rehearsal(bundles: string[] = []) {
   const rawFile = `${root}/rehearsal/evidence/raw.json`;
   const raw = () => JSON.parse(readFileSync(rawFile, "utf8"));
   return {
+    secrets,
     // `onOutput` sees the output so far each time the run writes more.
     async run(fault = "", phase = "deploy", onOutput?: (output: string) => void) {
       const child = spawn(process.execPath, ["--import", "tsx", "run.ts", phase], {
@@ -93,6 +94,9 @@ describe.concurrent("run.ts deploy", { timeout: 2 * RUN_TIMEOUT + 30_000 }, () =
     expect(r.raw().deploy).toMatchObject(recorded(r.chain(), sent!));
     expect(r.raw().deploy).toMatchObject({ dustBefore: String(10n ** 16n), dustAfter: String(10n ** 16n), landedAfterMs: expect.any(Number), prepared: { prepareMs: expect.any(Number) } });
     expect(r.journal()).toEqual([{ tx_hash: sent, state: "landed" }]);
+    // Wallet A is shared with the crash drill: it opens with every journal of the rehearsal's fees.
+    const relay = `${r.secrets}/journal-author-${Buffer.from(authorKey(readAuthorSecret(`${r.secrets}/author-relay.key`))).toString("hex")}.sqlite`;
+    expect(r.chain().walletOpens?.map((open) => open.journals)).toEqual([[`${r.secrets}/journal-deploy.sqlite`, relay]]);
     expect(r.raw().stateSaves).toEqual([
       { wallet: "walletA", when: "after sync", at: expect.any(String), saved: true },
       { wallet: "walletA", when: "at close", at: expect.any(String), saved: true },

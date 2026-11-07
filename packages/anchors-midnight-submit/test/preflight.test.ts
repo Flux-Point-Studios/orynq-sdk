@@ -1073,6 +1073,12 @@ describe.concurrent("scripts/anchor-mainnet.ts over an offline mainnet", () => {
 
 // The wallet state file deploy-mainnet and anchor-mainnet share by default, under the run's HOME.
 const defaultWalletState = (root: string) => `${root}/home/.local/state/orynq-midnight/mainnet-wallet.state.json`;
+// The journals a run opens the shared wallet with: its own, then every mainnet script's and the
+// standing service's at their default paths under the run's HOME.
+const walletJournals = (root: string, own: string) => {
+  const state = `${root}/home/.local/state/orynq-midnight`;
+  return [own, `${state}/mainnet-deploy.sqlite`, `${state}/mainnet-anchors.sqlite`, `${state}/runner/proof-release.sqlite`, `${state}/standing/attempts.sqlite`];
+};
 const SYNCED_LINE = "shielded applied 9 of 9, connected; unshielded applied 9 of 9, connected; dust applied 9 of 9, connected; synced";
 
 describe.concurrent("the wallet sync deploy-mainnet and anchor-mainnet share", () => {
@@ -1085,7 +1091,7 @@ describe.concurrent("the wallet sync deploy-mainnet and anchor-mainnet share", (
     const m = scripts[script]();
     const r = await m.run((token) => token);
     expect(r.status, r.output).toBe(0);
-    expect(m.chain().walletOpens).toEqual([{ stateFile: defaultWalletState(m.root) }]);
+    expect(m.chain().walletOpens).toEqual([{ stateFile: defaultWalletState(m.root), journals: walletJournals(m.root, m.journalPath) }]);
     expect(statSync(dirname(defaultWalletState(m.root))).mode & 0o777).toBe(0o700);
     expect(m.chain().syncWaits).toEqual([3 * 60 * MINUTE]);
     expect(r.output).toMatch(new RegExp(`\\nwallet sync at \\S+Z, 0 s in: ${SYNCED_LINE}\\n`));
@@ -1097,7 +1103,7 @@ describe.concurrent("the wallet sync deploy-mainnet and anchor-mainnet share", (
     const m = offlineMainnet("deploy-mainnet", (root) => ["--wallet-state", `${root}/elsewhere/wallet.state.json`]);
     const r = await m.run((token) => token);
     expect(r.status, r.output).toBe(0);
-    expect(m.chain().walletOpens).toEqual([{ stateFile: `${m.root}/elsewhere/wallet.state.json` }]);
+    expect(m.chain().walletOpens).toEqual([{ stateFile: `${m.root}/elsewhere/wallet.state.json`, journals: walletJournals(m.root, m.journalPath) }]);
     expect(statSync(`${m.root}/elsewhere`).mode & 0o777).toBe(0o700);
   });
 

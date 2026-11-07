@@ -21,8 +21,11 @@ import {
   readJsonFile,
   networkEndpoints,
   openWallet,
-  proofReleaseJournal,
   syncWithCheckpoints,
+  ANCHORS_JOURNAL,
+  DEPLOY_JOURNAL,
+  MAINNET_WALLET_JOURNALS,
+  STATE,
   type ChainFacts,
   type OperatorWallet,
   type PreparedAnchor,
@@ -48,12 +51,7 @@ export function deadlineBeforeAnnouncement(timeoutMillis: number, announce: () =
 export const home = homedir();
 // Where the FPS mainnet keys and the deploy wallet's mnemonic live.
 export const SECRETS = `${home}/.secrets/orynq-midnight-mainnet`;
-// Where the mainnet scripts keep their journals, results and wallet state: deploy-mainnet journals
-// the deploy at DEPLOY_JOURNAL, where anchor-mainnet reads which registry FPS deployed, and
-// anchor-mainnet its anchors at ANCHORS_JOURNAL.
-export const STATE = `${home}/.local/state/orynq-midnight`;
-export const DEPLOY_JOURNAL = `${STATE}/mainnet-deploy.sqlite`;
-export const ANCHORS_JOURNAL = `${STATE}/mainnet-anchors.sqlite`;
+export { ANCHORS_JOURNAL, DEPLOY_JOURNAL, STATE };
 
 const MINUTE = 60_000;
 // A from-genesis sync of the mainnet wallet can take more than an hour.
@@ -133,8 +131,7 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
               mkdirSync(dirname(stateFile), { recursive: true, mode: 0o700 });
               ensurePrivateDir(dirname(stateFile));
               process.stdout.write(`${chain.chain}, runtime ${chain.specVersion}, ledger ${chain.ledgerVersion}. Syncing the wallet...\n`);
-              // Every journal a mainnet script records the shared wallet's fees in.
-              const journals = [...new Set([journal, DEPLOY_JOURNAL, ANCHORS_JOURNAL, proofReleaseJournal(`${STATE}/runner`)])];
+              const journals = [...new Set([journal, ...MAINNET_WALLET_JOURNALS])];
               const wallet = await openWallet({ network: "mainnet", mnemonicFile: option("mnemonic"), endpoints, source, zkDir: option("zk"), expectedAddresses, journals, stateFile });
               opened.push(wallet);
               await syncWithCheckpoints(wallet, { timeoutMs: SYNC_TIMEOUT_MS, progressMs: MINUTE, checkpointMs: 5 * MINUTE, write: (line) => process.stdout.write(`${line}\n`) });

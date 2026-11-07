@@ -25,7 +25,7 @@ import { source, WALLET_SYNC } from "./endpoints.js";
 import { NODE_NEGATIVES } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
 import { toolingCommit, installedPins } from "./tooling.js";
-import { authorJournalPath, submissionVerification } from "./submission-verification.js";
+import { authorJournalPath, rehearsalWalletJournals, submissionVerification } from "./submission-verification.js";
 import { assertSourceRuntime } from "./source-runtime.js";
 
 const commit = toolingCommit();
@@ -112,7 +112,7 @@ async function wallet(which: "walletA" | "walletB") {
       zkDir: ZK,
       expectedAddresses: recorded[which].addresses,
       stateFile: `${SECRETS}/state/${which}-midnight.state.json`,
-      journals: [`${SECRETS}/journal-deploy.sqlite`, ...["author-relay.key", "author-relay-2.key"].map((key) => `${SECRETS}/${key}`).filter((key) => existsSync(key)).map((key) => authorJournalPath(SECRETS, key))],
+      journals: rehearsalWalletJournals(SECRETS),
       costParameters: { additionalFeeOverhead: OVERHEAD, feeBlocksMargin: 5 },
     });
     await w.waitForSync(7_200_000);

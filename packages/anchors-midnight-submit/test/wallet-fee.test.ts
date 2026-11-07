@@ -168,6 +168,13 @@ describe("opening the wallet against an indexer", () => {
     await expect(walletSyncedTo(facadeSyncedTo(7n, 7n), source)).rejects.toThrow(`the preprod indexer's genesis block ee${"0".repeat(62)} is not the node's ${"0".repeat(64)}; the wallet was not opened`);
     expect(init).not.toHaveBeenCalled();
   });
+
+  it("refuses an indexer that holds no genesis block, before the wallet syncs", async () => {
+    const init = vi.spyOn(WalletFacade, "init");
+    const source = liveSource({ indexerHashAt: (height) => (height === 0 ? null : height.toString(16).padStart(64, "0")) });
+    await expect(walletSyncedTo(facadeSyncedTo(7n, 7n), source)).rejects.toThrow(`the preprod indexer's genesis block (none) is not the node's ${"0".repeat(64)}; the wallet was not opened`);
+    expect(init).not.toHaveBeenCalled();
+  });
 });
 
 // Below the ledger 9 fork the wallets read the chain with ledger 8 and pay ledger 8 fees; from it,

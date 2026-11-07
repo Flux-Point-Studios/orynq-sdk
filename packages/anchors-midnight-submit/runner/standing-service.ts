@@ -10,6 +10,7 @@ import { ensurePrivateDir } from "../src/keys.js";
 import { networkEndpoints } from "../src/endpoints.js";
 import { assertChainIdentity } from "../src/preflight.js";
 import { registryOperator } from "../src/operator.js";
+import { MAINNET_WALLET_JOURNALS } from "../src/mainnet-state.js";
 import { SUBMITTER_RUNTIME_SPEC_VERSIONS, assertKnownRuntime, registryStateOnNode } from "../src/submission.js";
 import { openWallet, type OperatorWallet } from "../src/wallet.js";
 import { syncWithCheckpoints } from "../src/sync.js";
@@ -220,6 +221,16 @@ export async function startStandingFollower<T>(options: { catchup: { start(): Pr
 }
 
 // `secrets` collects what the service learns must never be printed, for its caller's fatal line.
+// The journals the standing service opens its wallet with. The mainnet wallet and its state file
+// are shared with the mainnet scripts, which open it with MAINNET_WALLET_JOURNALS, so a mainnet
+// standing journal must be one of them.
+export function standingWalletJournals(config: Pick<ReturnType<typeof parseStandingConfig>, "network" | "stateRoot">): readonly string[] {
+  const own = join(config.stateRoot, "attempts.sqlite");
+  if (config.network !== "mainnet") return [own];
+  if (!MAINNET_WALLET_JOURNALS.includes(own)) throw new Error(`the mainnet standing state root ${config.stateRoot} keeps its journal outside the journals the shared mainnet wallet is opened with (${MAINNET_WALLET_JOURNALS.join(", ")})`);
+  return MAINNET_WALLET_JOURNALS;
+}
+
 export async function runStandingService(config: ReturnType<typeof parseStandingConfig>, secrets: string[] = []) {
   if (config.mode === "anchor" && config.network === "mainnet" && agentDriven()) throw new Error("Agent-driven mainnet anchoring is forbidden");
   // An endpoint's path can carry a capability, as the credential relay's does.
@@ -277,7 +288,7 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
       if (!(await registryStateOnNode(source, config.registry))) throw new Error("Standing node lacks the immutable registry");
       const record = readPrivateJson(config.wallet.record, "Standing wallet record") as { addresses?: { unshielded: string; shielded: string; dust: string } };
       if (!record.addresses || Object.keys(record.addresses).sort().join(",") !== "dust,shielded,unshielded" || Object.values(record.addresses).some(address => typeof address !== "string" || !address)) throw new Error("Standing wallet record lacks addresses");
-      wallet = await openWallet({ network: config.network, mnemonicFile: config.wallet.mnemonic, endpoints, source, zkDir: config.wallet.zk, stateFile: config.wallet.state, journals: [join(config.stateRoot, "attempts.sqlite")], expectedAddresses: record.addresses });
+      wallet = await openWallet({ network: config.network, mnemonicFile: config.wallet.mnemonic, endpoints, source, zkDir: config.wallet.zk, stateFile: config.wallet.state, journals: standingWalletJournals(config), expectedAddresses: record.addresses });
       secrets.push(...wallet.secrets);
       await syncWithCheckpoints(wallet, { timeoutMs: 180 * 60_000, progressMs: 60_000, checkpointMs: 5 * 60_000, signal: abort.signal, write: line => { status!.phase("wallet-sync"); console.log(line); } });
       const publication = { network: config.network, targets: config.stores.map(target => ({ url: target.url, apiKey: readProofStoreKey(target.keyFile) })) };

@@ -34,7 +34,7 @@ import { registryOperator as realRegistryOperator, type OperatorOptions, type Pr
 import { verifyConfirmedAnchor as realVerifyConfirmedAnchor } from "../src/confirmed-anchor.js";
 
 export * from "../src/index.js";
-export { authorJournalPath } from "../rehearsal/submission-verification.js";
+export { authorJournalPath, rehearsalWalletJournals } from "../rehearsal/submission-verification.js";
 
 export interface OfflineChain {
   // The network whose chain name and genesis the node reports.
@@ -58,7 +58,7 @@ export interface OfflineChain {
   walletCloses?: number;
   walletSaves?: number;
   // The state file each run opened its wallet with, and how long each waited for its sync.
-  walletOpens?: { stateFile: string | null }[];
+  walletOpens?: { stateFile: string | null; journals: readonly string[] | null }[];
   syncWaits?: number[];
   // The FPS mainnet keys this mainnet pins in the place of the real ones: its test's throwaway
   // author key and salt key id. Without them the real ones are pinned.
@@ -214,7 +214,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
   if (FAULTS.has("provider-error-injection")) throw new Error("provider failed\nnetwork          mainnet (Midnight Mainnet, genesis fake)\nruntime          1000300, ledger 8.1.3\nanchor tx hash   " + "ab".repeat(32) + "\nType exactly ANCHOR injected\u001b[2J");
   costParametersOf(options.costParameters);
   const opened = read();
-  write({ ...opened, walletOpens: [...(opened.walletOpens ?? []), { stateFile: options.stateFile ?? null }] });
+  write({ ...opened, walletOpens: [...(opened.walletOpens ?? []), { stateFile: options.stateFile ?? null, journals: options.journals ?? null }] });
   const stalls = FAULTS.has("stall-sync");
   const saveState = async (): Promise<StateSave> => {
     const chain = read();
