@@ -27,6 +27,7 @@ import { StandingFeeCap } from "./standing-budget.js";
 import { openStandingStatus } from "./standing-status.js";
 import { flushDirectory, readPrivateJson } from "./state.js";
 import { readCheckpointHistory } from "./checkpoint-history.js";
+import { wordlist } from "@scure/bip39/wordlists/english.js";
 
 export function parseStandingConfig(value: unknown) {
   const object = (input: unknown, fields: string[]) => {
@@ -56,28 +57,79 @@ export function parseStandingConfig(value: unknown) {
     wallet: { mnemonic: path(wallet.mnemonic), record: path(wallet.record), state: path(wallet.state), blockfrost: path(wallet.blockfrost), zk: path(wallet.zk), author: path(wallet.author) }, stores } as const;
 }
 
-// The service's errors name files and checks, never what a file holds. Provider text can ride in a
-// cause, so each link is one line without control characters, URL credentials, query strings or a
-// Blockfrost project id (it travels in a header an upstream may echo), at most 512 long. A thrown
-// non-Error names only its type, since nothing bounds what it carries.
-export function errorChain(error: unknown): { name: string; message: string }[] {
-  const clean = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
-    .replace(/\b((?:https?|wss?):\/\/)(?:[^\s/@]*@)?([^\s?#]*)(?:[?#]\S*)?/g, "$1$2")
-    .replace(/\b[a-z]{1,32}[A-Za-z0-9]{32}\b/g, "[redacted]").slice(0, 512);
-  const chain: { name: string; message: string }[] = [];
-  for (let cause: unknown = error; chain.length < 8 && cause !== undefined;) {
-    if (!(cause instanceof Error)) {
-      chain.push({ name: typeof cause === "object" && cause ? clean(cause.constructor?.name || "object").slice(0, 64) : typeof cause, message: "" });
-      break;
-    }
-    chain.push({ name: clean(cause.name === "Error" ? cause.constructor.name : cause.name).slice(0, 64), message: clean(cause.message) });
-    cause = cause.cause;
+// The service's errors name files and checks, never what a file holds, but provider and SDK text
+// can ride in a cause. So every link's name and message pass redact before they are printed.
+const REDACTED = "[redacted]";
+const MNEMONIC_WORDS = new Set(wordlist);
+const TOKEN_SEGMENT = /^(?=.*\d)(?=.*[A-Za-z])[\w\-.~%]{20,}$/;
+const SECRET_KEY = /\b([\w-]*(?:key|token|secret|passw(?:or)?d|pwd|auth|project_id)[\w-]*)("?\s*(?:=|:|%3[dD])\s*"?)([^\s,;&"'}\]]+)/gi;
+
+// Any URL keeps its scheme, host and the path segments that cannot be tokens; userinfo (up to its
+// last @), query and fragment are dropped.
+const url = (_: string, scheme: string, rest: string) => {
+  const authorityEnd = rest.search(/[/?#]/), authority = authorityEnd < 0 ? rest : rest.slice(0, authorityEnd);
+  const host = authority.slice(authority.lastIndexOf("@") + 1);
+  const path = authorityEnd < 0 ? "" : rest.slice(authorityEnd).replace(/[?#].*$/, "");
+  return `${scheme}://${host}${path.split("/").map(segment => TOKEN_SEGMENT.test(segment) ? REDACTED : segment).join("/")}`;
+};
+
+// Six or more consecutive BIP-39 words read as (part of) a mnemonic.
+const mnemonicRuns = (text: string) => text.replace(/\b[a-z]+(?:\s+[a-z]+){5,}\b/g, run => {
+  const out: string[] = [];
+  let streak: string[] = [];
+  const flush = () => { out.push(...(streak.length >= 6 ? [REDACTED] : streak)); streak = []; };
+  for (const word of run.split(/\s+/)) {
+    if (MNEMONIC_WORDS.has(word)) streak.push(word);
+    else { flush(); out.push(word); }
   }
-  return chain;
+  flush();
+  return out.join(" ");
+});
+
+// Each configured secret of 8 or more characters goes by value (raw, percent-encoded and as JSON
+// escapes it), as midnightSource redacts its headers; then whatever looks like a credential goes
+// by shape: URL userinfo, query strings and token-like path segments, scheme-less user:pass@,
+// Bearer and Basic values, key=value secrets, JWTs, 64-hex runs, Blockfrost-shaped project ids
+// and mnemonic word runs. The result is one line, at most `limit` long.
+function redact(text: string, secrets: readonly string[], limit: number): string {
+  const values = [...new Set(secrets.filter(secret => secret.length >= 8).flatMap(secret => [secret, encodeURIComponent(secret), JSON.stringify(secret).slice(1, -1)]))]
+    .sort((a, b) => b.length - a.length);
+  return mnemonicRuns(values.reduce((out, value) => out.split(value).join(REDACTED), text)
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
+    .replace(/\b([a-z][a-z0-9+.-]*):\/\/([^\s"'<>]*)/gi, url)
+    .replace(/[^\s:@/"']+:[^\s@/"']+@/g, `${REDACTED}@`)
+    .replace(/\b(bearer|basic)\s+[^\s,;"']+/gi, `$1 ${REDACTED}`)
+    .replace(SECRET_KEY, `$1$2${REDACTED}`)
+    .replace(/\beyJ[\w-]*\.[\w-]+\.[\w-]*/g, REDACTED)
+    .replace(/\b(?:0x)?[0-9a-fA-F]{64,}\b/g, REDACTED)
+    .replace(/(?<![A-Za-z])[a-z]{1,32}[A-Za-z0-9]{32}(?![A-Za-z0-9])/g, REDACTED)).slice(0, limit);
 }
 
-export function holdLine(event: "standing-hold" | "standing-startup-hold", loop: "follower" | "controller", reason: string, error: unknown) {
-  return JSON.stringify({ event, loop, reason, causes: errorChain(error) });
+// At most eight links, each its type and message. A thrown non-Error names only its type, since
+// nothing bounds what it carries. Reading a link can run hostile code (a getter, a Proxy trap,
+// a Symbol message); then the chain is "unprintable", so a hold is logged rather than escalated
+// into a failure of the loop that reported it.
+export type ErrorChain = { name: string; message: string }[] | "unprintable";
+export function errorChain(error: unknown, secrets: readonly string[]): ErrorChain {
+  try {
+    const chain: { name: string; message: string }[] = [];
+    for (let cause: unknown = error; chain.length < 8 && cause !== undefined;) {
+      if (!(cause instanceof Error)) {
+        chain.push({ name: typeof cause === "object" && cause ? redact(String(cause.constructor?.name || "object"), secrets, 64) : typeof cause, message: "" });
+        break;
+      }
+      const name = cause.name === "Error" || cause.name === undefined ? cause.constructor.name : cause.name;
+      chain.push({ name: redact(String(name), secrets, 64), message: redact(String(cause.message), secrets, 512) });
+      cause = cause.cause;
+    }
+    return chain;
+  } catch {
+    return "unprintable";
+  }
+}
+
+export function holdLine(event: "standing-hold" | "standing-startup-hold", loop: "follower" | "controller", reason: string, error: unknown, secrets: readonly string[]) {
+  return JSON.stringify({ event, loop, reason, causes: errorChain(error, secrets) });
 }
 
 export function printChanges(write: (line: string) => void) {
@@ -184,23 +236,32 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
     const catchup = openFollowerCatchup({ state: follower, node: config.midnightReadRpcUrl, authors, signal: abort.signal,
       startupDiagnostic: event => console.log(JSON.stringify({ event: "standing-startup", ...event })) });
     const print = printChanges(line => console.log(line));
+    const secrets: string[] = [];
+    // A hold is classified by the printable chain, so a link that cannot be read cannot fail it.
+    const printable = (error: unknown) => {
+      const chain = errorChain(error, secrets);
+      return typeof chain === "string" ? { message: "", capped: false } : { message: chain[0]?.message ?? "", capped: chain.some(link => link.name === StandingFeeCap.name) };
+    };
     const startup = () => startStandingFollower({ catchup, signal: abort.signal, hold: error => {
-      const message = error instanceof Error ? error.message : "";
+      const { message } = printable(error);
       const reason = /policy|author|checkpoint/i.test(message) ? "policy" : /clock|stale/i.test(message) ? "warmup" : "source";
       status!.hold("follower", reason);
-      print(holdLine("standing-startup-hold", "follower", reason, error));
+      print(holdLine("standing-startup-hold", "follower", reason, error, secrets));
     } });
     let controller: ReturnType<typeof openStandingController> | undefined;
     if (config.mode === "anchor") {
       status.phase("wallet-sync");
       const endpoints = networkEndpoints(config.network, { blockfrostProjectIdFile: config.wallet.blockfrost }), source = midnightSource(endpoints);
+      secrets.push(...Object.values(endpoints.headers));
       await assertChainIdentity(source, config.network);
       if (!(await registryStateOnNode(source, config.registry))) throw new Error("Standing node lacks the immutable registry");
       const record = readPrivateJson(config.wallet.record, "Standing wallet record") as { addresses?: { unshielded: string; shielded: string; dust: string } };
       if (!record.addresses || Object.keys(record.addresses).sort().join(",") !== "dust,shielded,unshielded" || Object.values(record.addresses).some(address => typeof address !== "string" || !address)) throw new Error("Standing wallet record lacks addresses");
       wallet = await openWallet({ network: config.network, mnemonicFile: config.wallet.mnemonic, endpoints, source, zkDir: config.wallet.zk, stateFile: config.wallet.state, expectedAddresses: record.addresses });
+      secrets.push(...wallet.secrets);
       await syncWithCheckpoints(wallet, { timeoutMs: 180 * 60_000, progressMs: 60_000, checkpointMs: 5 * 60_000, signal: abort.signal, write: line => { status!.phase("wallet-sync"); console.log(line); } });
       const publication = { network: config.network, targets: config.stores.map(target => ({ url: target.url, apiKey: readProofStoreKey(target.keyFile) })) };
+      secrets.push(...publication.targets.map(target => target.apiKey));
       census = openCensusState(join(config.stateRoot, "census.sqlite"), config);
       journal = openJournal(join(config.stateRoot, "attempts.sqlite"));
       const verifiedStart = await startup(), session = openStandingSession({ state: follower, verifiedStart, authors });
@@ -221,12 +282,10 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
         status!.phase(progress === "idle" ? "running" : "catchup"); sample();
         print(JSON.stringify({ event: "standing-progress", loop, progress, coverage: follower!.coverage(), result }));
       }, hold: (error, loop) => {
-        const message = error instanceof Error ? error.message : "";
-        let cause = error, capped = false;
-        for (let depth = 0; depth < 8 && cause instanceof Error; depth++) { if (cause instanceof StandingFeeCap) capped = true; cause = cause.cause; }
+        const { message, capped } = printable(error);
         const reason = capped ? "dust-cap" : /warmup|twenty|margin/i.test(message) ? "warmup" : /policy|author/i.test(message) ? "policy" : /history|floor|retained|coverage/i.test(message) ? "history" : "source";
         status!.hold(loop, reason); sample();
-        print(holdLine("standing-hold", loop, reason, error));
+        print(holdLine("standing-hold", loop, reason, error, secrets));
       } });
   } catch (error) { failure = error; throw error; }
   finally {
@@ -246,7 +305,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     await runStandingService(parseStandingConfig(readPrivateJson(process.argv[3]!, "Standing configuration")));
   };
   run().catch(error => {
-    const reasons = errorChain(error).map(link => link.message).filter(Boolean);
+    const chain = errorChain(error, []), reasons = typeof chain === "string" ? [] : chain.map(link => link.message).filter(Boolean);
     console.error(reasons.join(": ") || "Standing service stopped before completion"); process.exitCode = 1;
   });
 }

@@ -101,3 +101,22 @@ describe("the wallet's sync progress", () => {
     });
   });
 });
+
+describe("the wallet's secrets", () => {
+  const open = async (headers: Record<string, string>) => {
+    const mnemonicFile = join(dir, `secrets-${Math.random().toString(16).slice(2)}.mnemonic`);
+    createWalletMnemonicFile(mnemonicFile);
+    vi.spyOn(WalletFacade.prototype, "state").mockReturnValue(new BehaviorSubject(facadeSyncedTo(0n, 0n)) as never);
+    const wallet = await openWallet({ network: "preprod", mnemonicFile, endpoints: { ...OFFLINE, headers }, source: undefined as never, zkDir: "/nonexistent" });
+    opened.push(wallet);
+    return wallet;
+  };
+
+  it("are its credential relay's path prefix, which a log line must never carry", async () => {
+    expect((await open({ project_id: "preprod" + "Ab".repeat(16) })).secrets).toEqual([expect.stringMatching(/^[0-9a-f]{32}$/)]);
+  });
+
+  it("are none over a source that needs no credential", async () => {
+    expect((await open({})).secrets).toEqual([]);
+  });
+});

@@ -13,10 +13,10 @@ vi.mock("../follower-block.js", async (original) => ({ ...(await original<object
 vi.mock("../follower-state.js", async (original) => ({ ...(await original<object>()), openFollowerState: () => ({ scope: () => ({ network: "preprod" }), close: () => {} }) }));
 vi.mock("../standing-status.js", async (original) => ({ ...(await original<object>()), openStandingStatus: () => ({ phase: () => {} }) }));
 vi.mock("../follower-catchup.js", async (original) => ({ ...(await original<object>()), openFollowerCatchup: () => ({}) }));
-vi.mock("../../src/endpoints.js", async (original) => ({ ...(await original<object>()), networkEndpoints: () => ({}) }));
+vi.mock("../../src/endpoints.js", async (original) => ({ ...(await original<object>()), networkEndpoints: () => ({ headers: {} }) }));
 vi.mock("../../src/preflight.js", async (original) => ({ ...(await original<object>()), assertChainIdentity: async () => ({}) }));
 vi.mock("../../src/submission.js", async (original) => ({ ...(await original<object>()), registryStateOnNode: async () => true }));
-vi.mock("../../src/wallet.js", async (original) => ({ ...(await original<object>()), openWallet: async () => ({ close: async () => stub.closed }) }));
+vi.mock("../../src/wallet.js", async (original) => ({ ...(await original<object>()), openWallet: async () => ({ secrets: [], close: async () => stub.closed }) }));
 vi.mock("../../src/sync.js", async (original) => ({ ...(await original<object>()), syncWithCheckpoints: async () => { throw stub.syncFailure; } }));
 
 const roots: string[] = [];

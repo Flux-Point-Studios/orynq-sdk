@@ -110,3 +110,18 @@ describe("credentialRelay", () => {
     await relay.close();
   });
 });
+
+describe("the relay's secrets", () => {
+  it("name its random path prefix, which grants use of the credential while it runs", async () => {
+    const { relay } = await relayed();
+    const prefix = new URL(relay.indexerHttpUrl).pathname.split("/")[1]!;
+    expect(relay.secrets).toEqual([prefix]);
+    expect(relay.indexerWsUrl).toContain(`/${prefix}/`);
+  });
+
+  it("are none when the source needs no credential", async () => {
+    const relay = await credentialRelay({ operator: "midnight", indexer: "https://indexer.example/api/v3/graphql", indexerWs: "wss://indexer.example/api/v3/graphql/ws", node: "https://rpc.example", headers: {} });
+    expect(relay.secrets).toEqual([]);
+    await relay.close();
+  });
+});
