@@ -33,7 +33,7 @@ describe("the wallet's DUST coin order", () => {
     const v2 = vi.spyOn(V2Builder.prototype, "withCoinSelection");
     const mnemonicFile = join(dir, "coin-order.mnemonic");
     createWalletMnemonicFile(mnemonicFile);
-    opened.push(await openWallet({ network: "preprod", mnemonicFile, endpoints: OFFLINE, source: undefined as never, zkDir: "/nonexistent" }));
+    opened.push(await openWallet({ network: "preprod", mnemonicFile, endpoints: OFFLINE, source: liveSource(), zkDir: "/nonexistent" }));
     for (const spy of [v1, v2]) {
       const selections = spy.mock.calls.map(([coinSelection]) => (coinSelection as (config: never, context: never) => unknown)({} as never, (() => ({})) as never));
       expect(selections.at(-1)).toBe(largestCoinFirst);
@@ -60,7 +60,7 @@ describe("the wallet's fee overhead", () => {
   it("is refused at 0, before the wallet reads its mnemonic", async () => {
     expect(() => costParametersOf({ additionalFeeOverhead: 0n, feeBlocksMargin: 5 })).toThrow(/additionalFeeOverhead must be at least 1 SPECK, not 0: a fee computed as 0 carries no DUST spend and pays nothing/);
     await expect(
-      openWallet({ network: "preprod", mnemonicFile: "/nonexistent/wallet.mnemonic", endpoints: undefined as never, source: undefined as never, zkDir: "/nonexistent", costParameters: { additionalFeeOverhead: 0n, feeBlocksMargin: 5 } }),
+      openWallet({ network: "preprod", mnemonicFile: "/nonexistent/wallet.mnemonic", endpoints: undefined as never, source: liveSource(), zkDir: "/nonexistent", costParameters: { additionalFeeOverhead: 0n, feeBlocksMargin: 5 } }),
     ).rejects.toThrow(/additionalFeeOverhead must be at least 1 SPECK/);
   });
 });
@@ -133,10 +133,40 @@ describe("paying a fee against the indexer", () => {
     expect(balanced).not.toHaveBeenCalled();
   });
 
-  it("refuses, paying nothing, an indexer whose finalized block is not the node's", async () => {
-    const { balanced, pay } = await walletSyncedTo(facadeSyncedTo(7n, 7n), liveSource({ indexed: 95, finalized: 100, indexedHash: "ee".repeat(32) }));
+  // An indexer on another fork from block 90 on: it agrees with the node below it.
+  const forkedFrom90 = (height: number) => (height < 90 ? height.toString(16).padStart(64, "0") : `ee${height.toString(16).padStart(62, "0")}`);
+
+  it("refuses, paying nothing, a forked indexer behind the node's finalized head", async () => {
+    const { balanced, pay } = await walletSyncedTo(facadeSyncedTo(7n, 7n), liveSource({ indexed: 95, finalized: 100, indexerHashAt: forkedFrom90 }));
     await expect(pay()).rejects.toThrow("the preprod indexer's block 95 is not the node's finalized block there; no fee was paid");
     expect(balanced).not.toHaveBeenCalled();
+  });
+
+  it.each([1, 3, 10])("refuses, paying nothing, a forked indexer %i blocks ahead of the node's finalized head", async (ahead) => {
+    const { balanced, pay } = await walletSyncedTo(facadeSyncedTo(7n, 7n), liveSource({ indexed: 100 + ahead, finalized: 100, indexerHashAt: forkedFrom90 }));
+    await expect(pay()).rejects.toThrow("the preprod indexer's block 100 is not the node's finalized block there; no fee was paid");
+    expect(balanced).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 1, 10])("pays with the node's chain indexed %i blocks ahead of its finalized head", async (ahead) => {
+    const { balanced, pay } = await walletSyncedTo(facadeSyncedTo(7n, 7n), liveSource({ indexed: 100 + ahead, finalized: 100 }));
+    await expect(pay()).resolves.toBeInstanceOf(L.Transaction);
+    expect(balanced).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses, paying nothing, an indexer ahead that holds no block at the node's finalized height", async () => {
+    const { balanced, pay } = await walletSyncedTo(facadeSyncedTo(7n, 7n), liveSource({ indexed: 103, finalized: 100, indexerHashAt: (height) => (height === 100 ? null : height.toString(16).padStart(64, "0")) }));
+    await expect(pay()).rejects.toThrow("the preprod indexer holds no block at the node's finalized height 100; no fee was paid");
+    expect(balanced).not.toHaveBeenCalled();
+  });
+});
+
+describe("opening the wallet against an indexer", () => {
+  it("refuses an indexer of another chain than the node's, before the wallet syncs", async () => {
+    const init = vi.spyOn(WalletFacade, "init");
+    const source = liveSource({ indexerHashAt: (height) => `ee${height.toString(16).padStart(62, "0")}` });
+    await expect(walletSyncedTo(facadeSyncedTo(7n, 7n), source)).rejects.toThrow(`the preprod indexer's genesis block ee${"0".repeat(62)} is not the node's ${"0".repeat(64)}; the wallet was not opened`);
+    expect(init).not.toHaveBeenCalled();
   });
 });
 

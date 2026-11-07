@@ -6,7 +6,7 @@ import { createAuthorKeyFile, createSaltKeyFile } from "@fluxpointstudios/orynq-
 import { registryOperator, type OperatorOptions } from "../src/operator.js";
 import { createWalletMnemonicFile } from "../src/keys.js";
 import { openWallet } from "../src/wallet.js";
-import { chain, deployed, fresh, wallet } from "./fakes.js";
+import { chain, deployed, fresh, liveSource, wallet } from "./fakes.js";
 import { prover } from "./prover.js";
 
 // The real FPS mainnet keys never leave their 0600 files, so the identities an operator off
@@ -153,7 +153,7 @@ describe("off mainnet, nothing is opened from the mainnet secrets directory, how
 
   it("openWallet refuses a mnemonic file there before reading it", async () => {
     const mnemonicFile = join(root, "alias", "mnemonic.txt");
-    await expect(openWallet({ network: "preprod", mnemonicFile, endpoints: undefined as never, source: undefined as never, zkDir: "/nonexistent" })).rejects.toThrow(
+    await expect(openWallet({ network: "preprod", mnemonicFile, endpoints: undefined as never, source: liveSource(), zkDir: "/nonexistent" })).rejects.toThrow(
       `${mnemonicFile} lies in the FPS mainnet secrets directory; a preprod process never opens it`,
     );
   });
@@ -169,7 +169,7 @@ it("refuses the account home mainnet mnemonic path even with HOME moved, before 
   const mnemonicFile = join(userInfo().homedir, ".secrets", "orynq-midnight-mainnet", "nonexistent-home-override-regression.txt");
   process.env.HOME = join(root, "moved-home");
   try {
-    await expect(openWallet({ network: "preprod", mnemonicFile, endpoints: undefined as never, source: undefined as never, zkDir: "/nonexistent" })).rejects.toThrow(
+    await expect(openWallet({ network: "preprod", mnemonicFile, endpoints: undefined as never, source: liveSource(), zkDir: "/nonexistent" })).rejects.toThrow(
       `${mnemonicFile} lies in the FPS mainnet secrets directory; a preprod process never opens it`,
     );
   } finally {

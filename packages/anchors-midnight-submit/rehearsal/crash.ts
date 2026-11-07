@@ -53,6 +53,7 @@ const wallet = await openWallet({
   zkDir: `${HOME}/.cache/orynq-midnight/zk`,
   expectedAddresses: recorded.walletA.addresses,
   stateFile: `${SECRETS}/state/walletA-midnight.state.json`,
+  journals: [JOURNAL],
 });
 await wallet.waitForSync(7_200_000);
 const die = (event: string, txHash: string) => {

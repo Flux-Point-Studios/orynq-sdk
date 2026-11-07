@@ -21,6 +21,7 @@ import {
   readJsonFile,
   networkEndpoints,
   openWallet,
+  proofReleaseJournal,
   syncWithCheckpoints,
   type ChainFacts,
   type OperatorWallet,
@@ -62,8 +63,9 @@ export interface Mainnet {
   source: MidnightSource;
   chain: ChainFacts;
   // Opens the wallet the mnemonic derives, refusing one that is not the recorded wallet, and
-  // waits until it has synced, resuming from and saving to the shared wallet state file.
-  syncWallet(): Promise<OperatorWallet>;
+  // waits until it has synced, resuming from and saving to the shared wallet state file. `journal`
+  // is the caller's journal of the fees it pays, consulted with the other mainnet scripts'.
+  syncWallet(journal: string): Promise<OperatorWallet>;
 }
 
 // The script `name` sends `a mainnet ${noun}`, which deci `does` himself at his own terminal.
@@ -125,13 +127,15 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
           return {
             source,
             chain,
-            async syncWallet() {
+            async syncWallet(journal: string) {
               const expectedAddresses = (readJsonFile(option("wallet-record")) as { addresses: { unshielded: string; shielded: string; dust: string } }).addresses;
               const stateFile = option("wallet-state");
               mkdirSync(dirname(stateFile), { recursive: true, mode: 0o700 });
               ensurePrivateDir(dirname(stateFile));
               process.stdout.write(`${chain.chain}, runtime ${chain.specVersion}, ledger ${chain.ledgerVersion}. Syncing the wallet...\n`);
-              const wallet = await openWallet({ network: "mainnet", mnemonicFile: option("mnemonic"), endpoints, source, zkDir: option("zk"), expectedAddresses, stateFile });
+              // Every journal a mainnet script records the shared wallet's fees in.
+              const journals = [...new Set([journal, DEPLOY_JOURNAL, ANCHORS_JOURNAL, proofReleaseJournal(`${STATE}/runner`)])];
+              const wallet = await openWallet({ network: "mainnet", mnemonicFile: option("mnemonic"), endpoints, source, zkDir: option("zk"), expectedAddresses, journals, stateFile });
               opened.push(wallet);
               await syncWithCheckpoints(wallet, { timeoutMs: SYNC_TIMEOUT_MS, progressMs: MINUTE, checkpointMs: 5 * MINUTE, write: (line) => process.stdout.write(`${line}\n`) });
               return wallet;

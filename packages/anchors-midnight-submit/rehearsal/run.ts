@@ -112,6 +112,7 @@ async function wallet(which: "walletA" | "walletB") {
       zkDir: ZK,
       expectedAddresses: recorded[which].addresses,
       stateFile: `${SECRETS}/state/${which}-midnight.state.json`,
+      journals: [`${SECRETS}/journal-deploy.sqlite`, ...["author-relay.key", "author-relay-2.key"].map((key) => `${SECRETS}/${key}`).filter((key) => existsSync(key)).map((key) => authorJournalPath(SECRETS, key))],
       costParameters: { additionalFeeOverhead: OVERHEAD, feeBlocksMargin: 5 },
     });
     await w.waitForSync(7_200_000);

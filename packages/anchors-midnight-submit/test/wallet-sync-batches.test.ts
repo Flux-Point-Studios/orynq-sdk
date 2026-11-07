@@ -12,6 +12,7 @@ import { Sync as ShieldedSyncV1 } from "@midnightntwrk/wallet-sdk-shielded/v1";
 import { Sync as ShieldedSyncV2 } from "@midnightntwrk/wallet-sdk-shielded/v2";
 import { createWalletMnemonicFile } from "../src/keys.js";
 import { openWallet, type OperatorWallet } from "../src/wallet.js";
+import { liveSource } from "./fakes.js";
 
 const dir = mkdtempSync(join(tmpdir(), "orynq-wallet-sync-batches-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -31,7 +32,7 @@ describe("the wallet's sync", () => {
     const init = vi.spyOn(WalletFacade, "init");
     const mnemonicFile = join(dir, `${network}.mnemonic`);
     createWalletMnemonicFile(mnemonicFile);
-    opened.push(await openWallet({ network, mnemonicFile, endpoints: OFFLINE, source: undefined as never, zkDir: "/nonexistent" }));
+    opened.push(await openWallet({ network, mnemonicFile, endpoints: OFFLINE, source: liveSource(), zkDir: "/nonexistent" }));
     const facade = await init.mock.results[0]!.value;
     expect(batching(facade.shielded)).toEqual({ size: 1000 });
     expect(batching(facade.dust)).toEqual({ size: 1000 });

@@ -33,7 +33,7 @@ const { option, run, requireDustFloor, confirm } = mainnetScript({
 
 await run(async (connect) => {
   const { source, chain, syncWallet } = await connect();
-  const wallet = await syncWallet();
+  const wallet = await syncWallet(option("journal"));
   const { dust } = await wallet.balances();
   const journalPath = option("journal");
   mkdirSync(dirname(journalPath), { recursive: true, mode: 0o700 });

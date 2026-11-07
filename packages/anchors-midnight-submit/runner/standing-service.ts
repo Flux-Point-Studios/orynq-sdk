@@ -277,7 +277,7 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
       if (!(await registryStateOnNode(source, config.registry))) throw new Error("Standing node lacks the immutable registry");
       const record = readPrivateJson(config.wallet.record, "Standing wallet record") as { addresses?: { unshielded: string; shielded: string; dust: string } };
       if (!record.addresses || Object.keys(record.addresses).sort().join(",") !== "dust,shielded,unshielded" || Object.values(record.addresses).some(address => typeof address !== "string" || !address)) throw new Error("Standing wallet record lacks addresses");
-      wallet = await openWallet({ network: config.network, mnemonicFile: config.wallet.mnemonic, endpoints, source, zkDir: config.wallet.zk, stateFile: config.wallet.state, expectedAddresses: record.addresses });
+      wallet = await openWallet({ network: config.network, mnemonicFile: config.wallet.mnemonic, endpoints, source, zkDir: config.wallet.zk, stateFile: config.wallet.state, journals: [join(config.stateRoot, "attempts.sqlite")], expectedAddresses: record.addresses });
       secrets.push(...wallet.secrets);
       await syncWithCheckpoints(wallet, { timeoutMs: 180 * 60_000, progressMs: 60_000, checkpointMs: 5 * 60_000, signal: abort.signal, write: line => { status!.phase("wallet-sync"); console.log(line); } });
       const publication = { network: config.network, targets: config.stores.map(target => ({ url: target.url, apiKey: readProofStoreKey(target.keyFile) })) };

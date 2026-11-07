@@ -15,6 +15,7 @@ import { ShieldedWallet } from "@midnightntwrk/wallet-sdk-shielded";
 import { PublicKey, UnshieldedWallet } from "@midnightntwrk/wallet-sdk-unshielded-wallet";
 import { Either } from "effect";
 import { Observable, filter, firstValueFrom, map, of, take, takeUntil, timeout } from "rxjs";
+import { TTL_MARGIN_MILLIS, openJournal, type JournalRow } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { decodeTransaction, readPrivateFile, writePrivateFile, type FinalTransaction, type MidnightNetwork, type MidnightSource, type SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { broadcast, nodeRefusal } from "./broadcast.js";
 import { refuseMainnetSecretsPath } from "./custody.js";
@@ -182,20 +183,41 @@ async function readsBack(Wallet: StateReader, serialized: string): Promise<Eithe
 // Moves a state file wallet-sdk 1.x saved aside, beside it as `<file>.wallet-sdk-1`, so the wallet
 // syncs from genesis: wallet-sdk 2.x rebuilds the DUST state from the chain, and the 1.x state
 // predates every ledger 9 event. Returns where it went, or null when the file is not a 1.x one.
-export function moveLegacyWalletState(file: string): string | null {
-  if (!existsSync(file)) return null;
-  let saved: { format?: unknown };
-  try {
-    saved = JSON.parse(readPrivateFile(file));
-  } catch (error) {
-    if (error instanceof SyntaxError) return null;
-    throw error;
+// A sync from genesis offers again every coin a fee still in flight spent, so the file stays
+// while any of `held`, the fees the wallet paid, may land: until its TTL plus the journal's margin.
+export function moveLegacyWalletState(file: string, held: ReadonlyArray<Pick<JournalRow, "txHash" | "ttl">>): string | null {
+  if (!savedByWalletSdk1(file)) return null;
+  const inFlight = held.find((row) => row.ttl.getTime() + TTL_MARGIN_MILLIS > Date.now());
+  if (inFlight) {
+    throw new Error(`${file} was saved by wallet-sdk 1.x while the fee ${inFlight.txHash} the wallet paid may still land, until ${new Date(inFlight.ttl.getTime() + TTL_MARGIN_MILLIS).toISOString()}; a sync from genesis would spend its DUST again, so the state file stays until the journal settles it`);
   }
-  if (saved.format !== undefined) return null;
   const aside = `${file}.wallet-sdk-1`;
   if (existsSync(aside)) throw new Error(`${file} was saved by wallet-sdk 1.x and ${aside} already exists; move one of them before opening the wallet`);
   renameSync(file, aside);
   return aside;
+}
+
+// Whether `file` is a state file wallet-sdk 1.x saved: JSON with no format tag.
+function savedByWalletSdk1(file: string): boolean {
+  if (!existsSync(file)) return false;
+  try {
+    return (JSON.parse(readPrivateFile(file)) as { format?: unknown }).format === undefined;
+  } catch (error) {
+    if (error instanceof SyntaxError) return false;
+    throw error;
+  }
+}
+
+// The pending rows of `journals` that `payer` paid, or that name no payer.
+function feesPaidBy(journals: readonly string[], payer: string): JournalRow[] {
+  return journals.filter((path) => existsSync(path)).flatMap((path) => {
+    const journal = openJournal(path);
+    try {
+      return journal.pending().filter((row) => row.payer === undefined || row.payer === payer);
+    } finally {
+      journal.close();
+    }
+  });
 }
 
 // The wallet's saved state, or null before it first saves one. A state saved by another wallet,
@@ -292,10 +314,28 @@ export async function assertIndexerLive(source: Pick<MidnightSource, "indexer" |
   if (Math.abs(indexed.height - height) > INDEXER_LIVENESS_BLOCKS) {
     throw new Error(`the ${network} indexer stands at block ${indexed.height} and the node's finalized head at ${height}, more than ${INDEXER_LIVENESS_BLOCKS} blocks apart; no fee was paid`);
   }
+  // Compared at the lower of the two heads: the node's block at the indexer's head when the
+  // indexer is behind, the indexer's block at the node's finalized head when it is ahead.
   if (indexed.height <= height) {
     const hash = String(await source.node.call<string>("chain_getBlockHash", [indexed.height])).replace(/^0x/, "");
     if (hash !== indexed.hash) throw new Error(`the ${network} indexer's block ${indexed.height} is not the node's finalized block there; no fee was paid`);
+  } else {
+    const block = await indexerBlockAt(source, height);
+    if (!block) throw new Error(`the ${network} indexer holds no block at the node's finalized height ${height}; no fee was paid`);
+    if (block.hash !== finalizedHash) throw new Error(`the ${network} indexer's block ${height} is not the node's finalized block there; no fee was paid`);
   }
+}
+
+const indexerBlockAt = (source: Pick<MidnightSource, "indexer">, height: number) => {
+  if (!source.indexer.blockAt) throw new Error("the indexer source reads no block by height");
+  return source.indexer.blockAt(height);
+};
+
+// Refuses an indexer whose genesis block is not the node's: the two serve different chains.
+async function assertSameChain(source: Pick<MidnightSource, "indexer" | "node">, network: MidnightNetwork): Promise<void> {
+  const [indexed, node] = await Promise.all([indexerBlockAt(source, 0), source.node.call<string>("chain_getBlockHash", [0])]);
+  const genesis = String(node).replace(/^0x/, "");
+  if (indexed?.hash !== genesis) throw new Error(`the ${network} indexer's genesis block ${indexed?.hash ?? "(none)"} is not the node's ${genesis}; the wallet was not opened`);
 }
 
 export interface WalletOptions {
@@ -308,6 +348,9 @@ export interface WalletOptions {
   expectedAddresses?: WalletAddresses;
   // A private file the wallet restores its sync state from and saves it to on close.
   stateFile?: string;
+  // The journals of every fee this wallet may have paid; a state file wallet-sdk 1.x saved is
+  // moved aside only once none of them holds a fee of this wallet that may still land.
+  journals?: readonly string[];
   costParameters?: CostParameters;
 }
 
@@ -333,7 +376,9 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
   }
   if (options.stateFile) {
     removeAbandonedSaves(options.stateFile);
-    const aside = moveLegacyWalletState(options.stateFile);
+    const legacy = savedByWalletSdk1(options.stateFile);
+    if (legacy && !options.journals) throw new Error(`${options.stateFile} was saved by wallet-sdk 1.x, and no journal of the fees the wallet paid was named; the state file stays`);
+    const aside = moveLegacyWalletState(options.stateFile, legacy ? feesPaidBy(options.journals!, addresses.unshielded) : []);
     if (aside) console.error(`${options.stateFile} was saved by wallet-sdk 1.x and moved to ${aside}; the ${network} wallet syncs from genesis`);
   }
   const saved = options.stateFile ? readWalletState(options.stateFile, network, addresses, endpoints.indexer) : null;
@@ -348,6 +393,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     if (Either.isLeft(read)) throw new Error(`${options.stateFile} does not restore (${part}: ${describeFailure(read.left)}); move it aside to sync from genesis`);
     return read.right;
   };
+  await assertSameChain(source, network);
   const transport = await credentialRelay(endpoints);
   const submitTo = (tx: FinalTransaction) => broadcast(source, tx.serialize());
   const configuration = {

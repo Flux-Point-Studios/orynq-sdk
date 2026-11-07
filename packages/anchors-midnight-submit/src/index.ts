@@ -12,6 +12,7 @@ export type { DeployerOptions, Deployment, PreparedDeploy, RegistryDeployer } fr
 export { createWalletMnemonicFile, ensurePrivateDir, walletAddresses } from "./keys.js";
 export type { WalletAddresses } from "./keys.js";
 export { registryOperator } from "./operator.js";
+export { proofReleaseJournal } from "./proof-release.js";
 export type { AnchorReceipt, AnchorRequest, HiddenOpening, OperatorOptions, PreparedAnchor, RegistryOperator } from "./operator.js";
 export { NETWORK_IDENTITY, anchorSummary, assertChainIdentity, assertHumanTerminal, confirmOnTerminal, confirmationToken, deploySummary, formatDust, parseDust } from "./preflight.js";
 export type { ChainFacts } from "./preflight.js";

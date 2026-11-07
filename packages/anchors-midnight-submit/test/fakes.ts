@@ -247,11 +247,20 @@ export const facadeSyncedTo = (applied: bigint, announced: bigint, connected = t
 
 // The credentialed reads a wallet checks the indexer against: an indexer whose head stands at
 // `indexed`, and a node whose finalized head is `finalized`, holding `hashAt(height)` at each height.
-export function liveSource({ indexed = 100, finalized = 98, indexedHash, hashAt = (height: number) => height.toString(16).padStart(64, "0") }: { indexed?: number; finalized?: number; indexedHash?: string; hashAt?: (height: number) => string } = {}): MidnightSource {
+// A node whose finalized head is at `finalized` and whose block at each height hashes as `hashAt`
+// says, and an indexer at `indexed` whose block at each height hashes as `indexerHashAt` says
+// (null: it holds none there), the node's unless given.
+export function liveSource({ indexed = 100, finalized = 98, hashAt = (height: number) => height.toString(16).padStart(64, "0"), indexerHashAt = hashAt }: { indexed?: number; finalized?: number; hashAt?: (height: number) => string; indexerHashAt?: (height: number) => string | null } = {}): MidnightSource {
   const finalizedHash = hashAt(finalized);
   return {
     operator: "live",
-    indexer: { head: async () => ({ height: indexed, hash: indexedHash ?? hashAt(indexed), timestamp: Date.now() }) },
+    indexer: {
+      head: async () => ({ height: indexed, hash: indexerHashAt(indexed)!, timestamp: Date.now() }),
+      blockAt: async (height: number) => {
+        const hash = height <= indexed ? indexerHashAt(height) : null;
+        return hash === null ? null : { height, hash };
+      },
+    },
     node: {
       async call(method: string, params: unknown[] = []) {
         if (method === "chain_getFinalizedHead") return `0x${finalizedHash}`;
