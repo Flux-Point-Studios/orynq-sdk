@@ -74,6 +74,8 @@ export function costParametersOf(given: CostParameters | undefined): CostParamet
 export interface OperatorWallet {
   readonly network: MidnightNetwork;
   readonly addresses: WalletAddresses;
+  // What its credential relay's URLs carry that grants use of the credential: never to be logged.
+  readonly secrets: readonly string[];
   waitForSync(timeoutMs?: number, signal?: AbortSignal): Promise<void>;
   progress(): Promise<SyncProgress>;
   // Saves the sync state to the wallet's state file, so the next open resumes from here. It
@@ -388,6 +390,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
   return {
     network,
     addresses,
+    secrets: transport.secrets,
     async waitForSync(timeoutMs = 600_000, signal?: AbortSignal) {
       await synced(timeoutMs, signal);
     },

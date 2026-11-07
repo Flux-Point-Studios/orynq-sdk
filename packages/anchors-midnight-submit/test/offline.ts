@@ -217,6 +217,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
   return {
     network: options.network,
     addresses: options.expectedAddresses!,
+    secrets: [],
     async waitForSync(timeoutMs = 600_000) {
       const chain = read();
       write({ ...chain, syncWaits: [...(chain.syncWaits ?? []), timeoutMs] });

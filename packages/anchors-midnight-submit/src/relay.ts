@@ -7,6 +7,8 @@ import type { SourceEndpoints } from "@fluxpointstudios/orynq-sdk-anchors-midnig
 export interface WalletTransport {
   indexerHttpUrl: string;
   indexerWsUrl: string;
+  // What in its URLs grants use of the credential: never to be logged.
+  secrets: readonly string[];
   close(): Promise<void>;
 }
 
@@ -20,7 +22,7 @@ const forwardable = (headers: IncomingMessage["headers"]) =>
 // prefix, which keeps other local accounts from borrowing the credential while it runs.
 export async function credentialRelay(endpoints: SourceEndpoints): Promise<WalletTransport> {
   if (Object.keys(endpoints.headers).length === 0) {
-    return { indexerHttpUrl: endpoints.indexer, indexerWsUrl: endpoints.indexerWs, close: async () => undefined };
+    return { indexerHttpUrl: endpoints.indexer, indexerWsUrl: endpoints.indexerWs, secrets: [], close: async () => undefined };
   }
   const prefix = `/${randomBytes(16).toString("hex")}`;
   const http = `${prefix}/graphql`;
@@ -74,6 +76,7 @@ export async function credentialRelay(endpoints: SourceEndpoints): Promise<Walle
   return {
     indexerHttpUrl: `http://127.0.0.1:${port}${http}`,
     indexerWsUrl: `ws://127.0.0.1:${port}${ws}`,
+    secrets: [prefix.slice(1)],
     close: () =>
       new Promise<void>((resolve) => {
         for (const s of sockets) s.destroy();

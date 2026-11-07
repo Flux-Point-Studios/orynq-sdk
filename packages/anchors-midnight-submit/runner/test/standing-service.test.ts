@@ -1,9 +1,10 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
-import { chmodSync, closeSync, existsSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseStandingConfig, runStandingLoops } from "../standing-service.js";
+import { errorChain, holdLine, parseStandingConfig, printChanges, runStandingLoops } from "../standing-service.js";
+import { StandingFeeCap } from "../standing-budget.js";
 
 const roots: string[] = [];
 const config = () => ({ mode: "observe", network: "mainnet", genesis: "01".repeat(32), registry: "438b1ea134e760e8b4e87409d663f36561f15341880c118dc41e4fc2b224c736", author: "02".repeat(32),
@@ -52,7 +53,7 @@ it("names why it stopped, and never what a refused file holds", () => {
 }, 270_000);
 
 it("prints why it stopped on one bounded line, whatever text a cause carries", () => {
-  const path = join(tmpdir(), "forged\nline", "a".repeat(200), "b".repeat(200), "c".repeat(200), "config.json");
+  const path = join(tmpdir(), "forged\nline", "q".repeat(200), "r".repeat(200), "s".repeat(200), "config.json");
   const result = spawnSync(process.execPath, ["--import", "tsx", "runner/standing-service.ts", "--config", path], { encoding: "utf8", timeout: 120_000 });
   const printed = result.stderr.trimEnd(), prefix = "Standing configuration is unreadable: ";
   expect(result.status).toBe(1);
@@ -130,3 +131,128 @@ it("records a fatal controller hold before draining and preserves its typed caus
   try {await vi.advanceTimersByTimeAsync(15_001);await rejected;expect(held).toContainEqual([fatal,"controller"]);}
   finally{abort.abort();vi.useRealTimers();}
 });
+
+it("logs a source hold with every message and type in its cause chain", () => {
+  const refused = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:443"), { code: "ECONNREFUSED" });
+  const error = new Error("Standing reservation failed", { cause: new TypeError("fetch failed", { cause: new StandingFeeCap("fixture cap", { cause: refused }) }) });
+  expect(JSON.parse(holdLine("standing-hold", "controller", "source", error, []))).toEqual({ event: "standing-hold", loop: "controller", reason: "source", causes: [
+    { name: "Error", message: "Standing reservation failed" }, { name: "TypeError", message: "fetch failed" },
+    { name: "StandingFeeCap", message: "fixture cap" }, { name: "Error", message: "connect ECONNREFUSED 127.0.0.1:443" }] });
+  expect(JSON.parse(holdLine("standing-startup-hold", "follower", "source", "a thrown string", []))).toEqual({ event: "standing-startup-hold", loop: "follower", reason: "source", causes: [{ name: "string", message: "" }] });
+});
+
+it("keeps credentials, query strings, project ids and long hex out of a logged cause chain, and keeps what locates the failure", () => {
+  const projectId = "mainnet" + "Q7".repeat(16), hash = "0a".repeat(32);
+  const error = new Error(`upstream https://name:secret@rpc.example/v0/blocks?api_key=hidden#frag refused ${hash}`,
+    { cause: new Error(`headers {"project_id":"${projectId}"}\nforged line`, { cause: Object.assign(new Event("error"), { message: "socket text" }) }) });
+  const chain = errorChain(error, []), printed = JSON.stringify(chain);
+  expect(chain).toEqual([{ name: "Error", message: "upstream https://rpc.example/v0/blocks refused [redacted]" },
+    { name: "Error", message: 'headers {"project_id":"[redacted]"} forged line' }, { name: "Event", message: "" }]);
+  for (const secret of ["secret", "name:", "hidden", "frag", projectId, hash, "socket text"]) expect(printed).not.toContain(secret);
+  expect(errorChain(new Error("connect ECONNREFUSED 127.0.0.1:443 at block 3346139"), [])).toEqual([{ name: "Error", message: "connect ECONNREFUSED 127.0.0.1:443 at block 3346139" }]);
+});
+
+const pid = "mainnet" + "Q7".repeat(16);
+it.each<[string, string, string]>([
+  ["an uppercase scheme's userinfo", "HTTPS://user:SECRETPW@h.example/x", "SECRETPW"],
+  ["an uppercase scheme's query", "Https://h.example/x?api_key=SECRETQ", "SECRETQ"],
+  ["userinfo whose password holds an @", "https://user:SEC@RETPW@h.example/x", "RETPW"],
+  ["userinfo under any scheme", "postgres://user:SECRETPG@db.example/x", "SECRETPG"],
+  ["scheme-less userinfo", "connect user:SECRETNS@db.example:5432 refused", "SECRETNS"],
+  ["a token-like path segment", "https://rpc.example/v1/SECRETPATHKEY0123456789abcdef/ws", "SECRETPATHKEY0123456789abcdef"],
+  ["a capability path prefix", "http://127.0.0.1:41234/0123456789abcdef0123456789abcdef/graphql", "0123456789abcdef0123456789abcdef"],
+  ["a Bearer header", "request headers: Authorization: Bearer SECRETBEARERTOKEN", "SECRETBEARERTOKEN"],
+  ["a bare key=value", "x-api-key=SECRETAPIKEY", "SECRETAPIKEY"],
+  ["token, secret, password and auth values", "token=SECRETTOK secret: SECRETSEC password=SECRETPWD auth=SECRETAUTH", "SECRETTOK|SECRETSEC|SECRETPWD|SECRETAUTH"],
+  ["a JWT", "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c", "eyJhbGciOiJIUzI1NiJ9|SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"],
+  ["a hex private key", "key " + "7f3a".repeat(16), "7f3a".repeat(16)],
+  ["mnemonic words", "bad seed abandon ability able about above absent absorb abstract absurd abuse access accident", "abandon|absurd|accident"],
+  ["a percent-encoded project id", `project_id%3D${pid}`, pid],
+  ["a project id between JSON unicode escapes", `\\u0022${pid}\\u0022`, pid],
+  ["a project id with a suffix", `${pid}_x`, pid],
+  ["a project id after a digit", `9${pid}`, pid],
+  ["a project id in a URL path", `https://h.example/${pid}x/`, pid],
+])("redacts %s", (_, message, secrets) => {
+  const printed = JSON.stringify(errorChain(new Error(message), []));
+  for (const secret of secrets.split("|")) expect(printed).not.toContain(secret);
+});
+
+it("redacts the error name and every link of the cause chain", () => {
+  const inner = new Error("ok"); inner.name = "Bearer SECRETNAME";
+  expect(JSON.stringify(errorChain(new Error("outer", { cause: new Error("mid", { cause: inner }) }), []))).not.toContain("SECRETNAME");
+});
+
+it("redacts each configured secret by value, raw, percent-encoded and JSON-escaped, whatever surrounds it", () => {
+  const key = "store-key/with+chars&more", prefix = "0123456789abcdef0123456789abcdef", short = "9f2c";
+  const message = `a${key}b ${encodeURIComponent(key)} ${JSON.stringify(key)} relay${prefix}x ${short}`;
+  const printed = JSON.stringify(errorChain(new Error(message), [key, prefix, short]));
+  for (const secret of [key, encodeURIComponent(key), prefix]) expect(printed).not.toContain(secret);
+  expect(printed).toContain(short);
+});
+
+it("never throws: a link it cannot read makes the whole chain unprintable", () => {
+  const numeric = Object.assign(new Error(), { message: 123 as unknown as string });
+  expect(errorChain(new Error("wrap", { cause: numeric }), [])).toEqual([{ name: "Error", message: "wrap" }, { name: "Error", message: "123" }]);
+  const nameless = new Error("m"); (nameless as { name: unknown }).name = undefined;
+  expect(errorChain(nameless, [])).toEqual([{ name: "Error", message: "m" }]);
+  const hostile = new Proxy({}, { get() { throw new Error("trap"); }, getPrototypeOf() { throw new Error("trap"); } });
+  expect(errorChain(Object.assign(new Error(), { message: Symbol("s") as unknown as string }), [])).toEqual([{ name: "Error", message: "Symbol(s)" }]);
+  const unstringable = Object.assign(new Error(), { message: { toString() { throw new Error("trap"); } } as unknown as string });
+  for (const error of [hostile, new Error("wrap", { cause: hostile }), unstringable]) {
+    expect(errorChain(error, [])).toBe("unprintable");
+    expect(JSON.parse(holdLine("standing-hold", "controller", "source", error, []))).toEqual({ event: "standing-hold", loop: "controller", reason: "source", causes: "unprintable" });
+  }
+});
+
+it("bounds a logged cause chain to eight links of 512 characters", () => {
+  let error: Error = new Error("x".repeat(2000));
+  for (let depth = 0; depth < 12; depth++) error = new Error(`link ${depth}`, { cause: error });
+  const chain = errorChain(error, []) as { message: string }[];
+  expect(chain).toHaveLength(8); expect(chain[0]!.message).toBe("link 11");
+  const long = (errorChain(new Error("y".repeat(2000)), []) as { message: string }[])[0]!;
+  expect(long.message).toHaveLength(512);
+});
+
+it("prints a line once per change, and again after a different line", () => {
+  const lines: string[] = [], print = printChanges(line => lines.push(line));
+  const held = (message: string) => holdLine("standing-hold", "controller", "source", new Error(message), []);
+  print(held("first")); print(held("first")); print(held("second")); print("progress"); print(held("second"));
+  expect(lines).toEqual([held("first"), held("second"), "progress", held("second")]);
+});
+
+it.each<[string, string]>([
+  ["colon runs", "a:".repeat(500_000)],
+  ["key-word runs", "k-".repeat(500_000) + "key"],
+  ["mnemonic runs", "abandon ".repeat(125_000) + "zzz"],
+  ["scheme runs", "https://".repeat(125_000)],
+  ["dotted scheme-like runs", "a.".repeat(500_000)],
+  ["JWT-like runs", "eyJ-".repeat(250_000)],
+  ["hex runs", "a".repeat(1_000_000) + "g"],
+  ["project-id-like runs", "1a".repeat(500_000)],
+])("redacts a 1 MB message of %s within 50 ms", (_, message) => {
+  errorChain(new Error("warm"), ["somesecretvalue1"]);
+  const started = performance.now();
+  const chain = errorChain(new Error(message), ["somesecretvalue1"]);
+  expect(performance.now() - started).toBeLessThan(50);
+  expect((chain as { message: string }[])[0]!.message.length).toBeLessThanOrEqual(512);
+});
+
+it("drops a token cut at the edge of the redaction window, which a shorter redacted prefix could bring into view", () => {
+  const hex = "7f3a".repeat(16), message = `https://h.example/x?q=${"z".repeat(4560)} ${hex}`;
+  const printed = JSON.stringify(errorChain(new Error(message), []));
+  expect(printed).toContain("https://h.example/x");
+  expect(printed).not.toContain(hex.slice(0, 16));
+});
+
+it("prints why it stopped without a configured endpoint's path segment, by value", () => {
+  const segment = "capabilityfatalsegment";
+  const root = mkdtempSync(join(tmpdir(), "standing-service-fatal-")); roots.push(root);
+  mkdirSync(join(root, segment));
+  const authors = join(root, segment, "authors.json"); writeFileSync(authors, "[]"); chmodSync(authors, 0o644);
+  const path = join(root, "config.json");
+  writeFileSync(path, JSON.stringify({ ...config(), network: "preprod", stateRoot: root, knownAuthorsFile: authors, midnightReadRpcUrl: `https://midnight.example/${segment}/rpc` }), { mode: 0o600 });
+  const result = spawnSync(process.execPath, ["--import", "tsx", "runner/standing-service.ts", "--config", path], { encoding: "utf8", timeout: 120_000 });
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("Standing signed author policy is unreadable: ");
+  expect(result.stderr).not.toContain(segment);
+}, 150_000);

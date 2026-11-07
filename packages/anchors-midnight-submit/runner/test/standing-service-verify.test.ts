@@ -26,10 +26,10 @@ vi.mock("../follower-catchup.js", async (original) => ({ ...(await original<obje
 vi.mock("../standing-session.js", async (original) => ({ ...(await original<object>()), openStandingSession: () => ({}) }));
 vi.mock("../standing-delivery.js", async (original) => ({ ...(await original<object>()), openStandingDelivery: () => ({}) }));
 vi.mock("../standing-controller.js", async (original) => ({ ...(await original<object>()), openStandingController: (options: unknown) => { stub.captured = options; return { turn: async () => ({ state: "idle" }) }; } }));
-vi.mock("../../src/endpoints.js", async (original) => ({ ...(await original<object>()), networkEndpoints: () => ({}) }));
+vi.mock("../../src/endpoints.js", async (original) => ({ ...(await original<object>()), networkEndpoints: () => ({ headers: {} }) }));
 vi.mock("../../src/preflight.js", async (original) => ({ ...(await original<object>()), assertChainIdentity: async () => ({}) }));
 vi.mock("../../src/submission.js", async (original) => ({ ...(await original<object>()), registryStateOnNode: async () => true }));
-vi.mock("../../src/wallet.js", async (original) => ({ ...(await original<object>()), openWallet: async () => ({ close: async () => ({ saved: true }) }) }));
+vi.mock("../../src/wallet.js", async (original) => ({ ...(await original<object>()), openWallet: async () => ({ secrets: [], close: async () => ({ saved: true }) }) }));
 vi.mock("../../src/sync.js", async (original) => ({ ...(await original<object>()), syncWithCheckpoints: async () => {} }));
 vi.mock("../../src/operator.js", async (original) => ({ ...(await original<object>()), registryOperator: () => ({ authorKey: AUTHOR, close: () => {} }) }));
 vi.mock("../../src/zk.js", async (original) => ({ ...(await original<object>()), provingService: () => ({}) }));
