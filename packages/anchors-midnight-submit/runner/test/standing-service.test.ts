@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
-import { chmodSync, closeSync, existsSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { errorChain, holdLine, parseStandingConfig, printChanges, runStandingLoops } from "../standing-service.js";
@@ -219,3 +219,40 @@ it("prints a line once per change, and again after a different line", () => {
   print(held("first")); print(held("first")); print(held("second")); print("progress"); print(held("second"));
   expect(lines).toEqual([held("first"), held("second"), "progress", held("second")]);
 });
+
+it.each<[string, string]>([
+  ["colon runs", "a:".repeat(500_000)],
+  ["key-word runs", "k-".repeat(500_000) + "key"],
+  ["mnemonic runs", "abandon ".repeat(125_000) + "zzz"],
+  ["scheme runs", "https://".repeat(125_000)],
+  ["dotted scheme-like runs", "a.".repeat(500_000)],
+  ["JWT-like runs", "eyJ-".repeat(250_000)],
+  ["hex runs", "a".repeat(1_000_000) + "g"],
+  ["project-id-like runs", "1a".repeat(500_000)],
+])("redacts a 1 MB message of %s within 50 ms", (_, message) => {
+  errorChain(new Error("warm"), ["somesecretvalue1"]);
+  const started = performance.now();
+  const chain = errorChain(new Error(message), ["somesecretvalue1"]);
+  expect(performance.now() - started).toBeLessThan(50);
+  expect((chain as { message: string }[])[0]!.message.length).toBeLessThanOrEqual(512);
+});
+
+it("drops a token cut at the edge of the redaction window, which a shorter redacted prefix could bring into view", () => {
+  const hex = "7f3a".repeat(16), message = `https://h.example/x?q=${"z".repeat(4560)} ${hex}`;
+  const printed = JSON.stringify(errorChain(new Error(message), []));
+  expect(printed).toContain("https://h.example/x");
+  expect(printed).not.toContain(hex.slice(0, 16));
+});
+
+it("prints why it stopped without a configured endpoint's path segment, by value", () => {
+  const segment = "capabilityfatalsegment";
+  const root = mkdtempSync(join(tmpdir(), "standing-service-fatal-")); roots.push(root);
+  mkdirSync(join(root, segment));
+  const authors = join(root, segment, "authors.json"); writeFileSync(authors, "[]"); chmodSync(authors, 0o644);
+  const path = join(root, "config.json");
+  writeFileSync(path, JSON.stringify({ ...config(), network: "preprod", stateRoot: root, knownAuthorsFile: authors, midnightReadRpcUrl: `https://midnight.example/${segment}/rpc` }), { mode: 0o600 });
+  const result = spawnSync(process.execPath, ["--import", "tsx", "runner/standing-service.ts", "--config", path], { encoding: "utf8", timeout: 120_000 });
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("Standing signed author policy is unreadable: ");
+  expect(result.stderr).not.toContain(segment);
+}, 150_000);

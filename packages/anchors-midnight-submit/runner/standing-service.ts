@@ -62,7 +62,10 @@ export function parseStandingConfig(value: unknown) {
 const REDACTED = "[redacted]";
 const MNEMONIC_WORDS = new Set(wordlist);
 const TOKEN_SEGMENT = /^(?=.*\d)(?=.*[A-Za-z])[\w\-.~%]{20,}$/;
-const SECRET_KEY = /\b([\w-]*(?:key|token|secret|passw(?:or)?d|pwd|auth|project_id)[\w-]*)("?\s*(?:=|:|%3[dD])\s*"?)([^\s,;&"'}\]]+)/gi;
+// Every pattern below starts only where a token can (or is bounded), so each runs in linear time.
+const SECRET_KEY = /(?<![\w-])([\w-]{0,64}?(?:key|token|secret|passw(?:or)?d|pwd|auth|project_id)[\w-]{0,64})("?\s{0,8}(?:=|:|%3[dD])\s{0,8}"?)([^\s,;&"'}\]]+)/gi;
+// Shape rules read at most this much past the printed limit; a token the cut splits is dropped.
+const WINDOW = 4096;
 
 // Any URL keeps its scheme, host and the path segments that cannot be tokens; userinfo (up to its
 // last @), query and fragment are dropped.
@@ -87,20 +90,23 @@ const mnemonicRuns = (text: string) => text.replace(/\b[a-z]+(?:\s+[a-z]+){5,}\b
 });
 
 // Each configured secret of 8 or more characters goes by value (raw, percent-encoded and as JSON
-// escapes it), as midnightSource redacts its headers; then whatever looks like a credential goes
+// escapes it), as midnightSource redacts its headers, over the whole text; then, within the window,
+// whatever looks like a credential goes
 // by shape: URL userinfo, query strings and token-like path segments, scheme-less user:pass@,
 // Bearer and Basic values, key=value secrets, JWTs, 64-hex runs, Blockfrost-shaped project ids
 // and mnemonic word runs. The result is one line, at most `limit` long.
 function redact(text: string, secrets: readonly string[], limit: number): string {
   const values = [...new Set(secrets.filter(secret => secret.length >= 8).flatMap(secret => [secret, encodeURIComponent(secret), JSON.stringify(secret).slice(1, -1)]))]
     .sort((a, b) => b.length - a.length);
-  return mnemonicRuns(values.reduce((out, value) => out.split(value).join(REDACTED), text)
+  const byValue = values.reduce((out, value) => out.split(value).join(REDACTED), text);
+  const window = byValue.length > limit + WINDOW ? byValue.slice(0, limit + WINDOW).replace(/\S*$/, "") : byValue;
+  return mnemonicRuns(window
     .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
-    .replace(/\b([a-z][a-z0-9+.-]*):\/\/([^\s"'<>]*)/gi, url)
-    .replace(/[^\s:@/"']+:[^\s@/"']+@/g, `${REDACTED}@`)
+    .replace(/\b([a-z][a-z0-9+.-]{0,31}):\/\/([^\s"'<>]*)/gi, url)
+    .replace(/(?<![^\s"'(<=,])[^\s:@/"']{1,256}:[^\s@/"']{1,256}@/g, `${REDACTED}@`)
     .replace(/\b(bearer|basic)\s+[^\s,;"']+/gi, `$1 ${REDACTED}`)
     .replace(SECRET_KEY, `$1$2${REDACTED}`)
-    .replace(/\beyJ[\w-]*\.[\w-]+\.[\w-]*/g, REDACTED)
+    .replace(/(?<![\w-])eyJ[\w-]*\.[\w-]+\.[\w-]*/g, REDACTED)
     .replace(/\b(?:0x)?[0-9a-fA-F]{64,}\b/g, REDACTED)
     .replace(/(?<![A-Za-z])[a-z]{1,32}[A-Za-z0-9]{32}(?![A-Za-z0-9])/g, REDACTED)).slice(0, limit);
 }
@@ -110,8 +116,13 @@ function redact(text: string, secrets: readonly string[], limit: number): string
 // a Symbol message); then the chain is "unprintable", so a hold is logged rather than escalated
 // into a failure of the loop that reported it.
 export type ErrorChain = { name: string; message: string }[] | "unprintable";
+const readable = <T>(read: () => T, unreadable: T): T => {
+  try { return read(); }
+  catch { return unreadable; }
+};
+
 export function errorChain(error: unknown, secrets: readonly string[]): ErrorChain {
-  try {
+  return readable<ErrorChain>(() => {
     const chain: { name: string; message: string }[] = [];
     for (let cause: unknown = error; chain.length < 8 && cause !== undefined;) {
       if (!(cause instanceof Error)) {
@@ -123,9 +134,13 @@ export function errorChain(error: unknown, secrets: readonly string[]): ErrorCha
       cause = cause.cause;
     }
     return chain;
-  } catch {
-    return "unprintable";
-  }
+  }, "unprintable");
+}
+
+// What the service prints to stderr when it stops: each printable message, joined.
+export function fatalLine(error: unknown, secrets: readonly string[]): string {
+  const chain = errorChain(error, secrets);
+  return (typeof chain === "string" ? [] : chain.map(link => link.message).filter(Boolean)).join(": ") || "Standing service stopped before completion";
 }
 
 export function holdLine(event: "standing-hold" | "standing-startup-hold", loop: "follower" | "controller", reason: string, error: unknown, secrets: readonly string[]) {
@@ -204,8 +219,11 @@ export async function startStandingFollower<T>(options: { catchup: { start(): Pr
   }
 }
 
-export async function runStandingService(config: ReturnType<typeof parseStandingConfig>) {
+// `secrets` collects what the service learns must never be printed, for its caller's fatal line.
+export async function runStandingService(config: ReturnType<typeof parseStandingConfig>, secrets: string[] = []) {
   if (config.mode === "anchor" && config.network === "mainnet" && agentDriven()) throw new Error("Agent-driven mainnet anchoring is forbidden");
+  // An endpoint's path can carry a capability, as the credential relay's does.
+  secrets.push(...[config.materiosRpcUrl, config.midnightReadRpcUrl, ...config.stores.map(store => store.url)].flatMap(url => new URL(url).pathname.split("/").filter(Boolean)));
   const lockPath = config.network === "mainnet" ? join(homedir(), ".local/state/orynq-midnight/runner/execution.lock") : join(config.stateRoot, "execution.lock");
   mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 }); ensurePrivateDir(dirname(lockPath));
   const fd = openSync(lockPath, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
@@ -236,12 +254,14 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
     const catchup = openFollowerCatchup({ state: follower, node: config.midnightReadRpcUrl, authors, signal: abort.signal,
       startupDiagnostic: event => console.log(JSON.stringify({ event: "standing-startup", ...event })) });
     const print = printChanges(line => console.log(line));
-    const secrets: string[] = [];
-    // A hold is classified by the printable chain, so a link that cannot be read cannot fail it.
-    const printable = (error: unknown) => {
-      const chain = errorChain(error, secrets);
-      return typeof chain === "string" ? { message: "", capped: false } : { message: chain[0]?.message ?? "", capped: chain.some(link => link.name === StandingFeeCap.name) };
-    };
+    // A link that cannot be read classifies as neither a fee cap nor any message.
+    const printable = (error: unknown) => ({
+      message: readable(() => error instanceof Error ? String(error.message) : "", ""),
+      capped: readable(() => {
+        for (let cause: unknown = error, depth = 0; depth < 8 && cause instanceof Error; depth++, cause = cause.cause) if (cause instanceof StandingFeeCap) return true;
+        return false;
+      }, false),
+    });
     const startup = () => startStandingFollower({ catchup, signal: abort.signal, hold: error => {
       const { message } = printable(error);
       const reason = /policy|author|checkpoint/i.test(message) ? "policy" : /clock|stale/i.test(message) ? "warmup" : "source";
@@ -300,12 +320,10 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const secrets: string[] = [];
   const run = async () => {
     if (process.argv.length !== 4 || process.argv[2] !== "--config") throw new Error("Expected --config with an owner-only configuration file");
-    await runStandingService(parseStandingConfig(readPrivateJson(process.argv[3]!, "Standing configuration")));
+    await runStandingService(parseStandingConfig(readPrivateJson(process.argv[3]!, "Standing configuration")), secrets);
   };
-  run().catch(error => {
-    const chain = errorChain(error, []), reasons = typeof chain === "string" ? [] : chain.map(link => link.message).filter(Boolean);
-    console.error(reasons.join(": ") || "Standing service stopped before completion"); process.exitCode = 1;
-  });
+  run().catch(error => { console.error(fatalLine(error, secrets)); process.exitCode = 1; });
 }
