@@ -4,28 +4,28 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8");
 const MIDNIGHT_PINS = {
   "@midnight-ntwrk/compact-runtime": "0.16.0",
-  "@midnight-ntwrk/ledger-v8": "8.1.3",
+  "@midnightntwrk/ledger-v8": "8.1.3",
   "@midnight-ntwrk/onchain-runtime-v3": "3.1.2",
-  "@midnight-ntwrk/zkir-v2": "2.1.1",
+  "@midnightntwrk/zkir-v2": "2.2.0",
   "@midnightntwrk/ledger-v9": "1.0.0",
 };
 const isMidnight = (name: string) => name.startsWith("@midnight-ntwrk/") || name.startsWith("@midnightntwrk/");
 
-// The wallet SDK 1.2.0 set (ledger 8) the submit package uses, exactly as npm resolves it.
+// The wallet SDK 2.0.0 set the submit package uses, exactly as npm resolves it.
 const WALLET_SDK = {
-  "@midnight-ntwrk/wallet-sdk-abstractions": "2.1.0",
-  "@midnight-ntwrk/wallet-sdk-address-format": "3.1.2",
-  "@midnight-ntwrk/wallet-sdk-capabilities": "3.3.1",
-  "@midnight-ntwrk/wallet-sdk-dust-wallet": "4.2.0",
-  "@midnight-ntwrk/wallet-sdk-facade": "4.1.0",
-  "@midnight-ntwrk/wallet-sdk-hd": "3.0.3",
-  "@midnight-ntwrk/wallet-sdk-indexer-client": "1.2.3",
-  "@midnight-ntwrk/wallet-sdk-node-client": "1.1.2",
-  "@midnight-ntwrk/wallet-sdk-prover-client": "1.2.2",
-  "@midnight-ntwrk/wallet-sdk-runtime": "1.0.5",
-  "@midnight-ntwrk/wallet-sdk-shielded": "3.0.2",
-  "@midnight-ntwrk/wallet-sdk-unshielded-wallet": "3.1.0",
-  "@midnight-ntwrk/wallet-sdk-utilities": "1.2.1",
+  "@midnightntwrk/wallet-sdk-abstractions": "3.0.0",
+  "@midnightntwrk/wallet-sdk-address-format": "4.0.0",
+  "@midnightntwrk/wallet-sdk-capabilities": "4.0.0",
+  "@midnightntwrk/wallet-sdk-dust-wallet": "5.0.0",
+  "@midnightntwrk/wallet-sdk-facade": "5.0.0",
+  "@midnightntwrk/wallet-sdk-hd": "4.0.0",
+  "@midnightntwrk/wallet-sdk-indexer-client": "2.0.0",
+  "@midnightntwrk/wallet-sdk-node-client": "2.0.0",
+  "@midnightntwrk/wallet-sdk-prover-client": "2.0.0",
+  "@midnightntwrk/wallet-sdk-runtime": "2.0.0",
+  "@midnightntwrk/wallet-sdk-shielded": "4.0.0",
+  "@midnightntwrk/wallet-sdk-unshielded-wallet": "4.0.0",
+  "@midnightntwrk/wallet-sdk-utilities": "1.3.0",
 };
 
 describe("toolchain and dependency pins", () => {

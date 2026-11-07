@@ -22,6 +22,10 @@ import {
   networkEndpoints,
   openWallet,
   syncWithCheckpoints,
+  ANCHORS_JOURNAL,
+  DEPLOY_JOURNAL,
+  MAINNET_WALLET_JOURNALS,
+  STATE,
   type ChainFacts,
   type OperatorWallet,
   type PreparedAnchor,
@@ -47,12 +51,7 @@ export function deadlineBeforeAnnouncement(timeoutMillis: number, announce: () =
 export const home = homedir();
 // Where the FPS mainnet keys and the deploy wallet's mnemonic live.
 export const SECRETS = `${home}/.secrets/orynq-midnight-mainnet`;
-// Where the mainnet scripts keep their journals, results and wallet state: deploy-mainnet journals
-// the deploy at DEPLOY_JOURNAL, where anchor-mainnet reads which registry FPS deployed, and
-// anchor-mainnet its anchors at ANCHORS_JOURNAL.
-export const STATE = `${home}/.local/state/orynq-midnight`;
-export const DEPLOY_JOURNAL = `${STATE}/mainnet-deploy.sqlite`;
-export const ANCHORS_JOURNAL = `${STATE}/mainnet-anchors.sqlite`;
+export { ANCHORS_JOURNAL, DEPLOY_JOURNAL, STATE };
 
 const MINUTE = 60_000;
 // A from-genesis sync of the mainnet wallet can take more than an hour.
@@ -62,8 +61,9 @@ export interface Mainnet {
   source: MidnightSource;
   chain: ChainFacts;
   // Opens the wallet the mnemonic derives, refusing one that is not the recorded wallet, and
-  // waits until it has synced, resuming from and saving to the shared wallet state file.
-  syncWallet(): Promise<OperatorWallet>;
+  // waits until it has synced, resuming from and saving to the shared wallet state file. `journal`
+  // is the caller's journal of the fees it pays, consulted with the other mainnet scripts'.
+  syncWallet(journal: string): Promise<OperatorWallet>;
 }
 
 // The script `name` sends `a mainnet ${noun}`, which deci `does` himself at his own terminal.
@@ -125,13 +125,14 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
           return {
             source,
             chain,
-            async syncWallet() {
+            async syncWallet(journal: string) {
               const expectedAddresses = (readJsonFile(option("wallet-record")) as { addresses: { unshielded: string; shielded: string; dust: string } }).addresses;
               const stateFile = option("wallet-state");
               mkdirSync(dirname(stateFile), { recursive: true, mode: 0o700 });
               ensurePrivateDir(dirname(stateFile));
               process.stdout.write(`${chain.chain}, runtime ${chain.specVersion}, ledger ${chain.ledgerVersion}. Syncing the wallet...\n`);
-              const wallet = await openWallet({ network: "mainnet", mnemonicFile: option("mnemonic"), endpoints, source, zkDir: option("zk"), expectedAddresses, stateFile });
+              const journals = [...new Set([journal, ...MAINNET_WALLET_JOURNALS])];
+              const wallet = await openWallet({ network: "mainnet", mnemonicFile: option("mnemonic"), endpoints, source, zkDir: option("zk"), expectedAddresses, journals, stateFile });
               opened.push(wallet);
               await syncWithCheckpoints(wallet, { timeoutMs: SYNC_TIMEOUT_MS, progressMs: MINUTE, checkpointMs: 5 * MINUTE, write: (line) => process.stdout.write(`${line}\n`) });
               return wallet;

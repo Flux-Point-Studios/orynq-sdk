@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { readFileSync } from "node:fs";
 import { anchorCallsIn, decodeAnchorTransaction } from "../anchor-transaction.js";
 import { pureCircuits } from "../../contract/managed/contract/index.js";

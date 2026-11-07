@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import * as rt from "@midnight-ntwrk/compact-runtime";
 import { buildProofDeploy, buildProofCall, proofInitialState, presentationId } from "../src/onchain.js";
 import { proofProvider } from "../src/proof-material.js";

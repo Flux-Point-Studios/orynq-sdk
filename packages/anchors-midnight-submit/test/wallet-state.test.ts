@@ -5,11 +5,17 @@ import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import * as L from "@midnight-ntwrk/ledger-v8";
-import { FacadeState, WalletFacade } from "@midnight-ntwrk/wallet-sdk-facade";
+import * as L from "@midnightntwrk/ledger-v8";
+import { FacadeState, WalletFacade } from "@midnightntwrk/wallet-sdk-facade";
 import { Subject, finalize } from "rxjs";
-import { createWalletMnemonicFile } from "../src/keys.js";
-import { openWallet, readWalletState, writeWalletState, type WalletSnapshot } from "../src/wallet.js";
+import { createWalletMnemonicFile, walletAddresses } from "../src/keys.js";
+import { WALLET_STATE_FORMAT, moveLegacyWalletState, openWallet, readWalletState, writeWalletState, type WalletSnapshot } from "../src/wallet.js";
+import { liveSource } from "./fakes.js";
+import { DatabaseSync } from "node:sqlite";
+import { TTL_MARGIN_MILLIS, openJournal } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
+
+// A source for a wallet opened in another process: a node and an indexer of one chain.
+const SAME_CHAIN_SOURCE = `{ indexer: { blockAt: async (height) => ({ height, hash: "00".repeat(32) }) }, node: { call: async () => "0x" + "00".repeat(32) } }`;
 
 const dir = mkdtempSync(join(tmpdir(), "orynq-wallet-state-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -168,7 +174,7 @@ describe("the wallet's saved sync state", () => {
   it.each(["network", "indexer"])("does not quote an unexpected saved %s", (field) => {
     const file = join(dir, `${field}.state.json`);
     const contents = "synthetic-private-value";
-    writeFileSync(file, JSON.stringify({ network: "preprod", indexer: HOSTED, addresses, ...snapshot, [field]: contents }), { mode: 0o600 });
+    writeFileSync(file, JSON.stringify({ format: WALLET_STATE_FORMAT, network: "preprod", indexer: HOSTED, addresses, ...snapshot, [field]: contents }), { mode: 0o600 });
     let message = "";
     try {
       readWalletState(file, "preprod", addresses, HOSTED);
@@ -198,6 +204,16 @@ describe("the wallet's saved sync state", () => {
     );
   });
 
+  it("is written in the wallet-sdk 2.x state format, and a file in any other is refused", () => {
+    const file = join(dir, "format.state.json");
+    writeWalletState(file, "preprod", addresses, HOSTED, snapshot);
+    expect(JSON.parse(readFileSync(file, "utf8")).format).toBe("orynq-midnight-wallet-state/wallet-sdk-2");
+    for (const format of [undefined, "orynq-midnight-wallet-state/wallet-sdk-3"]) {
+      writeFileSync(file, JSON.stringify({ format, network: "preprod", indexer: HOSTED, addresses, ...snapshot }), { mode: 0o600 });
+      expect(() => readWalletState(file, "preprod", addresses, HOSTED)).toThrow(`${file} was not saved by this wallet's wallet-sdk 2.x state format; move it aside to sync from genesis`);
+    }
+  });
+
   it("is refused when group or others can read it", () => {
     const file = join(dir, "c.state.json");
     writeWalletState(file, "preprod", addresses, HOSTED, snapshot);
@@ -214,7 +230,7 @@ describe("saving a wallet's sync state", () => {
   const open = async (name: string, stateFile = join(dir, `${name}.state.json`)) => {
     const mnemonicFile = join(dir, `${name}.mnemonic`);
     if (!existsSync(mnemonicFile)) createWalletMnemonicFile(mnemonicFile);
-    const wallet = await openWallet({ network: "preprod", mnemonicFile, endpoints: OFFLINE, source: undefined as never, zkDir: "/nonexistent", stateFile });
+    const wallet = await openWallet({ network: "preprod", mnemonicFile, endpoints: OFFLINE, source: liveSource(), zkDir: "/nonexistent", stateFile });
     return { wallet, stateFile };
   };
   const trapSerialize = () =>
@@ -471,7 +487,7 @@ describe("saving a wallet's sync state", () => {
           "-e",
           `import { openWallet } from ${JSON.stringify(walletModule)};
            const [mnemonicFile, stateFile] = process.argv.slice(1);
-           const wallet = await openWallet({ network: "preprod", mnemonicFile, endpoints: ${JSON.stringify(OFFLINE)}, zkDir: "/nonexistent", stateFile });
+           const wallet = await openWallet({ network: "preprod", mnemonicFile, endpoints: ${JSON.stringify(OFFLINE)}, source: ${SAME_CHAIN_SOURCE}, zkDir: "/nonexistent", stateFile });
            console.log(JSON.stringify(await wallet.saveState()));
            await wallet.close();`,
           mnemonicFile,
@@ -498,7 +514,7 @@ describe("saving a wallet's sync state", () => {
             "-e",
             `import { openWallet } from ${JSON.stringify(walletModule)};
              const [mnemonicFile, stateFile] = process.argv.slice(1);
-             const wallet = await openWallet({ network: "preprod", mnemonicFile, endpoints: ${JSON.stringify(OFFLINE)}, zkDir: "/nonexistent", stateFile });
+             const wallet = await openWallet({ network: "preprod", mnemonicFile, endpoints: ${JSON.stringify(OFFLINE)}, source: ${SAME_CHAIN_SOURCE}, zkDir: "/nonexistent", stateFile });
              const saved = [];
              for (let i = 0; i < 10; i++) saved.push((await wallet.saveState()).saved);
              await wallet.close();
@@ -543,3 +559,106 @@ describe("saving a wallet's sync state", () => {
     expect(leftovers(stateFile)).toEqual([]);
   });
 });
+
+// wallet-sdk 2.x cannot restore what wallet-sdk 1.x saved: its DUST state predates every ledger 9
+// event, and 2.x rebuilds the DUST state from the chain.
+describe("a state file wallet-sdk 1.x saved", () => {
+  const legacy = (name: string) => {
+    const file = join(dir, `${name}.state.json`);
+    writeFileSync(file, JSON.stringify({ network: "preprod", indexer: HOSTED, addresses, ...snapshot }), { mode: 0o600 });
+    return { file, bytes: readFileSync(file) };
+  };
+
+  it("is moved aside beside the state file, byte for byte, and nothing else is", () => {
+    const { file, bytes } = legacy("legacy-move");
+    expect(moveLegacyWalletState(file, [])).toBe(`${file}.wallet-sdk-1`);
+    expect(existsSync(file)).toBe(false);
+    expect(readFileSync(`${file}.wallet-sdk-1`)).toEqual(bytes);
+    const current = join(dir, "current.state.json");
+    writeWalletState(current, "preprod", addresses, HOSTED, snapshot);
+    expect(moveLegacyWalletState(current, [])).toBeNull();
+    expect(moveLegacyWalletState(join(dir, "absent.state.json"), [])).toBeNull();
+    const garbled = join(dir, "garbled.state.json");
+    writeFileSync(garbled, "not json", { mode: 0o600 });
+    expect(moveLegacyWalletState(garbled, [])).toBeNull();
+    expect(existsSync(garbled)).toBe(true);
+  });
+
+  it("is never moved over an earlier one", () => {
+    const { file, bytes } = legacy("legacy-twice");
+    writeFileSync(`${file}.wallet-sdk-1`, "earlier", { mode: 0o600 });
+    expect(() => moveLegacyWalletState(file, [])).toThrow(`${file} was saved by wallet-sdk 1.x and ${file}.wallet-sdk-1 already exists; move one of them before opening the wallet`);
+    expect(readFileSync(file)).toEqual(bytes);
+    expect(readFileSync(`${file}.wallet-sdk-1`, "utf8")).toBe("earlier");
+  });
+
+  // A sync from genesis offers again every coin a fee in flight spent, which the wallet then spends
+  // a second time and the node refuses (DustDoubleSpend): the move waits for the journals.
+  const held = (minutes: number) => ({ txHash: "ab".repeat(32), ttl: new Date(Date.now() + minutes * 60_000) });
+
+  it("is not moved while a fee the wallet paid may still land", () => {
+    const { file, bytes } = legacy("legacy-held");
+    const inFlight = held(-4);
+    expect(() => moveLegacyWalletState(file, [inFlight])).toThrow(`${file} was saved by wallet-sdk 1.x while the fee ${inFlight.txHash} the wallet paid may still land, until ${new Date(inFlight.ttl.getTime() + TTL_MARGIN_MILLIS).toISOString()}; a sync from genesis would spend its DUST again, so the state file stays until the journal settles it`);
+    expect(readFileSync(file)).toEqual(bytes);
+    expect(existsSync(`${file}.wallet-sdk-1`)).toBe(false);
+  });
+
+  it("is moved once every fee the wallet paid is past its TTL and the journal's margin", () => {
+    const { file } = legacy("legacy-settled");
+    expect(moveLegacyWalletState(file, [held(-6)])).toBe(`${file}.wallet-sdk-1`);
+  });
+
+  // A row written before journals recorded payers names none (null): it may be this wallet's.
+  const journalHolding = (name: string, payer: string | null, minutes: number) => {
+    const path = join(dir, `${name}.journal.sqlite`);
+    openJournal(path).close();
+    const db = new DatabaseSync(path);
+    db.prepare("insert into attempts (key, tx_hash, bytes, ttl_ms, state, payer) values (?, ?, ?, ?, 'pending', ?)").run("preprod/r/a/1/c/", "cd".repeat(32), new Uint8Array([1]), Date.now() + minutes * 60_000, payer);
+    db.close();
+    return path;
+  };
+  const openOver = async (name: string, journals?: readonly string[]) => {
+    const mnemonicFile = join(dir, `${name}.mnemonic`);
+    createWalletMnemonicFile(mnemonicFile);
+    const { file, bytes } = legacy(name);
+    const OFFLINE = { operator: "offline", indexer: "http://127.0.0.1:9/graphql", indexerWs: "ws://127.0.0.1:9/graphql/ws", node: "http://127.0.0.1:9", headers: {} };
+    const opening = openWallet({ network: "preprod", mnemonicFile, endpoints: OFFLINE, source: liveSource(), zkDir: "/nonexistent", stateFile: file, ...(journals ? { journals } : {}) });
+    return { file, bytes, opening };
+  };
+
+  it("is not moved by an open that names no journal, or whose journal holds a fee the wallet paid in flight", async () => {
+    const unnamed = await openOver("legacy-unnamed");
+    await expect(unnamed.opening).rejects.toThrow(`${unnamed.file} was saved by wallet-sdk 1.x, and no journal of the fees the wallet paid was named; the state file stays`);
+    expect(readFileSync(unnamed.file)).toEqual(unnamed.bytes);
+    const mnemonicFile = join(dir, "legacy-journal.mnemonic");
+    createWalletMnemonicFile(mnemonicFile);
+    const journal = journalHolding("legacy-journal", walletAddresses(mnemonicFile, "preprod").unshielded, 10);
+    const { file, bytes } = legacy("legacy-journal");
+    const OFFLINE = { operator: "offline", indexer: "http://127.0.0.1:9/graphql", indexerWs: "ws://127.0.0.1:9/graphql/ws", node: "http://127.0.0.1:9", headers: {} };
+    await expect(openWallet({ network: "preprod", mnemonicFile, endpoints: OFFLINE, source: liveSource(), zkDir: "/nonexistent", stateFile: file, journals: [journal, join(dir, "never-created.sqlite")] })).rejects.toThrow(`while the fee ${"cd".repeat(32)} the wallet paid may still land`);
+    expect(readFileSync(file)).toEqual(bytes);
+    expect(existsSync(join(dir, "never-created.sqlite"))).toBe(false);
+  });
+
+  it("is not moved while a journal holds a fee in flight that names no payer, which may be this wallet's", async () => {
+    const unnamed = journalHolding("legacy-no-payer", null, 10);
+    const { file, bytes, opening } = await openOver("legacy-no-payer", [unnamed]);
+    await expect(opening).rejects.toThrow(`while the fee ${"cd".repeat(32)} the wallet paid may still land`);
+    expect(readFileSync(file)).toEqual(bytes);
+  });
+
+  it("opens a wallet that syncs from genesis, and the next save writes a wallet-sdk 2.x state in its place", async () => {
+    const other = journalHolding("legacy-open-other", "mn_addr_test1someoneelse", 10);
+    const { file, bytes, opening } = await openOver("legacy-open", [other]);
+    const wallet = await opening;
+    try {
+      expect(readFileSync(`${file}.wallet-sdk-1`)).toEqual(bytes);
+      expect(await wallet.saveState()).toEqual({ saved: true });
+      expect(JSON.parse(readFileSync(file, "utf8")).format).toBe(WALLET_STATE_FORMAT);
+    } finally {
+      await wallet.close();
+    }
+  });
+});
+

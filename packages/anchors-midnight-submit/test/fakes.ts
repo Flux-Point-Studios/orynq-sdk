@@ -3,9 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import * as L9 from "@midnightntwrk/ledger-v9";
-import { SyncProgress } from "@midnight-ntwrk/wallet-sdk-abstractions";
+import { SyncProgress } from "@midnightntwrk/wallet-sdk-abstractions";
 import { assertTransactionRuntime, buildRegistryDeploy, decodeTransaction, registryInitialState, headerHash, midnightExtrinsic, midnightTransactionIn, orderedTrieRoot, type BlockHeader, type IndexedTransaction, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import ledger9Block from "../../anchors-midnight/src/__tests__/fixtures/mainnet-ledger9-block.json";
 import { batchOver, ledgerNode, type NodeVersion } from "../../anchors-midnight/src/__tests__/ledger-node.js";
@@ -235,10 +235,39 @@ export function wallet(net: ReturnType<typeof chain>, journalPath: () => string,
 }
 
 // The facade's state as openWallet reads it: the DUST sync has applied the indexer's events up to
-// `applied`, and the indexer's last message named `announced` as its newest.
-export const facadeSyncedTo = (applied: bigint, announced: bigint, connected = true) => ({
+// `applied`, and the indexer's last message named `announced` as its newest. The wallets act at
+// `protocolVersion`, below the ledger 9 fork unless it says otherwise.
+export const facadeSyncedTo = (applied: bigint, announced: bigint, connected = true, protocolVersion = 0n) => ({
   isSynced: false,
+  activeProtocolVersion: protocolVersion,
   shielded: { progress: SyncProgress.createSyncProgress({ appliedIndex: 3n, highestRelevantWalletIndex: 4n, isConnected: true }) },
   unshielded: { progress: { appliedId: 8n, highestTransactionId: 9n, isConnected: true } },
   dust: { progress: SyncProgress.createSyncProgress({ appliedIndex: applied, highestRelevantWalletIndex: announced, isConnected: connected }) },
 });
+
+// The credentialed reads a wallet checks the indexer against: an indexer whose head stands at
+// `indexed`, and a node whose finalized head is `finalized`, holding `hashAt(height)` at each height.
+// A node whose finalized head is at `finalized` and whose block at each height hashes as `hashAt`
+// says, and an indexer at `indexed` whose block at each height hashes as `indexerHashAt` says
+// (null: it holds none there), the node's unless given.
+export function liveSource({ indexed = 100, finalized = 98, hashAt = (height: number) => height.toString(16).padStart(64, "0"), indexerHashAt = hashAt }: { indexed?: number; finalized?: number; hashAt?: (height: number) => string; indexerHashAt?: (height: number) => string | null } = {}): MidnightSource {
+  const finalizedHash = hashAt(finalized);
+  return {
+    operator: "live",
+    indexer: {
+      head: async () => ({ height: indexed, hash: indexerHashAt(indexed)!, timestamp: Date.now() }),
+      blockAt: async (height: number) => {
+        const hash = height <= indexed ? indexerHashAt(height) : null;
+        return hash === null ? null : { height, hash };
+      },
+    },
+    node: {
+      async call(method: string, params: unknown[] = []) {
+        if (method === "chain_getFinalizedHead") return `0x${finalizedHash}`;
+        if (method === "chain_getHeader" && params[0] === `0x${finalizedHash}`) return { number: `0x${finalized.toString(16)}` };
+        if (method === "chain_getBlockHash") return `0x${hashAt(params[0] as number)}`;
+        throw new Error(`unexpected ${method}`);
+      },
+    },
+  } as unknown as MidnightSource;
+}

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { addEvent, addSpan, closeSpan, createManifest, createTrace, finalizeTrace, type TraceBundle } from "@fluxpointstudios/orynq-sdk-process-trace";
 import { deriveSalt, hash32, hiddenDigest } from "../commitment.js";
 import { registryInitialState } from "../registry.js";

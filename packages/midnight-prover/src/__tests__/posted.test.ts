@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { describe, expect, it, vi } from "vitest";
 import { proofInitialState, buildProofCall, buildProofDeploy } from "../onchain.js";
 import { assertPostedProof, verifyPosted } from "../posted.js";

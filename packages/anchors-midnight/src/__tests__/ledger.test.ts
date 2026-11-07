@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as rt from "@midnight-ntwrk/compact-runtime";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { ledger } from "../../contract/managed/contract/index.js";
 import { assertRegistryDeployBytes, assertRegistryState, buildRegistryDeploy, compiledVerifierKeys, registryInitialState } from "../registry.js";
 import { deployOf, NETWORK, random32, unprovenRegistryCall } from "./registry-call.js";

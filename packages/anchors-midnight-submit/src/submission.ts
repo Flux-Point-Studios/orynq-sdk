@@ -1,4 +1,4 @@
-import * as L8 from "@midnight-ntwrk/ledger-v8";
+import * as L8 from "@midnightntwrk/ledger-v8";
 import * as L9 from "@midnightntwrk/ledger-v9";
 import {
   KNOWN_RUNTIME_SPEC_VERSIONS,

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import * as L9 from "@midnightntwrk/ledger-v9";
-import { provingProvider } from "@midnight-ntwrk/zkir-v2";
+import { provingProvider } from "@midnightntwrk/zkir-v2";
 import { compiledContractFile } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 
 // Final-form bytes without proving: zkir checks each circuit as a prover would, and every proof

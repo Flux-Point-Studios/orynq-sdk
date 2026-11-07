@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { chainView, MIDNIGHT_GENESIS_HASHES, openJournal, type AnchorKey } from "../src/journal.js";
 import { fixture } from "../src/__tests__/anchor-chain.js";
 import { deployedRegistry9, finalBytes9, relabelled } from "../src/__tests__/registry-call.js";

@@ -3,7 +3,7 @@ import { chain, fresh, wallet } from "./fakes.js";
 import { proofReleaseOperator, PROOF_RELEASE_LABELS, landedProofDeploy, proofReleaseComplete } from "../src/proof-release.js";
 import { withFixtureProof } from "../../midnight-prover/tests/fixture-prover.js";
 import { proofLedger } from "../../midnight-prover/tests/proof-ledger.js";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { buildProofCall, proofProvider } from "@fluxpointstudios/orynq-sdk-midnight-prover";
 import { PROOF_RELEASE_CAPABILITY, proofReleaseStatements } from "../runner/proof-release-intent.js";
 

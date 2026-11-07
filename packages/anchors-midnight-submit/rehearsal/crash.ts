@@ -10,7 +10,7 @@ import { openWallet, provingService, registryOperator } from "../src/index.js";
 import { source, WALLET_SYNC } from "./endpoints.js";
 import { CRASH_WINDOWS } from "./gate.mjs";
 import recorded from "./wallets.json" with { type: "json" };
-import { authorJournalPath, submissionVerification } from "./submission-verification.js";
+import { authorJournalPath, rehearsalWalletJournals, submissionVerification } from "./submission-verification.js";
 import { entryCommitment } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { assertSourceRuntime } from "./source-runtime.js";
 
@@ -53,6 +53,7 @@ const wallet = await openWallet({
   zkDir: `${HOME}/.cache/orynq-midnight/zk`,
   expectedAddresses: recorded.walletA.addresses,
   stateFile: `${SECRETS}/state/walletA-midnight.state.json`,
+  journals: rehearsalWalletJournals(SECRETS),
 });
 await wallet.waitForSync(7_200_000);
 const die = (event: string, txHash: string) => {

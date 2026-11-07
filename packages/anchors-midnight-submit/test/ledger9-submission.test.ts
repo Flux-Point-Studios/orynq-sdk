@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import * as L8 from "@midnight-ntwrk/ledger-v8";
+import * as L8 from "@midnightntwrk/ledger-v8";
 import * as L9 from "@midnightntwrk/ledger-v9";
 import { MIDNIGHT_REGISTRIES, headerFromRpc, headerHash, unprovenRegistryCall, type MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { LEDGER8_RUNTIMES, SUBMITTER_RUNTIME_SPEC_VERSIONS, TimeToDismissError, assertBuiltFor, assertDismissable, assertKnownRuntime, registryStateOnNode } from "../src/submission.js";

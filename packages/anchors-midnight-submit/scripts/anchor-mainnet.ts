@@ -149,7 +149,7 @@ await run(async (connect) => {
   const { source, chain, syncWallet } = await connect();
   if (!(await registryStateOnNode(source, plan.registry))) throw new Error(`the mainnet node holds no contract at ${plan.registry}`);
   process.stdout.write(`registry ${plan.registry} holds the immutable registry: committee [], threshold 1, counter 0, the pinned verifier keys\n`);
-  const wallet = await syncWallet();
+  const wallet = await syncWallet(option("journal"));
   for (const path of [option("journal"), resultsPath]) mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const operator = registryOperator({
     network: "mainnet",

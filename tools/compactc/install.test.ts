@@ -52,8 +52,12 @@ function fakeRelease(version = "0.31.1") {
     "dust/9/spend.prover": "dust spend prover key",
     "dust/9/spend.verifier": "dust spend verifier key",
     "dust/9/spend.bzkir": "dust spend zkir",
+    "dust/10/spend.prover": "ledger 9 dust spend prover key",
+    "dust/10/spend.verifier": "ledger 9 dust spend verifier key",
+    "dust/10/spend.bzkir": "ledger 9 dust spend zkir",
   };
   mkdirSync(join(dir, "dust", "9"), { recursive: true });
+  mkdirSync(join(dir, "dust", "10"), { recursive: true });
   for (const [name, body] of Object.entries(params)) writeFileSync(join(dir, name), body);
   const pins = [
     `${sha256(readFileSync(zip))}  ${zipName}`,
@@ -107,6 +111,10 @@ describe("compactc installer", () => {
     expect(pinned).toContain("996602da7ca386284e656c78ea03e55bffdba29475e6a67965c50de05e13efc2  dust/9/spend.prover");
     expect(pinned).toContain("3f1569ebcab0655c5c145b28947c74edc4e3f5c6b276e4404b661cf0905b49d3  dust/9/spend.verifier");
     expect(pinned).toContain("904181287e75b0fb596ba5fcc116c882ee5d28e3115304c93ebd913722ce5841  dust/9/spend.bzkir");
+    // Ledger 9's DUST spend circuit, generation 10, as midnight-ledger ledger-9.1.0.0 declares it.
+    expect(pinned).toContain("3dff9f54add761350ad02621a425d67fe3d656c8145fef8ef147870489ffdc81  dust/10/spend.prover");
+    expect(pinned).toContain("d15a1295780549f534287a39c938005e1faa3232be21861573bd0cdb148949cb  dust/10/spend.verifier");
+    expect(pinned).toContain("d211cacb22391b9db60f945787d98c16d344cbb4790246132117084c080399c1  dust/10/spend.bzkir");
     for (const p of ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "x86_64-darwin", "aarch64-darwin"]) {
       const files = ["compactc", "compactc.bin", "zkir", "zkir-v3", "fixup-compact", "format-compact"].map((f) => `${p}/${f}`);
       for (const f of [`compactc_v0.31.1_${p}.zip`, ...files]) expect(pinned).toMatch(new RegExp(`^[0-9a-f]{64}  ${f}$`, "m"));
@@ -123,6 +131,7 @@ describe("compactc installer", () => {
     expect(execFileSync(join(dest, "compactc"), ["--version"], { encoding: "utf8" }).trim()).toBe("0.31.1");
     for (const name of Object.keys(release.params)) expect(readFileSync(join(params, name), "utf8"), name).toBe(release.params[name]);
     expect(statSync(join(params, "dust", "9")).mode & 0o022).toBe(0);
+    expect(statSync(join(params, "dust", "10")).mode & 0o022).toBe(0);
     expect(r.stdout).toContain(`compactc 0.31.1 (${platform}) verified in ${dest}`);
   });
 
@@ -163,17 +172,17 @@ describe("compactc installer", () => {
     expect(existsSync(join(params, "bls_midnight_2p14"))).toBe(false);
   });
 
-  it("refuses a DUST spend key that does not match its pin and leaves it out of the cache", async () => {
+  it.each(["dust/9/spend.prover", "dust/10/spend.prover"])("refuses a DUST spend key, %s, that does not match its pin and leaves it out of the cache", async (key) => {
     const release = fakeRelease();
-    writeFileSync(join(release.dir, "dust/9/spend.prover"), "tampered");
+    writeFileSync(join(release.dir, key), "tampered");
     const params = temp("zk-params-");
     const r = await run(installerWith(release.pins), [join(temp("compactc-dest-"), "bin"), params], {
       COMPACTC_RELEASE_URL: release.url,
       MIDNIGHT_PARAM_SOURCE: release.url,
     });
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain("sha256 mismatch for dust/9/spend.prover");
-    expect(existsSync(join(params, "dust/9/spend.prover"))).toBe(false);
+    expect(r.stderr).toContain(`sha256 mismatch for ${key}`);
+    expect(existsSync(join(params, key))).toBe(false);
   });
 
   it("re-verifies an existing install and replaces a binary that no longer matches its pin", async () => {

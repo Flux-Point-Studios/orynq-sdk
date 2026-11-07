@@ -48,6 +48,8 @@ export interface MidnightSource {
     contractActions(address: string, fromHeight: number): AsyncIterableIterator<IndexedAction>;
     // The serialized ledger parameters of the indexer's head block, in hex.
     ledgerParameters?(): Promise<{ height: number; hash: string; parameters: string }>;
+    // The indexer's block at `height`, or null when it holds none there.
+    blockAt?(height: number): Promise<{ height: number; hash: string } | null>;
   };
   node: {
     call<T = unknown>(method: string, params?: unknown[]): Promise<T>;
@@ -157,6 +159,7 @@ const TRANSACTIONS = `query Transactions($hash: HexEncoded!) {
 
 const HEAD = "query Head { block { height hash timestamp } }";
 const LEDGER_PARAMETERS = "query LedgerParameters { block { height hash ledgerParameters } }";
+const BLOCK_AT = "query BlockAt($height: Int!) { block(offset: { height: $height }) { height hash } }";
 const LATEST_ACTION = "query LatestAction($address: HexEncoded!) { contract(address: $address) { actions(limit: 1) { transaction { id block { height } } } } }";
 const CONTRACT_ACTIONS = `subscription ContractActions($address: HexEncoded!, $height: Int!) {
   contractActions(address: $address, offset: { height: $height }) { transaction { id hash raw block { height hash } } }
@@ -256,6 +259,14 @@ export function midnightSource(endpoints: SourceEndpoints): MidnightSource {
         const { block } = await graphql<{ block: { height: number; hash: string; ledgerParameters: string } }>(LEDGER_PARAMETERS, {});
         if (typeof block.ledgerParameters !== "string" || !/^(?:[0-9a-f]{2})+$/.test(block.ledgerParameters)) throw new Error(`${endpoints.operator} indexer: the head block's ledger parameters are not hex`);
         return { height: block.height, hash: block.hash, parameters: block.ledgerParameters };
+      },
+      async blockAt(height) {
+        if (!Number.isSafeInteger(height) || height < 0) throw new Error("a block height must be a non-negative safe integer");
+        const { block } = await graphql<{ block: { height: unknown; hash: unknown } | null }>(BLOCK_AT, { height });
+        if (block === null) return null;
+        if (block.height !== height) throw new Error(`${endpoints.operator} indexer: answered block ${Number.isSafeInteger(block.height) ? block.height : "?"} for height ${height}`);
+        if (typeof block.hash !== "string" || !HASH.test(block.hash)) throw new Error(`${endpoints.operator} indexer: block ${height}'s hash is not 32 bytes of lowercase hex`);
+        return { height, hash: block.hash };
       },
       async transactions(hash) {
         if (!HASH.test(hash)) throw new Error(`a transaction hash must be 64 lowercase hex characters`);

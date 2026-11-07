@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { buildProofDeploy, buildProofCall, proofInitialState, assertProofDeploy, presentationId } from "../onchain.js";
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");

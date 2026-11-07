@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import * as rt from "@midnight-ntwrk/compact-runtime";
 import { verifyFinalizedTransaction, type MidnightSource, type FinalityCheckpoint } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { ledger } from "../onchain/managed/contract/index.js";

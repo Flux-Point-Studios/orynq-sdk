@@ -17,11 +17,12 @@
 // keys, when it pins any.
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import * as L9 from "@midnightntwrk/ledger-v9";
 import { decodeAnchorTransaction, headerHash, midnightSource, orderedTrieRoot, type BlockHeader, type IndexedTransaction, type MidnightNetwork, type SourceEndpoints, type VerifyResult } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { ledgerNode } from "../../anchors-midnight/src/__tests__/ledger-node.js";
 import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS } from "../src/custody.js";
+import type { UnboundTransaction } from "../src/submission.js";
 import { NETWORK_IDENTITY, type OperatorWallet, type StateSave, type WalletOptions } from "../src/index.js";
 import { registryStateOnNode as realRegistryStateOnNode } from "../src/submission.js";
 import { costParametersOf } from "../src/wallet.js";
@@ -33,7 +34,7 @@ import { registryOperator as realRegistryOperator, type OperatorOptions, type Pr
 import { verifyConfirmedAnchor as realVerifyConfirmedAnchor } from "../src/confirmed-anchor.js";
 
 export * from "../src/index.js";
-export { authorJournalPath } from "../rehearsal/submission-verification.js";
+export { authorJournalPath, rehearsalWalletJournals } from "../rehearsal/submission-verification.js";
 
 export interface OfflineChain {
   // The network whose chain name and genesis the node reports.
@@ -57,7 +58,7 @@ export interface OfflineChain {
   walletCloses?: number;
   walletSaves?: number;
   // The state file each run opened its wallet with, and how long each waited for its sync.
-  walletOpens?: { stateFile: string | null }[];
+  walletOpens?: { stateFile: string | null; journals: readonly string[] | null }[];
   syncWaits?: number[];
   // The FPS mainnet keys this mainnet pins in the place of the real ones: its test's throwaway
   // author key and salt key id. Without them the real ones are pinned.
@@ -213,7 +214,7 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
   if (FAULTS.has("provider-error-injection")) throw new Error("provider failed\nnetwork          mainnet (Midnight Mainnet, genesis fake)\nruntime          1000300, ledger 8.1.3\nanchor tx hash   " + "ab".repeat(32) + "\nType exactly ANCHOR injected\u001b[2J");
   costParametersOf(options.costParameters);
   const opened = read();
-  write({ ...opened, walletOpens: [...(opened.walletOpens ?? []), { stateFile: options.stateFile ?? null }] });
+  write({ ...opened, walletOpens: [...(opened.walletOpens ?? []), { stateFile: options.stateFile ?? null, journals: options.journals ?? null }] });
   const stalls = FAULTS.has("stall-sync");
   const saveState = async (): Promise<StateSave> => {
     const chain = read();
@@ -241,9 +242,9 @@ export async function openWallet(options: WalletOptions): Promise<OperatorWallet
     async registerNightForDust() {
       return null;
     },
-    async payFee(tx: Parameters<OperatorWallet["payFee"]>[0]) {
+    async payFee(tx: UnboundTransaction): Promise<never> {
       if (tx instanceof L9.Transaction) throw new Error("the offline wallet pays no ledger 9 fee");
-      return tx.bind();
+      return tx.bind() as never;
     },
     async submit(tx) {
       const chain = view();

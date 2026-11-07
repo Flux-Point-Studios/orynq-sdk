@@ -5,7 +5,7 @@
 import { execFileSync } from "node:child_process";
 import { entropyToMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { packedTreeIdentity } from "../evidence-integrity.mjs";
 import { forgeKnownAuthors } from "../gate.mjs";
 import { installedPins } from "../tooling.js";
@@ -312,7 +312,7 @@ export function abortedDrill(edit: (files: Record<string, string>) => void = () 
     "    ^",
     "",
     "Wallet.InsufficientFunds: Insufficient Funds: could not balance dust",
-    `    at catch (file://${REPOSITORY}node_modules/.pnpm/@midnight-ntwrk+wallet-sdk-dust-wallet@4.2.0/node_modules/@midnight-ntwrk/wallet-sdk-dust-wallet/dist/v1/Transacting.js:279:32)`,
+    `    at catch (file://${REPOSITORY}node_modules/.pnpm/@midnight-ntwrk+wallet-sdk-dust-wallet@4.2.0/node_modules/@midnightntwrk/wallet-sdk-dust-wallet/dist/v1/Transacting.js:279:32)`,
     `    at FiberRuntime.runLoop (${REPOSITORY}node_modules/.pnpm/effect@3.21.4/node_modules/effect/src/internal/fiberRuntime.ts:1384:34) {`,
     "  tokenType: 'dust',",
     "  _tag: 'Wallet.InsufficientFunds'",

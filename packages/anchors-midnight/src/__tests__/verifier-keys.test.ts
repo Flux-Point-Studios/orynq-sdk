@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import * as L from "@midnight-ntwrk/ledger-v8";
-import { Zkir } from "@midnight-ntwrk/zkir-v2";
+import * as L from "@midnightntwrk/ledger-v8";
+import { Zkir } from "@midnightntwrk/zkir-v2";
 import {
   REGISTRY_CIRCUITS,
   REGISTRY_VERIFIER_KEY_SHA256,

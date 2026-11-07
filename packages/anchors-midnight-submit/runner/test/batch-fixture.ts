@@ -1,4 +1,4 @@
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import * as L9 from "@midnightntwrk/ledger-v9";
 import { authorKey, midnightTransactionIn, openKnownAuthors, registryInitialState, signKnownAuthors, unprovenRegistryCall, type CheckpointJson, type KnownAuthors } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { prover } from "../../test/prover.js";

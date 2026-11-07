@@ -1,4 +1,4 @@
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import type { MidnightSource } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 
 // Executes the actual transcript and gas meter; proof validity is covered by the real rehearsal.

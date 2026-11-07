@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L from "@midnightntwrk/ledger-v8";
 import { buildRegistryDeploy, decodeAnchorTransaction, unprovenRegistryCall } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { batchAnchorCommitment } from "../src/batch-plan.js";
 import { batch } from "../test/batch-fixture.js";
