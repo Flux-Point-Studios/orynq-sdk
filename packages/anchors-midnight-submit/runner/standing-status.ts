@@ -6,7 +6,7 @@ import { flushDirectory, readPrivateJson } from "./state.js";
 
 type Loop = "follower" | "controller";
 export type StandingHold = "dust-cap" | "warmup" | "policy" | "history" | "source";
-interface Scope { mode: "observe" | "anchor"; network: MidnightNetwork; genesis: string; registry: string; author: string; policyDigest: string; runtimeSpecVersion: number }
+interface Scope { mode: "observe" | "anchor"; network: MidnightNetwork; genesis: string; registry: string; author: string; policyDigest: string }
 interface LoopStatus {
   busy: boolean; operationStartedAt: number | null; lastCompletedAt: number | null; lastProgressAt: number | null;
   lastValue: string | null; hold: { reason: StandingHold; since: number; at: number } | null;
@@ -20,7 +20,9 @@ export function openStandingStatus(root: string, input: Scope, clock: () => numb
   if (existsSync(path)) {
     if (statSync(path).size > 2 * 1024 * 1024) throw new Error("Standing retained status exceeds its bounds");
     const previous = readPrivateJson(path, "Standing retained monitoring state") as { format?: unknown; scope?: Record<string, unknown>; cap?: typeof cap };
-    if (previous.format !== "orynq-midnight-standing-status/v1" || !previous.scope || Object.keys(previous.scope).sort().join(",") !== Object.keys(scope).sort().join(",") || Object.entries(scope).some(([key,value]) => previous.scope![key] !== value)) throw new Error("Standing retained monitoring scope differs");
+    // A status a follower scoped to runtime 1000300 retained carries that runtime in its scope.
+    const { runtimeSpecVersion, ...retained } = previous.scope ?? {};
+    if (previous.format !== "orynq-midnight-standing-status/v1" || !previous.scope || (runtimeSpecVersion !== undefined && runtimeSpecVersion !== 1000300) || Object.keys(retained).sort().join(",") !== Object.keys(scope).sort().join(",") || Object.entries(scope).some(([key,value]) => retained[key] !== value)) throw new Error("Standing retained monitoring scope differs");
     const saved = previous.cap;
     if (!saved || Object.keys(saved).sort().join(",") !== "active,lastAt,sequence" || !Number.isSafeInteger(saved.sequence) || saved.sequence < 0 || typeof saved.active !== "boolean" || (saved.lastAt !== null && (!Number.isSafeInteger(saved.lastAt) || saved.lastAt < 0)) || (saved.sequence === 0 ? saved.active || saved.lastAt !== null : saved.lastAt === null)) throw new Error("Standing retained cap history is invalid");
     cap = { ...saved };

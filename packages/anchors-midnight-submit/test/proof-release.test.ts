@@ -17,7 +17,7 @@ function setup(expiresAt = Date.now() + 3600_000, execute = false) {
   const ledger = proofLedger();
   if (execute) {
     const land = net.land;
-    net.land = tx => { ledger.apply(tx); land(tx); };
+    net.land = tx => { ledger.apply(tx as L.FinalizedTransaction); land(tx); };
     const batch = net.source.node.batch;
     net.source.node.batch = calls => calls.some(([method]) => method === "midnight_contractState") ? ledger.source.node.batch(calls) : batch(calls);
   }

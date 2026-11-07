@@ -11,7 +11,7 @@ spec = importlib.util.spec_from_file_location('standing_watch', Path(__file__).p
 watch = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(watch)
 NOW = 2 * 86_400_000
-SCOPE = dict(network='mainnet', genesis='01'*32, registry='02'*32, author='03'*32, policyDigest='04'*32, runtimeSpecVersion=1000300)
+SCOPE = dict(network='mainnet', genesis='01'*32, registry='02'*32, author='03'*32, policyDigest='04'*32)
 
 def snapshot():
     loop = dict(busy=False, operationStartedAt=NOW-1000, lastCompletedAt=NOW, lastProgressAt=NOW, lastValue='{"state":"idle"}', hold=None)

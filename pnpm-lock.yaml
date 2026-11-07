@@ -249,6 +249,9 @@ importers:
       '@midnight-ntwrk/zkir-v2':
         specifier: 2.1.1
         version: 2.1.1
+      '@midnightntwrk/ledger-v9':
+        specifier: 1.0.0
+        version: 1.0.0
       '@noble/hashes':
         specifier: ^2.4.0
         version: 2.4.0

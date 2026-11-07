@@ -18,7 +18,8 @@ import {
 import { encodedWindows, windowHits } from "../../anchors-midnight/src/__tests__/privacy-scan.js";
 import { MAINNET_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS } from "../src/custody.js";
 import { registryOperator, type OperatorOptions } from "../src/operator.js";
-import { bytes32, chain, deployed, fresh, hex, wallet } from "./fakes.js";
+import { bytes32, chain, deployed, deployed9, fresh, hex, issue838Parameters, wallet } from "./fakes.js";
+import { TimeToDismissError } from "../src/submission.js";
 import { batch } from "./batch-fixture.js";
 import { fixtureVerifier } from "./fixture-verifier.js";
 import { prover } from "./prover.js";
@@ -183,10 +184,9 @@ describe("registryOperator.anchor", () => {
     operator.close();
   });
 
-  // 2001100 is Ledger 9's runtime: the decoder reads it, but this submitter's transactions are ledger 8's.
-  it.each([1000400, 2001100])("refuses to prepare anything while the node runs runtime %i, which the submitter does not write for", async (spec) => {
-    const { operator, wallet: w } = setup({ net: chain({ spec }) });
-    await expect(operator.anchor(entry())).rejects.toThrow(new RegExp(`the preprod node runs runtime ${spec}, which is not one this submitter knows \\(1000300\\)`));
+  it("refuses to prepare anything while the node runs a runtime the submitter does not write for", async () => {
+    const { operator, wallet: w } = setup({ net: chain({ spec: 1000400 }) });
+    await expect(operator.anchor(entry())).rejects.toThrow(/the preprod node runs runtime 1000400, which is not one this submitter knows \(1000300, 2001100\)/);
     expect(w.submitted).toHaveLength(0);
     operator.close();
   });
@@ -567,3 +567,61 @@ describe("mandatory operator consensus completion", () => {
     } finally { operator.close(); }
   });
 });
+
+// Runtime 2001100 executes ledger 9, whose network holds the immutable ledger 8 registry's state as
+// contract-state[v8]: an anchor is a ledger 9 transaction[v12] carrying the ledger 8 circuit's call.
+describe("registryOperator under runtime 2001100 (ledger 9)", () => {
+  const tag = (bytes: Uint8Array) => Buffer.from(bytes.subarray(0, 26)).toString("latin1");
+  it("prepares a ledger 9 transaction[v12] partitioned with the head block's ledger 9 parameters, and lands it", async () => {
+    const { operator, wallet: w } = setup({ net: chain({ spec: 2001100, state: deployed9.state }) });
+    try {
+      const request = { kind: 1 as const, entry: entry() };
+      const prepared = await operator.prepare(request);
+      expect(tag(prepared.bytes)).toBe("midnight:transaction[v12](");
+      expect(decodeAnchorTransaction(prepared.bytes, [deployed.address]).calls[0]).toMatchObject({ entryPoint: "anchor", kind: 1, commitment: hex(entryCommitment(request.entry)) });
+      const receipt = await operator.submit(prepared);
+      expect(receipt).toMatchObject({ txHash: prepared.txHash, kind: 1 });
+      expect(w.submitted.map((tx) => tx.transactionHash())).toEqual([prepared.txHash]);
+    } finally { operator.close(); }
+  });
+
+  it.each([
+    ["serves no ledger parameters", null],
+    ["serves ledger 8's", L.LedgerParameters.initialParameters()],
+  ] as const)("refuses to build a ledger 9 call when the indexer %s", async (_, parameters) => {
+    const { operator, wallet: w } = setup({ net: chain({ spec: 2001100, state: deployed9.state, parameters }) });
+    await expect(operator.prepare({ kind: 1, entry: entry() })).rejects.toThrow(/ledger 9 call is partitioned with the chain's ledger 9 parameters/);
+    expect(w.submitted).toHaveLength(0);
+    operator.close();
+  });
+
+  it("refuses a ledger 8 registry state while the node runs ledger 9, which cannot have written it", async () => {
+    const { operator, wallet: w } = setup({ net: chain({ spec: 2001100 }) });
+    await expect(operator.prepare({ kind: 1, entry: entry() })).rejects.toThrow("the preprod node holds a ledger 8 registry state while it runs runtime 2001100, which executes ledger 9");
+    expect(w.submitted).toHaveLength(0);
+    operator.close();
+  });
+
+  it("sends nothing of bytes prepared for ledger 8 once the node runs ledger 9", async () => {
+    const net = chain();
+    const { operator, wallet: w } = setup({ net });
+    try {
+      const prepared = await operator.prepare({ kind: 1, entry: entry() });
+      expect(tag(prepared.bytes)).toBe("midnight:transaction[v9](s");
+      net.upgrade(2001100);
+      await expect(operator.submit(prepared)).rejects.toThrow("the prepared bytes cannot land: transaction header midnight:transaction[v9] is not one runtime 2001100 executes; nothing was sent; rerun to prepare new bytes");
+      expect(w.submitted).toHaveLength(0);
+    } finally { operator.close(); }
+  });
+
+  it("refuses final bytes that exceed ledger 9's time to dismiss, and frees the DUST they spend (midnight-ledger#838)", async () => {
+    const { operator, wallet: w } = setup({ net: chain({ spec: 2001100, state: deployed9.state, parameters: issue838Parameters() }) });
+    const refusal = await operator.prepare({ kind: 1, entry: entry() }).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(TimeToDismissError);
+    expect((refusal as TimeToDismissError).dustSpends).toBe(1);
+    expect(w.discarded).toHaveLength(1);
+    expect(w.submitted).toHaveLength(0);
+    operator.close();
+  });
+});
+

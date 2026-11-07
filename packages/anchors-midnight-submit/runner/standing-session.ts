@@ -8,7 +8,7 @@ export function openStandingSession(options: { state: ReturnType<typeof openFoll
   const proof = options.verifiedStart, start = { network: proof.network, policyDigest: proof.policyDigest, height: proof.block.height, hash: proof.block.hash, timestamp: proof.timestamp, runtime: proof.runtimeSpecVersion };
   const authors = loadAuthors(); state.observeStandingPolicy(authors);
   if (start.network !== state.chainView().network || start.policyDigest !== followerPolicyDigest(authors.checkpoints(start.network))) throw new Error("Standing startup proof has a different network or policy scope");
-  if (start.runtime !== 1000300 || !Number.isSafeInteger(start.height) || start.height < 1 || !/^[a-f0-9]{64}$/.test(start.hash)) throw new Error("Invalid standing startup proof");
+  if (!Number.isSafeInteger(start.height) || start.height < 1 || !/^[a-f0-9]{64}$/.test(start.hash) || !state.runtimeAllowedAt(start.runtime, start.height)) throw new Error("Invalid standing startup proof");
   const started = { ...clock(), chainTime: start.timestamp };
   assertStandingFreshClock(started);
   let lastClock = started, lastHead: { height: number; hash: string; timestamp: number } | null = null, fatal: Error | null = null;

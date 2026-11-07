@@ -1,6 +1,9 @@
+import * as L9 from "@midnightntwrk/ledger-v9";
 import {
   authorKey,
   decodeAnchorTransaction,
+  ledgerParametersIn,
+  runtimeLedger,
   deriveSalt,
   entryCommitment,
   hash32,
@@ -24,6 +27,7 @@ import { batchAnchorCommitment, type BatchAnchorData } from "./batch-plan.js";
 import { chainView, type AnchorKey, type ChainView, type JournalRow, type Submission } from "@fluxpointstudios/orynq-sdk-anchors-midnight/journal";
 import { MAINNET_AUTHOR_KEYS, MAINNET_BATCH_AUTHOR_KEYS, RETIRED_AUTHOR_KEYS, MAINNET_SALT_KEY_IDS, agentDriven, refuseMainnetSecretsPath } from "./custody.js";
 import {
+  assertBuiltFor,
   assertConfirmedHash,
   assertKnownRuntime,
   confirmedSends,
@@ -32,7 +36,9 @@ import {
   landedRow,
   finalizeChecked,
   registryStateOnNode,
+  runtimeAt,
   submitJournalled,
+  SUBMITTER_RUNTIME_SPEC_VERSIONS,
   type FeeWallet,
   type PreparedBytes,
   type Prover,
@@ -155,7 +161,8 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
   const journal = authorJournal(network, author, options.journalPath, options.bindingRoot);
   const chain = options.chain ?? chainView(source, network);
   const ttlMillis = (options.ttlMinutes ?? 15) * 60_000;
-  const journalling = { journal, chain, wallet, network, pollMillis: options.pollMillis ?? 3_000, ...(options.settleTimeoutMillis === undefined ? {} : { settleTimeoutMillis: options.settleTimeoutMillis }) };
+  const runtime = () => assertKnownRuntime(source, network, SUBMITTER_RUNTIME_SPEC_VERSIONS, options.registry);
+  const journalling = { journal, chain, wallet, network, runtime, pollMillis: options.pollMillis ?? 3_000, ...(options.settleTimeoutMillis === undefined ? {} : { settleTimeoutMillis: options.settleTimeoutMillis }) };
   const assertKindRole = (kind: number) => {
     if (![1, 2, 3].includes(kind)) throw new Error("Unknown anchor kind");
     if (role === "batch" && kind !== 3) throw new Error("A batch author writes kind 3 only");
@@ -214,15 +221,36 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
     if (!exact) throw new Error("the final bytes do not carry exactly the intended anchor; nothing was submitted");
   };
 
-  // Builds, proves, pays and binds the call against the registry's state on the node; bytes that
-  // do not carry exactly the anchor never leave, and their DUST is released.
-  const build = async ({ key, call, witnesses }: ReturnType<typeof intent>): Promise<Submission> => {
+  // The chain's ledger 9 parameters, which a ledger 9 call is partitioned and its fee checked with,
+  // from a block of the node's chain that ran `specVersion`.
+  const ledger9Parameters = async (specVersion: number): Promise<L9.LedgerParameters> => {
+    const read = await source.indexer.ledgerParameters?.();
+    const parameters = read && ledgerParametersIn(Buffer.from(read.parameters, "hex"));
+    if (!read || !(parameters instanceof L9.LedgerParameters)) throw new Error(`the ${network} indexer serves no ledger 9 parameters, and a ledger 9 call is partitioned with the chain's ledger 9 parameters`);
+    const attributed = read.hash.replace(/^0x/, "").toLowerCase();
+    const hash = await source.node.call<string | null>("chain_getBlockHash", [read.height]);
+    const held = typeof hash === "string" ? hash.replace(/^0x/, "").toLowerCase() : null;
+    if (held !== attributed) throw new Error(`the ${network} indexer attributes its ledger parameters to block ${read.height} (${attributed}), which the node ${held ? `holds as ${held}` : "does not hold"}; nothing was prepared`);
+    const ran = await runtimeAt(source, `0x${held}`);
+    if (ran !== specVersion) throw new Error(`the ${network} indexer's ledger parameters come from block ${read.height} (${held}), which ran runtime ${ran}, not ${specVersion}; nothing was prepared`);
+    return parameters;
+  };
+
+  // Builds, proves, pays and binds the call against the registry's state on the node, with the
+  // ledger `specVersion` executes; bytes that do not carry exactly the anchor never leave, and
+  // their DUST is released.
+  const build = async ({ key, call, witnesses }: ReturnType<typeof intent>, specVersion: number): Promise<Submission> => {
     const state = await registryStateOnNode(source, key.registry);
     if (!state) throw new Error(`the ${network} node holds no contract at ${key.registry}`);
+    const ledger9 = runtimeLedger(specVersion) === L9;
+    if (ledger9 !== state instanceof L9.ContractState) {
+      throw new Error(`the ${network} node holds a ledger ${state instanceof L9.ContractState ? 9 : 8} registry state while it runs runtime ${specVersion}, which executes ledger ${ledger9 ? 9 : 8}`);
+    }
     const ttl = new Date(Date.now() + ttlMillis);
-    const built = unprovenRegistryCall({ networkId: network, address: key.registry, state, call, witnesses, ttl });
+    const parameters = ledger9 ? await ledger9Parameters(specVersion) : undefined;
+    const built = unprovenRegistryCall({ networkId: network, address: key.registry, state, call, witnesses, ttl, ...(parameters ? { parameters } : {}) });
     if (key.kind === 2 && hex(built.after.last_commitment) !== key.commitment) throw new Error("the circuit computed a different kind-2 commitment than the opening");
-    const { bytes } = await finalizeChecked(wallet, prover, built.tx, ttl, (b) => assertExact(b, key));
+    const { bytes } = await finalizeChecked(wallet, prover, built.tx, ttl, (b) => assertExact(b, key), parameters);
     return { bytes, ttl };
   };
 
@@ -239,9 +267,9 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
   });
 
   const write = async (request: AnchorRequest) => {
-    await assertKnownRuntime(source, network);
+    const specVersion = await runtime();
     const planned = intent(request);
-    const row = await submitJournalled(journalling, planned.key, () => build(planned));
+    const row = await submitJournalled(journalling, planned.key, () => build(planned, specVersion));
     return { receipt: await complete(planned.key, row), opening: planned.opening };
   };
 
@@ -280,7 +308,7 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
     const key = keyOf(snapshot.kind, snapshot.commitment, snapshot.attribute);
     assertExact(snapshot.bytes, key);
     assertConfirmedHash(snapshot);
-    await assertKnownRuntime(source, network);
+    assertBuiltFor(snapshot.bytes, await runtime());
     return complete(key, await confirmed(key).submit(snapshot));
   };
 
@@ -305,9 +333,9 @@ export function registryOperator(options: OperatorOptions): RegistryOperator {
       return row && describe(key, row.bytes, row.ttl, row.payer, { state: row.state, broadcasts: row.broadcasts, expired: row.expired });
     },
     async prepare(request) {
-      await assertKnownRuntime(source, network);
+      const specVersion = await runtime();
       const planned = intent(request);
-      const { bytes, ttl } = await build(planned);
+      const { bytes, ttl } = await build(planned, specVersion);
       return describe(planned.key, bytes, ttl, wallet.addresses.unshielded);
     },
     submit,

@@ -37,6 +37,7 @@
     "@midnight-ntwrk/wallet-sdk-shielded": "3.0.2",
     "@midnight-ntwrk/wallet-sdk-unshielded-wallet": "3.1.0",
     "@midnight-ntwrk/zkir-v2": "2.1.1",
+    "@midnightntwrk/ledger-v9": "1.0.0",
     "@scure/bip39": "2.0.1",
     "effect": "3.21.5",
     "rxjs": "7.8.2",

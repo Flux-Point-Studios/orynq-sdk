@@ -247,7 +247,7 @@ export async function runStandingService(config: ReturnType<typeof parseStanding
     };
     const initial = authors();
     if (!initial.authors(config.network).some(row => row.key === config.author && row.role === "batch") || (config.network === "mainnet" && !MAINNET_BATCH_AUTHOR_KEYS.includes(config.author))) throw new Error("Standing batch author is not pinned and authorized");
-    follower = openFollowerState(join(config.stateRoot, "follower.sqlite"), { network: config.network, genesis: config.genesis, registry: config.registry, author: config.author, policyDigest: followerPolicyDigest(initial.checkpoints(config.network)), runtimeSpecVersion: 1000300 });
+    follower = openFollowerState(join(config.stateRoot, "follower.sqlite"), { network: config.network, genesis: config.genesis, registry: config.registry, author: config.author, policyDigest: followerPolicyDigest(initial.checkpoints(config.network)) });
     const advancementFile = join(config.stateRoot, "checkpoint-history.json");
     if (existsSync(advancementFile)) await follower.retainCheckpointHistory(initial.checkpoints(config.network), readCheckpointHistory(advancementFile));
     status = openStandingStatus(config.stateRoot, { ...follower.scope(), mode: config.mode });

@@ -6,11 +6,11 @@ import { DatabaseSync } from "node:sqlite";
 import { followerPolicyDigest, type FollowerBlock } from "../follower-block.js";
 import { openFollowerState } from "../follower-state.js";
 import { openStandingSession } from "../standing-session.js";
-import { batchAuthors, batchBytes, batchScope } from "./batch-fixture.js";
+import { batchAuthors, batchBytes, batchBytes9, batchScope } from "./batch-fixture.js";
 import { finalTransaction } from "../../src/submission.js";
 
 const h = (n: number) => n.toString(16).padStart(64, "0"), now = 1_800_000_000_000, minute = 60_000;
-const scope = { ...batchScope, genesis: h(1), policyDigest: followerPolicyDigest([]), runtimeSpecVersion: 1000300 };
+const scope = { ...batchScope, genesis: h(1), policyDigest: followerPolicyDigest([]) };
 const roots: string[] = [], handles: ReturnType<typeof openFollowerState>[] = [];
 const block = (height: number, timestamp: number): FollowerBlock => ({ network: scope.network, policyDigest: scope.policyDigest, block: { height, hash: h(height) }, parentHash: h(height - 1), timestamp, runtimeSpecVersion: 1000300, sends: [] });
 function setup() {
@@ -221,3 +221,19 @@ it("refuses a stale or cross-network startup proof", () => {
   expect(() => openStandingSession({ ...f.options, verifiedStart: block(11, now - 120_001) })).toThrow(/stale/i);
   expect(() => openStandingSession({ ...f.options, verifiedStart: { ...block(11, now), network: "mainnet" } })).toThrow(/network|scope/i);
 });
+
+it("reserves a ledger 9 batch once the follower crossed to runtime 2001100, and refuses ledger 8 bytes there", async () => {
+  const f = setup();
+  const crossed = (height: number) => { f.clock.wallTime += 20 * minute + 1000; f.clock.monotonicMillis += 20 * minute + 1000; return { ...block(height, f.clock.wallTime), runtimeSpecVersion: 2001100 }; };
+  const start = crossed(12); f.state.recordVerifiedBlock(start);
+  const session = openStandingSession({ ...f.options, verifiedStart: start });
+  f.state.recordVerifiedBlock(crossed(13));
+  await expect(session.reserve(await batchBytes({ ttl: f.clock.wallTime + 10 * minute }), batchScope.commitment)).rejects.toThrow("transaction header midnight:transaction[v9] is not one runtime 2001100 executes");
+  await expect(session.reserve(await batchBytes9({ ttl: f.clock.wallTime + 10 * minute }), batchScope.commitment)).resolves.toMatchObject({ commitment: batchScope.commitment });
+});
+
+it.each([1000400, 0])("refuses a startup proof under runtime %i", (runtime) => {
+  const f = setup();
+  expect(() => openStandingSession({ ...f.options, verifiedStart: { ...f.verifiedStart, runtimeSpecVersion: runtime } })).toThrow("Invalid standing startup proof");
+});
+

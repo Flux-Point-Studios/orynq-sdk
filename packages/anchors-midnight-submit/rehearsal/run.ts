@@ -73,7 +73,7 @@ function instrument(wallet: OperatorWallet, label: string) {
   let payMs = 0;
   return {
     addresses: wallet.addresses,
-    async payFee(tx: Parameters<OperatorWallet["payFee"]>[0], ttl: Date) {
+    async payFee(tx: L.Transaction<L.SignatureEnabled, L.Proof, L.PreBinding>, ttl: Date) {
       const t = performance.now();
       const out = await wallet.payFee(tx, ttl);
       payMs = performance.now() - t;

@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { makeWasmProvingService, type ProvingService, type UnboundTransaction } from "@midnight-ntwrk/wallet-sdk-capabilities/proving";
+import type * as L8 from "@midnight-ntwrk/ledger-v8";
 import type { KeyMaterialProvider } from "@midnight-ntwrk/zkir-v2";
+import * as L9 from "@midnightntwrk/ledger-v9";
 import { REGISTRY_CIRCUITS, compiledContractFile } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 
 // What tools/compactc/install.sh puts in a ZK directory, pinned as midnight-ledger 8.1.3 pins
@@ -56,7 +58,14 @@ export function keyMaterial(zkDir: string): KeyMaterialProvider {
 }
 
 // Proves in a worker thread of this process with zkir-v2 and keyMaterial(zkDir), so a proof
-// never blocks the wallet's subscriptions and no witness reaches a proof server.
-export function provingService(zkDir: string): ProvingService<UnboundTransaction> {
-  return makeWasmProvingService({ keyMaterialProvider: keyMaterial(zkDir) });
+// never blocks the wallet's subscriptions and no witness reaches a proof server. wallet-sdk 1.x's
+// prover reads ledger 8 transactions only.
+export function provingService(zkDir: string): ProvingService<UnboundTransaction> & { prove(tx: L8.UnprovenTransaction | L9.UnprovenTransaction): Promise<UnboundTransaction> } {
+  const service = makeWasmProvingService({ keyMaterialProvider: keyMaterial(zkDir) });
+  return {
+    prove(tx: L8.UnprovenTransaction | L9.UnprovenTransaction) {
+      if (tx instanceof L9.Transaction) return Promise.reject(new Error("wallet-sdk 1.x proves no ledger 9 transaction; nothing was proven"));
+      return service.prove(tx);
+    },
+  };
 }

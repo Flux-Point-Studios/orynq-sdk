@@ -19,7 +19,7 @@ async function setup() {
   const root = mkdtempSync(join(tmpdir(), "checkpoint-history-")); roots.push(root);
   const chain = followerChain(undefined, height => height <= 1301 ? now - day - 5000 : now + (height - 1303) * 6000);
   const source = { ...chain.source, network: "preprod" as const }, originals = [chain.checkpoint];
-  const scope = { network: batchScope.network, registry: batchScope.registry, author: batchScope.author, genesis: "01".repeat(32), policyDigest: followerPolicyDigest(originals), runtimeSpecVersion: 1000300 };
+  const scope = { network: batchScope.network, registry: batchScope.registry, author: batchScope.author, genesis: "01".repeat(32), policyDigest: followerPolicyDigest(originals) };
   const file = join(root, "follower.sqlite"), state = openFollowerState(file, scope); handles.push(state);
   for (const height of [1301, 1302, 1303]) state.recordVerifiedBlock(await verifyFollowerBlock({ source, block: chain.ref(height), checkpoints: originals }));
   const authors = batchAuthors({ validFrom: 1301 }, 1, originals.map(checkpointToJson));

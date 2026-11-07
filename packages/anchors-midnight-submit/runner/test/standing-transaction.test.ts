@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { registryInitialState } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
-import { batchAuthors as authors, batchBytes, batchScope as scope } from "./batch-fixture.js";
+import { MIDNIGHT_REGISTRIES } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { batchAuthors as authors, batchBytes, batchBytes9, batchScope as scope } from "./batch-fixture.js";
 import { assertStandingTransaction } from "../standing-transaction.js";
 
 const h = (n: number) => n.toString(16).padStart(64, "0"), now = 1_800_000_000_000;
@@ -61,3 +62,26 @@ it("refuses unknown runtimes and invalid authenticated heights", async () => {
 it("refuses a new mainnet registry before any authorization can admit it", async () => {
   const raw = await bytes(); expect(() => assertStandingTransaction(raw, { ...scope, network: "mainnet", registry: h(7) }, head, authors())).toThrow(/registry/i);
 });
+
+it("accepts a ledger 9 batch call, its fee one DUST spend, while the head runs runtime 2001100", async () => {
+  const raw = await batchBytes9({ ttl: now + 10 * 60_000, feeSpends: 1 });
+  const result = assertStandingTransaction(raw, scope, { ...head, runtimeSpecVersion: 2001100 }, authors());
+  expect(result).toMatchObject({ commitment: scope.commitment, ttl: now + 10 * 60_000 });
+  expect(result.fee).toBeGreaterThan(0n);
+});
+
+it("refuses a transaction of the other ledger than the head's runtime executes", async () => {
+  const v9 = await bytes(), v12 = await batchBytes9({ ttl: now + 10 * 60_000 });
+  expect(() => assertStandingTransaction(v9, scope, { ...head, runtimeSpecVersion: 2001100 }, authors())).toThrow("transaction header midnight:transaction[v9] is not one runtime 2001100 executes");
+  expect(() => assertStandingTransaction(v12, scope, head, authors())).toThrow("transaction header midnight:transaction[v12] is not one runtime 1000300 executes");
+});
+
+it("binds the head's runtime to mainnet generation 1's span: 1000300 through 3346138, 2001100 from 3346139", async () => {
+  const raw = await bytes(), mainnet = { ...scope, network: "mainnet" as const, registry: MIDNIGHT_REGISTRIES.mainnet[0]!.address };
+  for (const [height, spec] of [[3346138, 2001100], [3346139, 1000300]] as const) {
+    expect(() => assertStandingTransaction(raw, mainnet, { height, timestamp: now, runtimeSpecVersion: spec }, authors())).toThrow(`Standing runtime ${spec} at block ${height} is outside registry generation 1's spans`);
+  }
+  // Inside the span the runtime passes, and the fixture's call to another registry is what mainnet refuses.
+  expect(() => assertStandingTransaction(raw, mainnet, { height: 3346138, timestamp: now, runtimeSpecVersion: 1000300 }, authors())).toThrow("Transaction is outside the intended standing batch scope");
+});
+

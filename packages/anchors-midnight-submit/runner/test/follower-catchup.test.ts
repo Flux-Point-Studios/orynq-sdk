@@ -28,7 +28,7 @@ beforeEach(async () => {
   }, timestamp);
   chain.checkpoint = chain.chain.chain.checkpoint(1);
   root = mkdtempSync(join(tmpdir(), "midnight-catchup-"));
-  state = openFollowerState(join(root, "follower.sqlite"), { ...batchScope, genesis: "01".repeat(32), policyDigest: followerPolicyDigest([chain.checkpoint]), runtimeSpecVersion: 1000300 });
+  state = openFollowerState(join(root, "follower.sqlite"), { ...batchScope, genesis: "01".repeat(32), policyDigest: followerPolicyDigest([chain.checkpoint]) });
   server = createServer(async (req, res) => {
     try {
       const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));

@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { openFollowerState } from "../follower-state.js";
 import type { FollowerBlock } from "../follower-block.js";
 import { followerPolicyDigest, verifyFollowerBlock } from "../follower-block.js";
-import { authorKey, rpcOnlySource, registryInitialState, unprovenRegistryCall, type FinalityCheckpoint } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
+import { MIDNIGHT_REGISTRIES, authorKey, rpcOnlySource, registryInitialState, unprovenRegistryCall, type FinalityCheckpoint } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { finalTransaction } from "../../src/submission.js";
 import { prover } from "../../test/prover.js";
 import { deployed } from "../../test/fakes.js";
@@ -15,8 +15,8 @@ import recording from "../../../anchors-midnight/src/__tests__/fixtures/rpc-main
 const h = (n: number) => n.toString(16).padStart(64, "0");
 const roots: string[] = [], handles: ReturnType<typeof openFollowerState>[] = [];
 const secret = new Uint8Array(32).fill(19), author = Buffer.from(authorKey(secret)).toString("hex");
-const scope = { network: "preprod" as const, genesis: h(1), registry: deployed.address, author, policyDigest: h(2), runtimeSpecVersion: 1000300 };
-function setup(overrides: { network?: "mainnet" | "preprod"; policyDigest?: string } = {}) {
+const scope = { network: "preprod" as const, genesis: h(1), registry: deployed.address, author, policyDigest: h(2) };
+function setup(overrides: { network?: "mainnet" | "preprod"; policyDigest?: string; registry?: string } = {}) {
   const root = mkdtempSync(join(tmpdir(), "follower-state-")); roots.push(root); chmodSync(root, 0o700);
   const path = join(root, "follower.sqlite"), state = openFollowerState(path, { ...scope, ...overrides }); handles.push(state); return { path, state };
 }
@@ -169,3 +169,57 @@ it("records a real authenticated mainnet block through the existing proof reader
   const { state } = setup({ network: "mainnet", policyDigest: followerPolicyDigest([checkpoint]) }); state.recordVerifiedBlock(verified);
   expect(state.head()).toEqual(verified.block); expect(state.observations(hint.txHash)[0]?.status).toBe("SUCCESS");
 });
+
+const mainnet = { network: "mainnet" as const, registry: MIDNIGHT_REGISTRIES.mainnet[0]!.address };
+const mainnetBlock = (height: number, runtimeSpecVersion: number): FollowerBlock => ({ ...block(height), network: "mainnet", runtimeSpecVersion });
+
+it("follows mainnet across the Ledger 9 upgrade: runtime 1000300 through block 3346138, 2001100 from 3346139", () => {
+  const { state } = setup(mainnet);
+  for (const [height, runtime] of [[3346137, 1000300], [3346138, 1000300], [3346139, 2001100], [3346140, 2001100]] as const) state.recordVerifiedBlock(mainnetBlock(height, runtime));
+  expect(state.head()).toEqual({ height: 3346140, hash: h(3346140) });
+});
+
+it.each([[3346138, 2001100], [3346139, 1000300]] as const)("refuses block %i under runtime %i, which registry generation 1 does not run there", (height, runtime) => {
+  const { state } = setup(mainnet);
+  state.recordVerifiedBlock(mainnetBlock(height - 1, height - 1 <= 3346138 ? 1000300 : 2001100));
+  expect(() => state.recordVerifiedBlock(mainnetBlock(height, runtime))).toThrow(`Follower block ${height} runs runtime ${runtime}, which registry generation 1 does not run there`);
+  expect(state.head()).toEqual({ height: height - 1, hash: h(height - 1) });
+});
+
+it("follows a registry no generation pins onto a later runtime the decoder knows, never back, and onto no unknown one", () => {
+  const { state } = setup(); state.recordVerifiedBlock(block(10));
+  state.recordVerifiedBlock({ ...block(11), runtimeSpecVersion: 2001100 });
+  expect(() => state.recordVerifiedBlock(block(12))).toThrow("Follower block 12 runs runtime 1000300 after its parent ran 2001100");
+  expect(() => state.recordVerifiedBlock({ ...block(12), runtimeSpecVersion: 1000400 })).toThrow("Follower block 12 runs runtime 1000400, which the decoder does not know");
+  expect(state.head()).toEqual(block(11).block);
+});
+
+// Schema 3 recorded the one runtime its follower ran as part of its scope; schema 4 binds each
+// block's runtime to its height instead, so the scope no longer names one.
+function asSchema3(path: string, runtimeSpecVersion: number) {
+  const db = new DatabaseSync(path);
+  const saved = JSON.parse(String(db.prepare("select scope from follower_scope where id=1").get()!.scope));
+  db.prepare("update follower_scope set scope=? where id=1").run(JSON.stringify({ ...saved, runtimeSpecVersion }));
+  db.exec("alter table follower_blocks drop column runtime; pragma user_version=3"); db.close();
+}
+
+it("opens a schema 3 follower whose scope pinned runtime 1000300 as schema 4, keeping its blocks", () => {
+  const { state, path } = setup(); state.recordVerifiedBlock(block(10)); state.close(); handles.splice(handles.indexOf(state), 1);
+  asSchema3(path, 1000300);
+  const reopened = openFollowerState(path, scope); handles.push(reopened);
+  expect(reopened.head()).toEqual(block(10).block);
+  const db = new DatabaseSync(path);
+  expect([db.prepare("pragma user_version").get()!.user_version, db.prepare("select scope from follower_scope where id=1").get()!.scope]).toEqual([4, JSON.stringify(scope)]);
+  expect(db.prepare("select height,runtime from follower_blocks").all()).toEqual([{ height: 10, runtime: 1000300 }]);
+  db.close();
+});
+
+it("refuses a schema 3 follower whose scope pinned another runtime, changing nothing", () => {
+  const { state, path } = setup(); state.recordVerifiedBlock(block(10)); state.close(); handles.splice(handles.indexOf(state), 1);
+  asSchema3(path, 2001100);
+  expect(() => openFollowerState(path, scope)).toThrow("Follower scope differs");
+  const db = new DatabaseSync(path);
+  expect(db.prepare("pragma user_version").get()!.user_version).toBe(3);
+  db.close();
+});
+

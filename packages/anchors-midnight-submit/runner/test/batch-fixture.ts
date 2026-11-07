@@ -1,7 +1,8 @@
 import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L9 from "@midnightntwrk/ledger-v9";
 import { authorKey, midnightTransactionIn, openKnownAuthors, registryInitialState, signKnownAuthors, unprovenRegistryCall, type CheckpointJson, type KnownAuthors } from "@fluxpointstudios/orynq-sdk-anchors-midnight";
 import { prover } from "../../test/prover.js";
-import { deployed } from "../../test/fakes.js";
+import { deployed, deployed9, recordedDustSpend } from "../../test/fakes.js";
 import { finalTransaction } from "../../src/submission.js";
 import recording from "../../../anchors-midnight/src/__tests__/fixtures/rpc-mainnet-execution.json";
 
@@ -19,7 +20,7 @@ function recordedSpend() {
     for (const encoded of body) {
       const bytes = midnightTransactionIn(Buffer.from(encoded.slice(2), "hex"));
       if (!bytes) continue;
-      for (const intent of finalTransaction(bytes).intents?.values() ?? []) {
+      for (const intent of (finalTransaction(bytes) as L.FinalizedTransaction).intents?.values() ?? []) {
         const spend = intent.dustActions?.spends[0]; if (spend) return spend;
       }
     }
@@ -41,3 +42,19 @@ export async function batchBytes(options: { kind?: number; ttl?: number; commitm
   }
   return proven.bind().serialize();
 }
+
+// batchBytes as runtime 2001100 carries them: a ledger 9 transaction[v12] calling the registry's
+// ledger 9 state, each fee spend the recorded mainnet DUST spend.
+export async function batchBytes9(options: { ttl?: number; feeSpends?: number } = {}) {
+  const ttl = new Date(options.ttl ?? 100_000);
+  const built = unprovenRegistryCall({ networkId: batchScope.network, address: batchScope.registry, state: deployed9.state, parameters: L9.LedgerParameters.initialParameters(), ttl, call: { circuit: "anchor", args: [Buffer.from(batchScope.commitment, "hex"), 3n] }, witnesses: { authorSecret: secret } });
+  if (options.feeSpends) built.tx.intents = new Map([...built.tx.intents!, [2, L9.Intent.new(ttl)]]);
+  const proven = await prover.prove(built.tx);
+  if (options.feeSpends) {
+    const intents = proven.intents!, feeIntent = intents.get(2)!;
+    feeIntent.dustActions = new L9.DustActions("signature", "proof", new Date(ttl.getTime() - 60_000), Array.from({ length: options.feeSpends }, () => recordedDustSpend), []);
+    proven.intents = intents;
+  }
+  return proven.bind().serialize();
+}
+

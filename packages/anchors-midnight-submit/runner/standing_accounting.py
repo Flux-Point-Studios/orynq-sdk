@@ -12,12 +12,13 @@ TTL_MARGIN=300_000
 PER_TX=10_000_000_000_000
 TABLES={
     'follower_scope':['id','scope'],
-    'follower_blocks':['height','hash','parent_hash','timestamp','digest','batch_indexed'],
+    'follower_blocks':['height','hash','parent_hash','timestamp','digest','batch_indexed','runtime'],
     'follower_observations':['block_hash','extrinsic_index','tx_hash','status','fee','policy_key'],
     'follower_attempts':['tx_hash','bytes','ttl','fee','commitment','boundary_height','boundary_hash'],
     'follower_admissions':['tx_hash','policy_serial','head_height','head_hash'],
     'follower_batch_calls':['block_hash','extrinsic_index','commitment','ttl'],
     'follower_policies':['id','serial','digest','conflicted'],
+    'follower_checkpoints':['root_id','sequence','digest','artifact'],
 }
 
 def integer(value):
@@ -38,8 +39,8 @@ def read_accounting(path,scope,status_head):
     try:
         db.set_progress_handler(lambda: int(time.monotonic()>deadline),1000)
         db.execute('pragma query_only=on');db.execute('begin')
-        if db.execute('pragma user_version').fetchone()[0]!=2: raise ValueError('unsupported accounting schema')
-        tables={row[0] for row in db.execute("select name from sqlite_master where type='table' and name not like 'sqlite_%' limit 8")}
+        if db.execute('pragma user_version').fetchone()[0]!=4: raise ValueError('unsupported accounting schema')
+        tables={row[0] for row in db.execute("select name from sqlite_master where type='table' and name not like 'sqlite_%' limit 9")}
         if tables!=set(TABLES): raise ValueError('accounting tables differ')
         for table,columns in TABLES.items():
             if [row[1] for row in db.execute('pragma table_info('+table+')')]!=columns: raise ValueError('accounting columns differ')
