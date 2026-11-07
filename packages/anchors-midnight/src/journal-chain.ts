@@ -1,7 +1,9 @@
-import * as L from "@midnight-ntwrk/ledger-v8";
+import * as L8 from "@midnight-ntwrk/ledger-v8";
+import * as L9 from "@midnightntwrk/ledger-v9";
 import type { AnchorKey, ChainView, JournalBoundary, JournalConfirmation } from "./journal.js";
 import { decodeAnchorTransaction } from "./anchor-transaction.js";
 import { contractStateOnNode } from "./contract-state.js";
+import { assertTransactionRuntime, decodeTransaction } from "./ledgers.js";
 import { fromHex, ScaleReader, toHex } from "./scale.js";
 import { KNOWN_RUNTIME_SPEC_VERSIONS } from "./registries.js";
 import { SourceConflict, type MidnightSource } from "./source.js";
@@ -52,7 +54,7 @@ export function chainView(source: MidnightSource, network: string, { maxScanBloc
     if (header.number !== block.height || toHex(headerHash(header)) !== block.hash || toHex(orderedTrieRoot(extrinsics)) !== toHex(header.extrinsicsRoot)) {
       throw new SourceConflict("A scanned journal block disagrees with its canonical header/body root");
     }
-    return { header, extrinsics };
+    return { header, extrinsics, specVersion };
   };
   return {
     network,
@@ -102,17 +104,24 @@ export function chainView(source: MidnightSource, network: string, { maxScanBloc
       try {
       const head = await finalized(call);
       if (!head) return { state: "pending" };
-      const tx = L.Transaction.deserialize("signature", "proof", "binding", bytes);
+      const { tx } = decodeTransaction(bytes);
       const originalIntents = [...(tx.intents?.values() ?? [])];
-      const guaranteed = originalIntents.every(intent => intent.actions.every(action => !(action instanceof L.ContractCall) || (action.guaranteedTranscript !== undefined && action.fallibleTranscript === undefined)));
+      const guaranteed = originalIntents.every(intent => intent.actions.every(action => !(action instanceof L8.ContractCall || action instanceof L9.ContractCall) || (action.guaranteedTranscript !== undefined && action.fallibleTranscript === undefined)));
       const intents = originalIntents.map(intent => Buffer.from(intent.serialize()));
       const check = async (block: JournalBoundary, loaded?: Awaited<ReturnType<typeof bodyAt>>) => {
-        const { header, extrinsics } = loaded ?? await bodyAt(block, call);
+        const { header, extrinsics, specVersion } = loaded ?? await bodyAt(block, call);
         let uncertain = false;
         for (const [extrinsicIndex, extrinsic] of extrinsics.entries()) {
           const raw = midnightTransactionIn(extrinsic);
           if (raw) {
-            const actual = L.Transaction.deserialize("signature", "proof", "binding", raw);
+            // Neither ledger reads the other's transactions, so bytes outside the block's runtime
+            // ledger are not what the chain executed there, however they decode.
+            try {
+              assertTransactionRuntime(raw, specVersion);
+            } catch (error) {
+              throw new SourceConflict(`Block ${block.height} carries a transaction its runtime cannot execute: ${(error as Error).message}`);
+            }
+            const actual = decodeTransaction(raw).tx;
             if (actual.transactionHash() === tx.transactionHash() || (key.kind !== 0 && sameAnchor(raw, key))) {
               if (!guaranteed && !source.verifyExecution) return "uncertain";
               if (source.verifyExecution) await withinBudget(() => source.verifyExecution!({ header, blockHash: block.hash, extrinsicIndex, txHash: actual.transactionHash() }));

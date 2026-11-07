@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { openJournal, type AnchorKey, type ChainView, type Submission } from "../src/journal.js";
 import { fixture } from "../src/__tests__/anchor-chain.js";
+import { deployedRegistry9, finalBytes9 } from "../src/__tests__/registry-call.js";
+import { unprovenRegistryCall } from "../src/registry-call.js";
+import { decodeTransaction } from "../src/ledgers.js";
 
 const dir = mkdtempSync(join(tmpdir(), "orynq-journal-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -478,6 +481,16 @@ describe("the write-ahead journal", () => {
     await journal.reconcile(newer);
     expect(journal.live(key)?.state).toBe("pending");
     expect(net.arrived).toEqual([fixture.anchor.txHash]); journal.close();
+  });
+
+  it("writes a ledger 9 transaction's row under the hash ledger 9 computes from its bytes", async () => {
+    const { state, parameters } = deployedRegistry9(fixture.network);
+    const { tx } = unprovenRegistryCall({ networkId: fixture.network, address: fixture.registry.address, state, parameters, call: { circuit: "anchor", args: [Buffer.from(fixture.anchor.commitment, "hex"), 1n] }, witnesses: { authorSecret: Buffer.from(fixture.author.secret, "hex") }, ttl: TTL });
+    const v12 = await finalBytes9(tx);
+    const journal = openJournal(file());
+    const row = await journal.submitOnce(key, { prepare: async () => ({ bytes: v12, ttl: TTL }), broadcast: async () => undefined, chain: network().chain });
+    expect(row).toMatchObject({ txHash: decodeTransaction(v12).tx.transactionHash(), state: "pending", broadcasts: 1 });
+    journal.close();
   });
 
   it("refuses bytes that are not a final transaction before writing anything", async () => {

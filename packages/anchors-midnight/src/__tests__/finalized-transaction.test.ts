@@ -1,23 +1,26 @@
 import { describe, expect, it } from "vitest";
 import fixture from "./fixtures/rpc-mainnet-execution.json";
+import ledger9 from "./fixtures/rpc-mainnet-ledger9-tx.json";
+import { forkCheckpoint } from "./fork-chain.js";
 import { rpcOnlySource } from "../rpc-source.js";
 import { verifyFinalizedTransaction } from "../finalized-transaction.js";
 import type { FinalityCheckpoint } from "../grandpa.js";
 import type { MidnightSource } from "../source.js";
 
 const checkpoint: FinalityCheckpoint = { ...fixture.checkpoint, setId: BigInt(fixture.checkpoint.setId), authorities: fixture.checkpoint.authorities.map(author => ({ ...author, weight: BigInt(author.weight) })) };
-function source(edit: (method: string, value: any) => unknown = (_, value) => value) {
+type Recorded = { hints: typeof fixture.hints; recording: Record<string, unknown> };
+function source(edit: (method: string, value: any) => unknown = (_, value) => value, recorded: Recorded = fixture) {
   const calls: string[] = [];
   const node: MidnightSource["node"] = {
     async call<T>(method: string, params: unknown[] = []) {
       calls.push(method);
       const key = method + JSON.stringify(params);
-      if (!(key in fixture.recording)) throw new Error(`Unrecorded RPC ${method}`);
-      return edit(method, structuredClone(fixture.recording[key as keyof typeof fixture.recording])) as T;
+      if (!(key in recorded.recording)) throw new Error(`Unrecorded RPC ${method}`);
+      return edit(method, structuredClone(recorded.recording[key])) as T;
     },
     async batch<T>(requests: [string, unknown[]][]) { return Promise.all(requests.map(([method, params]) => node.call<T>(method, params))); },
   };
-  return { source: rpcOnlySource({ network: "mainnet", node, hints: fixture.hints, registries: [] }), calls };
+  return { source: rpcOnlySource({ network: "mainnet", node, hints: recorded.hints, registries: [] }), calls };
 }
 
 describe("finalized transaction primitive", () => {
@@ -26,6 +29,16 @@ describe("finalized transaction primitive", () => {
     expect(result.block.hash).toBe(fixture.hints[0]!.blockHash);
     expect(result.timestamp).toBeGreaterThan(0);
     expect(result.bytes.length).toBeGreaterThan(1000);
+    expect(result.finality.finalized).toBe(true);
+    expect(result.runtimeSpecVersion).toBe(1000300);
+  });
+
+  it("authenticates mainnet's first transaction after the Ledger 9 upgrade, a transaction[v12] runtime 2001100 executed", async () => {
+    const txHash = ledger9.hints[0]!.txHash;
+    const result = await verifyFinalizedTransaction(txHash, { ...source(undefined, ledger9), checkpoints: [forkCheckpoint] });
+    expect(result.block).toEqual({ height: 3346954, hash: ledger9.hints[0]!.blockHash });
+    expect(result.runtimeSpecVersion).toBe(2001100);
+    expect(Buffer.from(result.bytes.subarray(0, 26)).toString("latin1")).toBe("midnight:transaction[v12](");
     expect(result.finality.finalized).toBe(true);
   });
 

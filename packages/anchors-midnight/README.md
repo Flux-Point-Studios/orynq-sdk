@@ -85,7 +85,12 @@ address, deploy transaction and block height, the runtimes it runs under as cont
 spans from its deploy (each one the decoder knows, the last one open), and this contract's
 verifier keys, which `assertRegistryGenerations` checks. Generation 1 runs spec 1000300
 (ledger 8) for blocks 3113819 through 3346138 and spec 2001100 (ledger 9) from 3346139.
-`registryRuntimeAllows` checks a block's runtime against its height. The verifier accepts an
+`registryRuntimeAllows` checks a block's runtime against its height.
+`unprovenRegistryCall` builds a call against the state it is given, with that state's ledger:
+against the `contract-state[v8]` a ledger 9 network holds for the registry, a ledger 9
+`transaction[v12]` carrying the ledger 8 circuit's call, partitioned with the chain's ledger 9
+parameters (`parameters`; `midnightSource`'s indexer reads the head block's). It builds what
+midnight-js 5's retained ledger 8 call path builds, which `tools/midnight-js-oracle` records. The verifier accepts an
 anchor only in a pinned generation, in a block whose runtime that generation runs at its
 height, and verifies that
 generation's pinned deploy the way it verifies the anchor.
@@ -111,7 +116,9 @@ in the result:
 3. The node's block at the indexer's height must have the indexer's hash, hash to it from its
    header, and commit to its body through `extrinsicsRoot`; its runtime must be one whose
    extrinsic layout the decoder knows, and one extrinsic must be exactly the bare
-   `Midnight.send_mn_transaction` of these bytes.
+   `Midnight.send_mn_transaction` of these bytes. The transaction must be of the ledger that
+   runtime executes (`transaction[v9]` under 1000300, `transaction[v12]` under 2001100): ledger 8
+   bytes relabelled `transaction[v12]` decode under ledger 9, as another transaction.
 4. GRANDPA must show the block final from a trusted checkpoint (the KNOWN_AUTHORS document's,
    or the caller's).
 5. The registry's pinned deploy goes through the same steps and must deploy exactly the

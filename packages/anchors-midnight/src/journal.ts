@@ -1,7 +1,8 @@
 import { closeSync, constants, openSync, lstatSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import * as L from "@midnight-ntwrk/ledger-v8";
-
+import * as L8 from "@midnight-ntwrk/ledger-v8";
+import * as L9 from "@midnightntwrk/ledger-v9";
+import { decodeTransaction } from "./ledgers.js";
 
 export { chainView, MIDNIGHT_GENESIS_HASHES } from "./journal-chain.js";
 
@@ -109,17 +110,19 @@ const view = (r: Row): JournalRow => ({
 
 const finalTransaction = (bytes: Uint8Array) => {
   try {
-    return L.Transaction.deserialize("signature", "proof", "binding", bytes);
+    return decodeTransaction(bytes).tx;
   } catch (error) {
     throw new Error(`the prepared bytes are not a final Midnight transaction: ${(error as Error).message}`);
   }
 };
 
-const deployedBy = (bytes: Uint8Array) =>
-  [...(finalTransaction(bytes).intents?.values() ?? [])]
-    .flatMap((intent) => intent.actions)
-    .filter((action): action is L.ContractDeploy => action instanceof L.ContractDeploy)
-    .map((deploy) => String(deploy.address));
+const deployedBy = (bytes: Uint8Array) => {
+  const addresses: string[] = [];
+  for (const intent of finalTransaction(bytes).intents?.values() ?? []) {
+    for (const action of intent.actions) if (action instanceof L8.ContractDeploy || action instanceof L9.ContractDeploy) addresses.push(String(action.address));
+  }
+  return addresses;
+};
 
 // How long past its TTL, in chain time, a transaction may still be unlisted by an indexer that
 // lags the chain: the journal's default wait before it rules a pending row out.

@@ -7,7 +7,8 @@ import { concatBytes, encodeCompact, fromHex, toHex, u32le, u64le } from "../sca
 import { decodeFinalityProof } from "../grandpa.js";
 import { encodeHeader } from "../substrate.js";
 import { DEPLOY_HEIGHT, HEIGHTS, anchorChain, fixture, sendMnTransaction } from "./anchor-chain.js";
-import { NETWORK, finalBytes, unprovenRegistryCall } from "./registry-call.js";
+import { NETWORK, finalBytes, relabelled, unprovenRegistryCall } from "./registry-call.js";
+import { decodeAnchorTransaction } from "../anchor-transaction.js";
 import { replaySource } from "./recorded-source.js";
 import { knownAuthors } from "../known-authors.js";
 import { MIDNIGHT_REGISTRIES, type RegistryInfo } from "../registries.js";
@@ -203,6 +204,16 @@ describe("the transaction, the registry and its state", () => {
     const r = await verifyMidnightAnchor(request("anchor", KIND1), { source: chain.source, registries: [upgraded], knownAuthors: chain.authors() });
     expect(check(r, "registry-runtime")).toMatchObject({ ok: false, detail: `block ${HEIGHTS.anchor} runs runtime 1000300, which registry generation 1 does not run at that height` });
     expect(r.status).toBe("invalid");
+  });
+
+  it("refuses a ledger 8 anchor relabelled transaction[v12] in a block runtime 1000300 executed, which ledger 9 reads as another transaction", async () => {
+    const forged = relabelled(fromHex(fixture.anchor.tx, "anchor"));
+    const forgedHash = decodeAnchorTransaction(forged, [fixture.registry.address]).txHash;
+    const chain = anchorChain({ place: [[HEIGHTS.stranger + 1, "anchor", toHex(forged), forgedHash]] });
+    const r = await verify(chain, { network: "mainnet", txHash: forgedHash, expect: { kind: 1, commitment: fixture.anchor.commitment } });
+    expect(check(r, "transaction-ledger")).toMatchObject({ ok: false, detail: "transaction header midnight:transaction[v12] is not one runtime 1000300 executes" });
+    expect(r.status).toBe("invalid");
+    expect(check(await verify(anchorChain(), request("anchor", KIND1)), "transaction-ledger")).toMatchObject({ ok: true });
   });
 
   it("refuses a registry pinned to a genuine registry deploy at another address", async () => {

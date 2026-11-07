@@ -1,9 +1,7 @@
 import * as L8 from "@midnight-ntwrk/ledger-v8";
 import * as L9 from "@midnightntwrk/ledger-v9";
-import { taggedLedger } from "./ledgers.js";
+import { decodeTransaction, type AnyTransaction } from "./ledgers.js";
 import { toHex } from "./scale.js";
-
-type AnyTransaction = L8.Transaction<L8.Signaturish, L8.Proofish, L8.Bindingish> | L9.Transaction<L9.Signaturish, L9.Proofish, L9.Bindingish>;
 
 export interface AnchorCall {
   address: string;
@@ -114,14 +112,7 @@ export function anchorCallsIn(
 // canonical encoding of what they decode to, with the ledger its header tag names, and returns
 // its hash and anchorCallsIn.
 export function decodeAnchorTransaction(bytes: Uint8Array, registries: readonly string[]): AnchorTransaction {
-  const { tag, ledger } = taggedLedger(bytes, "transaction");
-  if (!ledger) throw new Error(`transaction header ${tag} is not one this decoder knows`);
-  let tx: AnyTransaction;
-  try {
-    tx = ledger === L9 ? L9.Transaction.deserialize("signature", "proof", "binding", bytes) : L8.Transaction.deserialize("signature", "proof", "binding", bytes);
-  } catch (error) {
-    throw new Error(`the bytes are not a Midnight transaction: ${(error as Error).message}`);
-  }
+  const { tx } = decodeTransaction(bytes);
   if (toHex(tx.serialize()) !== toHex(bytes)) throw new Error("the bytes are not the canonical encoding of the transaction they decode to");
   const txHash = tx.transactionHash();
   return { txHash, ...anchorCallsIn(tx, registries, `transaction ${txHash}`) };

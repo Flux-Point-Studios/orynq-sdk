@@ -1,4 +1,5 @@
 import { decodeAnchorTransaction, type AnchorCall, type AnchorTransaction } from "./anchor-transaction.js";
+import { assertTransactionRuntime } from "./ledgers.js";
 import { entryCommitment, hash32, hiddenDigest, hidingCommitment, type EntryHashes, type Hash32 } from "./commitment.js";
 import { verifyFinality, type BlockRef, type FinalityCheckpoint, type FinalityResult } from "./grandpa.js";
 import { knownAuthors as shippedKnownAuthors, authorStatusAt, type AuthorStatus, type KnownAuthors } from "./known-authors.js";
@@ -336,6 +337,14 @@ export async function verifyMidnightAnchor(request: VerifyRequest, options: Veri
   result.registry = { generation: registry.generation, address: registry.address };
   if (indexed.runtime !== null && !registryRuntimeAllows(registry, indexed.runtime, indexed.block.height)) {
     checks.fail("registry-runtime", "invalid", `block ${indexed.block.height} runs runtime ${indexed.runtime}, which registry generation ${registry.generation} does not run at that height`);
+  }
+  if (indexed.runtime !== null) {
+    try {
+      assertTransactionRuntime(indexed.raw, indexed.runtime);
+      checks.pass("transaction-ledger", `runtime ${indexed.runtime} executes the ledger whose transaction header the bytes carry`);
+    } catch (error) {
+      checks.fail("transaction-ledger", "invalid", message(error));
+    }
   }
 
   if (options.source.verifyExecution) checks.pass("execution-status", "authenticated finalized events prove SUCCESS");

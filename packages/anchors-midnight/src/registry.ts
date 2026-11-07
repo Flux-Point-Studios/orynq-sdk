@@ -83,15 +83,21 @@ export function assertRegistryState(state: L.ContractState | L9.ContractState, v
   if (schema !== REGISTRY_SCHEMA) throw new Error(`schema must be ${REGISTRY_SCHEMA}, got ${schema}`);
 }
 
-// The sha256 of each registry circuit's verifier key in a serialized contract state, which must be
-// the immutable registry's: midnight:contract-state[v6] read with ledger 8, [v8] with ledger 9,
-// any other tag refused.
-export function registryVerifierKeysIn(bytes: Uint8Array): Record<RegistryCircuit, string> {
+// The immutable registry's state from its serialized bytes: midnight:contract-state[v6] read with
+// ledger 8, [v8] with ledger 9, any other tag refused, as are bytes that are not the canonical
+// encoding of the state they decode to.
+export function registryState(bytes: Uint8Array): L.ContractState | L9.ContractState {
   const { tag, ledger: stateLedger } = taggedLedger(bytes, "contract-state");
   if (!stateLedger) throw new Error(`contract state header ${tag} is not one this verifier knows`);
   const state = stateLedger === L9 ? L9.ContractState.deserialize(bytes) : L.ContractState.deserialize(bytes);
   if (hex(state.serialize()) !== hex(bytes)) throw new Error("the bytes are not the canonical encoding of the contract state they decode to");
   assertRegistryState(state);
+  return state;
+}
+
+// The sha256 of each registry circuit's verifier key in a serialized registry state.
+export function registryVerifierKeysIn(bytes: Uint8Array): Record<RegistryCircuit, string> {
+  const state = registryState(bytes);
   return { anchor: sha256(state.operation("anchor")!.verifierKey), anchor_hiding: sha256(state.operation("anchor_hiding")!.verifierKey) };
 }
 

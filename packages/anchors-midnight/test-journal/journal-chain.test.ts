@@ -5,6 +5,9 @@ import { join } from "node:path";
 import * as L from "@midnight-ntwrk/ledger-v8";
 import { chainView, MIDNIGHT_GENESIS_HASHES, openJournal, type AnchorKey } from "../src/journal.js";
 import { fixture } from "../src/__tests__/anchor-chain.js";
+import { deployedRegistry9, finalBytes9, relabelled } from "../src/__tests__/registry-call.js";
+import { unprovenRegistryCall } from "../src/registry-call.js";
+import { decodeTransaction } from "../src/ledgers.js";
 import { headerHash, midnightExtrinsic, orderedTrieRoot, type BlockHeader } from "../src/substrate.js";
 import type { MidnightSource } from "../src/source.js";
 import { toHex, u64le } from "../src/scale.js";
@@ -19,7 +22,7 @@ function source() {
   let genesis = MIDNIGHT_GENESIS_HASHES.preprod;
   let status: "SUCCESS" | "PARTIAL_SUCCESS" | "FAILURE" | null = "SUCCESS", listed = false;
   const bodies = new Map<number, Uint8Array[]>(), reads: number[] = [];
-  let mutateBody = false, badTimestamp: string | null | undefined;
+  let mutateBody = false, badTimestamp: string | null | undefined, runtime = 1000300;
   const blocks = () => {
     const out = new Map<number, { hash: string; header: BlockHeader }>();
     let parent = genesis!;
@@ -37,7 +40,7 @@ function source() {
     if (method === "chain_getFinalizedHead") return `0x${get(tip).hash}` as T;
     if (method === "chain_getHeader") return headerJson(get(heightOf(params[0])!).header) as T;
     if (method === "state_getStorage") return (badTimestamp === undefined ? `0x${toHex(u64le(BigInt(clock)))}` : badTimestamp) as T;
-    if (method === "state_getRuntimeVersion") return { specVersion: 1000300 } as T;
+    if (method === "state_getRuntimeVersion") return { specVersion: runtime } as T;
     if (method === "chain_getBlock") {
       const height = heightOf(params[0])!; reads.push(height);
       return { block: { header: headerJson(get(height).header), extrinsics: (mutateBody ? [] : bodies.get(height) ?? []).map(raw => `0x${toHex(raw)}`) } } as T;
@@ -48,7 +51,7 @@ function source() {
     transactions: async () => listed ? [{ hash: fixture.anchor.txHash, raw: fixture.anchor.tx, block: { height: 2, hash: get(2).hash, timestamp: clock }, status, contractActions: [] }] : [],
     head: async () => ({ height: 999999, hash: "ff".repeat(32), timestamp: ttl.getTime() + 365 * 24 * 3600_000 }),
   } } as unknown as MidnightSource;
-  return { s, reads, block: get, head: (height: number, time = clock) => { tip = height; clock = time; }, body: (height: number, raw: Uint8Array[]) => bodies.set(height, raw), list: (value: typeof status) => { listed = true; status = value; }, foreign: () => { genesis = "ab".repeat(32); }, corrupt: () => { mutateBody = true; }, timestamp: (raw: string | null) => { badTimestamp = raw; } };
+  return { s, reads, block: get, head: (height: number, time = clock) => { tip = height; clock = time; }, body: (height: number, raw: Uint8Array[]) => bodies.set(height, raw), list: (value: typeof status) => { listed = true; status = value; }, foreign: () => { genesis = "ab".repeat(32); }, corrupt: () => { mutateBody = true; }, timestamp: (raw: string | null) => { badTimestamp = raw; }, upgrade: (spec: number) => { runtime = spec; } };
 }
 
 describe("node-confirmed finalized journal retirement", () => {
@@ -120,4 +123,42 @@ describe("node-confirmed finalized journal retirement", () => {
     expect(await journal.reconcile(view)).toEqual([expect.objectContaining({ state: "landed", height: 2 })]); journal.close();
   });
 
+});
+
+// The registry fixture's kind-1 anchor as runtime 2001100 carries it: a ledger 9 transaction[v12].
+const ledger9Anchor = async () => {
+  const { state, parameters } = deployedRegistry9(fixture.network);
+  const { tx } = unprovenRegistryCall({ networkId: fixture.network, address: fixture.registry.address, state, parameters, call: { circuit: "anchor", args: [Buffer.from(fixture.anchor.commitment, "hex"), 1n] }, witnesses: { authorSecret: Buffer.from(fixture.author.secret, "hex") }, ttl });
+  return finalBytes9(tx);
+};
+
+describe("journal retirement across the Ledger 9 upgrade", () => {
+  it("settles a ledger 9 anchor from a block runtime 2001100 executed, under the hash ledger 9 computes", async () => {
+    const v12 = await ledger9Anchor(), txHash = decodeTransaction(v12).tx.transactionHash();
+    const net = source(); net.upgrade(2001100);
+    const view = chainView(net.s, "preprod"), journal = openJournal(join(root, `${index++}.sqlite`));
+    await journal.submitOnce(key, { prepare: async () => ({ bytes: v12, ttl }), broadcast: async () => { net.body(2, [midnightExtrinsic(v12)]); net.head(3, ttl.getTime() + 3600_000); }, chain: view });
+    expect(await journal.reconcile(view)).toEqual([expect.objectContaining({ state: "landed", txHash, height: 2 })]); journal.close();
+  });
+
+  it("refuses a block whose runtime cannot have executed the transaction it carries, and keeps the row pending", async () => {
+    for (const [runtime, carried] of [[1000300, await ledger9Anchor()], [2001100, bytes()], [1000300, relabelled(bytes())]] as const) {
+      const net = source(); net.upgrade(runtime);
+      const view = chainView(net.s, "preprod"), journal = openJournal(join(root, `${index++}.sqlite`));
+      await journal.submitOnce(key, { prepare: async () => ({ bytes: bytes(), ttl }), broadcast: async () => { net.body(2, [midnightExtrinsic(carried)]); net.head(3, ttl.getTime() + 3600_000); }, chain: view });
+      await expect(journal.reconcile(view)).rejects.toThrow(`is not one runtime ${runtime} executes`);
+      expect(journal.live(key)?.state).toBe("pending"); journal.close();
+    }
+  });
+
+  it("never matches ledger 8 bytes by the hash ledger 9 computes for them relabelled v12", async () => {
+    const forged = relabelled(bytes());
+    expect(decodeTransaction(forged).tx.transactionHash()).not.toBe(fixture.anchor.txHash);
+    const net = source(); net.upgrade(2001100);
+    const view = chainView(net.s, "preprod"), journal = openJournal(join(root, `${index++}.sqlite`));
+    const row = await journal.submitOnce(key, { prepare: async () => ({ bytes: bytes(), ttl }), broadcast: async () => { net.body(2, [midnightExtrinsic(forged)]); net.head(3, ttl.getTime() + 3600_000); }, chain: view });
+    expect(row.txHash).toBe(fixture.anchor.txHash);
+    // It writes the same anchor, so it settles the key as any other transaction writing it does.
+    expect(await journal.reconcile(view)).toEqual([expect.objectContaining({ state: "landed", txHash: fixture.anchor.txHash, height: 2 })]); journal.close();
+  });
 });
