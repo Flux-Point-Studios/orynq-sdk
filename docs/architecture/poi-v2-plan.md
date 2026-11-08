@@ -14,7 +14,7 @@ PoI v2 represents a fundamental philosophy shift from "deterministic replay" to 
 
 | Tier | Guarantee | Mechanism |
 |------|-----------|-----------|
-| **Integrity** | Trace hasn't been altered since time X | Merkle trees + L1/L2 anchoring |
+| **Integrity** | Trace hasn't been altered since time X | Merkle trees + L1 anchoring |
 | **Authenticity** | Trace produced by attested recorder | TEE attestation bundles |
 | **Correctness** | Output is valid for model M, input I, params P | zkML proofs (optional) |
 
@@ -28,7 +28,6 @@ orynq-sdk/packages/
 
   # NEW PACKAGES (v2)
   flight-recorder/         # Streaming recorder with chunking/encryption
-  hydra-batcher/           # High-frequency L2 commitment lane
   attestor/                # TEE attestation backends
   midnight-prover/         # ZK proof generation
   storage-adapters/        # IPFS, S3, local storage backends
@@ -58,15 +57,9 @@ orynq-sdk/packages/
                       |                     |                     |
                       v                     v                     v
              +--------+--------+   +--------+--------+   +--------+--------+
-             | poi-attestor    |   | poi-hydra-      |   | poi-storage-    |
-             | (TEE evidence)  |   | batcher (L2)    |   | adapters        |
+             | poi-attestor    |   | anchors-cardano |   | poi-storage-    |
+             | (TEE evidence)  |   | (L1 anchor)     |   | adapters        |
              +-----------------+   +--------+--------+   +--------+--------+
-                                           |                     |
-                                           v                     |
-                                  +--------+--------+            |
-                                  | anchors-cardano |            |
-                                  | (L1 anchor)     |            |
-                                  +--------+--------+            |
                                            |                     |
                                            v                     v
                                   +--------+---------+   +-------+---------+
@@ -410,189 +403,7 @@ Events Stream In
 
 ---
 
-### 2. poi-hydra-batcher
-
-High-frequency L2 commitment lane using Cardano Hydra for sub-second finality.
-
-#### Package Structure
-
-```
-packages/hydra-batcher/
-  src/
-    index.ts
-    types.ts
-
-    # Hydra Head Management
-    head/
-      head-manager.ts           # Open, close, fanout
-      head-config.ts            # Head configuration
-      peer-discovery.ts         # Find auditor nodes
-
-    # Commitment Pattern
-    commitment/
-      commitment-utxo.ts        # UTxO pattern for accumulator
-      batch-accumulator.ts      # Merkle accumulator for batches
-      settlement-trigger.ts     # When to settle to L1
-
-    # Transaction Building
-    tx/
-      l2-tx-builder.ts          # Hydra L2 transactions
-      l1-settlement.ts          # L1 fanout/anchor
-
-    # Monitoring
-    monitor/
-      head-health.ts            # Head status monitoring
-      metrics.ts                # Performance metrics
-
-  __tests__/
-```
-
-#### Key Interfaces
-
-```typescript
-// === Hydra Head Configuration ===
-
-interface HydraBatcherConfig {
-  // Participants
-  recorderNode: HydraNode;
-  auditorNodes: HydraNode[];
-
-  // Commitment pattern
-  commitmentIntervalMs: number;     // How often to commit
-  commitmentBatchSize: number;      // Max jobs per commit
-
-  // Settlement triggers
-  settlementPolicy: SettlementPolicy;
-
-  // Network
-  network: "mainnet" | "preprod" | "preview";
-}
-
-interface HydraNode {
-  nodeId: string;
-  host: string;
-  port: number;
-  verificationKey: string;
-}
-
-interface SettlementPolicy {
-  // Settle after N commits
-  maxCommitsBeforeSettlement: number;
-
-  // Settle after time
-  maxTimeBeforeSettlementMs: number;
-
-  // Settle on accumulated value threshold
-  valueThresholdLovelace?: bigint;
-
-  // Force settlement on specific events
-  settleOnEvents?: ("error" | "shutdown" | "key-rotation")[];
-}
-
-// === Commitment UTxO Pattern ===
-
-interface CommitmentDatum {
-  // Current accumulator state
-  accumulatorRoot: string;    // Merkle root of all committed roots
-  commitCount: number;
-
-  // Latest batch
-  latestBatchRoot: string;
-  latestBatchTimestamp: number;
-
-  // History (for verification)
-  batchHistory: Array<{
-    batchRoot: string;
-    timestamp: number;
-    itemCount: number;
-  }>;
-}
-
-interface BatchItem {
-  sessionId: string;
-  rootHash: string;
-  merkleRoot: string;
-  manifestHash: string;
-  timestamp: string;
-}
-
-// === Batcher API ===
-
-interface HydraBatcher {
-  // Lifecycle
-  openHead(): Promise<HeadHandle>;
-  closeHead(handle: HeadHandle): Promise<SettlementResult>;
-
-  // Commitment
-  commit(items: BatchItem[]): Promise<CommitResult>;
-
-  // Settlement
-  settle(): Promise<SettlementResult>;
-
-  // Status
-  getStatus(): Promise<BatcherStatus>;
-  getCommitHistory(): Promise<CommitRecord[]>;
-}
-
-interface CommitResult {
-  l2TxHash: string;
-  newAccumulatorRoot: string;
-  commitIndex: number;
-  timestamp: string;
-}
-
-interface SettlementResult {
-  l1TxHash: string;
-  finalAccumulatorRoot: string;
-  totalCommits: number;
-  anchorEntry: AnchorEntry;  // Ready for label 2222
-}
-
-interface HeadHandle {
-  headId: string;
-  participants: string[];
-  openedAt: string;
-  status: "initializing" | "open" | "closing" | "closed" | "fanout";
-}
-```
-
-#### Commitment Flow
-
-```
-                     Hydra Head
-        +--------------------------------+
-        |                                |
-        |   Recorder       Auditor(s)    |
-        |      |              |          |
-        |      +------+-------+          |
-        |             |                  |
-        |             v                  |
-        |   +---------+---------+        |
-        |   | Commitment UTxO   |        |
-        |   | (accumulator)     |        |
-        |   +---------+---------+        |
-        |             |                  |
-        +-------------|------------------+
-                      |
-        (periodic settlement)
-                      |
-                      v
-        +-------------+--------------+
-        |    Cardano L1 (Mainnet)    |
-        |    PoI Anchor (2222)       |
-        +----------------------------+
-```
-
-#### Design Principles
-
-1. **Keep Head "Boring"**: ADA-only, minimal script complexity
-2. **Graceful Degradation**: If Head fails, buffer and retry or fallback to L1
-3. **Deterministic Settlement**: Clear rules for when to close and fanout
-4. **Audit Trail**: Full history of all commits for verification
-
----
-
-### 3. poi-attestor
+### 2. poi-attestor
 
 TEE attestation backends providing hardware-rooted trust.
 
@@ -842,7 +653,7 @@ interface VerifierPolicy {
 
 ---
 
-### 4. poi-midnight-prover
+### 3. poi-midnight-prover
 
 ZK proof layer for privacy-preserving verification using Midnight network.
 
@@ -1094,7 +905,7 @@ interface PublicationResult {
 
 ---
 
-### 5. poi-storage-adapters
+### 4. poi-storage-adapters
 
 Content-addressed storage backends for chunks and manifests.
 
@@ -1355,9 +1166,9 @@ export class OpenClawAdapter {
                    flight-recorder
                           |
             +-------------+-------------+
-            |             |             |
-        attestor    hydra-batcher  midnight-prover
-            |             |             |
+            |                           |
+        attestor                 midnight-prover
+            |                           |
             +-------------+-------------+
                           |
                    anchors-cardano
@@ -1376,18 +1187,6 @@ export class OpenClawAdapter {
   },
   "optionalDependencies": {
     "@fluxpointstudios/orynq-sdk-attestor": "workspace:*"
-  }
-}
-
-// packages/hydra-batcher/package.json
-{
-  "name": "@fluxpointstudios/orynq-sdk-hydra-batcher",
-  "dependencies": {
-    "@fluxpointstudios/orynq-sdk-core": "workspace:*",
-    "@fluxpointstudios/orynq-sdk-anchors-cardano": "workspace:*"
-  },
-  "peerDependencies": {
-    "@cardano-ogmios/client": "^6.0.0"
   }
 }
 
@@ -1482,26 +1281,7 @@ export class OpenClawAdapter {
 - Mock attestor for unit tests
 - Cross-platform verification tests
 
-### Phase 4: Hydra Integration (4-6 weeks)
-
-**Deliverables:**
-- [ ] Hydra Head management (open/close/fanout)
-- [ ] Commitment UTxO pattern
-- [ ] Batch accumulator with Merkle tree
-- [ ] Settlement to L1 via `anchors-cardano`
-- [ ] Head health monitoring
-
-**Success Criteria:**
-- Open Head between recorder and auditor
-- Sub-second L2 commits
-- Periodic settlement to L1 with valid anchor
-
-**Testing Strategy:**
-- Local Hydra devnet integration tests
-- Settlement flow tests on preprod
-- Failure mode tests (Head crash, network partition)
-
-### Phase 5: Midnight Integration (6-8 weeks)
+### Phase 4: Midnight Integration (6-8 weeks)
 
 **Deliverables:**
 - [ ] Hash chain validity proof (Compact circuit)
@@ -1528,7 +1308,7 @@ export class OpenClawAdapter {
 
 | Threat | Mitigation | Tier Required |
 |--------|------------|---------------|
-| Operator forges trace after recording | L1/L2 anchoring with timestamps | Integrity |
+| Operator forges trace after recording | L1 anchoring with timestamps | Integrity |
 | Operator forges trace during recording | TEE attestation | Authenticity |
 | Operator claims false model/params | ManifestV2 with runtime capture | Integrity |
 | Auditor sees sensitive content | Encryption + key management | Privacy |
@@ -1569,7 +1349,6 @@ export class OpenClawAdapter {
 | Component | CPU | Memory | Storage | Network |
 |-----------|-----|--------|---------|---------|
 | Flight Recorder | 2+ cores | 4GB+ | 100GB+ SSD | Low latency to storage |
-| Hydra Node | 2+ cores | 8GB+ | 50GB SSD | <50ms to peers |
 | Attestor (Nitro) | Enclave-capable | 4GB+ | 10GB | AWS VPC |
 | Midnight Prover | 8+ cores | 32GB+ | 50GB | Midnight network |
 
@@ -1603,7 +1382,6 @@ Resources:
 ### Cardano Node Requirements
 
 - Full node for L1 anchoring (or use Blockfrost/Koios)
-- Hydra node for L2 batching
 - Preprod for testing, mainnet for production
 
 ### Monitoring
@@ -1627,7 +1405,6 @@ interface RecorderMetrics {
   // Costs
   storageBytes: number;
   l1Transactions: number;
-  l2Transactions: number;
 }
 ```
 
@@ -1639,7 +1416,6 @@ interface RecorderMetrics {
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
-| Hydra Head instability | Medium | High | Fallback to L1-only, buffer commits |
 | TEE SDK complexity | High | Medium | Start with Nitro (best docs), abstract interface |
 | zkML circuit size limits | High | High | Limit to small models, offer as optional tier |
 | Storage cost at scale | Medium | Medium | Tiered storage, pruning policies |
@@ -1647,17 +1423,12 @@ interface RecorderMetrics {
 
 ### Mitigation Strategies
 
-1. **Hydra Instability**: Implement circuit breaker pattern
-   - If Head fails, buffer commits locally
-   - Retry Head open with exponential backoff
-   - Always maintain L1 fallback path
-
-2. **TEE Complexity**: Abstraction + Feature Flags
+1. **TEE Complexity**: Abstraction + Feature Flags
    - Start with most documented TEE (Nitro)
    - Feature flag for each backend
    - Graceful degradation to attestation-optional
 
-3. **zkML Limits**: Scope Management
+2. **zkML Limits**: Scope Management
    - Document model size limits clearly
    - Offer "hash-chain only" as default
    - zkML as premium tier for high-stakes
@@ -1710,12 +1481,6 @@ export enum PoiV2Error {
   ATTESTATION_VERIFICATION_FAILED = 3002,
   TEE_NOT_SUPPORTED = 3003,
 
-  // Hydra errors (4xxx)
-  HEAD_OPEN_FAILED = 4001,
-  HEAD_CLOSED_UNEXPECTEDLY = 4002,
-  COMMIT_FAILED = 4003,
-  SETTLEMENT_FAILED = 4004,
-
   // Proof errors (5xxx)
   PROOF_GENERATION_FAILED = 5001,
   PROOF_VERIFICATION_FAILED = 5002,
@@ -1756,7 +1521,6 @@ const recorder = new FlightRecorder({
 import { FlightRecorder } from "@fluxpointstudios/orynq-sdk-flight-recorder";
 import { NitroAttestor } from "@fluxpointstudios/orynq-sdk-attestor";
 import { IpfsStorageAdapter } from "@fluxpointstudios/orynq-sdk-storage-adapters";
-import { HydraBatcher } from "@fluxpointstudios/orynq-sdk-hydra-batcher";
 import { MidnightProver } from "@fluxpointstudios/orynq-sdk-midnight-prover";
 
 const attestor = new NitroAttestor({
@@ -1770,18 +1534,6 @@ const storage = new IpfsStorageAdapter({
     name: "pinata",
     apiKey: process.env.PINATA_API_KEY!,
   },
-});
-
-const batcher = new HydraBatcher({
-  recorderNode: { nodeId: "recorder", host: "localhost", port: 4001, verificationKey: "..." },
-  auditorNodes: [{ nodeId: "auditor", host: "auditor.example.com", port: 4001, verificationKey: "..." }],
-  commitmentIntervalMs: 1000,
-  commitmentBatchSize: 100,
-  settlementPolicy: {
-    maxCommitsBeforeSettlement: 1000,
-    maxTimeBeforeSettlementMs: 3600000, // 1 hour
-  },
-  network: "mainnet",
 });
 
 const prover = new MidnightProver({
@@ -1802,7 +1554,6 @@ const recorder = new FlightRecorder({
   },
   storage,
   attestor,
-  batcher,
   prover,
 });
 ```
@@ -1814,6 +1565,7 @@ const recorder = new FlightRecorder({
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 2.0.0-draft | 2026-02-01 | PACT Architect | Initial architectural specification |
+| 2.0.1-draft | 2026-11-08 | Flux Point Studios | Removed the Hydra L2 commitment lane; Materios covers this role |
 
 ---
 
@@ -1821,8 +1573,7 @@ const recorder = new FlightRecorder({
 
 1. [PoI SDK GitHub Repository](https://github.com/Flux-Point-Studios/orynq-sdk)
 2. [Cardano Metadata Labels (CIP-10)](https://cips.cardano.org/cips/cip10/)
-3. [Hydra Protocol Specification](https://hydra.family/head-protocol/)
-4. [Midnight Network Documentation](https://docs.midnight.network/)
-5. [AMD SEV-SNP Documentation](https://www.amd.com/en/developer/sev.html)
-6. [AWS Nitro Enclaves](https://docs.aws.amazon.com/enclaves/)
-7. [Intel TDX Specification](https://www.intel.com/content/www/us/en/developer/tools/trust-domain-extensions/overview.html)
+3. [Midnight Network Documentation](https://docs.midnight.network/)
+4. [AMD SEV-SNP Documentation](https://www.amd.com/en/developer/sev.html)
+5. [AWS Nitro Enclaves](https://docs.aws.amazon.com/enclaves/)
+6. [Intel TDX Specification](https://www.intel.com/content/www/us/en/developer/tools/trust-domain-extensions/overview.html)

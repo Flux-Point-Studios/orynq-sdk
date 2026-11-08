@@ -20,7 +20,6 @@ export default defineConfig({
       '@fluxpointstudios/orynq-sdk-conduct': resolve(root, 'packages/conduct/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-core': resolve(root, 'packages/core/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-flight-recorder': resolve(root, 'packages/flight-recorder/src/index.ts'),
-      '@fluxpointstudios/orynq-sdk-hydra-batcher': resolve(root, 'packages/hydra-batcher/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-midnight-prover': resolve(root, 'packages/midnight-prover/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-attestor': resolve(root, 'packages/attestor/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-storage-adapters': resolve(root, 'packages/storage-adapters/src/index.ts'),

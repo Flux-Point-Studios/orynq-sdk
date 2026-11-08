@@ -411,17 +411,6 @@
       "status": "live"
     },
     {
-      "id": "hydra-batcher",
-      "name": "Hydra batcher",
-      "desc": "High-frequency L2 commitment lane using Cardano Hydra for Proof-of-Intent.",
-      "kind": "pipeline",
-      "paths": [
-        "packages/hydra-batcher"
-      ],
-      "consumes": [],
-      "status": "experimental"
-    },
-    {
       "id": "midnight-prover",
       "name": "Midnight prover",
       "desc": "Local Compact capability and exact rolling proofs plus immutable keyed on-chain presentations, caller-wallet post and checkpoint-rooted verifyPosted using authenticated execution. Compiled ledger-8 keys and initial state are pinned and ship in npm. Mainnet-deployed on 2026-10-27: the immutable deployment and both synthetic presentations have independent fresh-consumer consensus-verified receipts. PROOF_DEPLOYMENTS exports deeply frozen mainnet and preprod addresses, deployment transaction hashes and block hints, code hashes and initial-state digests. Legacy publication is explicitly simulation-only; simulation disclosure proofs that carry a span without its events, or events without their span, never verify and are reported unbound, naming only the caller-authenticated span their Merkle path proves, and every disclosure is bound to the caller's expected Merkle root whenever leaf hashes or a leaf count are given. Each call reads current state, budgets gas with headroom. Malformed event digests produce value-free errors; verification trust roots bind their genesis. Verification refuses unknown network labels and requires both authenticated transactions to encode the requested network. Direct posting retries only definitive node transcript refusals (1010/custom 104) or local pre-submission gas exhaustion, at most three attempts, with ambiguous sends preserved.",
