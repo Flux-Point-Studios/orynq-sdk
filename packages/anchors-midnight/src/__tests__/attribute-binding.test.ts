@@ -29,6 +29,31 @@ describe("anchor_hiding binds the attribute to the commitment", () => {
   });
 });
 
+// The byte values a transcript publishes, each at its declared width. The ledger stores a
+// bytes atom without its trailing zero bytes and keeps the width in the alignment beside it,
+// so the raw cell of a value ending in 0x00 is shorter than the value.
+const publishedBytes = (transcript: unknown): string[] => {
+  const found: string[] = [];
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) return node.forEach(visit);
+    if (!node || typeof node !== "object" || node instanceof Uint8Array) return;
+    const { value, alignment } = node as { value?: unknown; alignment?: unknown };
+    if (Array.isArray(value) && Array.isArray(alignment) && value.length === alignment.length) {
+      value.forEach((bytes, i) => {
+        const atom = (alignment[i] as { tag?: string; value?: { tag?: string; length?: number } } | undefined);
+        if (bytes instanceof Uint8Array && atom?.tag === "atom" && atom.value?.tag === "bytes" && typeof atom.value.length === "number") {
+          const full = new Uint8Array(Math.max(atom.value.length, bytes.length));
+          full.set(bytes);
+          found.push(hex(full));
+        }
+      });
+    }
+    Object.values(node).forEach(visit);
+  };
+  visit(transcript);
+  return found;
+};
+
 describe("anchor_hiding does not bind the attribute to the trace", () => {
   it("a trace whose root binds model manifest B is anchored with attribute A, and B never appears in public", async () => {
     const manifestA = sha256("model-manifest-A");
@@ -40,11 +65,31 @@ describe("anchor_hiding does not bind the attribute to the trace", () => {
     const { result, after } = anchorHiding(manifestA, entry);
 
     expect(hex(after.last_attribute)).toBe(hex(manifestA));
-    const published = JSON.stringify(result.proofData.publicTranscript, (_, v) =>
-      v instanceof Uint8Array ? hex(v) : typeof v === "bigint" ? String(v) : v,
-    );
+    const published = publishedBytes(result.proofData.publicTranscript);
     expect(published).toContain(hex(manifestA));
     expect(published).toContain(hex(after.last_commitment));
     expect(published).not.toContain(hex(manifestB));
+    // B ends in a non-zero byte, so no stored form of it is shorter than B itself.
+    expect(manifestB[31]).not.toBe(0);
+    const raw = JSON.stringify(result.proofData.publicTranscript, (_, v) =>
+      v instanceof Uint8Array ? hex(v) : typeof v === "bigint" ? String(v) : v,
+    );
+    expect(raw).not.toContain(hex(manifestB));
+  });
+
+  it("finds a published commitment that ends in a zero byte, which the transcript stores one byte short", () => {
+    // Fixed inputs whose commitment ends in 0x00: about one random draw in 256 does.
+    const attribute = sha256("A");
+    const entry = { root_hash: sha256("r"), manifest_hash: sha256("m"), merkle_root: sha256("k"), salt: sha256("salt-141") };
+
+    const { result, after } = anchorHiding(attribute, entry);
+
+    expect(hex(after.last_commitment)).toBe("7b1696fc3a928c8d8b9e2315e878ed5e6a67a6f4c34ea45be2ac25f94d839f00");
+    const raw = JSON.stringify(result.proofData.publicTranscript, (_, v) =>
+      v instanceof Uint8Array ? hex(v) : typeof v === "bigint" ? String(v) : v,
+    );
+    expect(raw).not.toContain(hex(after.last_commitment));
+    expect(publishedBytes(result.proofData.publicTranscript)).toContain(hex(after.last_commitment));
+    expect(publishedBytes(result.proofData.publicTranscript)).toContain(hex(attribute));
   });
 });
