@@ -6,12 +6,13 @@
  *
  * Entry points:
  * - src/index.ts: Main package exports (ViemPayer, utilities)
+ * - src/signers/index.ts: The ./signers subpath (ViemSigner, EvmKmsSigner, KmsSigner)
  */
 
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: ["src/index.ts", "src/signers/index.ts"],
   format: ["esm", "cjs"],
   dts: true,
   clean: true,
