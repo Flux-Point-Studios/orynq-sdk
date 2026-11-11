@@ -277,13 +277,21 @@ describe("checkLayouts against a registry", () => {
   });
 
   it("waits for a version the registry does not serve yet, and gives up after the last attempt", async () => {
+    // The waits are counted, not timed: the attempt count must not depend on wall time.
+    const waits: number[] = [];
+    const counted = () => ({ ...options(), visibility: { attempts: 3, delayMs: 60_000, sleep: async (ms: number) => void waits.push(ms) } });
     hidden = new Map([["@f/good", 2]]);
-    expect((await checkLayouts(["@f/good@1.0.0"], options())).problems).toEqual([]);
+    expect((await checkLayouts(["@f/good@1.0.0"], counted())).problems).toEqual([]);
     expect(hidden.get("@f/good")).toBe(0);
+    expect(waits).toEqual([60_000, 60_000]);
+    waits.length = 0;
     hidden = new Map([["@f/good", 5]]);
-    expect(await checkLayouts(["@f/good@1.0.0"], options())).toEqual({
+    expect(await checkLayouts(["@f/good@1.0.0"], counted())).toEqual({
       problems: ["@f/good@1.0.0: not served by the registry after 3 attempts"],
       layouts: [],
     });
+    // No wait follows the last attempt.
+    expect(waits).toEqual([60_000, 60_000]);
+    expect(hidden.get("@f/good")).toBe(2);
   });
 });
