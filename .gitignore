@@ -72,3 +72,5 @@ out-mainnet-trace/
 packages/midnight-prover/managed/
 packages/midnight-prover/conduct-managed/
 packages/midnight-prover/native/target/
+packages/broker/native/target/
+packages/credential-broker-windows/native/target/

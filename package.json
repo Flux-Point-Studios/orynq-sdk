@@ -52,6 +52,9 @@
   },
   "packageManager": "pnpm@8.14.0",
   "pnpm": {
+    "neverBuiltDependencies": [
+      "koffi"
+    ],
     "overrides": {
       "minimatch@9": "^9.0.7",
       "ip-address@9": "^10.7.4",

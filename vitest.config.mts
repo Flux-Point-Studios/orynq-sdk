@@ -11,6 +11,8 @@ export default defineConfig({
       '@fluxpointstudios/orynq-sdk-core/utils': resolve(root, 'packages/core/src/utils/index.ts'),
       '@fluxpointstudios/orynq-sdk-core/types': resolve(root, 'packages/core/src/types/index.ts'),
       '@fluxpointstudios/orynq-sdk-core/chains': resolve(root, 'packages/core/src/chains.ts'),
+      '@fluxpointstudios/orynq-sdk-core/broker-wire': resolve(root, 'packages/core/src/broker-wire/index.ts'),
+      '@fluxpointstudios/orynq-sdk-credential-broker-windows/frontend': resolve(root, 'packages/credential-broker-windows/src/frontend.ts'),
       '@fluxpointstudios/orynq-sdk-anchors-midnight/journal': resolve(root, 'packages/anchors-midnight/src/journal.ts'),
       // Main package aliases
       '@fluxpointstudios/orynq-sdk-anchors-cardano': resolve(root, 'packages/anchors-cardano/src/index.ts'),
@@ -19,6 +21,7 @@ export default defineConfig({
       '@fluxpointstudios/orynq-sdk-client': resolve(root, 'packages/client/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-conduct': resolve(root, 'packages/conduct/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-core': resolve(root, 'packages/core/src/index.ts'),
+      '@fluxpointstudios/orynq-sdk-credential-broker-windows': resolve(root, 'packages/credential-broker-windows/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-flight-recorder': resolve(root, 'packages/flight-recorder/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-midnight-prover': resolve(root, 'packages/midnight-prover/src/index.ts'),
       '@fluxpointstudios/orynq-sdk-attestor': resolve(root, 'packages/attestor/src/index.ts'),
@@ -43,6 +46,7 @@ export default defineConfig({
     include: [
       'packages/**/src/**/*.test.ts',
       'packages/**/tests/**/*.test.ts',
+      'packages/broker/test/**/*.test.ts',
       'services/**/src/**/*.test.ts',
       'services/**/tests/**/*.test.ts',
       'tests/**/*.test.ts',

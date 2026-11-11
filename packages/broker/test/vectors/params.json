@@ -1,0 +1,895 @@
+{
+  "description": "params.cddl vectors (read with mandate-draft.cddl and release.cddl). Valid params appear in wire JSON and as the dCBOR they map to (CBOR diagnostic notation, canonical key order); each invalid case patches a valid one at one path and names who must refuse it: the JSON-to-dCBOR profile (-32602), the CDDL, or both. `extension` adds test-only effect kinds to both.",
+  "extension": "; Test-only effect kinds; production effect kinds add themselves with their handlers.\n$$intent-effect //= (kind: \"test.echo\", params: { message: text .size (1..64) })\n$$release-effect //= (kind: \"test.echo\", effect: { message: text .size (1..64) })\n$$intent-effect //= (kind: \"test.raw\", params: { tx: bytes .size (1..16384) })\n$$release-effect //= (kind: \"test.raw\", effect: bytes .size (1..16384))",
+  "valid": [
+    {
+      "name": "broker.hello",
+      "rule": "broker-hello-params",
+      "json": {},
+      "cdn": "{}"
+    },
+    {
+      "name": "credential.list",
+      "rule": "credential-list-params",
+      "json": {},
+      "cdn": "{}"
+    },
+    {
+      "name": "mandate.get",
+      "rule": "mandate-get-params",
+      "json": {
+        "mandate": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "cdn": "{\"mandate\": h'1111111111111111111111111111111111111111111111111111111111111111'}"
+    },
+    {
+      "name": "intent.submit minimal",
+      "rule": "intent-submit-params",
+      "json": {
+        "kind": "test.echo",
+        "params": {
+          "message": "hi"
+        },
+        "mandates": [
+          "1111111111111111111111111111111111111111111111111111111111111111"
+        ]
+      },
+      "cdn": "{\"kind\": \"test.echo\", \"params\": {\"message\": \"hi\"}, \"mandates\": [h'1111111111111111111111111111111111111111111111111111111111111111']}"
+    },
+    {
+      "name": "intent.submit with expect, wait and note",
+      "rule": "intent-submit-params",
+      "json": {
+        "kind": "test.echo",
+        "params": {
+          "message": "ping"
+        },
+        "mandates": [
+          "1111111111111111111111111111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222222222222222222222222222"
+        ],
+        "expect": {
+          "calls": 1,
+          "outflows": [
+            {
+              "counterparty": "ca1:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+              "amount": "2500000"
+            }
+          ],
+          "fee": "171000"
+        },
+        "wait": 30,
+        "note": "deploy preview"
+      },
+      "cdn": "{\"kind\": \"test.echo\", \"note\": \"deploy preview\", \"wait\": 30, \"expect\": {\"fee\": 171000, \"calls\": 1, \"outflows\": [{\"amount\": 2500000, \"counterparty\": \"ca1:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"}]}, \"params\": {\"message\": \"ping\"}, \"mandates\": [h'1111111111111111111111111111111111111111111111111111111111111111', h'2222222222222222222222222222222222222222222222222222222222222222']}"
+    },
+    {
+      "name": "session.open",
+      "rule": "session-open-params",
+      "json": {
+        "mandates": [
+          "1111111111111111111111111111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222222222222222222222222222"
+        ]
+      },
+      "cdn": "{\"mandates\": [h'1111111111111111111111111111111111111111111111111111111111111111', h'2222222222222222222222222222222222222222222222222222222222222222']}"
+    },
+    {
+      "name": "session.close",
+      "rule": "session-close-params",
+      "json": {
+        "sessionId": "9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f"
+      },
+      "cdn": "{\"sessionId\": h'9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f'}"
+    },
+    {
+      "name": "mandate.prepare",
+      "rule": "mandate-prepare-params",
+      "json": {
+        "draft": {
+          "principalDid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "domain": "X:abababababababababababababababababababababababababababababababab",
+          "spendCap": {
+            "asset": "orynq:call",
+            "amount": "500",
+            "windowSeconds": "3600"
+          },
+          "members": [
+            {
+              "cap": {
+                "kind": "http.request",
+                "alias": "ci-deploy",
+                "ruleDigest": "4444444444444444444444444444444444444444444444444444444444444444"
+              }
+            }
+          ],
+          "approvedMeasurementSetRoot": "6666666666666666666666666666666666666666666666666666666666666666",
+          "validityWindow": {
+            "notBefore": "1793000000",
+            "notAfter": "1793604800"
+          },
+          "disclosurePolicy": {
+            "committeeId": "orynq-evidence-escrow",
+            "threshold": "3",
+            "committeeSize": "5"
+          }
+        }
+      },
+      "cdn": "{\"draft\": {\"domain\": \"X:abababababababababababababababababababababababababababababababab\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"ci-deploy\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}], \"spendCap\": {\"asset\": \"orynq:call\", \"amount\": 500, \"windowSeconds\": 3600}, \"principalDid\": \"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK\", \"validityWindow\": {\"notAfter\": 1793604800, \"notBefore\": 1793000000}, \"disclosurePolicy\": {\"threshold\": 3, \"committeeId\": \"orynq-evidence-escrow\", \"committeeSize\": 5}, \"approvedMeasurementSetRoot\": h'6666666666666666666666666666666666666666666666666666666666666666'}}"
+    },
+    {
+      "name": "mandate.register with a WebAuthn assertion",
+      "rule": "mandate-register-params",
+      "json": {
+        "cbor": "ab00010150111111111111111111111111111111110278",
+        "members": [
+          {
+            "cap": {
+              "kind": "http.request",
+              "alias": "ci-deploy",
+              "ruleDigest": "4444444444444444444444444444444444444444444444444444444444444444"
+            }
+          },
+          {
+            "ca1": {
+              "networkId": 1,
+              "paymentCred": "55555555555555555555555555555555555555555555555555555555",
+              "stakeCred": "56565656565656565656565656565656565656565656565656565656"
+            }
+          }
+        ],
+        "domain": "X:abababababababababababababababababababababababababababababababab",
+        "assertion": {
+          "type": "webauthn",
+          "credentialId": "77777777777777777777777777777777",
+          "authenticatorData": "88888888888888888888888888888888888888888888888888888888888888888888888888",
+          "clientDataJSON": "7b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a2241414141222c226f726967696e223a2268747470733a2f2f617070726f76652e6578616d706c65227d",
+          "signature": "99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999",
+          "userHandle": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "purpose": "CI deploys for the preview site"
+      },
+      "cdn": "{\"cbor\": h'ab00010150111111111111111111111111111111110278', \"domain\": \"X:abababababababababababababababababababababababababababababababab\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"ci-deploy\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}, {\"ca1\": {\"networkId\": 1, \"stakeCred\": h'56565656565656565656565656565656565656565656565656565656', \"paymentCred\": h'55555555555555555555555555555555555555555555555555555555'}}], \"purpose\": \"CI deploys for the preview site\", \"assertion\": {\"type\": \"webauthn\", \"signature\": h'99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999', \"userHandle\": h'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', \"credentialId\": h'77777777777777777777777777777777', \"clientDataJSON\": h'7b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a2241414141222c226f726967696e223a2268747470733a2f2f617070726f76652e6578616d706c65227d', \"authenticatorData\": h'88888888888888888888888888888888888888888888888888888888888888888888888888'}}"
+    },
+    {
+      "name": "mandate.register with a CTAP2 assertion",
+      "rule": "mandate-register-params",
+      "json": {
+        "cbor": "ab00010150111111111111111111111111111111110278",
+        "members": [
+          {
+            "cap": {
+              "kind": "http.request",
+              "alias": "ci-deploy",
+              "ruleDigest": "4444444444444444444444444444444444444444444444444444444444444444"
+            }
+          },
+          {
+            "ca1": {
+              "networkId": 1,
+              "paymentCred": "55555555555555555555555555555555555555555555555555555555",
+              "stakeCred": "56565656565656565656565656565656565656565656565656565656"
+            }
+          }
+        ],
+        "domain": "X:abababababababababababababababababababababababababababababababab",
+        "assertion": {
+          "type": "ctap2",
+          "credentialId": "77777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777",
+          "authenticatorData": "88888888888888888888888888888888888888888888888888888888888888888888888888",
+          "signature": "99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999"
+        },
+        "purpose": "CI deploys for the preview site"
+      },
+      "cdn": "{\"cbor\": h'ab00010150111111111111111111111111111111110278', \"domain\": \"X:abababababababababababababababababababababababababababababababab\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"ci-deploy\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}, {\"ca1\": {\"networkId\": 1, \"stakeCred\": h'56565656565656565656565656565656565656565656565656565656', \"paymentCred\": h'55555555555555555555555555555555555555555555555555555555'}}], \"purpose\": \"CI deploys for the preview site\", \"assertion\": {\"type\": \"ctap2\", \"signature\": h'99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999', \"credentialId\": h'77777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777', \"authenticatorData\": h'88888888888888888888888888888888888888888888888888888888888888888888888888'}}"
+    },
+    {
+      "name": "mandate.register with a WebAuthn assertion and no userHandle",
+      "rule": "mandate-register-params",
+      "json": {
+        "cbor": "ab00010150111111111111111111111111111111110278",
+        "members": [
+          {
+            "cap": {
+              "kind": "http.request",
+              "alias": "ci-deploy",
+              "ruleDigest": "4444444444444444444444444444444444444444444444444444444444444444"
+            }
+          },
+          {
+            "ca1": {
+              "networkId": 1,
+              "paymentCred": "55555555555555555555555555555555555555555555555555555555",
+              "stakeCred": "56565656565656565656565656565656565656565656565656565656"
+            }
+          }
+        ],
+        "domain": "X:abababababababababababababababababababababababababababababababab",
+        "assertion": {
+          "type": "webauthn",
+          "credentialId": "77777777777777777777777777777777",
+          "authenticatorData": "88888888888888888888888888888888888888888888888888888888888888888888888888",
+          "clientDataJSON": "7b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a2241414141222c226f726967696e223a2268747470733a2f2f617070726f76652e6578616d706c65227d",
+          "signature": "99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999"
+        },
+        "purpose": "CI deploys for the preview site"
+      },
+      "cdn": "{\"cbor\": h'ab00010150111111111111111111111111111111110278', \"domain\": \"X:abababababababababababababababababababababababababababababababab\", \"members\": [{\"cap\": {\"kind\": \"http.request\", \"alias\": \"ci-deploy\", \"ruleDigest\": h'4444444444444444444444444444444444444444444444444444444444444444'}}, {\"ca1\": {\"networkId\": 1, \"stakeCred\": h'56565656565656565656565656565656565656565656565656565656', \"paymentCred\": h'55555555555555555555555555555555555555555555555555555555'}}], \"purpose\": \"CI deploys for the preview site\", \"assertion\": {\"type\": \"webauthn\", \"signature\": h'99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999', \"credentialId\": h'77777777777777777777777777777777', \"clientDataJSON\": h'7b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a2241414141222c226f726967696e223a2268747470733a2f2f617070726f76652e6578616d706c65227d', \"authenticatorData\": h'88888888888888888888888888888888888888888888888888888888888888888888888888'}}"
+    },
+    {
+      "name": "mandate.revoke",
+      "rule": "mandate-revoke-params",
+      "json": {
+        "mandate": "1111111111111111111111111111111111111111111111111111111111111111",
+        "reason": "superseded by a narrower mandate"
+      },
+      "cdn": "{\"reason\": \"superseded by a narrower mandate\", \"mandate\": h'1111111111111111111111111111111111111111111111111111111111111111'}"
+    },
+    {
+      "name": "release.history",
+      "rule": "release-history-params",
+      "json": {
+        "C": "1111111111111111111111111111111111111111111111111111111111111111",
+        "fromCount": "0"
+      },
+      "cdn": "{\"C\": h'1111111111111111111111111111111111111111111111111111111111111111', \"fromCount\": 0}"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "broker.hello takes no params",
+      "base": "broker.hello",
+      "patch": [
+        {
+          "path": [
+            "verbose"
+          ],
+          "json": 1,
+          "cdn": "1"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "credential.list takes no params",
+      "base": "credential.list",
+      "patch": [
+        {
+          "path": [
+            "alias"
+          ],
+          "json": "ci-deploy",
+          "cdn": "\"ci-deploy\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "mandate is 31 bytes",
+      "base": "mandate.get",
+      "patch": [
+        {
+          "path": [
+            "mandate"
+          ],
+          "json": "11111111111111111111111111111111111111111111111111111111111111",
+          "cdn": "h'11111111111111111111111111111111111111111111111111111111111111'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "mandate is missing",
+      "base": "mandate.get",
+      "patch": [
+        {
+          "path": [
+            "mandate"
+          ],
+          "remove": true
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "mandate is upper-case hex",
+      "base": "mandate.get",
+      "patch": [
+        {
+          "path": [
+            "mandate"
+          ],
+          "json": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      ],
+      "refusedBy": [
+        "profile"
+      ]
+    },
+    {
+      "name": "intent kind has no registered effect",
+      "base": "intent.submit minimal",
+      "patch": [
+        {
+          "path": [
+            "kind"
+          ],
+          "json": "http.request",
+          "cdn": "\"http.request\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "intent params do not match the kind",
+      "base": "intent.submit minimal",
+      "patch": [
+        {
+          "path": [
+            "params"
+          ],
+          "json": {
+            "body": "hi"
+          },
+          "cdn": "{\"body\": \"hi\"}"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "intent names no mandate",
+      "base": "intent.submit minimal",
+      "patch": [
+        {
+          "path": [
+            "mandates"
+          ],
+          "json": [],
+          "cdn": "[]"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "intent mandate is 33 bytes",
+      "base": "intent.submit minimal",
+      "patch": [
+        {
+          "path": [
+            "mandates",
+            0
+          ],
+          "json": "111111111111111111111111111111111111111111111111111111111111111111",
+          "cdn": "h'111111111111111111111111111111111111111111111111111111111111111111'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "wait exceeds 30 s",
+      "base": "intent.submit with expect, wait and note",
+      "patch": [
+        {
+          "path": [
+            "wait"
+          ],
+          "json": 31,
+          "cdn": "31"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "wait is a decimal string",
+      "base": "intent.submit with expect, wait and note",
+      "patch": [
+        {
+          "path": [
+            "wait"
+          ],
+          "json": "30"
+        }
+      ],
+      "refusedBy": [
+        "profile"
+      ]
+    },
+    {
+      "name": "note exceeds 256 bytes",
+      "base": "intent.submit with expect, wait and note",
+      "patch": [
+        {
+          "path": [
+            "note"
+          ],
+          "json": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+          "cdn": "\"nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "expect counts two calls",
+      "base": "intent.submit with expect, wait and note",
+      "patch": [
+        {
+          "path": [
+            "expect",
+            "calls"
+          ],
+          "json": 2,
+          "cdn": "2"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "expect omits the fee",
+      "base": "intent.submit with expect, wait and note",
+      "patch": [
+        {
+          "path": [
+            "expect",
+            "fee"
+          ],
+          "remove": true
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "an outflow names a capability",
+      "base": "intent.submit with expect, wait and note",
+      "patch": [
+        {
+          "path": [
+            "expect",
+            "outflows",
+            0,
+            "counterparty"
+          ],
+          "json": "oc1:abababababababababababababababababababababababababababababab",
+          "cdn": "\"oc1:abababababababababababababababababababababababababababababab\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "an outflow moves nothing",
+      "base": "intent.submit with expect, wait and note",
+      "patch": [
+        {
+          "path": [
+            "expect",
+            "outflows",
+            0,
+            "amount"
+          ],
+          "json": "0",
+          "cdn": "0"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "intent carries a salt",
+      "base": "intent.submit minimal",
+      "patch": [
+        {
+          "path": [
+            "salt"
+          ],
+          "json": "01010101010101010101010101010101",
+          "cdn": "h'01010101010101010101010101010101'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "session opens no mandate",
+      "base": "session.open",
+      "patch": [
+        {
+          "path": [
+            "mandates"
+          ],
+          "json": [],
+          "cdn": "[]"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "sessionId is 15 bytes",
+      "base": "session.close",
+      "patch": [
+        {
+          "path": [
+            "sessionId"
+          ],
+          "json": "9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f",
+          "cdn": "h'9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "sessionId is a number",
+      "base": "session.close",
+      "patch": [
+        {
+          "path": [
+            "sessionId"
+          ],
+          "json": 1
+        }
+      ],
+      "refusedBy": [
+        "profile"
+      ]
+    },
+    {
+      "name": "prepare carries no draft",
+      "base": "mandate.prepare",
+      "patch": [
+        {
+          "path": [
+            "draft"
+          ],
+          "remove": true
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "prepare's draft carries a mandateId",
+      "base": "mandate.prepare",
+      "patch": [
+        {
+          "path": [
+            "draft",
+            "mandateId"
+          ],
+          "json": "01010101010101010101010101010101",
+          "cdn": "h'01010101010101010101010101010101'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "register's cbor is empty",
+      "base": "mandate.register with a WebAuthn assertion",
+      "patch": [
+        {
+          "path": [
+            "cbor"
+          ],
+          "json": "",
+          "cdn": "h''"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "register's domain is not an executor domain",
+      "base": "mandate.register with a WebAuthn assertion",
+      "patch": [
+        {
+          "path": [
+            "domain"
+          ],
+          "json": "operator",
+          "cdn": "\"operator\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "register's purpose is empty",
+      "base": "mandate.register with a WebAuthn assertion",
+      "patch": [
+        {
+          "path": [
+            "purpose"
+          ],
+          "json": "",
+          "cdn": "\"\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "assertion type is unknown",
+      "base": "mandate.register with a WebAuthn assertion",
+      "patch": [
+        {
+          "path": [
+            "assertion",
+            "type"
+          ],
+          "json": "u2f",
+          "cdn": "\"u2f\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "WebAuthn assertion lacks clientDataJSON",
+      "base": "mandate.register with a WebAuthn assertion",
+      "patch": [
+        {
+          "path": [
+            "assertion",
+            "clientDataJSON"
+          ],
+          "remove": true
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "CTAP2 assertion carries clientDataJSON",
+      "base": "mandate.register with a CTAP2 assertion",
+      "patch": [
+        {
+          "path": [
+            "assertion",
+            "clientDataJSON"
+          ],
+          "json": "7b7d",
+          "cdn": "h'7b7d'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "authenticatorData is 36 bytes",
+      "base": "mandate.register with a WebAuthn assertion",
+      "patch": [
+        {
+          "path": [
+            "assertion",
+            "authenticatorData"
+          ],
+          "json": "888888888888888888888888888888888888888888888888888888888888888888888888",
+          "cdn": "h'888888888888888888888888888888888888888888888888888888888888888888888888'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "signature is 73 bytes",
+      "base": "mandate.register with a CTAP2 assertion",
+      "patch": [
+        {
+          "path": [
+            "assertion",
+            "signature"
+          ],
+          "json": "99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999",
+          "cdn": "h'99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "userHandle is empty",
+      "base": "mandate.register with a WebAuthn assertion",
+      "patch": [
+        {
+          "path": [
+            "assertion",
+            "userHandle"
+          ],
+          "json": "",
+          "cdn": "h''"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "revoke gives no reason",
+      "base": "mandate.revoke",
+      "patch": [
+        {
+          "path": [
+            "reason"
+          ],
+          "remove": true
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "revoke's reason is empty",
+      "base": "mandate.revoke",
+      "patch": [
+        {
+          "path": [
+            "reason"
+          ],
+          "json": "",
+          "cdn": "\"\""
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "history C is 31 bytes",
+      "base": "release.history",
+      "patch": [
+        {
+          "path": [
+            "C"
+          ],
+          "json": "11111111111111111111111111111111111111111111111111111111111111",
+          "cdn": "h'11111111111111111111111111111111111111111111111111111111111111'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "history key is lower-case c",
+      "base": "release.history",
+      "patch": [
+        {
+          "path": [
+            "C"
+          ],
+          "remove": true
+        },
+        {
+          "path": [
+            "c"
+          ],
+          "json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "cdn": "h'1111111111111111111111111111111111111111111111111111111111111111'"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    },
+    {
+      "name": "fromCount is a JSON number",
+      "base": "release.history",
+      "patch": [
+        {
+          "path": [
+            "fromCount"
+          ],
+          "json": 0
+        }
+      ],
+      "refusedBy": [
+        "profile"
+      ]
+    },
+    {
+      "name": "fromCount is negative",
+      "base": "release.history",
+      "patch": [
+        {
+          "path": [
+            "fromCount"
+          ],
+          "json": "-1"
+        }
+      ],
+      "refusedBy": [
+        "profile"
+      ]
+    },
+    {
+      "name": "fromCount is null",
+      "base": "release.history",
+      "patch": [
+        {
+          "path": [
+            "fromCount"
+          ],
+          "json": null,
+          "cdn": "null"
+        }
+      ],
+      "refusedBy": [
+        "profile",
+        "cddl"
+      ]
+    }
+  ]
+}

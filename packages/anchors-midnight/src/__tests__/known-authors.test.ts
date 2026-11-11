@@ -206,8 +206,18 @@ describe("unambiguous policy text", () => {
     expect(JSON.stringify(review)).not.toContain('"key":"' + "cc".repeat(32));
   });
   it("bounds nested and malformed policy input without quoting file contents", () => {
-    expect(() => knownAuthorsSigningSummary('private-seed-should-not-appear')).toThrow(/^Policy document is not valid JSON$/);
-    const deep = '['.repeat(66) + '0' + ']'.repeat(66);
+    expect(() => knownAuthorsSigningSummary('private-seed-should-not-appear')).toThrow(/^Document is not valid JSON$/);
+    const deep = '['.repeat(34) + '0' + ']'.repeat(34);
     expect(() => knownAuthorsSigningSummary(deep)).toThrow(/nesting limit/);
+  });
+  it.each([
+    ['"validFrom":100', '"validFrom":100.0', /non-canonical number/],
+    ['"serial":1', '"serial":1e0', /non-canonical number/],
+    ['"validFrom":100', '"validFrom":9007199254740993', /non-canonical number/],
+    ['"fluxpoint-relay"', '"fluxpoint-relay\\ud800"', /lone surrogate/],
+  ])("refuses policy text whose %s spelling %s has more than one meaning", (from, to, message) => {
+    const document = JSON.stringify(doc()).replace(from, to);
+    expect(document).not.toBe(JSON.stringify(doc()));
+    expect(() => knownAuthorsSigningSummary(document)).toThrow(message);
   });
 });
