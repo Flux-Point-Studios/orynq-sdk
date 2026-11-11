@@ -12,7 +12,8 @@ vi.mock("node:fs/promises", async importOriginal => {
   return { ...actual, lstat: vi.fn(actual.lstat) };
 });
 
-const UID = process.getuid!();
+// Windows has no uids; the suite below runs on Linux alone.
+const UID = process.getuid?.() ?? -1;
 const utf8 = (text: string) => new TextEncoder().encode(text);
 
 let dir: string | undefined;
@@ -69,7 +70,7 @@ async function refusal(path: string, brokerUid = UID): Promise<Error> {
   throw new Error("connected");
 }
 
-describe("connectBroker", () => {
+describe.runIf(process.platform === "linux")("connectBroker", () => {
   it("sends each request as one frame and returns its result", async () => {
     const { path, requests } = await listen();
     const client = await connectBroker(path, { brokerUid: UID });

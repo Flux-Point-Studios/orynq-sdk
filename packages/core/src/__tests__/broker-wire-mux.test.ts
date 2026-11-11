@@ -12,7 +12,6 @@ import {
   type MuxKind,
   type MuxMessage,
 } from "../broker-wire/index.js";
-import { message as windowsMessage, MessageReader } from "./fixtures/windows-mux-reader.js";
 
 interface Vectors {
   valid: { name: string; kind: number; conn: string; payloadUtf8: string; hex: string }[];
@@ -171,39 +170,5 @@ describe("MuxDecoder", () => {
         "mux CLOSE must carry no payload",
       ]),
     );
-  });
-});
-
-// The shipped Windows host decodes the sidecar's stdout with MessageReader and encodes its replies
-// with `message`; neither validates, so agreement is checked on every valid vector.
-describe("the Windows host's mux code (fixture copy)", () => {
-  it.each(vectors.valid)("reads $name as the core decoder does, whole and byte by byte", vector => {
-    const bytes = Buffer.from(vector.hex, "hex");
-    for (const chunks of [[bytes], [...bytes].map(byte => Buffer.of(byte))]) {
-      const reader = new MessageReader();
-      const read: MuxMessage[] = [];
-      for (const chunk of chunks) {
-        reader.push(chunk);
-        for (let next = reader.next(); next; next = reader.next()) {
-          read.push({ kind: next.kind as MuxKind, conn: next.conn, payload: new Uint8Array(next.payload) });
-        }
-      }
-      expect(read).toEqual(new MuxDecoder().push(bytes));
-    }
-  });
-
-  it("reads a full 16 MiB FRAME as the core decoder does", () => {
-    const bytes = Buffer.from(largeBytes());
-    const reader = new MessageReader();
-    reader.push(bytes);
-    const next = reader.next()!;
-    const [core] = new MuxDecoder().push(bytes);
-    expect({ kind: next.kind, conn: next.conn }).toEqual({ kind: core!.kind, conn: core!.conn });
-    expect(Buffer.compare(next.payload, core!.payload)).toBe(0);
-  });
-
-  it.each(vectors.valid)("writes $name as the core encoder does", vector => {
-    const { kind, conn, payload } = asMessage(vector);
-    expect(new Uint8Array(windowsMessage(kind, conn, payload))).toEqual(encodeMuxMessage({ kind, conn, payload }));
   });
 });

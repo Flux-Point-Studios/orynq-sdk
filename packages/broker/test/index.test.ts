@@ -1,5 +1,18 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import * as broker from "../src/index.js";
+
+const { loads } = vi.hoisted(() => ({ loads: [] as string[] }));
+
+// The Windows package's root entry loads koffi; its ./frontend entry does not.
+vi.mock("@fluxpointstudios/orynq-sdk-credential-broker-windows", () => {
+  loads.push("credential-broker-windows");
+  return {};
+});
+
+it("hosts the Windows sidecar without loading the Windows package's native bindings", () => {
+  expect(broker.startWindowsFrontend).toBeTypeOf("function");
+  expect(loads).toEqual([]);
+});
 
 it("exports the broker, host, client, framing, decoding and schema surface and nothing else", () => {
   expect(Object.keys(broker).sort()).toEqual([
@@ -30,6 +43,7 @@ it("exports the broker, host, client, framing, decoding and schema surface and n
     "serveConnection",
     "serveMux",
     "startLinuxFrontend",
+    "startWindowsFrontend",
     "text",
     "uint",
   ]);

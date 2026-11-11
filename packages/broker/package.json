@@ -28,7 +28,8 @@
   },
   "dependencies": {
     "@fluxpointstudios/orynq-sdk-conduct": "workspace:*",
-    "@fluxpointstudios/orynq-sdk-core": "workspace:*"
+    "@fluxpointstudios/orynq-sdk-core": "workspace:*",
+    "@fluxpointstudios/orynq-sdk-credential-broker-windows": "workspace:^"
   },
   "devDependencies": {
     "@cbortech/cbor": "0.27.3",
