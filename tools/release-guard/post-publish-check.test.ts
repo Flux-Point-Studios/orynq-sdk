@@ -6,7 +6,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SINGLETONS, checkLayouts, npmInstallFailure, packedSpecs, singletonCopies } from "./post-publish-check.mjs";
+import { SINGLETONS, VISIBILITY, checkLayouts, npmInstallFailure, packedSpecs, singletonCopies } from "./post-publish-check.mjs";
 
 const scratchDirs: string[] = [];
 const scratch = () => {
@@ -285,5 +285,13 @@ describe("checkLayouts against a registry", () => {
       problems: ["@f/good@1.0.0: not served by the registry after 3 attempts"],
       layouts: [],
     });
+  });
+});
+
+describe("registry visibility budget", () => {
+  // npm has taken about 24 minutes to serve a package's first version (2026-10-28) and more
+  // than the old five-minute budget on 2026-11-12, so a correct first publish must not read as missing.
+  it("waits at least 30 minutes for a newly published version to be served", () => {
+    expect(VISIBILITY.attempts * VISIBILITY.delayMs).toBeGreaterThanOrEqual(30 * 60_000);
   });
 });
