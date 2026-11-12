@@ -152,6 +152,48 @@ describe("parseStrictJson", () => {
     expect(code("[" + "0,".repeat(3), LIMIT, 5)).toBe("JSON_SYNTAX");
   });
 
+  // The precedence on text that is wrong in more than one way: bytes, then whichever of nesting
+  // and values the scan meets first (nesting, at a value that exceeds both), then syntax.
+  const deep = (n: number) => "[".repeat(n) + "0";
+
+  it("refuses oversized text as JSON_TOO_LARGE even when it is also deep, wide and malformed", () => {
+    expect(code(deep(40), 40, 5)).toBe("JSON_TOO_LARGE");
+    expect(code(deep(40), 41, 5)).toBe("JSON_VALUES");
+  });
+
+  it("does not let a stray closing bracket buy a level of nesting", () => {
+    // Each of these is malformed; the value at level 33 still decides.
+    for (const stray of ["]", "}", "]]]]", "0]", "[]]"]) {
+      expect(code(stray + deep(33))).toBe("JSON_DEPTH");
+      expect(code(stray + deep(32))).toBe("JSON_SYNTAX");
+    }
+    expect(code("]" + "[".repeat(34))).toBe("JSON_DEPTH");
+    expect(code("]" + "[".repeat(33))).toBe("JSON_SYNTAX");
+  });
+
+  it("ends a scalar at a quote, so the string after it is counted and hides its brackets", () => {
+    // `0"…"` is two values, a scalar and a string, and brackets inside the string open nothing.
+    expect(code(`0"${"[".repeat(40)}"`)).toBe("JSON_SYNTAX");
+    expect(code(`[true"${"{".repeat(40)}"]`)).toBe("JSON_SYNTAX");
+    expect(code('0"a"', LIMIT, 1)).toBe("JSON_VALUES");
+    expect(code('0"a"', LIMIT, 2)).toBe("JSON_SYNTAX");
+    expect(code('[0"a"]', LIMIT, 2)).toBe("JSON_VALUES");
+    expect(code('[0"a"]', LIMIT, 3)).toBe("JSON_SYNTAX");
+  });
+
+  it("refuses a value that exceeds both the nesting and the value limit as JSON_DEPTH", () => {
+    // The 0 is the 34th value and sits at level 33.
+    expect(code(deep(33), LIMIT, 33)).toBe("JSON_DEPTH");
+    expect(code(deep(33), LIMIT, 32)).toBe("JSON_VALUES");
+    expect(code(deep(32), LIMIT, 32)).toBe("JSON_VALUES");
+    expect(parseStrictJson(deep(32) + "]".repeat(32), LIMIT, 33)).toEqual(JSON.parse(deep(32) + "]".repeat(32)));
+  });
+
+  it("refuses text both deep and wide by the limit its scan meets first", () => {
+    expect(code("[0,0,0,0," + deep(33), LIMIT, 4)).toBe("JSON_VALUES");
+    expect(code(deep(33) + ",0".repeat(100), LIMIT, 40)).toBe("JSON_DEPTH");
+  });
+
   // The shapes that cost JSON.parse the most per byte: at 16 MiB, about a second and hundreds of
   // MiB each.
   const FRAME = 16 * 1024 * 1024;
