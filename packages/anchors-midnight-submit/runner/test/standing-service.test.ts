@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { errorChain, holdLine, parseStandingConfig, printChanges, runStandingLoops } from "../standing-service.js";
+import { errorChain, holdLine, parseStandingConfig, printChanges, redact, redactionWork, runStandingLoops } from "../standing-service.js";
 import { StandingFeeCap } from "../standing-budget.js";
 
 const roots: string[] = [];
@@ -220,21 +220,42 @@ it("prints a line once per change, and again after a different line", () => {
   expect(lines).toEqual([held("first"), held("second"), "progress", held("second")]);
 });
 
-it.each<[string, string]>([
-  ["colon runs", "a:".repeat(500_000)],
-  ["key-word runs", "k-".repeat(500_000) + "key"],
-  ["mnemonic runs", "abandon ".repeat(125_000) + "zzz"],
-  ["scheme runs", "https://".repeat(125_000)],
-  ["dotted scheme-like runs", "a.".repeat(500_000)],
-  ["JWT-like runs", "eyJ-".repeat(250_000)],
-  ["hex runs", "a".repeat(1_000_000) + "g"],
-  ["project-id-like runs", "1a".repeat(500_000)],
-])("redacts a 1 MB message of %s within 50 ms", (_, message) => {
-  errorChain(new Error("warm"), ["somesecretvalue1"]);
-  const started = performance.now();
-  const chain = errorChain(new Error(message), ["somesecretvalue1"]);
-  expect(performance.now() - started).toBeLessThan(50);
-  expect((chain as { message: string }[])[0]!.message.length).toBeLessThanOrEqual(512);
+// What bounds a redaction is the work it does, which no clock on a shared runner measures: each
+// distinct form of a configured secret is one pass over the text, and every shape rule reads the
+// same bounded window however long the text is. So the cost grows with the text's length times
+// the configured values, never with its square.
+const MB = 1_000_000;
+it.each<[string, (size: number) => string]>([
+  ["colon runs", size => "a:".repeat(size / 2)],
+  ["key-word runs", size => "k-".repeat(size / 2) + "key"],
+  ["mnemonic runs", size => "abandon ".repeat(size / 8) + "zzz"],
+  ["scheme runs", size => "https://".repeat(size / 8)],
+  ["dotted scheme-like runs", size => "a.".repeat(size / 2)],
+  ["JWT-like runs", size => "eyJ-".repeat(size / 4)],
+  ["hex runs", size => "a".repeat(size) + "g"],
+  ["project-id-like runs", size => "1a".repeat(size / 2)],
+  ["runs without a space to cut the window at", size => "x".repeat(size)],
+])("redacts a 1 MB message of %s in one pass per configured value and a fixed window of shape rules", (_, run) => {
+  const secrets = ["somesecretvalue1", "store-key/with+chars&more"], forms = 1 + 2;
+  const measure = (size: number) => {
+    const message = run(size), work = redactionWork();
+    const printed = redact(message, secrets, 512, work);
+    expect(printed.length).toBeLessThanOrEqual(512);
+    expect(work.values).toBe(forms);
+    expect(work.textCharacters).toBe(forms * message.length);
+    expect(work.rules).toBeLessThanOrEqual(16);
+    expect(work.windowCharacters).toBeLessThanOrEqual(work.rules * (512 + 4096));
+    return work;
+  };
+  const one = measure(MB), two = measure(2 * MB);
+  expect({ values: two.values, rules: two.rules, windowCharacters: two.windowCharacters }).toEqual({ values: one.values, rules: one.rules, windowCharacters: one.windowCharacters });
+});
+
+it("counts the work of the redaction errorChain prints, and none it does not do", () => {
+  const work = redactionWork();
+  expect(redact("upstream refused token=SECRETTOK", [], 512, work)).toBe((errorChain(new Error("upstream refused token=SECRETTOK"), []) as { message: string }[])[0]!.message);
+  expect(work.values).toBe(0); expect(work.textCharacters).toBe(0);
+  expect(work.rules).toBeGreaterThan(0); expect(work.windowCharacters).toBeGreaterThan(0);
 });
 
 it("drops a token cut at the edge of the redaction window, which a shorter redacted prefix could bring into view", () => {

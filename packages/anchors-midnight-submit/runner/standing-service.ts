@@ -10,7 +10,7 @@ import { ensurePrivateDir } from "../src/keys.js";
 import { networkEndpoints } from "../src/endpoints.js";
 import { assertChainIdentity } from "../src/preflight.js";
 import { registryOperator } from "../src/operator.js";
-import { MAINNET_WALLET_JOURNALS } from "../src/mainnet-state.js";
+import { MAINNET_WALLET_JOURNALS, MAINNET_WALLET_STATE } from "../src/mainnet-state.js";
 import { SUBMITTER_RUNTIME_SPEC_VERSIONS, assertKnownRuntime, registryStateOnNode } from "../src/submission.js";
 import { openWallet, type OperatorWallet } from "../src/wallet.js";
 import { syncWithCheckpoints } from "../src/sync.js";
@@ -90,26 +90,46 @@ const mnemonicRuns = (text: string) => text.replace(/\b[a-z]+(?:\s+[a-z]+){5,}\b
   return out.join(" ");
 });
 
+// The shape rules, in the order they apply. Each reads the window alone.
+const SHAPE_RULES: readonly ((window: string) => string)[] = [
+  window => window.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " "),
+  window => window.replace(/\b([a-z][a-z0-9+.-]{0,31}):\/\/([^\s"'<>]*)/gi, url),
+  window => window.replace(/(?<![^\s"'(<=,])[^\s:@/"']{1,256}:[^\s@/"']{1,256}@/g, `${REDACTED}@`),
+  window => window.replace(/\b(bearer|basic)\s+[^\s,;"']+/gi, `$1 ${REDACTED}`),
+  window => window.replace(SECRET_KEY, `$1$2${REDACTED}`),
+  window => window.replace(/(?<![\w-])eyJ[\w-]*\.[\w-]+\.[\w-]*/g, REDACTED),
+  window => window.replace(/\b(?:0x)?[0-9a-fA-F]{64,}\b/g, REDACTED),
+  window => window.replace(/(?<![A-Za-z])[a-z]{1,32}[A-Za-z0-9]{32}(?![A-Za-z0-9])/g, REDACTED),
+  mnemonicRuns,
+];
+
+// What one redaction read: `values` passes over the whole text, one per distinct form of a
+// configured secret, of `textCharacters` in all, and `rules` shape rules over the window, of
+// `windowCharacters` in all. The tests bound a redaction's cost by this count, not by a clock.
+export type RedactionWork = { values: number; textCharacters: number; rules: number; windowCharacters: number };
+export const redactionWork = (): RedactionWork => ({ values: 0, textCharacters: 0, rules: 0, windowCharacters: 0 });
+
 // Each configured secret of 8 or more characters goes by value (raw, percent-encoded and as JSON
 // escapes it), as midnightSource redacts its headers, over the whole text; then, within the window,
 // whatever looks like a credential goes
 // by shape: URL userinfo, query strings and token-like path segments, scheme-less user:pass@,
 // Bearer and Basic values, key=value secrets, JWTs, 64-hex runs, Blockfrost-shaped project ids
-// and mnemonic word runs. The result is one line, at most `limit` long.
-function redact(text: string, secrets: readonly string[], limit: number): string {
+// and mnemonic word runs. The result is one line, at most `limit` long. Nothing but the by-value
+// passes reads past the window, so the cost is linear in the text for each configured value.
+export function redact(text: string, secrets: readonly string[], limit: number, work?: RedactionWork): string {
   const values = [...new Set(secrets.filter(secret => secret.length >= 8).flatMap(secret => [secret, encodeURIComponent(secret), JSON.stringify(secret).slice(1, -1)]))]
     .sort((a, b) => b.length - a.length);
-  const byValue = values.reduce((out, value) => out.split(value).join(REDACTED), text);
-  const window = byValue.length > limit + WINDOW ? byValue.slice(0, limit + WINDOW).replace(/\S*$/, "") : byValue;
-  return mnemonicRuns(window
-    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
-    .replace(/\b([a-z][a-z0-9+.-]{0,31}):\/\/([^\s"'<>]*)/gi, url)
-    .replace(/(?<![^\s"'(<=,])[^\s:@/"']{1,256}:[^\s@/"']{1,256}@/g, `${REDACTED}@`)
-    .replace(/\b(bearer|basic)\s+[^\s,;"']+/gi, `$1 ${REDACTED}`)
-    .replace(SECRET_KEY, `$1$2${REDACTED}`)
-    .replace(/(?<![\w-])eyJ[\w-]*\.[\w-]+\.[\w-]*/g, REDACTED)
-    .replace(/\b(?:0x)?[0-9a-fA-F]{64,}\b/g, REDACTED)
-    .replace(/(?<![A-Za-z])[a-z]{1,32}[A-Za-z0-9]{32}(?![A-Za-z0-9])/g, REDACTED)).slice(0, limit);
+  let byValue = text;
+  for (const value of values) {
+    if (work) { work.values++; work.textCharacters += byValue.length; }
+    byValue = byValue.split(value).join(REDACTED);
+  }
+  let window = byValue.length > limit + WINDOW ? byValue.slice(0, limit + WINDOW).replace(/\S*$/, "") : byValue;
+  for (const rule of SHAPE_RULES) {
+    if (work) { work.rules++; work.windowCharacters += window.length; }
+    window = rule(window);
+  }
+  return window.slice(0, limit);
 }
 
 // At most eight links, each its type and message. A thrown non-Error names only its type, since
@@ -223,11 +243,15 @@ export async function startStandingFollower<T>(options: { catchup: { start(): Pr
 // `secrets` collects what the service learns must never be printed, for its caller's fatal line.
 // The journals the standing service opens its wallet with. The mainnet wallet and its state file
 // are shared with the mainnet scripts, which open it with MAINNET_WALLET_JOURNALS, so a mainnet
-// standing journal must be one of them.
-export function standingWalletJournals(config: Pick<ReturnType<typeof parseStandingConfig>, "network" | "stateRoot">): readonly string[] {
+// standing journal must be one of them. Those journals are named from this process's HOME, so the
+// state file must be the one that HOME names too (MAINNET_WALLET_STATE): started under another
+// HOME, the service would otherwise open the shared state with journals that do not record its
+// fees.
+export function standingWalletJournals(config: Pick<ReturnType<typeof parseStandingConfig>, "network" | "stateRoot"> & { wallet: { state: string } }): readonly string[] {
   const own = join(config.stateRoot, "attempts.sqlite");
   if (config.network !== "mainnet") return [own];
   if (!MAINNET_WALLET_JOURNALS.includes(own)) throw new Error(`the mainnet standing state root ${config.stateRoot} keeps its journal outside the journals the shared mainnet wallet is opened with (${MAINNET_WALLET_JOURNALS.join(", ")})`);
+  if (config.wallet.state !== MAINNET_WALLET_STATE) throw new Error(`the mainnet standing wallet state ${config.wallet.state} is not the state file the shared mainnet wallet is opened with (${MAINNET_WALLET_STATE})`);
   return MAINNET_WALLET_JOURNALS;
 }
 
