@@ -276,6 +276,30 @@ describe("Materios dev node", () => {
     expect(await receiptStored(receiptIdOf(input))).toBe(false);
   }, 180_000);
 
+  it("reports the mortality end of the era the extrinsic was signed with (#213)", async () => {
+    const px = await proxy();
+    const p = await provider(px.url);
+    let sent: string | undefined;
+    px.hooks.onClient = (_connection, message) => {
+      if (message.method !== "author_submitAndWatchExtrinsic") return undefined;
+      sent = (message.params as unknown[])[0] as string;
+      return "kill";
+    };
+    const finalizedBefore = (await chain.rpc.chain.getHeader(await chain.rpc.chain.getFinalizedHead())).number.toNumber();
+    const error = await failure(sdk.submitReceipt(p, freshInput(), { timeoutMs: 6_000 }));
+    expect(error).toMatchObject({ code: "inclusion-unknown", safeToResubmit: false });
+    // The extrinsic never reached the node, so its nonce stays free. Its era, read from the bytes
+    // the SDK sent, names the birth block once a block inside its window is given.
+    const era = chain.registry.createType("Extrinsic", sent).era;
+    expect(era.isMortalEra).toBe(true);
+    const birth = era.asMortalEra.birth(await bestNumber());
+    expect(error.mortalityEnd).toBe(birth + era.asMortalEra.period.toNumber() - 1);
+    // Born at the block polkadot.js signs against: the finalized head, or the best block's
+    // parent when finality lags more than five blocks. Never an older block.
+    expect(birth).toBeGreaterThanOrEqual(finalizedBefore);
+    expect(birth).toBeLessThanOrEqual(await bestNumber());
+  }, 60_000);
+
   it("keeps an orchestrated receipt's on-chain result through a lost socket, and a retry does not rebroadcast (s5/sk3)", async () => {
     const gateway = http.createServer((request, response) => {
       request.resume();

@@ -81,10 +81,17 @@ fields remain unused. Budgets must be positive, finite, and at most 2147483647 m
 The submission budget covers every step below. The last `min(30000, timeoutMs / 2)`
 milliseconds are reserved for recovery, so a silent watch ends before the total budget.
 
-1. **Connection.** The provider's connection is replaced first if an earlier read or
-   watch on it timed out, and awaited while it reconnects on its own.
+1. **Connection.** The provider's connection is replaced first if it stopped answering:
+   an earlier read or preparation step on it timed out, or a watch timed out having seen
+   neither a reply to its submission nor a status. A watch that timed out after either
+   only outlasted its window, as an anchor's does whenever finality is slower, and
+   leaves the connection in place, since replacing it would cut other calls' watches.
+   A connection that is reconnecting on its own is awaited.
 2. **Signing.** Receipts and anchors are signed with `signAsync` before anything is
-   sent, so a failure here never broadcasts.
+   sent, so a failure here never broadcasts. The era and block hash are passed
+   explicitly: they are the ones polkadot.js picks by default (the finalized head, or
+   the best block's parent when finality lags more than five blocks), so `mortalityEnd`
+   is computed from the block the era was born at and a later reorg cannot shorten it.
 3. **Storage check.** The record at the id is read: receipts at the best block,
    anchors at the finalized block. A record with the same payload returns success
    (`reconciled: true`) without broadcasting; a different payload is `dispatch`.
@@ -99,13 +106,16 @@ milliseconds are reserved for recovery, so a silent watch ends before the total 
    dropped, invalid, usurped or finality timeout): an isolated connection to the same
    RPC URL, checked against the genesis hash, re-reads storage once per new block
    until the deadline, best blocks for receipts and finalized blocks for anchors. It
-   never broadcasts a replacement transaction.
+   never broadcasts a replacement transaction. A provider opens one such connection,
+   shared by every submission in recovery and every `resolveInclusion` call, and closes
+   it with the last of them. `disconnect()` closes it and ends those polls at once:
+   each rejects with `inclusion-unknown`, since nothing more was learned.
 
 ### Retry contract
 
 | Error | Code | Meaning | What to do |
 | --- | --- | --- | --- |
-| `MateriosSubmissionError` | `not-landed` | Nothing from this call was broadcast, or the node refused it: `1010` (invalid, e.g. cannot pay fees), `1011` (unknown validity) or `1014` (priority too low, e.g. another transaction holds the signer's nonce). `safeToResubmit === true`. | Resubmit with the **same** receipt or anchor id. |
+| `MateriosSubmissionError` | `not-landed` | Nothing from this call was broadcast, or the node refused it: `1010` (invalid, e.g. cannot pay fees), `1011` (unknown validity), `1014` (priority too low, e.g. another transaction holds the signer's nonce) or `1016` (the pool is full). `safeToResubmit === true`. | Resubmit with the **same** receipt or anchor id. |
 | `MateriosSubmissionError` | `inclusion-unknown` | The transaction may have reached a node and may still land. `safeToResubmit === false`. | Settle it with `resolveInclusion(provider, error)`. Never treat one absent read as "did not land". |
 | `MateriosSubmissionError` | `dispatch` | The runtime rejects the call (in the dry-run or in its block), or the id holds a different payload. `safeToResubmit === false`. | Fix the cause; resubmitting unchanged fails the same way. |
 | `MateriosCertificationError` | | `submitCertifiedReceipt` stored the receipt, then waiting for certification or its anchor failed. `result` carries the submission result, `stage` says which wait failed. | Never resubmit; wait again with `waitForCertification`. |
@@ -114,6 +124,8 @@ milliseconds are reserved for recovery, so a silent watch ends before the total 
 - A node refusal keeps the node's message verbatim (`1014: Priority is too low: ...`),
   so `/^1014: Priority is too low/` matchers keep working; `cause` is the original
   error. Every error built from an underlying failure keeps it as `cause`.
+- `1012` (temporarily banned) and `1013` (already imported) are not refusals: that
+  transaction may already be pooled or included, so they go to recovery like a lost watch.
 - "Already exists" with the same stored payload is success, for receipts and anchors,
   whoever stored it. Never retry with a fresh id: that can store the content twice.
 - Submission errors carry `id` and, once the extrinsic is signed, `txHash`, `signer`,
@@ -151,7 +163,8 @@ default `600000`). It resolves `landed` once a finalized block holds the matchin
 record, and `not-landed` only once a finalized block without it is past the
 extrinsic's `mortalityEnd` (`reason: "expired"`) or shows the signer's nonce above the
 extrinsic's nonce (`reason: "nonce-consumed"`). A different stored payload rejects
-with `dispatch`; no settlement by `timeoutMs` rejects with `inclusion-unknown` again.
+with `dispatch`; no settlement by `timeoutMs`, or before `disconnect()`, rejects with
+`inclusion-unknown` again.
 
 ### Results
 
