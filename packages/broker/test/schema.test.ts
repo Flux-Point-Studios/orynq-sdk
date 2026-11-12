@@ -11,7 +11,7 @@ import {
 } from "@cbortech/cbor/cddl";
 import { actionDigestHex, bytesToHex, cborDecode, cborEncode } from "@fluxpointstudios/orynq-sdk-conduct";
 import { describe, expect, it } from "vitest";
-import { bytes, jsonToCbor, jsonToDcbor, map, text, type Shape } from "../src/dcbor.js";
+import { array, bytes, jsonToCbor, jsonToDcbor, map, text, uint, type Shape } from "../src/dcbor.js";
 import { RpcError } from "../src/errors.js";
 import { decodeRequest } from "../src/framing.js";
 import { METHOD_PARAMS, SCHEMA_RULES, schemaRules, type EffectKind } from "../src/schema.js";
@@ -56,6 +56,15 @@ function profileRefusal(json: unknown, shape: Shape): RpcError | undefined {
     if (error instanceof RpcError) return error;
     throw error;
   }
+}
+
+function refusedPayload(payload: Uint8Array): unknown {
+  try {
+    parseJsonPayload(payload);
+  } catch (error) {
+    return ((error as RpcError).cause as { code?: unknown }).code;
+  }
+  throw new Error("payload accepted");
 }
 
 function patched(target: unknown, path: Path, change: { remove: true } | { value: unknown }): unknown {
@@ -589,6 +598,56 @@ describe("runtime schema", () => {
     expect(() => jsonToCbor(request.params, rules["release-request"])).not.toThrow();
     expect(valuesIn(request.params)).toBe(valuesAtMost(rules["release-request"]));
     expect(4 + valuesIn(request.params)).toBeGreaterThan(49_000);
+  });
+
+  // The largest release.commit the rules allow for an effect of `n` uints: every other member is
+  // the vector's, so the request holds exactly the values the rule's shapes can.
+  const filler = (n: number): EffectKind => ({ params: map({}), effect: array(uint({ max: 9n }), 0, n) });
+  const fullRelease = (n: number) => {
+    const [, release] = FILES.find(([name]) => name === "release")!;
+    const vector = release.valid.find(v => v.name === "committee release over two mandates with a proof and instanceSig")!;
+    const params = vector.json as { mandates: { steps: { proof?: unknown }[] }[] };
+    const step = params.mandates.flatMap(m => m.steps).find(s => s.proof !== undefined)!;
+    return {
+      ...params,
+      kind: "ext.fill",
+      effect: Array(n).fill(0),
+      mandates: Array(8).fill({ ...params.mandates[0]!, steps: Array(258).fill(step) }),
+    };
+  };
+  const room = MAX_REQUEST_VALUES - 4 - valuesAtMost(schemaRules({ "ext.fill": filler(0) })["release-request"]);
+
+  it("registers an effect kind whose largest request holds exactly MAX_REQUEST_VALUES, and decodes that request", () => {
+    expect(room).toBeGreaterThan(0);
+    const rules = schemaRules({ "ext.fill": filler(room) });
+    expect(4 + valuesAtMost(rules["release-request"])).toBe(MAX_REQUEST_VALUES);
+    const request = decodeRequest(wire({ jsonrpc: "2.0", id: 1, method: "release.commit", params: fullRelease(room) }));
+    expect(4 + valuesIn(request.params)).toBe(MAX_REQUEST_VALUES);
+    expect(() => jsonToCbor(request.params, rules["release-request"])).not.toThrow();
+  });
+
+  it("refuses to register an effect kind that would let a valid request exceed MAX_REQUEST_VALUES", () => {
+    const refused = (effects: Readonly<Record<string, EffectKind>>) => {
+      try {
+        schemaRules(effects);
+      } catch (error) {
+        expect(error).toBeInstanceOf(RangeError);
+        return (error as RangeError).message;
+      }
+      throw new Error("registered");
+    };
+    expect(refused({ "ext.fill": filler(room + 1) }))
+      .toBe("a request for release-request could hold 65537 JSON values, above MAX_REQUEST_VALUES (65536)");
+    // The request the registration refuses is the one the parser would refuse.
+    expect(refusedPayload(wire({ jsonrpc: "2.0", id: 1, method: "release.commit", params: fullRelease(room + 1) })))
+      .toBe("JSON_VALUES");
+    const wideParams: EffectKind = { params: array(uint(), 0, MAX_REQUEST_VALUES), effect: bytes(1) };
+    expect(refused({ "ext.wide": wideParams })).toContain("a request for intent-submit-params could hold ");
+    // One oversized kind is refused however many fit beside it.
+    expect(refused({ ...TEST_EFFECTS, "ext.fill": filler(room + 1) })).toContain("release-request");
+    for (const max of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(refused({ "ext.open": { params: map({}), effect: array(uint(), 0, max) } })).toContain("release-request");
+    }
   });
 
   it("refuses every effect while no effect kind is registered", () => {

@@ -552,7 +552,8 @@ describe.runIf(process.platform === "linux")("serveConnection over a Unix domain
     expect(vi.getTimerCount()).toBe(0);
     server!.destroy();
     await closed;
-    while (reasons.length === 0) await turns(1);
+    // Bounded, so a connection that never settles fails here instead of spinning the worker.
+    for (const deadline = Date.now() + 2_000; reasons.length === 0 && Date.now() < deadline;) await turns(1);
     expect(reasons).toEqual(["end"]);
     release(json({ jsonrpc: "2.0", id: 1, result: {} }));
     await turns(10);
