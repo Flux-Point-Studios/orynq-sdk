@@ -63,27 +63,56 @@ export function parseStandingConfig(value: unknown) {
 const REDACTED = "[redacted]";
 const MNEMONIC_WORDS = new Set(wordlist);
 const TOKEN_SEGMENT = /^(?=.*\d)(?=.*[A-Za-z])[\w\-.~%]{20,}$/;
-// Every pattern below starts only where a token can (or is bounded), so each runs in linear time.
-const SECRET_KEY = /(?<![\w-])([\w-]{0,64}?(?:key|token|secret|passw(?:or)?d|pwd|auth|project_id)[\w-]{0,64})("?\s{0,8}(?:=|:|%3[dD])\s{0,8}"?)([^\s,;&"'}\]]+)/gi;
+// No rule below limits how long a key name, a scheme or a user name may be: a limit there is a
+// limit on what is redacted, and a long word glued in front would carry the secret past it. Each
+// pattern instead starts only at the start of a run of the characters it reads (its lookbehind),
+// or at a literal, and reads that run once, so each runs in linear time.
+const SECRET_KEY = /(?<![\w-])(?=[\w-]*?(?:key|token|secret|passw(?:or)?d|pwd|auth|project_id))([\w-]+)("?\s{0,8}(?:=|:|%3[dD])\s{0,8}"?)([^\s,;&"'}\]]+)/gi;
 // Shape rules read at most this much past the printed limit; a token the cut splits is dropped.
 const WINDOW = 4096;
+// Where the window may be cut. Any other white space is not a place to cut, which drops more.
+const CUTS = [" ", "\n", "\t", "\r"];
 
-// Any URL keeps its scheme, host and the path segments that cannot be tokens; userinfo (up to its
-// last @), query and fragment are dropped.
+// Any URL keeps its scheme (and whatever is glued in front of it), host and the path segments
+// that cannot be tokens; userinfo (up to its last @), query and fragment are dropped.
 const url = (_: string, scheme: string, rest: string) => {
   const authorityEnd = rest.search(/[/?#]/), authority = authorityEnd < 0 ? rest : rest.slice(0, authorityEnd);
   const host = authority.slice(authority.lastIndexOf("@") + 1);
   const path = authorityEnd < 0 ? "" : rest.slice(authorityEnd).replace(/[?#].*$/, "");
-  return `${scheme}://${host}${path.split("/").map(segment => TOKEN_SEGMENT.test(segment) ? REDACTED : segment).join("/")}`;
+  return `${scheme}://${host}${path.split("/").map(segment => segment.length >= 32 || TOKEN_SEGMENT.test(segment) ? REDACTED : segment).join("/")}`;
 };
 
-// Six or more consecutive BIP-39 words read as (part of) a mnemonic.
-const mnemonicRuns = (text: string) => text.replace(/\b[a-z]+(?:\s+[a-z]+){5,}\b/g, run => {
+// user:pass@ without a scheme, wherever it starts: from the first part that holds a colon up to
+// the last @ of the run, since a password can hold an @. A part without a colon is kept, as the
+// local part of a mail address is.
+const userinfo = (run: string) => {
+  const parts = run.split("@"), first = parts.findIndex(part => part.includes(":"));
+  return first < 0 || first === parts.length - 1 ? run : `${parts.slice(0, first).map(part => `${part}@`).join("")}${REDACTED}@`;
+};
+
+// A JWT, complete or cut after any dot, wherever it starts in a run of dotted words: from the eyJ
+// that opens a header (fifteen or more characters before a dot, the shortest a header encodes
+// to) to the end of the run.
+const jwt = (run: string) => {
+  const parts = run.split(".");
+  for (let index = 0, offset = 0; index < parts.length - 1; offset += parts[index]!.length + 1, index++) {
+    const at = parts[index]!.indexOf("eyJ");
+    if (at >= 0 && parts[index]!.length - at >= 15) return run.slice(0, offset + at) + REDACTED;
+  }
+  return run;
+};
+
+// A run of 32 or more letters and digits that holds both, or of 64 or more hex digits: a key, a
+// hash, a project id or unpunctuated base64, whole, cut short or glued to a word.
+const token = (run: string) => (/\d/.test(run) && /[A-Za-z]/.test(run)) || (run.length >= 64 && /^[0-9a-fA-F]+$/.test(run)) ? REDACTED : run;
+
+// Six or more consecutive BIP-39 words, in any case, read as (part of) a mnemonic.
+const mnemonicRuns = (text: string) => text.replace(/\b[a-z]+(?:\s+[a-z]+){5,}\b/gi, run => {
   const out: string[] = [];
   let streak: string[] = [];
   const flush = () => { out.push(...(streak.length >= 6 ? [REDACTED] : streak)); streak = []; };
   for (const word of run.split(/\s+/)) {
-    if (MNEMONIC_WORDS.has(word)) streak.push(word);
+    if (MNEMONIC_WORDS.has(word.toLowerCase())) streak.push(word);
     else { flush(); out.push(word); }
   }
   flush();
@@ -93,12 +122,12 @@ const mnemonicRuns = (text: string) => text.replace(/\b[a-z]+(?:\s+[a-z]+){5,}\b
 // The shape rules, in the order they apply. Each reads the window alone.
 const SHAPE_RULES: readonly ((window: string) => string)[] = [
   window => window.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " "),
-  window => window.replace(/\b([a-z][a-z0-9+.-]{0,31}):\/\/([^\s"'<>]*)/gi, url),
-  window => window.replace(/(?<![^\s"'(<=,])[^\s:@/"']{1,256}:[^\s@/"']{1,256}@/g, `${REDACTED}@`),
-  window => window.replace(/\b(bearer|basic)\s+[^\s,;"']+/gi, `$1 ${REDACTED}`),
+  window => window.replace(/(?<![A-Za-z0-9+.-])([A-Za-z0-9+.-]*):\/\/([^\s"'<>]*)/g, url),
+  window => window.replace(/(?<![^\s@/"'])[^\s@/"']+@(?:[^\s@/"']*@)*/g, userinfo),
+  window => window.replace(/(bearer|basic)\s+[^\s,;"']+/gi, `$1 ${REDACTED}`),
   window => window.replace(SECRET_KEY, `$1$2${REDACTED}`),
-  window => window.replace(/(?<![\w-])eyJ[\w-]*\.[\w-]+\.[\w-]*/g, REDACTED),
-  window => window.replace(/\b(?:0x)?[0-9a-fA-F]{64,}\b/g, REDACTED),
+  window => window.replace(/(?<![\w.-])[\w.-]+/g, jwt),
+  window => window.replace(/(?<![A-Za-z0-9])[A-Za-z0-9]{32,}/g, token),
   window => window.replace(/(?<![A-Za-z])[a-z]{1,32}[A-Za-z0-9]{32}(?![A-Za-z0-9])/g, REDACTED),
   mnemonicRuns,
 ];
@@ -111,11 +140,18 @@ export const redactionWork = (): RedactionWork => ({ values: 0, textCharacters: 
 
 // Each configured secret of 8 or more characters goes by value (raw, percent-encoded and as JSON
 // escapes it), as midnightSource redacts its headers, over the whole text; then, within the window,
-// whatever looks like a credential goes
-// by shape: URL userinfo, query strings and token-like path segments, scheme-less user:pass@,
-// Bearer and Basic values, key=value secrets, JWTs, 64-hex runs, Blockfrost-shaped project ids
-// and mnemonic word runs. The result is one line, at most `limit` long. Nothing but the by-value
-// passes reads past the window, so the cost is linear in the text for each configured value.
+// whatever looks like a credential goes by shape: URL userinfo, query strings and path segments
+// that are token-like or 32 characters or longer, scheme-less user:pass@, Bearer and Basic values,
+// key=value secrets, JWTs, runs of 32 or more letters and digits (hex keys and hashes, project
+// ids, unpunctuated base64), Blockfrost-shaped project ids and mnemonic word runs. The result is
+// one line, at most `limit` long. Nothing but the by-value passes reads past the window, so the
+// cost is linear in the text for each configured value.
+//
+// Not covered by shape, so printed unless configured: a token of letters alone, or of fewer than
+// 32 characters (20 in a URL path); base64 that + / - or _ breaks into runs under 32; a key named
+// in prose ("the key is ..."); fewer than six mnemonic words, or words not separated by white
+// space; and a configured endpoint's path segment under 8 characters, which by value would
+// redact ordinary words.
 export function redact(text: string, secrets: readonly string[], limit: number, work?: RedactionWork): string {
   const values = [...new Set(secrets.filter(secret => secret.length >= 8).flatMap(secret => [secret, encodeURIComponent(secret), JSON.stringify(secret).slice(1, -1)]))]
     .sort((a, b) => b.length - a.length);
@@ -124,7 +160,11 @@ export function redact(text: string, secrets: readonly string[], limit: number, 
     if (work) { work.values++; work.textCharacters += byValue.length; }
     byValue = byValue.split(value).join(REDACTED);
   }
-  let window = byValue.length > limit + WINDOW ? byValue.slice(0, limit + WINDOW).replace(/\S*$/, "") : byValue;
+  let window = byValue;
+  if (byValue.length > limit + WINDOW) {
+    const head = byValue.slice(0, limit + WINDOW);
+    window = head.slice(0, 1 + Math.max(...CUTS.map(cut => head.lastIndexOf(cut))));
+  }
   for (const rule of SHAPE_RULES) {
     if (work) { work.rules++; work.windowCharacters += window.length; }
     window = rule(window);
