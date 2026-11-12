@@ -24,8 +24,20 @@ describe("the conduct-circuits registry entry", () => {
     expect(entry!.desc).toContain("every statement field moved by one");
   });
 
-  it("names the opening sources and the process-trace hub they read", () => {
+  it("counts the step classes from classes.json and states what a step leaves assumed, refused and unclaimed", () => {
+    const { steps }: { steps: Record<string, unknown> } = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../circuits/conduct/classes.json"), "utf8"));
+    expect(entry!.desc).toContain(`st_* step circuits (${Object.keys(steps).length} classes)`);
+    const missing = [
+      "a stated prior spend", "verdicts 5 and 7 (non-membership) are refused, never proven",
+      "Prior spend, chain continuity, root authenticity and the K weld to a mandate opening are stated assumptions", "no cumulative or whole-run claim",
+      "count and index gaps pinned", "only circuits with installed pinned parameters",
+    ].filter(phrase => !entry!.desc.includes(phrase));
+    expect(missing).toEqual([]);
+  });
+
+  it("names the opening and bench sources and the process-trace hub they read", () => {
     expect(entry!.paths).toContain("packages/midnight-prover/scripts/conduct");
+    expect(entry!.paths).toContain("packages/midnight-prover/bench/conduct");
     expect(entry!.consumes).toContain("process-trace");
   });
 });

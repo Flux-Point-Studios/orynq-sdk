@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { CLASSES } from "../../scripts/conduct/template.mjs";
 import { loadUnit, runLedger } from "./harness.js";
 import { HONEST_MANDATES, mandateOpeningOf } from "./mandates.js";
-import { honestEvents, openingOf, OPENINGS_UNIT } from "./openings.js";
+import { honestEvents, openingOf, OPENINGS_UNIT, privateInputs } from "./openings.js";
 import { maxStep, runCase, STEP_CLASSES, STEP_FIXTURE, stepMutations, stepOpeningOf, STEPS_UNIT, stepWitnessFunctions, worldOf, type StepWitness, type WitnessRecord } from "./steps.js";
 
 interface Covered { readonly unit: string; readonly circuit: string; readonly witnesses: Readonly<Record<string, StepWitness>>; readonly statement: unknown; readonly table: readonly string[] }
@@ -63,5 +63,15 @@ describe("T-C05 every witness an exported conduct circuit requests has a mutatio
     await runLedger(c.unit, c.circuit, stepWitnessFunctions(c.witnesses, record), [c.statement]);
     expect([...record.read].sort()).toEqual([...c.table].sort());
     expect(Object.keys(c.witnesses).sort()).toEqual([...c.table].sort());
+  });
+
+  // A second read of a witness would be a private input of its own. A step's ZKIR takes one private input per segment
+  // byte and per fixed-width byte (two digests' hex, the id, the ISO time and the event hash's hex), per CBOR argument
+  // byte and commitment byte, 11 for the atoms (five uints, the mode and three digests of two field elements each), 3
+  // for the window and 4 per path level (two flags and a sibling of two field elements).
+  it.each(Object.entries(STEP_CLASSES))("%s: its ZKIR takes exactly the private inputs of its class's witnesses", (circuit, { lengths, cbor, depth }) => {
+    const sum = (values: readonly number[]) => values.reduce((total, n) => total + n, 0);
+    const expected = sum(Object.values(lengths)) + 64 + 64 + 36 + 24 + 64 + sum(Object.values(cbor)) + 32 + 11 + 3 + 4 * (depth ?? 0);
+    expect(privateInputs(STEPS_UNIT, circuit)).toBe(expected);
   });
 });

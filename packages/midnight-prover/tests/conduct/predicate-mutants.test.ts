@@ -7,6 +7,7 @@ import { allCases, checkVerdictArgs, circuitOutcomes, CLAIMS, MAX_U64, slot, typ
 import { loadUnit, outcome, unitDir, zkCheck, type Outcome, type UnitModule } from "./harness.js";
 import { agrees, assertsApplying, atomTruths, orderCases, withoutStacks, type Judged, type Judgement, type OrderCell } from "./order-type.js";
 import { OPENINGS_MUTANTS } from "./openings.js";
+import { STEPS_MUTANTS } from "./steps.js";
 import { auditStructure } from "./structure.js";
 
 const BAND = "a rule skipped in a band between 2^32 and 2^53";
@@ -127,7 +128,7 @@ describe("T-A14 every VerdictCore mutant is killed by a T-A03..T-A10 case or a T
     const ids = (file: string) => mutants.filter(m => m.file === file).map(m => m.id).sort();
     expect(ids("verdict_core.compact")).toEqual([...VERDICT_CORE_MUTANTS, ...EQUIVALENT_MUTANTS].sort());
     expect(ids("predicate.compact")).toEqual([...PREDICATE_MUTANTS, ...HIDDEN_CODE_MUTANTS].sort());
-    expect(mutants.map(m => m.id).sort()).toEqual([...VERDICT_CORE_MUTANTS, ...EQUIVALENT_MUTANTS, ...PREDICATE_MUTANTS, ...HIDDEN_CODE_MUTANTS, ...OPENINGS_MUTANTS].sort());
+    expect(mutants.map(m => m.id).sort()).toEqual([...VERDICT_CORE_MUTANTS, ...EQUIVALENT_MUTANTS, ...PREDICATE_MUTANTS, ...HIDDEN_CODE_MUTANTS, ...OPENINGS_MUTANTS, ...STEPS_MUTANTS].sort());
   });
 
   it.each(VERDICT_CORE_MUTANTS)("kills %s", async id => {
@@ -207,7 +208,7 @@ describe("a mutant that moves messages between asserts compiles to the predicate
 
 describe("AM-6.3: a mutant that passes T-A16 only re-wires audited comparisons, and T-A17 kills it", () => {
   it("exactly the re-wiring mutants of the predicate unit pass T-A16", () => {
-    const predicateMutants = mutants.filter(m => !OPENINGS_MUTANTS.includes(m.id));
+    const predicateMutants = mutants.filter(m => !OPENINGS_MUTANTS.includes(m.id) && !STEPS_MUTANTS.includes(m.id));
     expect(predicateMutants.filter(m => auditStructure(`mutants/${m.id}`).length === 0).map(m => m.id).sort()).toEqual([...REWIRING_MUTANTS].sort());
   });
 
@@ -282,7 +283,7 @@ describe("T-A14 ZKIR leg: every mutant that reaches check_verdict is killed by t
 
   // The cases whose guard_verdict the mutant gets wrong at JS come first; when no named case does, the first such T-A17
   // cell. A predicate.compact mutant leaves the pure circuits as they are, so no JS case can differ.
-  it.each(mutants.map(m => m.id).filter(id => ![...EVALUATE_ONLY_MUTANTS, ...EQUIVALENT_MUTANTS, ...HIDDEN_CODE_MUTANTS, ...MESSAGE_ONLY_MUTANTS, ...REFUSAL_ONLY_MUTANTS, ...OPENINGS_MUTANTS].includes(id)))("kills %s", async id => {
+  it.each(mutants.map(m => m.id).filter(id => ![...EVALUATE_ONLY_MUTANTS, ...EQUIVALENT_MUTANTS, ...HIDDEN_CODE_MUTANTS, ...MESSAGE_ONLY_MUTANTS, ...REFUSAL_ONLY_MUTANTS, ...OPENINGS_MUTANTS, ...STEPS_MUTANTS].includes(id)))("kills %s", async id => {
     const unit = `mutants/${id}`;
     const pure = (await loadUnit(unit)).pureCircuits;
     const jsKills = (c: VerdictCase) => !isDeepStrictEqual(circuitOutcomes(pure, c).guard, c.guard);

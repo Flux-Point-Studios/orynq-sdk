@@ -4,7 +4,7 @@ import { MAX_U64 } from "./cases.js";
 import { fieldVariants, latin1 } from "./openings.js";
 import { chain, mandateAtoms, type RollStatement } from "./statement-checker.js";
 import {
-  acceptedMutations, atomsOf, checkStep, maxStep, rederivedStep, runCase, runStep, STEP_CLASSES, STEP_FIELDS, STEP_FIXTURE, stepMutations, stepOpeningOf, stepOutcome,
+  acceptedMutations, atomsOf, checkStep, maxStep, rederivedStep, refusedByAssert, runCase, runStep, STEP_CLASSES, STEP_FIELDS, STEP_FIXTURE, stepMutations, stepOpeningOf, stepOutcome,
   stepWorld, withClaim, withStepWitness, worldOf, type FixtureCase, type MandateAtoms, type StepOpening, type StepWitness, type StepWorld, type TracedStep,
 } from "./steps.js";
 
@@ -117,7 +117,8 @@ describe("T-C04 every disclosed field and every witness of a step is bound", () 
     let tried = 0;
     const attempt = async (label: string, claim: Record<string, Uint8Array | bigint>) => {
       tried += 1;
-      if (await stepOutcome(withClaim(opening, claim)) === "accepted") accepted.push(label);
+      const result = await stepOutcome(withClaim(opening, claim));
+      if (!refusedByAssert(result)) accepted.push(`${label}: ${result}`);
     };
     for (const field of ["prevRollHex", "rollAfter", "atoms", "windowIndex", "dataSeq", "traceSeq"]) {
       for (const variant of fieldVariants(field, opening.statement[field]!)) await attempt(`${field} = ${String(variant)}`, { [field]: variant });
@@ -162,8 +163,9 @@ describe("T-C04 every disclosed field and every witness of a step is bound", () 
     const unbound: string[] = [];
     for (const [name, mutations] of table) {
       if (!SEGMENT.test(name)) continue;
-      const { value } = mutations[0]!;
-      if (!BINDING.test(await stepOutcome({ ...opening, witnesses: { ...opening.witnesses, [name]: value } }))) unbound.push(name);
+      // A moved hex character can leave the hex class, which its own check refuses first; one of the first moves stays in it.
+      const results = await Promise.all(mutations.slice(0, 4).map(({ value }) => stepOutcome({ ...opening, witnesses: { ...opening.witnesses, [name]: value } })));
+      if (!results.some(result => BINDING.test(result))) unbound.push(name);
     }
     expect(unbound, "segments with no rejection by the hash link").toEqual([]);
   }, 600_000);
@@ -181,6 +183,9 @@ const lies = (o: StepOpening): [string, Partial<StepOpening["context"]>][] => {
     ["the other egress mode", lie({ egressMode: atoms.egressMode ^ 1n })], ["another mandated asset", lie({ assetDigest: Uint8Array.from(atoms.assetDigest, b => b ^ 1) })],
     ["another counterparty root", lie({ counterpartyRoot: Uint8Array.from(atoms.counterpartyRoot, b => b ^ 1) })],
     ["another egress root", lie({ egressRoot: Uint8Array.from(atoms.egressRoot, b => b ^ 1) })],
+    // An expired step reaches another provable verdict only past its expiry and one more rule.
+    ["a validity window to 2^64-1 and another mandated asset", lie({ notAfter: MAX_U64, assetDigest: Uint8Array.from(atoms.assetDigest, b => b ^ 1) })],
+    ["a validity window to 2^64-1 and the other egress mode", lie({ notAfter: MAX_U64, egressMode: atoms.egressMode ^ 1n })],
   ];
 };
 
@@ -193,7 +198,7 @@ describe("T-C04 a step never proves a verdict other than the decision its event 
     for (const [label, context] of lies(opening)) {
       for (let verdict = 0n; verdict < 8n; verdict++) {
         const result = await stepOutcome(rederivedStep(opening, { context }, { verdict }));
-        if (result === "accepted" && verdict !== recorded) accepted.push(`${label}, claiming verdict ${verdict}`);
+        if (result === "accepted" ? verdict !== recorded : !refusedByAssert(result)) accepted.push(`${label}, claiming verdict ${verdict}: ${result}`);
         reasons.add(result);
       }
     }

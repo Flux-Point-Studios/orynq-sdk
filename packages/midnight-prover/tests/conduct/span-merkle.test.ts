@@ -26,7 +26,7 @@ beforeAll(() => {
 
 interface Trace { readonly run: TraceRun; readonly tree: TraceMerkleTree }
 interface SpanOpening {
-  readonly circuit: string; readonly witnesses: Record<string, StepWitness>; readonly statement: { root: Uint8Array };
+  readonly circuit: string; readonly witnesses: Record<string, StepWitness>; readonly statement: { root: Uint8Array } & Record<string, Uint8Array | bigint>;
   readonly spanPreimage: Uint8Array; readonly leaf: Uint8Array;
 }
 
@@ -76,7 +76,9 @@ function opened({ run, tree }: Trace, index: number, siblings = siblingsOf(gener
 
 const run = async (o: SpanOpening) => (await runLedger(UNIT, o.circuit, stepWitnessFunctions(o.witnesses), [o.statement])).spanOpening as { root: Uint8Array };
 const outcome = (o: SpanOpening) => settle(run(o));
-const withRoot = (o: SpanOpening, root: string): SpanOpening => ({ ...o, statement: { root: new Uint8Array(Buffer.from(root, "hex")) } });
+const withRoot = (o: SpanOpening, root: string): SpanOpening => ({ ...o, statement: { ...o.statement, root: new Uint8Array(Buffer.from(root, "hex")) } });
+// A forgery is judged by the circuit's own asserts, never by the generated binding.
+const REFUSED = /^failed assert: (span root mismatch|hex opening)$/;
 const withWitness = (o: SpanOpening, name: string, value: StepWitness): SpanOpening => ({ ...o, witnesses: { ...o.witnesses, [`${o.circuit}_${name}`]: value } });
 const SIZES = Array.from({ length: 17 }, (_, i) => i + 1);
 const traces = new Map<number, Trace>();
@@ -124,7 +126,10 @@ describe("T-C07 option B: a guard event opened against process-trace's existing 
           id: t.run.spans[index]!.id, spanSeq: String(t.run.spans[index]!.spanSeq), startedAt: other.startedAt, endedAt: other.endedAt!, durationMs: "0",
         }, siblings), t.tree.rootHash)]);
       }
-      for (const [label, f] of forged) if (await outcome(withRoot(f, t.tree.rootHash)) === "accepted") accepted.push(`span ${index}: ${label}`);
+      for (const [label, f] of forged) {
+        const result = await outcome(withRoot(f, t.tree.rootHash));
+        if (!REFUSED.test(result)) accepted.push(`span ${index}: ${label}: ${result}`);
+      }
     }
     expect(accepted, "mutation accepted").toEqual([]);
   }, 300_000);

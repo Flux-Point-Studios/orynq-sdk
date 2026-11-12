@@ -15,5 +15,17 @@
       "m_max": { "principalDid": 265, "agentDid": 265, "asset": 128, "capAmount": 8, "windowSeconds": 8, "notBefore": 8, "notAfter": 8, "committeeId": 128, "threshold": 8, "committeeSize": 8 },
       "m_step": { "principalDid": 17, "agentDid": 17, "asset": 3, "capAmount": 0, "windowSeconds": 0, "notBefore": 0, "notAfter": 0, "committeeId": 1, "threshold": 0, "committeeSize": 0 }
     }
+  },
+  "steps": {
+    "st_pa": { "kind": "payment-action", "lengths": { "amount": 1, "asset": 3, "counterparty": 4, "ts": 1, "enforcedAt": 1, "dataSeq": 1, "traceSeq": 1, "vis": 7 }, "cbor": { "amount": 0, "ts": 0 }, "depth": 2 },
+    "st_pd1": { "kind": "payment-denial-1", "lengths": { "amount": 1, "asset": 3, "counterparty": 4, "ts": 1, "enforcedAt": 1, "dataSeq": 1, "traceSeq": 1, "vis": 7 }, "cbor": { "amount": 0, "ts": 0 } },
+    "st_pd2": { "kind": "payment-denial-2", "lengths": { "amount": 1, "asset": 3, "counterparty": 4, "ts": 1, "enforcedAt": 1, "dataSeq": 1, "traceSeq": 1, "vis": 7 }, "cbor": { "amount": 0, "ts": 0 } },
+    "st_pd3": { "kind": "payment-denial-3", "lengths": { "amount": 1, "asset": 3, "counterparty": 4, "ts": 1, "enforcedAt": 1, "dataSeq": 1, "traceSeq": 1, "vis": 7 }, "cbor": { "amount": 0, "ts": 0 } },
+    "st_pd4": { "kind": "payment-denial-4", "lengths": { "amount": 1, "asset": 3, "counterparty": 4, "ts": 1, "enforcedAt": 1, "dataSeq": 1, "traceSeq": 1, "vis": 7 }, "cbor": { "amount": 0, "ts": 0 }, "depth": 2 },
+    "st_ea": { "kind": "egress-action", "lengths": { "destination": 4, "ts": 1, "enforcedAt": 1, "dataSeq": 1, "traceSeq": 1, "vis": 7 }, "cbor": { "ts": 0 }, "depth": 2 },
+    "st_ed1": { "kind": "egress-denial-1", "lengths": { "destination": 4, "ts": 1, "enforcedAt": 1, "dataSeq": 1, "traceSeq": 1, "vis": 7 }, "cbor": { "ts": 0 } },
+    "st_ed2": { "kind": "egress-denial-2", "lengths": { "destination": 4, "ts": 1, "enforcedAt": 1, "dataSeq": 1, "traceSeq": 1, "vis": 7 }, "cbor": { "ts": 0 } },
+    "st_ed6": { "kind": "egress-denial-6", "lengths": { "destination": 4, "ts": 1, "enforcedAt": 1, "dataSeq": 1, "traceSeq": 1, "vis": 7 }, "cbor": { "ts": 0 } },
+    "st_pa_max_d8": { "kind": "payment-action", "lengths": { "amount": 20, "asset": 128, "counterparty": 256, "ts": 20, "enforcedAt": 20, "dataSeq": 20, "traceSeq": 16, "vis": 7 }, "cbor": { "amount": 8, "ts": 8 }, "depth": 8 }
   }
 }

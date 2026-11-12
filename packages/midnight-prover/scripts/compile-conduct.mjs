@@ -1,7 +1,9 @@
 // Compiles the conduct circuits into the gitignored conduct-managed/ and pins their deterministic outputs.
-//   node scripts/compile-conduct.mjs --write|--check [--units predicate,openings,mutants,reference]
+//   node scripts/compile-conduct.mjs --write|--check [--units predicate,openings,steps,mutants,reference]
+//   node scripts/compile-conduct.mjs --write|--check --units bench[:group][,bench:group...]
 // Build-order rule: node builtins and scripts/conduct only, so the script runs from the files the npm package ships,
-// with no workspace build.
+// with no workspace build. The bench groups are opt-in: they read bench/conduct, which the package does not ship, and
+// pin into bench/conduct/pins.json.
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -9,18 +11,25 @@ import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { isDeepStrictEqual, promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { emitOpenings } from "./conduct/template.mjs";
+import { emitOpenings, emitSteps } from "./conduct/template.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const circuits = join(root, "circuits/conduct");
 const reference = join(circuits, "reference");
 const managed = join(root, "conduct-managed");
 const pinsFile = join(circuits, "pins.json");
-const UNITS = ["predicate", "openings", "mutants", "reference"];
+const UNITS = ["predicate", "openings", "steps", "mutants", "reference"];
 // The sources each compiled unit is built from, its entry first.
-const UNIT_SOURCES = { predicate: ["predicate.compact", "verdict_core.compact"], openings: ["openings.generated.compact", "gadgets.compact"] };
+const UNIT_SOURCES = {
+  predicate: ["predicate.compact", "verdict_core.compact"],
+  openings: ["openings.generated.compact", "gadgets.compact"],
+  steps: ["steps.generated.compact", "gadgets.compact", "verdict_core.compact"],
+};
+// The generated entry of each unit that has one.
+const GENERATED = { openings: emitOpenings, steps: emitSteps };
+const BENCH = "bench";
 
-const usage = `usage: compile-conduct.mjs --write|--check [--units ${UNITS.join(",")}]`;
+const usage = `usage: compile-conduct.mjs --write|--check [--units ${UNITS.join(",")} | --units ${BENCH}[:group],...]`;
 let mode;
 let unitList;
 for (const args = process.argv.slice(2); args.length > 0;) {
@@ -32,7 +41,11 @@ for (const args = process.argv.slice(2); args.length > 0;) {
 if (mode === undefined) throw new Error(usage);
 const check = mode === "--check";
 const units = unitList === undefined ? UNITS : [...new Set(unitList.split(","))];
-for (const unit of units) if (!UNITS.includes(unit)) throw new Error(`unknown conduct unit: ${unit}`);
+const isBench = unit => unit === BENCH || unit.startsWith(`${BENCH}:`);
+// The bench groups build and pin apart from the shipped units, so one run takes either kind, never both.
+const bench = units.some(isBench);
+if (bench && !units.every(isBench)) throw new Error("the bench groups build apart from the conduct units: select one or the other");
+if (!bench) for (const unit of units) if (!UNITS.includes(unit)) throw new Error(`unknown conduct unit: ${unit}`);
 const partial = units.length < UNITS.length;
 
 // A committed file's text, or undefined where it does not exist yet; any other read error propagates.
@@ -41,19 +54,24 @@ const readIfPresent = file => readFile(file, "utf8").catch(error => {
   return undefined;
 });
 
-const generatedFile = join(circuits, UNIT_SOURCES.openings[0]);
-const generated = emitOpenings();
-if (!check) await writeFile(generatedFile, generated);
-else if (await readIfPresent(generatedFile) !== generated) throw new Error("generated circuits differ from classes.json; run --write");
+if (!bench) {
+  for (const [unit, emit] of Object.entries(GENERATED)) {
+    const generatedFile = join(circuits, UNIT_SOURCES[unit][0]);
+    const generated = emit();
+    if (!check) await writeFile(generatedFile, generated);
+    else if (await readIfPresent(generatedFile) !== generated) throw new Error("generated circuits differ from classes.json; run --write");
+  }
+}
 
-const unitOf = file => Object.keys(UNIT_SOURCES).find(unit => UNIT_SOURCES[unit].includes(file));
+// The unit a mutant edits: the one it names, or the first whose sources hold its file.
+const unitOf = ({ file, unit }) => (unit === undefined ? Object.keys(UNIT_SOURCES).find(name => UNIT_SOURCES[name].includes(file)) : UNIT_SOURCES[unit]?.includes(file) ? unit : undefined);
 const mutants = JSON.parse(await readFile(join(circuits, "mutants.json"), "utf8"));
 const mutantIds = new Set();
-for (const { id, file, find } of mutants) {
+for (const { id, file, find, unit } of mutants) {
   if (!/^[a-z0-9_]+$/.test(id)) throw new Error(`mutant id ${JSON.stringify(id)} must be lowercase letters, digits and underscores`);
   if (mutantIds.has(id)) throw new Error(`mutant id ${id} is repeated`);
   mutantIds.add(id);
-  if (unitOf(file) === undefined) throw new Error(`mutant ${id} must edit one of ${Object.values(UNIT_SOURCES).flat().join(", ")}`);
+  if (unitOf({ file, unit }) === undefined) throw new Error(`mutant ${id} must edit one of ${Object.values(UNIT_SOURCES).flat().join(", ")}`);
   if ((await readFile(join(circuits, file), "utf8")).split(find).length !== 2) throw new Error(`mutant ${id} does not apply exactly once`);
 }
 
@@ -67,7 +85,9 @@ const committedPins = committed ? JSON.parse(committed) : { sources: {}, units: 
 for (const unit of Object.keys(committedPins.units)) if (!UNITS.includes(unit)) throw new Error(`pins.json names unknown conduct unit: ${unit}`);
 // A pin survives only by being rebuilt: --check never compares a unit against itself, and a partial --write keeps the
 // pins of skipped units only while the sources they were built from are unchanged.
-if (check) {
+if (bench) {
+  // The bench groups pin into their own file, below.
+} else if (check) {
   for (const unit of Object.keys(committedPins.units)) if (!units.includes(unit)) throw new Error(`--check must rebuild every pinned unit: ${unit} is not selected`);
 } else if (partial && committed && !isDeepStrictEqual(committedPins.sources, sources)) {
   throw new Error("sources changed since pins.json was written; run --write without --units");
@@ -194,6 +214,7 @@ async function pinnedUnit(unit) {
 const build = {
   predicate: () => pinnedUnit("predicate"),
   openings: () => pinnedUnit("openings"),
+  steps: () => pinnedUnit("steps"),
   async mutants() {
     await rm(join(managed, "mutants"), { recursive: true, force: true });
     // A mutant keeps its edited sources in source/, which its source map names and the structure audit reads. Only the
@@ -201,7 +222,7 @@ const build = {
     // of their compactc ZKIR.
     await settled(mutants.map(async mutant => {
       const out = join(managed, "mutants", mutant.id);
-      const unit = unitOf(mutant.file);
+      const unit = unitOf(mutant);
       await compileEdited(unit, mutant.file, text => text.replace(mutant.find, () => mutant.replace), join(out, "source"), out);
       if (unit === "predicate") await mockCompile(out);
     }));
@@ -213,16 +234,61 @@ const build = {
   },
 };
 
-const rebuilt = Object.fromEntries(await settled(units.map(async unit => [unit, await build[unit]()])));
-const kept = check || !partial ? {} : committedPins.units;
-const pinnedUnits = {};
-for (const unit of UNITS) {
-  const pins = rebuilt[unit] ?? kept[unit];
-  if (pins) pinnedUnits[unit] = pins;
+// The bench circuits are generated from bench/conduct/bench.json into conduct-managed/bench/<group>/ and never
+// committed. Their k, rows, op histograms and ZKIR hashes pin into bench/conduct/pins.json; a run of some groups holds
+// those groups, the toolchain and the sources to the pins.
+async function buildBench() {
+  const benchDir = join(root, "bench/conduct");
+  const benchPinsFile = join(benchDir, "pins.json");
+  const { emitBench, BENCH_INCLUDES } = await import("./conduct/bench.mjs");
+  const spec = JSON.parse(await readFile(join(benchDir, "bench.json"), "utf8"));
+  const all = Object.keys(spec.groups);
+  const groups = units.includes(BENCH) ? all : units.map(unit => unit.slice(BENCH.length + 1));
+  for (const group of groups) if (!all.includes(group)) throw new Error(`unknown conduct bench group: ${group}`);
+  const benchSources = { ...sources };
+  for (const path of ["bench/conduct/bench.json", "scripts/conduct/bench.mjs", "scripts/conduct/template.mjs"]) benchSources[path] = sha256(await readFile(join(root, path)));
+  const committedBench = (await readIfPresent(benchPinsFile)) ?? "";
+  const pinned = committedBench ? JSON.parse(committedBench) : { sources: {}, groups: {} };
+  for (const group of Object.keys(pinned.groups)) if (!all.includes(group)) throw new Error(`bench/conduct/pins.json names unknown bench group: ${group}`);
+  const whole = groups.length === all.length;
+  if (!check && !whole && committedBench && !isDeepStrictEqual(pinned.sources, benchSources)) {
+    throw new Error("sources changed since bench/conduct/pins.json was written; run --write --units bench");
+  }
+  const built = Object.fromEntries(await settled(groups.map(async group => {
+    const out = join(managed, BENCH, group);
+    await rm(out, { recursive: true, force: true });
+    const sourceDir = join(out, "source");
+    await mkdir(sourceDir, { recursive: true });
+    for (const name of BENCH_INCLUDES) await copyFile(join(circuits, name), join(sourceDir, name));
+    await writeFile(join(sourceDir, `${group}.compact`), emitBench(group, spec.groups[group]));
+    await compile(sourceDir, `${group}.compact`, out);
+    return [group, { circuits: await mockCompile(out) }];
+  })));
+  if (check) {
+    const same = isDeepStrictEqual(pinned.toolchain, toolchain) && isDeepStrictEqual(pinned.sources, benchSources)
+      && (!whole || isDeepStrictEqual(Object.keys(pinned.groups), all)) && groups.every(group => isDeepStrictEqual(pinned.groups[group], built[group]));
+    if (!same) throw new Error("Conduct circuits differ from their pins");
+    return;
+  }
+  const kept = {};
+  for (const group of all) if (built[group] ?? pinned.groups[group]) kept[group] = built[group] ?? pinned.groups[group];
+  await writeFile(benchPinsFile, JSON.stringify({ version: 1, toolchain, sources: benchSources, groups: kept }, null, 2) + "\n");
 }
 
-const encoded = JSON.stringify({ version: 1, toolchain, sources, units: pinnedUnits }, null, 2) + "\n";
-if (check) {
-  if (committed !== encoded) throw new Error("Conduct circuits differ from their pins");
-} else await writeFile(pinsFile, encoded);
+if (bench) {
+  await buildBench();
+} else {
+  const rebuilt = Object.fromEntries(await settled(units.map(async unit => [unit, await build[unit]()])));
+  const kept = check || !partial ? {} : committedPins.units;
+  const pinnedUnits = {};
+  for (const unit of UNITS) {
+    const pins = rebuilt[unit] ?? kept[unit];
+    if (pins) pinnedUnits[unit] = pins;
+  }
+
+  const encoded = JSON.stringify({ version: 1, toolchain, sources, units: pinnedUnits }, null, 2) + "\n";
+  if (check) {
+    if (committed !== encoded) throw new Error("Conduct circuits differ from their pins");
+  } else await writeFile(pinsFile, encoded);
+}
 console.log(check ? "Conduct circuits reproduce their pins" : "Compiled and pinned conduct circuits");

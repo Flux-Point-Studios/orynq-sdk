@@ -43,3 +43,12 @@ export function mandateAtoms(m: MandateV1): Uint8Array {
     Uint8Array.of(Number(m.egressPolicy.mode)), m.counterpartyAllowlistRoot, m.egressPolicy.allowlistRoot,
   ])).digest());
 }
+
+/**
+ * Assumption A4, checked outside the circuit: the step discloses the K of the given mandate opening, so the atoms its
+ * verdict read are those the opening computed from the mandate's own bytes. K commits C, so one K means one mandate.
+ */
+export function weld(step: { readonly atoms?: unknown }, mandate: { readonly atoms?: unknown }): void {
+  if (!(mandate.atoms instanceof Uint8Array) || mandate.atoms.length !== 32) throw new Error("the mandate opening discloses no K");
+  if (!(step.atoms instanceof Uint8Array) || !Buffer.from(step.atoms).equals(Buffer.from(mandate.atoms))) throw new Error("the step's K is not the K of the mandate opening");
+}

@@ -724,5 +724,68 @@
     "file": "gadgets.compact",
     "find": "(W == 4 ? 65536 : 4294967296))), \"cbor uint not minimal\");",
     "replace": "(W == 4 ? 65536 : 4294967296))) || value == 1000, \"cbor uint not minimal\");"
+  },
+  {
+    "id": "step_no_recorded_decision",
+    "file": "steps.generated.compact",
+    "find": "  assert(verdict == 4, \"recorded decision\");\n",
+    "replace": ""
+  },
+  {
+    "id": "step_verdict_unbound",
+    "file": "steps.generated.compact",
+    "find": "  assert(verdict == s.verdict, \"verdict mismatch\");\n  assert(verdict == 6, \"recorded decision\");\n",
+    "replace": "  assert(verdict == 6, \"recorded decision\");\n"
+  },
+  {
+    "id": "step_no_action_digest_link",
+    "file": "steps.generated.compact",
+    "find": "  hexOfHash(actionDigest, persistentHash<[Bytes<30>, Vector<2, Uint<8>>, Bytes<7>, Vector<1, Uint<8>>, Bytes<1>, Vector<4, Uint<8>>, Vector<1, Uint<8>>, Uint<8>]>([\"orynq:conduct:guard:action:v1|\", [163, 0], \"fegress\", [1], \"d\", destination, [2], tsValue as Uint<8>]));\n  const commitment = st_ea_commitment();\n",
+    "replace": "  const commitment = st_ea_commitment();\n"
+  },
+  {
+    "id": "step_no_commitment_link",
+    "file": "steps.generated.compact",
+    "find": "  const commitment = st_pd1_commitment();\n  hexOfBytes(mandateCommitment, commitment);\n",
+    "replace": "  const commitment = st_pd1_commitment();\n"
+  },
+  {
+    "id": "step_window_index_unbound",
+    "file": "steps.generated.compact",
+    "find": "  const window = st_pd2_window();\n  windowOf(tsValue, enforcedAtValue, atoms.windowSeconds, window.q, window.r, window.rClock);\n  assert(window.q == s.windowIndex, \"window index\");\n",
+    "replace": "  const window = st_pd2_window();\n  windowOf(tsValue, enforcedAtValue, atoms.windowSeconds, window.q, window.r, window.rClock);\n"
+  },
+  {
+    "id": "step_asset_unchecked",
+    "file": "steps.generated.compact",
+    "find": "  const assetOk = persistentHash<[Vector<3, Uint<8>>]>([asset]) == atoms.assetDigest;\n  const path = st_pa_path();\n",
+    "replace": "  const assetOk = true;\n  const path = st_pa_path();\n"
+  },
+  {
+    "id": "step_member_unchecked",
+    "file": "steps.generated.compact",
+    "find": "  const path = st_pd4_path();\n  const memberOk = allowlistRoot<2>(persistentHash<[Bytes<33>, Vector<4, Uint<8>>]>([\"orynq:conduct:allowlist:leaf:v1|d\", counterparty]), path) == atoms.counterpartyRoot;\n",
+    "replace": "  const path = st_pd4_path();\n  const memberOk = true;\n"
+  },
+  {
+    "id": "window_remainder_unchecked",
+    "file": "gadgets.compact",
+    "unit": "steps",
+    "find": "assert(r < w && rClock < w, \"window remainder\");",
+    "replace": "assert(r < w, \"window remainder\");"
+  },
+  {
+    "id": "allowlist_inactive_level_free",
+    "file": "gadgets.compact",
+    "unit": "steps",
+    "find": "    assert(step.active || (!step.sibRight && step.sib == pad(32, \"\")), \"allowlist path not canonical\");\n",
+    "replace": ""
+  },
+  {
+    "id": "allowlist_direction_ignored",
+    "file": "gadgets.compact",
+    "unit": "steps",
+    "find": "const left = step.sibRight ? cur : step.sib;\n    const right = step.sibRight ? step.sib : cur;",
+    "replace": "const left = cur;\n    const right = step.sib;"
   }
 ]

@@ -182,7 +182,10 @@ export async function maxStep(offset = 0n): Promise<{ step: TracedStep; world: S
   const world: StepWorld = { mandate, counterparties, egress };
   const action: PaymentAction = { kind: "payment", asset: p.asset, amount: p.amount - offset, counterparty: p.counterparty, timestamp: p.at };
   const enforcedAt = p.at + p.clockLag;
-  const runtime = new MandateGuard({ mandate, counterpartyAllowlist: counterparties, egressAllowlist: egress, history: "fresh", now: () => enforcedAt }).enforce(action);
+  const log = new MemoryGuardLog();
+  const runtime = new MandateGuard({
+    mandate, counterpartyAllowlist: counterparties, egressAllowlist: egress, history: "fresh", now: () => enforcedAt, onEvent: (event, previous) => log.append(event, previous),
+  }).enforce(action);
   const guardEvent: GuardEvent = {
     type: "orynq.conduct.guard.action.v1", seq: 10n ** 19n + 7n, timestamp: action.timestamp, enforcedAt, mandateCommitment: mandateCommitmentHex(mandate),
     actionDigest: actionDigestHex(action), actionKind: "payment", action,
@@ -327,12 +330,19 @@ export function stepMutations(o: StepOpening): Map<string, WitnessMutation[]> {
   return table;
 }
 
-/** The label of every mutation of the table that `unit` accepts. */
+/** Whether an outcome is a refusal by one of the circuit's own asserts, which alone counts as the circuit refusing. */
+export const refusedByAssert = (result: string): boolean => result.startsWith("failed assert: ");
+
+/**
+ * Every mutation of the table that no assert of `unit` refuses, with its outcome: one the circuit accepts, and one
+ * only the generated binding turned away, which would say nothing about the circuit.
+ */
 export async function acceptedMutations(o: StepOpening, table: ReadonlyMap<string, readonly WitnessMutation[]>, unit = STEPS_UNIT): Promise<string[]> {
   const accepted: string[] = [];
   for (const [name, mutations] of table) {
     for (const { label, value } of mutations) {
-      if (await stepOutcome({ ...o, witnesses: { ...o.witnesses, [name]: value } }, unit) === "accepted") accepted.push(label);
+      const result = await stepOutcome({ ...o, witnesses: { ...o.witnesses, [name]: value } }, unit);
+      if (!refusedByAssert(result)) accepted.push(`${label}: ${result}`);
     }
   }
   return accepted;

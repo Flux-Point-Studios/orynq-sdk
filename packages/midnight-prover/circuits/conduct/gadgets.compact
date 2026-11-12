@@ -116,4 +116,36 @@ module ConductGadgets {
   export circuit vis7(v: Vector<7, Uint<8>>): [] {
     assert((v as Bytes<7>) == "private", "visibility");
   }
+
+  // The 32 bytes that 64 lowercase hex digits encode.
+  export circuit hexOfBytes(h: Vector<64, Uint<8>>, b: Vector<32, Uint<8>>): [] {
+    for (const j of 0..32) {
+      assert(nib(h[2 * j]) * 16 + nib(h[2 * j + 1]) == (b[j] as Field), "hex opening");
+    }
+  }
+
+  // One level of a path through the conduct allowlist tree. An active level hashes the node of the current hash and its
+  // sibling; an inactive one passes an odd last node up unchanged, and carries no direction and no sibling.
+  export struct PathStep { active: Boolean, sibRight: Boolean, sib: Bytes<32> }
+
+  export circuit allowlistStep(cur: Bytes<32>, step: PathStep): Bytes<32> {
+    assert(step.active || (!step.sibRight && step.sib == pad(32, "")), "allowlist path not canonical");
+    const left = step.sibRight ? cur : step.sib;
+    const right = step.sibRight ? step.sib : cur;
+    const node = persistentHash<[Bytes<32>, Bytes<32>, Bytes<32>]>(["orynq:conduct:allowlist:node:v1|", left, right]);
+    return step.active ? node : cur;
+  }
+
+  // The root a leaf reaches by its path. There is no index: reaching the root shows membership of a set.
+  export circuit allowlistRoot<#D>(leaf: Bytes<32>, path: Vector<D, PathStep>): Bytes<32> {
+    return fold(allowlistStep, leaf, path);
+  }
+
+  // An action time and its guard clock lie in one spend window of width w: window q, at remainders r and rClock. The
+  // products are taken in the field, where q * w + r stays below 2^129 and cannot wrap.
+  export circuit windowOf(ts: Uint<64>, clock: Uint<64>, w: Uint<64>, q: Uint<64>, r: Uint<64>, rClock: Uint<64>): [] {
+    assert(r < w && rClock < w, "window remainder");
+    assert((q as Field) * (w as Field) + (r as Field) == (ts as Field), "action window");
+    assert((q as Field) * (w as Field) + (rClock as Field) == (clock as Field), "guard clock window");
+  }
 }

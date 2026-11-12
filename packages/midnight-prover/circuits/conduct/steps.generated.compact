@@ -1,0 +1,678 @@
+// Generated from templates/guard-event-v1.json and classes.json by scripts/compile-conduct.mjs --write.
+pragma language_version 0.23;
+import CompactStandardLibrary;
+include "gadgets";
+import ConductGadgets;
+include "verdict_core";
+import ConductVerdict prefix CV_;
+
+export struct ConductStep {
+  prevRollHex: Bytes<64>,
+  rollAfter: Bytes<32>,
+  atoms: Bytes<32>,
+  windowIndex: Uint<64>,
+  priorSpent: Uint<64>,
+  verdict: Uint<8>,
+  dataSeq: Uint<64>,
+  traceSeq: Uint<64>
+}
+export ledger conductStep: ConductStep;
+
+export struct MandateAtoms {
+  notBefore: Uint<64>,
+  notAfter: Uint<64>,
+  assetDigest: Bytes<32>,
+  capAmount: Uint<64>,
+  windowSeconds: Uint<64>,
+  egressMode: Uint<8>,
+  counterpartyRoot: Bytes<32>,
+  egressRoot: Bytes<32>
+}
+
+export struct WindowSplit {
+  q: Uint<64>,
+  r: Uint<64>,
+  rClock: Uint<64>
+}
+
+witness st_pa_amount(): Vector<1, Uint<8>>;
+witness st_pa_asset(): Vector<3, Uint<8>>;
+witness st_pa_counterparty(): Vector<4, Uint<8>>;
+witness st_pa_ts(): Vector<1, Uint<8>>;
+witness st_pa_actionDigest(): Vector<64, Uint<8>>;
+witness st_pa_enforcedAt(): Vector<1, Uint<8>>;
+witness st_pa_mandateCommitment(): Vector<64, Uint<8>>;
+witness st_pa_dataSeq(): Vector<1, Uint<8>>;
+witness st_pa_id(): Vector<36, Uint<8>>;
+witness st_pa_traceSeq(): Vector<1, Uint<8>>;
+witness st_pa_iso(): Vector<24, Uint<8>>;
+witness st_pa_vis(): Vector<7, Uint<8>>;
+witness st_pa_eventHex(): Vector<64, Uint<8>>;
+witness st_pa_commitment(): Vector<32, Uint<8>>;
+witness st_pa_atoms(): MandateAtoms;
+witness st_pa_window(): WindowSplit;
+witness st_pa_path(): Vector<2, PathStep>;
+
+export circuit st_pa(s: ConductStep): [] {
+  const amount = st_pa_amount();
+  const asset = st_pa_asset();
+  const counterparty = st_pa_counterparty();
+  const ts = st_pa_ts();
+  const actionDigest = st_pa_actionDigest();
+  const enforcedAt = st_pa_enforcedAt();
+  const mandateCommitment = st_pa_mandateCommitment();
+  const dataSeq = st_pa_dataSeq();
+  const id = st_pa_id();
+  const traceSeq = st_pa_traceSeq();
+  const iso = st_pa_iso();
+  const vis = st_pa_vis();
+  const eventHash = persistentHash<[Bytes<48>, Vector<1, Uint<8>>, Bytes<11>, Vector<3, Uint<8>>, Bytes<18>, Vector<4, Uint<8>>, Bytes<32>, Vector<1, Uint<8>>, Bytes<19>, Vector<64, Uint<8>>, Bytes<39>, Vector<1, Uint<8>>, Bytes<23>, Vector<64, Uint<8>>, Bytes<9>, Vector<1, Uint<8>>, Bytes<15>, Vector<1, Uint<8>>, Bytes<85>, Vector<36, Uint<8>>, Bytes<24>, Vector<1, Uint<8>>, Bytes<14>, Vector<24, Uint<8>>, Bytes<16>, Vector<7, Uint<8>>, Bytes<2>]>(["poi-trace:event:v1|{\"data\":{\"action\":{\"amount\":\"", amount, "\",\"asset\":\"", asset, "\",\"counterparty\":\"", counterparty, "\",\"kind\":\"payment\",\"timestamp\":\"", ts, "\"},\"actionDigest\":\"", actionDigest, "\",\"actionKind\":\"payment\",\"enforcedAt\":\"", enforcedAt, "\",\"mandateCommitment\":\"", mandateCommitment, "\",\"seq\":\"", dataSeq, "\",\"timestamp\":\"", ts, "\",\"type\":\"orynq.conduct.guard.action.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"", id, "\",\"kind\":\"custom\",\"seq\":", traceSeq, ",\"timestamp\":\"", iso, "\",\"visibility\":\"", vis, "\"}"]);
+  const eventHex = st_pa_eventHex();
+  hexOfHash(eventHex, eventHash);
+  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>(["poi-trace:roll:v1|", s.prevRollHex, "|", eventHex]) == s.rollAfter, "rolling root mismatch");
+  const amountValue = decU64<1>(amount);
+  assert(amountValue != 0, "decimal nonzero");
+  const tsValue = decU64<1>(ts);
+  const enforcedAtValue = decU64<1>(enforcedAt);
+  assert(decU64<1>(dataSeq) == s.dataSeq, "dataSeq opening");
+  assert(dec53<1>(traceSeq) == s.traceSeq, "traceSeq opening");
+  jsonStr<3>(asset);
+  jsonStr<4>(counterparty);
+  uuid(id);
+  iso8601(iso);
+  vis7(vis);
+  assert(amountValue <= 23, "action cbor head");
+  assert(tsValue <= 23, "action cbor head");
+  hexOfHash(actionDigest, persistentHash<[Bytes<30>, Vector<2, Uint<8>>, Bytes<8>, Vector<1, Uint<8>>, Bytes<1>, Vector<3, Uint<8>>, Vector<1, Uint<8>>, Uint<8>, Vector<1, Uint<8>>, Bytes<1>, Vector<4, Uint<8>>, Vector<1, Uint<8>>, Uint<8>]>(["orynq:conduct:guard:action:v1|", [165, 0], "gpayment", [1], "c", asset, [2], amountValue as Uint<8>, [3], "d", counterparty, [4], tsValue as Uint<8>]));
+  const commitment = st_pa_commitment();
+  hexOfBytes(mandateCommitment, commitment);
+  const atoms = st_pa_atoms();
+  assert(persistentHash<[Bytes<32>, Vector<32, Uint<8>>, Uint<64>, Uint<64>, Bytes<32>, Uint<64>, Uint<64>, Uint<8>, Bytes<32>, Bytes<32>]>([pad(32, "orynq:conduct:mandate-atoms:v1"), commitment, atoms.notBefore, atoms.notAfter, atoms.assetDigest, atoms.capAmount, atoms.windowSeconds, atoms.egressMode, atoms.counterpartyRoot, atoms.egressRoot]) == s.atoms, "mandate atoms mismatch");
+  const window = st_pa_window();
+  windowOf(tsValue, enforcedAtValue, atoms.windowSeconds, window.q, window.r, window.rClock);
+  assert(window.q == s.windowIndex, "window index");
+  const assetOk = persistentHash<[Vector<3, Uint<8>>]>([asset]) == atoms.assetDigest;
+  const path = st_pa_path();
+  const memberOk = allowlistRoot<2>(persistentHash<[Bytes<33>, Vector<4, Uint<8>>]>(["orynq:conduct:allowlist:leaf:v1|d", counterparty]), path) == atoms.counterpartyRoot;
+  const verdict = CV_decide(enforcedAtValue, atoms.notBefore, atoms.notAfter, atoms.capAmount, atoms.egressMode, 0, tsValue, amountValue, assetOk, memberOk, s.priorSpent, false);
+  assert(verdict != 5 && verdict != 7, "non-membership not provable");
+  assert(verdict == s.verdict, "verdict mismatch");
+  assert(verdict == 0, "recorded decision");
+  conductStep = disclose(s);
+}
+
+witness st_pd1_amount(): Vector<1, Uint<8>>;
+witness st_pd1_asset(): Vector<3, Uint<8>>;
+witness st_pd1_counterparty(): Vector<4, Uint<8>>;
+witness st_pd1_ts(): Vector<1, Uint<8>>;
+witness st_pd1_actionDigest(): Vector<64, Uint<8>>;
+witness st_pd1_enforcedAt(): Vector<1, Uint<8>>;
+witness st_pd1_mandateCommitment(): Vector<64, Uint<8>>;
+witness st_pd1_dataSeq(): Vector<1, Uint<8>>;
+witness st_pd1_id(): Vector<36, Uint<8>>;
+witness st_pd1_traceSeq(): Vector<1, Uint<8>>;
+witness st_pd1_iso(): Vector<24, Uint<8>>;
+witness st_pd1_vis(): Vector<7, Uint<8>>;
+witness st_pd1_eventHex(): Vector<64, Uint<8>>;
+witness st_pd1_commitment(): Vector<32, Uint<8>>;
+witness st_pd1_atoms(): MandateAtoms;
+witness st_pd1_window(): WindowSplit;
+
+export circuit st_pd1(s: ConductStep): [] {
+  const amount = st_pd1_amount();
+  const asset = st_pd1_asset();
+  const counterparty = st_pd1_counterparty();
+  const ts = st_pd1_ts();
+  const actionDigest = st_pd1_actionDigest();
+  const enforcedAt = st_pd1_enforcedAt();
+  const mandateCommitment = st_pd1_mandateCommitment();
+  const dataSeq = st_pd1_dataSeq();
+  const id = st_pd1_id();
+  const traceSeq = st_pd1_traceSeq();
+  const iso = st_pd1_iso();
+  const vis = st_pd1_vis();
+  const eventHash = persistentHash<[Bytes<48>, Vector<1, Uint<8>>, Bytes<11>, Vector<3, Uint<8>>, Bytes<18>, Vector<4, Uint<8>>, Bytes<32>, Vector<1, Uint<8>>, Bytes<19>, Vector<64, Uint<8>>, Bytes<39>, Vector<1, Uint<8>>, Bytes<23>, Vector<64, Uint<8>>, Bytes<87>, Vector<1, Uint<8>>, Bytes<15>, Vector<1, Uint<8>>, Bytes<85>, Vector<36, Uint<8>>, Bytes<24>, Vector<1, Uint<8>>, Bytes<14>, Vector<24, Uint<8>>, Bytes<16>, Vector<7, Uint<8>>, Bytes<2>]>(["poi-trace:event:v1|{\"data\":{\"action\":{\"amount\":\"", amount, "\",\"asset\":\"", asset, "\",\"counterparty\":\"", counterparty, "\",\"kind\":\"payment\",\"timestamp\":\"", ts, "\"},\"actionDigest\":\"", actionDigest, "\",\"actionKind\":\"payment\",\"enforcedAt\":\"", enforcedAt, "\",\"mandateCommitment\":\"", mandateCommitment, "\",\"reason\":\"MANDATE_NOT_YET_VALID\",\"rule\":\"timestamp precedes mandate validity\",\"seq\":\"", dataSeq, "\",\"timestamp\":\"", ts, "\",\"type\":\"orynq.conduct.guard.denial.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"", id, "\",\"kind\":\"custom\",\"seq\":", traceSeq, ",\"timestamp\":\"", iso, "\",\"visibility\":\"", vis, "\"}"]);
+  const eventHex = st_pd1_eventHex();
+  hexOfHash(eventHex, eventHash);
+  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>(["poi-trace:roll:v1|", s.prevRollHex, "|", eventHex]) == s.rollAfter, "rolling root mismatch");
+  const amountValue = decU64<1>(amount);
+  assert(amountValue != 0, "decimal nonzero");
+  const tsValue = decU64<1>(ts);
+  const enforcedAtValue = decU64<1>(enforcedAt);
+  assert(decU64<1>(dataSeq) == s.dataSeq, "dataSeq opening");
+  assert(dec53<1>(traceSeq) == s.traceSeq, "traceSeq opening");
+  jsonStr<3>(asset);
+  jsonStr<4>(counterparty);
+  uuid(id);
+  iso8601(iso);
+  vis7(vis);
+  assert(amountValue <= 23, "action cbor head");
+  assert(tsValue <= 23, "action cbor head");
+  hexOfHash(actionDigest, persistentHash<[Bytes<30>, Vector<2, Uint<8>>, Bytes<8>, Vector<1, Uint<8>>, Bytes<1>, Vector<3, Uint<8>>, Vector<1, Uint<8>>, Uint<8>, Vector<1, Uint<8>>, Bytes<1>, Vector<4, Uint<8>>, Vector<1, Uint<8>>, Uint<8>]>(["orynq:conduct:guard:action:v1|", [165, 0], "gpayment", [1], "c", asset, [2], amountValue as Uint<8>, [3], "d", counterparty, [4], tsValue as Uint<8>]));
+  const commitment = st_pd1_commitment();
+  hexOfBytes(mandateCommitment, commitment);
+  const atoms = st_pd1_atoms();
+  assert(persistentHash<[Bytes<32>, Vector<32, Uint<8>>, Uint<64>, Uint<64>, Bytes<32>, Uint<64>, Uint<64>, Uint<8>, Bytes<32>, Bytes<32>]>([pad(32, "orynq:conduct:mandate-atoms:v1"), commitment, atoms.notBefore, atoms.notAfter, atoms.assetDigest, atoms.capAmount, atoms.windowSeconds, atoms.egressMode, atoms.counterpartyRoot, atoms.egressRoot]) == s.atoms, "mandate atoms mismatch");
+  const window = st_pd1_window();
+  windowOf(tsValue, enforcedAtValue, atoms.windowSeconds, window.q, window.r, window.rClock);
+  assert(window.q == s.windowIndex, "window index");
+  const assetOk = persistentHash<[Vector<3, Uint<8>>]>([asset]) == atoms.assetDigest;
+  const verdict = CV_decide(enforcedAtValue, atoms.notBefore, atoms.notAfter, atoms.capAmount, atoms.egressMode, 0, tsValue, amountValue, assetOk, false, s.priorSpent, false);
+  assert(verdict != 5 && verdict != 7, "non-membership not provable");
+  assert(verdict == s.verdict, "verdict mismatch");
+  assert(verdict == 1, "recorded decision");
+  conductStep = disclose(s);
+}
+
+witness st_pd2_amount(): Vector<1, Uint<8>>;
+witness st_pd2_asset(): Vector<3, Uint<8>>;
+witness st_pd2_counterparty(): Vector<4, Uint<8>>;
+witness st_pd2_ts(): Vector<1, Uint<8>>;
+witness st_pd2_actionDigest(): Vector<64, Uint<8>>;
+witness st_pd2_enforcedAt(): Vector<1, Uint<8>>;
+witness st_pd2_mandateCommitment(): Vector<64, Uint<8>>;
+witness st_pd2_dataSeq(): Vector<1, Uint<8>>;
+witness st_pd2_id(): Vector<36, Uint<8>>;
+witness st_pd2_traceSeq(): Vector<1, Uint<8>>;
+witness st_pd2_iso(): Vector<24, Uint<8>>;
+witness st_pd2_vis(): Vector<7, Uint<8>>;
+witness st_pd2_eventHex(): Vector<64, Uint<8>>;
+witness st_pd2_commitment(): Vector<32, Uint<8>>;
+witness st_pd2_atoms(): MandateAtoms;
+witness st_pd2_window(): WindowSplit;
+
+export circuit st_pd2(s: ConductStep): [] {
+  const amount = st_pd2_amount();
+  const asset = st_pd2_asset();
+  const counterparty = st_pd2_counterparty();
+  const ts = st_pd2_ts();
+  const actionDigest = st_pd2_actionDigest();
+  const enforcedAt = st_pd2_enforcedAt();
+  const mandateCommitment = st_pd2_mandateCommitment();
+  const dataSeq = st_pd2_dataSeq();
+  const id = st_pd2_id();
+  const traceSeq = st_pd2_traceSeq();
+  const iso = st_pd2_iso();
+  const vis = st_pd2_vis();
+  const eventHash = persistentHash<[Bytes<48>, Vector<1, Uint<8>>, Bytes<11>, Vector<3, Uint<8>>, Bytes<18>, Vector<4, Uint<8>>, Bytes<32>, Vector<1, Uint<8>>, Bytes<19>, Vector<64, Uint<8>>, Bytes<39>, Vector<1, Uint<8>>, Bytes<23>, Vector<64, Uint<8>>, Bytes<89>, Vector<1, Uint<8>>, Bytes<15>, Vector<1, Uint<8>>, Bytes<85>, Vector<36, Uint<8>>, Bytes<24>, Vector<1, Uint<8>>, Bytes<14>, Vector<24, Uint<8>>, Bytes<16>, Vector<7, Uint<8>>, Bytes<2>]>(["poi-trace:event:v1|{\"data\":{\"action\":{\"amount\":\"", amount, "\",\"asset\":\"", asset, "\",\"counterparty\":\"", counterparty, "\",\"kind\":\"payment\",\"timestamp\":\"", ts, "\"},\"actionDigest\":\"", actionDigest, "\",\"actionKind\":\"payment\",\"enforcedAt\":\"", enforcedAt, "\",\"mandateCommitment\":\"", mandateCommitment, "\",\"reason\":\"MANDATE_EXPIRED\",\"rule\":\"timestamp reaches or exceeds mandate expiry\",\"seq\":\"", dataSeq, "\",\"timestamp\":\"", ts, "\",\"type\":\"orynq.conduct.guard.denial.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"", id, "\",\"kind\":\"custom\",\"seq\":", traceSeq, ",\"timestamp\":\"", iso, "\",\"visibility\":\"", vis, "\"}"]);
+  const eventHex = st_pd2_eventHex();
+  hexOfHash(eventHex, eventHash);
+  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>(["poi-trace:roll:v1|", s.prevRollHex, "|", eventHex]) == s.rollAfter, "rolling root mismatch");
+  const amountValue = decU64<1>(amount);
+  assert(amountValue != 0, "decimal nonzero");
+  const tsValue = decU64<1>(ts);
+  const enforcedAtValue = decU64<1>(enforcedAt);
+  assert(decU64<1>(dataSeq) == s.dataSeq, "dataSeq opening");
+  assert(dec53<1>(traceSeq) == s.traceSeq, "traceSeq opening");
+  jsonStr<3>(asset);
+  jsonStr<4>(counterparty);
+  uuid(id);
+  iso8601(iso);
+  vis7(vis);
+  assert(amountValue <= 23, "action cbor head");
+  assert(tsValue <= 23, "action cbor head");
+  hexOfHash(actionDigest, persistentHash<[Bytes<30>, Vector<2, Uint<8>>, Bytes<8>, Vector<1, Uint<8>>, Bytes<1>, Vector<3, Uint<8>>, Vector<1, Uint<8>>, Uint<8>, Vector<1, Uint<8>>, Bytes<1>, Vector<4, Uint<8>>, Vector<1, Uint<8>>, Uint<8>]>(["orynq:conduct:guard:action:v1|", [165, 0], "gpayment", [1], "c", asset, [2], amountValue as Uint<8>, [3], "d", counterparty, [4], tsValue as Uint<8>]));
+  const commitment = st_pd2_commitment();
+  hexOfBytes(mandateCommitment, commitment);
+  const atoms = st_pd2_atoms();
+  assert(persistentHash<[Bytes<32>, Vector<32, Uint<8>>, Uint<64>, Uint<64>, Bytes<32>, Uint<64>, Uint<64>, Uint<8>, Bytes<32>, Bytes<32>]>([pad(32, "orynq:conduct:mandate-atoms:v1"), commitment, atoms.notBefore, atoms.notAfter, atoms.assetDigest, atoms.capAmount, atoms.windowSeconds, atoms.egressMode, atoms.counterpartyRoot, atoms.egressRoot]) == s.atoms, "mandate atoms mismatch");
+  const window = st_pd2_window();
+  windowOf(tsValue, enforcedAtValue, atoms.windowSeconds, window.q, window.r, window.rClock);
+  assert(window.q == s.windowIndex, "window index");
+  const assetOk = persistentHash<[Vector<3, Uint<8>>]>([asset]) == atoms.assetDigest;
+  const verdict = CV_decide(enforcedAtValue, atoms.notBefore, atoms.notAfter, atoms.capAmount, atoms.egressMode, 0, tsValue, amountValue, assetOk, false, s.priorSpent, false);
+  assert(verdict != 5 && verdict != 7, "non-membership not provable");
+  assert(verdict == s.verdict, "verdict mismatch");
+  assert(verdict == 2, "recorded decision");
+  conductStep = disclose(s);
+}
+
+witness st_pd3_amount(): Vector<1, Uint<8>>;
+witness st_pd3_asset(): Vector<3, Uint<8>>;
+witness st_pd3_counterparty(): Vector<4, Uint<8>>;
+witness st_pd3_ts(): Vector<1, Uint<8>>;
+witness st_pd3_actionDigest(): Vector<64, Uint<8>>;
+witness st_pd3_enforcedAt(): Vector<1, Uint<8>>;
+witness st_pd3_mandateCommitment(): Vector<64, Uint<8>>;
+witness st_pd3_dataSeq(): Vector<1, Uint<8>>;
+witness st_pd3_id(): Vector<36, Uint<8>>;
+witness st_pd3_traceSeq(): Vector<1, Uint<8>>;
+witness st_pd3_iso(): Vector<24, Uint<8>>;
+witness st_pd3_vis(): Vector<7, Uint<8>>;
+witness st_pd3_eventHex(): Vector<64, Uint<8>>;
+witness st_pd3_commitment(): Vector<32, Uint<8>>;
+witness st_pd3_atoms(): MandateAtoms;
+witness st_pd3_window(): WindowSplit;
+
+export circuit st_pd3(s: ConductStep): [] {
+  const amount = st_pd3_amount();
+  const asset = st_pd3_asset();
+  const counterparty = st_pd3_counterparty();
+  const ts = st_pd3_ts();
+  const actionDigest = st_pd3_actionDigest();
+  const enforcedAt = st_pd3_enforcedAt();
+  const mandateCommitment = st_pd3_mandateCommitment();
+  const dataSeq = st_pd3_dataSeq();
+  const id = st_pd3_id();
+  const traceSeq = st_pd3_traceSeq();
+  const iso = st_pd3_iso();
+  const vis = st_pd3_vis();
+  const eventHash = persistentHash<[Bytes<48>, Vector<1, Uint<8>>, Bytes<11>, Vector<3, Uint<8>>, Bytes<18>, Vector<4, Uint<8>>, Bytes<32>, Vector<1, Uint<8>>, Bytes<19>, Vector<64, Uint<8>>, Bytes<39>, Vector<1, Uint<8>>, Bytes<23>, Vector<64, Uint<8>>, Bytes<76>, Vector<1, Uint<8>>, Bytes<15>, Vector<1, Uint<8>>, Bytes<85>, Vector<36, Uint<8>>, Bytes<24>, Vector<1, Uint<8>>, Bytes<14>, Vector<24, Uint<8>>, Bytes<16>, Vector<7, Uint<8>>, Bytes<2>]>(["poi-trace:event:v1|{\"data\":{\"action\":{\"amount\":\"", amount, "\",\"asset\":\"", asset, "\",\"counterparty\":\"", counterparty, "\",\"kind\":\"payment\",\"timestamp\":\"", ts, "\"},\"actionDigest\":\"", actionDigest, "\",\"actionKind\":\"payment\",\"enforcedAt\":\"", enforcedAt, "\",\"mandateCommitment\":\"", mandateCommitment, "\",\"reason\":\"ASSET_MISMATCH\",\"rule\":\"asset is not the mandated asset\",\"seq\":\"", dataSeq, "\",\"timestamp\":\"", ts, "\",\"type\":\"orynq.conduct.guard.denial.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"", id, "\",\"kind\":\"custom\",\"seq\":", traceSeq, ",\"timestamp\":\"", iso, "\",\"visibility\":\"", vis, "\"}"]);
+  const eventHex = st_pd3_eventHex();
+  hexOfHash(eventHex, eventHash);
+  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>(["poi-trace:roll:v1|", s.prevRollHex, "|", eventHex]) == s.rollAfter, "rolling root mismatch");
+  const amountValue = decU64<1>(amount);
+  assert(amountValue != 0, "decimal nonzero");
+  const tsValue = decU64<1>(ts);
+  const enforcedAtValue = decU64<1>(enforcedAt);
+  assert(decU64<1>(dataSeq) == s.dataSeq, "dataSeq opening");
+  assert(dec53<1>(traceSeq) == s.traceSeq, "traceSeq opening");
+  jsonStr<3>(asset);
+  jsonStr<4>(counterparty);
+  uuid(id);
+  iso8601(iso);
+  vis7(vis);
+  assert(amountValue <= 23, "action cbor head");
+  assert(tsValue <= 23, "action cbor head");
+  hexOfHash(actionDigest, persistentHash<[Bytes<30>, Vector<2, Uint<8>>, Bytes<8>, Vector<1, Uint<8>>, Bytes<1>, Vector<3, Uint<8>>, Vector<1, Uint<8>>, Uint<8>, Vector<1, Uint<8>>, Bytes<1>, Vector<4, Uint<8>>, Vector<1, Uint<8>>, Uint<8>]>(["orynq:conduct:guard:action:v1|", [165, 0], "gpayment", [1], "c", asset, [2], amountValue as Uint<8>, [3], "d", counterparty, [4], tsValue as Uint<8>]));
+  const commitment = st_pd3_commitment();
+  hexOfBytes(mandateCommitment, commitment);
+  const atoms = st_pd3_atoms();
+  assert(persistentHash<[Bytes<32>, Vector<32, Uint<8>>, Uint<64>, Uint<64>, Bytes<32>, Uint<64>, Uint<64>, Uint<8>, Bytes<32>, Bytes<32>]>([pad(32, "orynq:conduct:mandate-atoms:v1"), commitment, atoms.notBefore, atoms.notAfter, atoms.assetDigest, atoms.capAmount, atoms.windowSeconds, atoms.egressMode, atoms.counterpartyRoot, atoms.egressRoot]) == s.atoms, "mandate atoms mismatch");
+  const window = st_pd3_window();
+  windowOf(tsValue, enforcedAtValue, atoms.windowSeconds, window.q, window.r, window.rClock);
+  assert(window.q == s.windowIndex, "window index");
+  const assetOk = persistentHash<[Vector<3, Uint<8>>]>([asset]) == atoms.assetDigest;
+  const verdict = CV_decide(enforcedAtValue, atoms.notBefore, atoms.notAfter, atoms.capAmount, atoms.egressMode, 0, tsValue, amountValue, assetOk, false, s.priorSpent, false);
+  assert(verdict != 5 && verdict != 7, "non-membership not provable");
+  assert(verdict == s.verdict, "verdict mismatch");
+  assert(verdict == 3, "recorded decision");
+  conductStep = disclose(s);
+}
+
+witness st_pd4_amount(): Vector<1, Uint<8>>;
+witness st_pd4_asset(): Vector<3, Uint<8>>;
+witness st_pd4_counterparty(): Vector<4, Uint<8>>;
+witness st_pd4_ts(): Vector<1, Uint<8>>;
+witness st_pd4_actionDigest(): Vector<64, Uint<8>>;
+witness st_pd4_enforcedAt(): Vector<1, Uint<8>>;
+witness st_pd4_mandateCommitment(): Vector<64, Uint<8>>;
+witness st_pd4_dataSeq(): Vector<1, Uint<8>>;
+witness st_pd4_id(): Vector<36, Uint<8>>;
+witness st_pd4_traceSeq(): Vector<1, Uint<8>>;
+witness st_pd4_iso(): Vector<24, Uint<8>>;
+witness st_pd4_vis(): Vector<7, Uint<8>>;
+witness st_pd4_eventHex(): Vector<64, Uint<8>>;
+witness st_pd4_commitment(): Vector<32, Uint<8>>;
+witness st_pd4_atoms(): MandateAtoms;
+witness st_pd4_window(): WindowSplit;
+witness st_pd4_path(): Vector<2, PathStep>;
+
+export circuit st_pd4(s: ConductStep): [] {
+  const amount = st_pd4_amount();
+  const asset = st_pd4_asset();
+  const counterparty = st_pd4_counterparty();
+  const ts = st_pd4_ts();
+  const actionDigest = st_pd4_actionDigest();
+  const enforcedAt = st_pd4_enforcedAt();
+  const mandateCommitment = st_pd4_mandateCommitment();
+  const dataSeq = st_pd4_dataSeq();
+  const id = st_pd4_id();
+  const traceSeq = st_pd4_traceSeq();
+  const iso = st_pd4_iso();
+  const vis = st_pd4_vis();
+  const eventHash = persistentHash<[Bytes<48>, Vector<1, Uint<8>>, Bytes<11>, Vector<3, Uint<8>>, Bytes<18>, Vector<4, Uint<8>>, Bytes<32>, Vector<1, Uint<8>>, Bytes<19>, Vector<64, Uint<8>>, Bytes<39>, Vector<1, Uint<8>>, Bytes<23>, Vector<64, Uint<8>>, Bytes<95>, Vector<1, Uint<8>>, Bytes<15>, Vector<1, Uint<8>>, Bytes<85>, Vector<36, Uint<8>>, Bytes<24>, Vector<1, Uint<8>>, Bytes<14>, Vector<24, Uint<8>>, Bytes<16>, Vector<7, Uint<8>>, Bytes<2>]>(["poi-trace:event:v1|{\"data\":{\"action\":{\"amount\":\"", amount, "\",\"asset\":\"", asset, "\",\"counterparty\":\"", counterparty, "\",\"kind\":\"payment\",\"timestamp\":\"", ts, "\"},\"actionDigest\":\"", actionDigest, "\",\"actionKind\":\"payment\",\"enforcedAt\":\"", enforcedAt, "\",\"mandateCommitment\":\"", mandateCommitment, "\",\"reason\":\"SPEND_CAP_EXCEEDED\",\"rule\":\"payment exceeds the remaining window spend cap\",\"seq\":\"", dataSeq, "\",\"timestamp\":\"", ts, "\",\"type\":\"orynq.conduct.guard.denial.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"", id, "\",\"kind\":\"custom\",\"seq\":", traceSeq, ",\"timestamp\":\"", iso, "\",\"visibility\":\"", vis, "\"}"]);
+  const eventHex = st_pd4_eventHex();
+  hexOfHash(eventHex, eventHash);
+  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>(["poi-trace:roll:v1|", s.prevRollHex, "|", eventHex]) == s.rollAfter, "rolling root mismatch");
+  const amountValue = decU64<1>(amount);
+  assert(amountValue != 0, "decimal nonzero");
+  const tsValue = decU64<1>(ts);
+  const enforcedAtValue = decU64<1>(enforcedAt);
+  assert(decU64<1>(dataSeq) == s.dataSeq, "dataSeq opening");
+  assert(dec53<1>(traceSeq) == s.traceSeq, "traceSeq opening");
+  jsonStr<3>(asset);
+  jsonStr<4>(counterparty);
+  uuid(id);
+  iso8601(iso);
+  vis7(vis);
+  assert(amountValue <= 23, "action cbor head");
+  assert(tsValue <= 23, "action cbor head");
+  hexOfHash(actionDigest, persistentHash<[Bytes<30>, Vector<2, Uint<8>>, Bytes<8>, Vector<1, Uint<8>>, Bytes<1>, Vector<3, Uint<8>>, Vector<1, Uint<8>>, Uint<8>, Vector<1, Uint<8>>, Bytes<1>, Vector<4, Uint<8>>, Vector<1, Uint<8>>, Uint<8>]>(["orynq:conduct:guard:action:v1|", [165, 0], "gpayment", [1], "c", asset, [2], amountValue as Uint<8>, [3], "d", counterparty, [4], tsValue as Uint<8>]));
+  const commitment = st_pd4_commitment();
+  hexOfBytes(mandateCommitment, commitment);
+  const atoms = st_pd4_atoms();
+  assert(persistentHash<[Bytes<32>, Vector<32, Uint<8>>, Uint<64>, Uint<64>, Bytes<32>, Uint<64>, Uint<64>, Uint<8>, Bytes<32>, Bytes<32>]>([pad(32, "orynq:conduct:mandate-atoms:v1"), commitment, atoms.notBefore, atoms.notAfter, atoms.assetDigest, atoms.capAmount, atoms.windowSeconds, atoms.egressMode, atoms.counterpartyRoot, atoms.egressRoot]) == s.atoms, "mandate atoms mismatch");
+  const window = st_pd4_window();
+  windowOf(tsValue, enforcedAtValue, atoms.windowSeconds, window.q, window.r, window.rClock);
+  assert(window.q == s.windowIndex, "window index");
+  const assetOk = persistentHash<[Vector<3, Uint<8>>]>([asset]) == atoms.assetDigest;
+  const path = st_pd4_path();
+  const memberOk = allowlistRoot<2>(persistentHash<[Bytes<33>, Vector<4, Uint<8>>]>(["orynq:conduct:allowlist:leaf:v1|d", counterparty]), path) == atoms.counterpartyRoot;
+  const verdict = CV_decide(enforcedAtValue, atoms.notBefore, atoms.notAfter, atoms.capAmount, atoms.egressMode, 0, tsValue, amountValue, assetOk, memberOk, s.priorSpent, false);
+  assert(verdict != 5 && verdict != 7, "non-membership not provable");
+  assert(verdict == s.verdict, "verdict mismatch");
+  assert(verdict == 4, "recorded decision");
+  conductStep = disclose(s);
+}
+
+witness st_ea_destination(): Vector<4, Uint<8>>;
+witness st_ea_ts(): Vector<1, Uint<8>>;
+witness st_ea_actionDigest(): Vector<64, Uint<8>>;
+witness st_ea_enforcedAt(): Vector<1, Uint<8>>;
+witness st_ea_mandateCommitment(): Vector<64, Uint<8>>;
+witness st_ea_dataSeq(): Vector<1, Uint<8>>;
+witness st_ea_id(): Vector<36, Uint<8>>;
+witness st_ea_traceSeq(): Vector<1, Uint<8>>;
+witness st_ea_iso(): Vector<24, Uint<8>>;
+witness st_ea_vis(): Vector<7, Uint<8>>;
+witness st_ea_eventHex(): Vector<64, Uint<8>>;
+witness st_ea_commitment(): Vector<32, Uint<8>>;
+witness st_ea_atoms(): MandateAtoms;
+witness st_ea_window(): WindowSplit;
+witness st_ea_path(): Vector<2, PathStep>;
+
+export circuit st_ea(s: ConductStep): [] {
+  const destination = st_ea_destination();
+  const ts = st_ea_ts();
+  const actionDigest = st_ea_actionDigest();
+  const enforcedAt = st_ea_enforcedAt();
+  const mandateCommitment = st_ea_mandateCommitment();
+  const dataSeq = st_ea_dataSeq();
+  const id = st_ea_id();
+  const traceSeq = st_ea_traceSeq();
+  const iso = st_ea_iso();
+  const vis = st_ea_vis();
+  const eventHash = persistentHash<[Bytes<53>, Vector<4, Uint<8>>, Bytes<31>, Vector<1, Uint<8>>, Bytes<19>, Vector<64, Uint<8>>, Bytes<38>, Vector<1, Uint<8>>, Bytes<23>, Vector<64, Uint<8>>, Bytes<9>, Vector<1, Uint<8>>, Bytes<15>, Vector<1, Uint<8>>, Bytes<85>, Vector<36, Uint<8>>, Bytes<24>, Vector<1, Uint<8>>, Bytes<14>, Vector<24, Uint<8>>, Bytes<16>, Vector<7, Uint<8>>, Bytes<2>]>(["poi-trace:event:v1|{\"data\":{\"action\":{\"destination\":\"", destination, "\",\"kind\":\"egress\",\"timestamp\":\"", ts, "\"},\"actionDigest\":\"", actionDigest, "\",\"actionKind\":\"egress\",\"enforcedAt\":\"", enforcedAt, "\",\"mandateCommitment\":\"", mandateCommitment, "\",\"seq\":\"", dataSeq, "\",\"timestamp\":\"", ts, "\",\"type\":\"orynq.conduct.guard.action.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"", id, "\",\"kind\":\"custom\",\"seq\":", traceSeq, ",\"timestamp\":\"", iso, "\",\"visibility\":\"", vis, "\"}"]);
+  const eventHex = st_ea_eventHex();
+  hexOfHash(eventHex, eventHash);
+  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>(["poi-trace:roll:v1|", s.prevRollHex, "|", eventHex]) == s.rollAfter, "rolling root mismatch");
+  const tsValue = decU64<1>(ts);
+  const enforcedAtValue = decU64<1>(enforcedAt);
+  assert(decU64<1>(dataSeq) == s.dataSeq, "dataSeq opening");
+  assert(dec53<1>(traceSeq) == s.traceSeq, "traceSeq opening");
+  jsonStr<4>(destination);
+  uuid(id);
+  iso8601(iso);
+  vis7(vis);
+  assert(tsValue <= 23, "action cbor head");
+  hexOfHash(actionDigest, persistentHash<[Bytes<30>, Vector<2, Uint<8>>, Bytes<7>, Vector<1, Uint<8>>, Bytes<1>, Vector<4, Uint<8>>, Vector<1, Uint<8>>, Uint<8>]>(["orynq:conduct:guard:action:v1|", [163, 0], "fegress", [1], "d", destination, [2], tsValue as Uint<8>]));
+  const commitment = st_ea_commitment();
+  hexOfBytes(mandateCommitment, commitment);
+  const atoms = st_ea_atoms();
+  assert(persistentHash<[Bytes<32>, Vector<32, Uint<8>>, Uint<64>, Uint<64>, Bytes<32>, Uint<64>, Uint<64>, Uint<8>, Bytes<32>, Bytes<32>]>([pad(32, "orynq:conduct:mandate-atoms:v1"), commitment, atoms.notBefore, atoms.notAfter, atoms.assetDigest, atoms.capAmount, atoms.windowSeconds, atoms.egressMode, atoms.counterpartyRoot, atoms.egressRoot]) == s.atoms, "mandate atoms mismatch");
+  const window = st_ea_window();
+  windowOf(tsValue, enforcedAtValue, atoms.windowSeconds, window.q, window.r, window.rClock);
+  assert(window.q == s.windowIndex, "window index");
+  const path = st_ea_path();
+  const memberOk = allowlistRoot<2>(persistentHash<[Bytes<33>, Vector<4, Uint<8>>]>(["orynq:conduct:allowlist:leaf:v1|d", destination]), path) == atoms.egressRoot;
+  const verdict = CV_decide(enforcedAtValue, atoms.notBefore, atoms.notAfter, atoms.capAmount, atoms.egressMode, 1, tsValue, 0, false, false, s.priorSpent, memberOk);
+  assert(verdict != 5 && verdict != 7, "non-membership not provable");
+  assert(verdict == s.verdict, "verdict mismatch");
+  assert(verdict == 0, "recorded decision");
+  conductStep = disclose(s);
+}
+
+witness st_ed1_destination(): Vector<4, Uint<8>>;
+witness st_ed1_ts(): Vector<1, Uint<8>>;
+witness st_ed1_actionDigest(): Vector<64, Uint<8>>;
+witness st_ed1_enforcedAt(): Vector<1, Uint<8>>;
+witness st_ed1_mandateCommitment(): Vector<64, Uint<8>>;
+witness st_ed1_dataSeq(): Vector<1, Uint<8>>;
+witness st_ed1_id(): Vector<36, Uint<8>>;
+witness st_ed1_traceSeq(): Vector<1, Uint<8>>;
+witness st_ed1_iso(): Vector<24, Uint<8>>;
+witness st_ed1_vis(): Vector<7, Uint<8>>;
+witness st_ed1_eventHex(): Vector<64, Uint<8>>;
+witness st_ed1_commitment(): Vector<32, Uint<8>>;
+witness st_ed1_atoms(): MandateAtoms;
+witness st_ed1_window(): WindowSplit;
+
+export circuit st_ed1(s: ConductStep): [] {
+  const destination = st_ed1_destination();
+  const ts = st_ed1_ts();
+  const actionDigest = st_ed1_actionDigest();
+  const enforcedAt = st_ed1_enforcedAt();
+  const mandateCommitment = st_ed1_mandateCommitment();
+  const dataSeq = st_ed1_dataSeq();
+  const id = st_ed1_id();
+  const traceSeq = st_ed1_traceSeq();
+  const iso = st_ed1_iso();
+  const vis = st_ed1_vis();
+  const eventHash = persistentHash<[Bytes<53>, Vector<4, Uint<8>>, Bytes<31>, Vector<1, Uint<8>>, Bytes<19>, Vector<64, Uint<8>>, Bytes<38>, Vector<1, Uint<8>>, Bytes<23>, Vector<64, Uint<8>>, Bytes<87>, Vector<1, Uint<8>>, Bytes<15>, Vector<1, Uint<8>>, Bytes<85>, Vector<36, Uint<8>>, Bytes<24>, Vector<1, Uint<8>>, Bytes<14>, Vector<24, Uint<8>>, Bytes<16>, Vector<7, Uint<8>>, Bytes<2>]>(["poi-trace:event:v1|{\"data\":{\"action\":{\"destination\":\"", destination, "\",\"kind\":\"egress\",\"timestamp\":\"", ts, "\"},\"actionDigest\":\"", actionDigest, "\",\"actionKind\":\"egress\",\"enforcedAt\":\"", enforcedAt, "\",\"mandateCommitment\":\"", mandateCommitment, "\",\"reason\":\"MANDATE_NOT_YET_VALID\",\"rule\":\"timestamp precedes mandate validity\",\"seq\":\"", dataSeq, "\",\"timestamp\":\"", ts, "\",\"type\":\"orynq.conduct.guard.denial.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"", id, "\",\"kind\":\"custom\",\"seq\":", traceSeq, ",\"timestamp\":\"", iso, "\",\"visibility\":\"", vis, "\"}"]);
+  const eventHex = st_ed1_eventHex();
+  hexOfHash(eventHex, eventHash);
+  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>(["poi-trace:roll:v1|", s.prevRollHex, "|", eventHex]) == s.rollAfter, "rolling root mismatch");
+  const tsValue = decU64<1>(ts);
+  const enforcedAtValue = decU64<1>(enforcedAt);
+  assert(decU64<1>(dataSeq) == s.dataSeq, "dataSeq opening");
+  assert(dec53<1>(traceSeq) == s.traceSeq, "traceSeq opening");
+  jsonStr<4>(destination);
+  uuid(id);
+  iso8601(iso);
+  vis7(vis);
+  assert(tsValue <= 23, "action cbor head");
+  hexOfHash(actionDigest, persistentHash<[Bytes<30>, Vector<2, Uint<8>>, Bytes<7>, Vector<1, Uint<8>>, Bytes<1>, Vector<4, Uint<8>>, Vector<1, Uint<8>>, Uint<8>]>(["orynq:conduct:guard:action:v1|", [163, 0], "fegress", [1], "d", destination, [2], tsValue as Uint<8>]));
+  const commitment = st_ed1_commitment();
+  hexOfBytes(mandateCommitment, commitment);
+  const atoms = st_ed1_atoms();
+  assert(persistentHash<[Bytes<32>, Vector<32, Uint<8>>, Uint<64>, Uint<64>, Bytes<32>, Uint<64>, Uint<64>, Uint<8>, Bytes<32>, Bytes<32>]>([pad(32, "orynq:conduct:mandate-atoms:v1"), commitment, atoms.notBefore, atoms.notAfter, atoms.assetDigest, atoms.capAmount, atoms.windowSeconds, atoms.egressMode, atoms.counterpartyRoot, atoms.egressRoot]) == s.atoms, "mandate atoms mismatch");
+  const window = st_ed1_window();
+  windowOf(tsValue, enforcedAtValue, atoms.windowSeconds, window.q, window.r, window.rClock);
+  assert(window.q == s.windowIndex, "window index");
+  const verdict = CV_decide(enforcedAtValue, atoms.notBefore, atoms.notAfter, atoms.capAmount, atoms.egressMode, 1, tsValue, 0, false, false, s.priorSpent, false);
+  assert(verdict != 5 && verdict != 7, "non-membership not provable");
+  assert(verdict == s.verdict, "verdict mismatch");
+  assert(verdict == 1, "recorded decision");
+  conductStep = disclose(s);
+}
+
+witness st_ed2_destination(): Vector<4, Uint<8>>;
+witness st_ed2_ts(): Vector<1, Uint<8>>;
+witness st_ed2_actionDigest(): Vector<64, Uint<8>>;
+witness st_ed2_enforcedAt(): Vector<1, Uint<8>>;
+witness st_ed2_mandateCommitment(): Vector<64, Uint<8>>;
+witness st_ed2_dataSeq(): Vector<1, Uint<8>>;
+witness st_ed2_id(): Vector<36, Uint<8>>;
+witness st_ed2_traceSeq(): Vector<1, Uint<8>>;
+witness st_ed2_iso(): Vector<24, Uint<8>>;
+witness st_ed2_vis(): Vector<7, Uint<8>>;
+witness st_ed2_eventHex(): Vector<64, Uint<8>>;
+witness st_ed2_commitment(): Vector<32, Uint<8>>;
+witness st_ed2_atoms(): MandateAtoms;
+witness st_ed2_window(): WindowSplit;
+
+export circuit st_ed2(s: ConductStep): [] {
+  const destination = st_ed2_destination();
+  const ts = st_ed2_ts();
+  const actionDigest = st_ed2_actionDigest();
+  const enforcedAt = st_ed2_enforcedAt();
+  const mandateCommitment = st_ed2_mandateCommitment();
+  const dataSeq = st_ed2_dataSeq();
+  const id = st_ed2_id();
+  const traceSeq = st_ed2_traceSeq();
+  const iso = st_ed2_iso();
+  const vis = st_ed2_vis();
+  const eventHash = persistentHash<[Bytes<53>, Vector<4, Uint<8>>, Bytes<31>, Vector<1, Uint<8>>, Bytes<19>, Vector<64, Uint<8>>, Bytes<38>, Vector<1, Uint<8>>, Bytes<23>, Vector<64, Uint<8>>, Bytes<89>, Vector<1, Uint<8>>, Bytes<15>, Vector<1, Uint<8>>, Bytes<85>, Vector<36, Uint<8>>, Bytes<24>, Vector<1, Uint<8>>, Bytes<14>, Vector<24, Uint<8>>, Bytes<16>, Vector<7, Uint<8>>, Bytes<2>]>(["poi-trace:event:v1|{\"data\":{\"action\":{\"destination\":\"", destination, "\",\"kind\":\"egress\",\"timestamp\":\"", ts, "\"},\"actionDigest\":\"", actionDigest, "\",\"actionKind\":\"egress\",\"enforcedAt\":\"", enforcedAt, "\",\"mandateCommitment\":\"", mandateCommitment, "\",\"reason\":\"MANDATE_EXPIRED\",\"rule\":\"timestamp reaches or exceeds mandate expiry\",\"seq\":\"", dataSeq, "\",\"timestamp\":\"", ts, "\",\"type\":\"orynq.conduct.guard.denial.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"", id, "\",\"kind\":\"custom\",\"seq\":", traceSeq, ",\"timestamp\":\"", iso, "\",\"visibility\":\"", vis, "\"}"]);
+  const eventHex = st_ed2_eventHex();
+  hexOfHash(eventHex, eventHash);
+  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>(["poi-trace:roll:v1|", s.prevRollHex, "|", eventHex]) == s.rollAfter, "rolling root mismatch");
+  const tsValue = decU64<1>(ts);
+  const enforcedAtValue = decU64<1>(enforcedAt);
+  assert(decU64<1>(dataSeq) == s.dataSeq, "dataSeq opening");
+  assert(dec53<1>(traceSeq) == s.traceSeq, "traceSeq opening");
+  jsonStr<4>(destination);
+  uuid(id);
+  iso8601(iso);
+  vis7(vis);
+  assert(tsValue <= 23, "action cbor head");
+  hexOfHash(actionDigest, persistentHash<[Bytes<30>, Vector<2, Uint<8>>, Bytes<7>, Vector<1, Uint<8>>, Bytes<1>, Vector<4, Uint<8>>, Vector<1, Uint<8>>, Uint<8>]>(["orynq:conduct:guard:action:v1|", [163, 0], "fegress", [1], "d", destination, [2], tsValue as Uint<8>]));
+  const commitment = st_ed2_commitment();
+  hexOfBytes(mandateCommitment, commitment);
+  const atoms = st_ed2_atoms();
+  assert(persistentHash<[Bytes<32>, Vector<32, Uint<8>>, Uint<64>, Uint<64>, Bytes<32>, Uint<64>, Uint<64>, Uint<8>, Bytes<32>, Bytes<32>]>([pad(32, "orynq:conduct:mandate-atoms:v1"), commitment, atoms.notBefore, atoms.notAfter, atoms.assetDigest, atoms.capAmount, atoms.windowSeconds, atoms.egressMode, atoms.counterpartyRoot, atoms.egressRoot]) == s.atoms, "mandate atoms mismatch");
+  const window = st_ed2_window();
+  windowOf(tsValue, enforcedAtValue, atoms.windowSeconds, window.q, window.r, window.rClock);
+  assert(window.q == s.windowIndex, "window index");
+  const verdict = CV_decide(enforcedAtValue, atoms.notBefore, atoms.notAfter, atoms.capAmount, atoms.egressMode, 1, tsValue, 0, false, false, s.priorSpent, false);
+  assert(verdict != 5 && verdict != 7, "non-membership not provable");
+  assert(verdict == s.verdict, "verdict mismatch");
+  assert(verdict == 2, "recorded decision");
+  conductStep = disclose(s);
+}
+
+witness st_ed6_destination(): Vector<4, Uint<8>>;
+witness st_ed6_ts(): Vector<1, Uint<8>>;
+witness st_ed6_actionDigest(): Vector<64, Uint<8>>;
+witness st_ed6_enforcedAt(): Vector<1, Uint<8>>;
+witness st_ed6_mandateCommitment(): Vector<64, Uint<8>>;
+witness st_ed6_dataSeq(): Vector<1, Uint<8>>;
+witness st_ed6_id(): Vector<36, Uint<8>>;
+witness st_ed6_traceSeq(): Vector<1, Uint<8>>;
+witness st_ed6_iso(): Vector<24, Uint<8>>;
+witness st_ed6_vis(): Vector<7, Uint<8>>;
+witness st_ed6_eventHex(): Vector<64, Uint<8>>;
+witness st_ed6_commitment(): Vector<32, Uint<8>>;
+witness st_ed6_atoms(): MandateAtoms;
+witness st_ed6_window(): WindowSplit;
+
+export circuit st_ed6(s: ConductStep): [] {
+  const destination = st_ed6_destination();
+  const ts = st_ed6_ts();
+  const actionDigest = st_ed6_actionDigest();
+  const enforcedAt = st_ed6_enforcedAt();
+  const mandateCommitment = st_ed6_mandateCommitment();
+  const dataSeq = st_ed6_dataSeq();
+  const id = st_ed6_id();
+  const traceSeq = st_ed6_traceSeq();
+  const iso = st_ed6_iso();
+  const vis = st_ed6_vis();
+  const eventHash = persistentHash<[Bytes<53>, Vector<4, Uint<8>>, Bytes<31>, Vector<1, Uint<8>>, Bytes<19>, Vector<64, Uint<8>>, Bytes<38>, Vector<1, Uint<8>>, Bytes<23>, Vector<64, Uint<8>>, Bytes<77>, Vector<1, Uint<8>>, Bytes<15>, Vector<1, Uint<8>>, Bytes<85>, Vector<36, Uint<8>>, Bytes<24>, Vector<1, Uint<8>>, Bytes<14>, Vector<24, Uint<8>>, Bytes<16>, Vector<7, Uint<8>>, Bytes<2>]>(["poi-trace:event:v1|{\"data\":{\"action\":{\"destination\":\"", destination, "\",\"kind\":\"egress\",\"timestamp\":\"", ts, "\"},\"actionDigest\":\"", actionDigest, "\",\"actionKind\":\"egress\",\"enforcedAt\":\"", enforcedAt, "\",\"mandateCommitment\":\"", mandateCommitment, "\",\"reason\":\"EGRESS_DENIED\",\"rule\":\"mandate egress policy is deny-all\",\"seq\":\"", dataSeq, "\",\"timestamp\":\"", ts, "\",\"type\":\"orynq.conduct.guard.denial.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"", id, "\",\"kind\":\"custom\",\"seq\":", traceSeq, ",\"timestamp\":\"", iso, "\",\"visibility\":\"", vis, "\"}"]);
+  const eventHex = st_ed6_eventHex();
+  hexOfHash(eventHex, eventHash);
+  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>(["poi-trace:roll:v1|", s.prevRollHex, "|", eventHex]) == s.rollAfter, "rolling root mismatch");
+  const tsValue = decU64<1>(ts);
+  const enforcedAtValue = decU64<1>(enforcedAt);
+  assert(decU64<1>(dataSeq) == s.dataSeq, "dataSeq opening");
+  assert(dec53<1>(traceSeq) == s.traceSeq, "traceSeq opening");
+  jsonStr<4>(destination);
+  uuid(id);
+  iso8601(iso);
+  vis7(vis);
+  assert(tsValue <= 23, "action cbor head");
+  hexOfHash(actionDigest, persistentHash<[Bytes<30>, Vector<2, Uint<8>>, Bytes<7>, Vector<1, Uint<8>>, Bytes<1>, Vector<4, Uint<8>>, Vector<1, Uint<8>>, Uint<8>]>(["orynq:conduct:guard:action:v1|", [163, 0], "fegress", [1], "d", destination, [2], tsValue as Uint<8>]));
+  const commitment = st_ed6_commitment();
+  hexOfBytes(mandateCommitment, commitment);
+  const atoms = st_ed6_atoms();
+  assert(persistentHash<[Bytes<32>, Vector<32, Uint<8>>, Uint<64>, Uint<64>, Bytes<32>, Uint<64>, Uint<64>, Uint<8>, Bytes<32>, Bytes<32>]>([pad(32, "orynq:conduct:mandate-atoms:v1"), commitment, atoms.notBefore, atoms.notAfter, atoms.assetDigest, atoms.capAmount, atoms.windowSeconds, atoms.egressMode, atoms.counterpartyRoot, atoms.egressRoot]) == s.atoms, "mandate atoms mismatch");
+  const window = st_ed6_window();
+  windowOf(tsValue, enforcedAtValue, atoms.windowSeconds, window.q, window.r, window.rClock);
+  assert(window.q == s.windowIndex, "window index");
+  const verdict = CV_decide(enforcedAtValue, atoms.notBefore, atoms.notAfter, atoms.capAmount, atoms.egressMode, 1, tsValue, 0, false, false, s.priorSpent, false);
+  assert(verdict != 5 && verdict != 7, "non-membership not provable");
+  assert(verdict == s.verdict, "verdict mismatch");
+  assert(verdict == 6, "recorded decision");
+  conductStep = disclose(s);
+}
+
+witness st_pa_max_d8_amount(): Vector<20, Uint<8>>;
+witness st_pa_max_d8_asset(): Vector<128, Uint<8>>;
+witness st_pa_max_d8_counterparty(): Vector<256, Uint<8>>;
+witness st_pa_max_d8_ts(): Vector<20, Uint<8>>;
+witness st_pa_max_d8_actionDigest(): Vector<64, Uint<8>>;
+witness st_pa_max_d8_enforcedAt(): Vector<20, Uint<8>>;
+witness st_pa_max_d8_mandateCommitment(): Vector<64, Uint<8>>;
+witness st_pa_max_d8_dataSeq(): Vector<20, Uint<8>>;
+witness st_pa_max_d8_id(): Vector<36, Uint<8>>;
+witness st_pa_max_d8_traceSeq(): Vector<16, Uint<8>>;
+witness st_pa_max_d8_iso(): Vector<24, Uint<8>>;
+witness st_pa_max_d8_vis(): Vector<7, Uint<8>>;
+witness st_pa_max_d8_eventHex(): Vector<64, Uint<8>>;
+witness st_pa_max_d8_amountCbor(): Vector<8, Uint<8>>;
+witness st_pa_max_d8_tsCbor(): Vector<8, Uint<8>>;
+witness st_pa_max_d8_commitment(): Vector<32, Uint<8>>;
+witness st_pa_max_d8_atoms(): MandateAtoms;
+witness st_pa_max_d8_window(): WindowSplit;
+witness st_pa_max_d8_path(): Vector<8, PathStep>;
+
+export circuit st_pa_max_d8(s: ConductStep): [] {
+  const amount = st_pa_max_d8_amount();
+  const asset = st_pa_max_d8_asset();
+  const counterparty = st_pa_max_d8_counterparty();
+  const ts = st_pa_max_d8_ts();
+  const actionDigest = st_pa_max_d8_actionDigest();
+  const enforcedAt = st_pa_max_d8_enforcedAt();
+  const mandateCommitment = st_pa_max_d8_mandateCommitment();
+  const dataSeq = st_pa_max_d8_dataSeq();
+  const id = st_pa_max_d8_id();
+  const traceSeq = st_pa_max_d8_traceSeq();
+  const iso = st_pa_max_d8_iso();
+  const vis = st_pa_max_d8_vis();
+  const eventHash = persistentHash<[Bytes<48>, Vector<20, Uint<8>>, Bytes<11>, Vector<128, Uint<8>>, Bytes<18>, Vector<256, Uint<8>>, Bytes<32>, Vector<20, Uint<8>>, Bytes<19>, Vector<64, Uint<8>>, Bytes<39>, Vector<20, Uint<8>>, Bytes<23>, Vector<64, Uint<8>>, Bytes<9>, Vector<20, Uint<8>>, Bytes<15>, Vector<20, Uint<8>>, Bytes<85>, Vector<36, Uint<8>>, Bytes<24>, Vector<16, Uint<8>>, Bytes<14>, Vector<24, Uint<8>>, Bytes<16>, Vector<7, Uint<8>>, Bytes<2>]>(["poi-trace:event:v1|{\"data\":{\"action\":{\"amount\":\"", amount, "\",\"asset\":\"", asset, "\",\"counterparty\":\"", counterparty, "\",\"kind\":\"payment\",\"timestamp\":\"", ts, "\"},\"actionDigest\":\"", actionDigest, "\",\"actionKind\":\"payment\",\"enforcedAt\":\"", enforcedAt, "\",\"mandateCommitment\":\"", mandateCommitment, "\",\"seq\":\"", dataSeq, "\",\"timestamp\":\"", ts, "\",\"type\":\"orynq.conduct.guard.action.v1\"},\"eventType\":\"orynq.conduct.guard.v1\",\"id\":\"", id, "\",\"kind\":\"custom\",\"seq\":", traceSeq, ",\"timestamp\":\"", iso, "\",\"visibility\":\"", vis, "\"}"]);
+  const eventHex = st_pa_max_d8_eventHex();
+  hexOfHash(eventHex, eventHash);
+  assert(persistentHash<[Bytes<18>, Bytes<64>, Bytes<1>, Vector<64, Uint<8>>]>(["poi-trace:roll:v1|", s.prevRollHex, "|", eventHex]) == s.rollAfter, "rolling root mismatch");
+  const amountValue = decU64<20>(amount);
+  assert(amountValue != 0, "decimal nonzero");
+  const tsValue = decU64<20>(ts);
+  const enforcedAtValue = decU64<20>(enforcedAt);
+  assert(decU64<20>(dataSeq) == s.dataSeq, "dataSeq opening");
+  assert(dec53<16>(traceSeq) == s.traceSeq, "traceSeq opening");
+  jsonStr<128>(asset);
+  jsonStr<256>(counterparty);
+  uuid(id);
+  iso8601(iso);
+  vis7(vis);
+  const amountCbor = st_pa_max_d8_amountCbor();
+  assert(cborUint<8>(amountCbor) == amountValue, "action cbor uint");
+  const tsCbor = st_pa_max_d8_tsCbor();
+  assert(cborUint<8>(tsCbor) == tsValue, "action cbor uint");
+  hexOfHash(actionDigest, persistentHash<[Bytes<30>, Vector<2, Uint<8>>, Bytes<8>, Vector<1, Uint<8>>, Bytes<1>, Vector<1, Uint<8>>, Vector<128, Uint<8>>, Vector<2, Uint<8>>, Vector<8, Uint<8>>, Vector<1, Uint<8>>, Bytes<1>, Vector<2, Uint<8>>, Vector<256, Uint<8>>, Vector<2, Uint<8>>, Vector<8, Uint<8>>]>(["orynq:conduct:guard:action:v1|", [165, 0], "gpayment", [1], "x", [128], asset, [2, 27], amountCbor, [3], "y", [1, 0], counterparty, [4, 27], tsCbor]));
+  const commitment = st_pa_max_d8_commitment();
+  hexOfBytes(mandateCommitment, commitment);
+  const atoms = st_pa_max_d8_atoms();
+  assert(persistentHash<[Bytes<32>, Vector<32, Uint<8>>, Uint<64>, Uint<64>, Bytes<32>, Uint<64>, Uint<64>, Uint<8>, Bytes<32>, Bytes<32>]>([pad(32, "orynq:conduct:mandate-atoms:v1"), commitment, atoms.notBefore, atoms.notAfter, atoms.assetDigest, atoms.capAmount, atoms.windowSeconds, atoms.egressMode, atoms.counterpartyRoot, atoms.egressRoot]) == s.atoms, "mandate atoms mismatch");
+  const window = st_pa_max_d8_window();
+  windowOf(tsValue, enforcedAtValue, atoms.windowSeconds, window.q, window.r, window.rClock);
+  assert(window.q == s.windowIndex, "window index");
+  const assetOk = persistentHash<[Vector<128, Uint<8>>]>([asset]) == atoms.assetDigest;
+  const path = st_pa_max_d8_path();
+  const memberOk = allowlistRoot<8>(persistentHash<[Bytes<33>, Vector<2, Uint<8>>, Vector<256, Uint<8>>]>(["orynq:conduct:allowlist:leaf:v1|y", [1, 0], counterparty]), path) == atoms.counterpartyRoot;
+  const verdict = CV_decide(enforcedAtValue, atoms.notBefore, atoms.notAfter, atoms.capAmount, atoms.egressMode, 0, tsValue, amountValue, assetOk, memberOk, s.priorSpent, false);
+  assert(verdict != 5 && verdict != 7, "non-membership not provable");
+  assert(verdict == s.verdict, "verdict mismatch");
+  assert(verdict == 0, "recorded decision");
+  conductStep = disclose(s);
+}
+
+export pure circuit allowlist_root_d1(leaf: Bytes<32>, path: Vector<1, PathStep>): Bytes<32> {
+  return allowlistRoot<1>(leaf, path);
+}
+
+export pure circuit allowlist_root_d2(leaf: Bytes<32>, path: Vector<2, PathStep>): Bytes<32> {
+  return allowlistRoot<2>(leaf, path);
+}
+
+export pure circuit allowlist_root_d3(leaf: Bytes<32>, path: Vector<3, PathStep>): Bytes<32> {
+  return allowlistRoot<3>(leaf, path);
+}
+
+export pure circuit allowlist_root_d4(leaf: Bytes<32>, path: Vector<4, PathStep>): Bytes<32> {
+  return allowlistRoot<4>(leaf, path);
+}
+
+export pure circuit allowlist_root_d5(leaf: Bytes<32>, path: Vector<5, PathStep>): Bytes<32> {
+  return allowlistRoot<5>(leaf, path);
+}
+
+export pure circuit allowlist_root_d6(leaf: Bytes<32>, path: Vector<6, PathStep>): Bytes<32> {
+  return allowlistRoot<6>(leaf, path);
+}
+
+export pure circuit window_split(ts: Uint<64>, clock: Uint<64>, w: Uint<64>, q: Uint<64>, r: Uint<64>, rClock: Uint<64>): [] {
+  return windowOf(ts, clock, w, q, r, rClock);
+}
+
+export pure circuit hex_of_bytes(v: Vector<64, Uint<8>>, b: Vector<32, Uint<8>>): [] {
+  return hexOfBytes(v, b);
+}
