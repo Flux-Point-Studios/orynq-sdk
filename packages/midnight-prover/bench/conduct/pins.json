@@ -18,7 +18,7 @@
     "circuits/conduct/verdict_core.compact": "bb063e92994397f84757161f4c36c94a1088945b60f40d97bf163e10b76593d1",
     "bench/conduct/bench.json": "a898b8833efb654da248f3ab81af31a0d2ae58386523ee67c2e124ca8a99a323",
     "scripts/conduct/bench.mjs": "33604c48c7f478c9d7f3c14f272aba448561617a0e974a24c5d9dac58810bf42",
-    "scripts/conduct/template.mjs": "4805f818014aa806d91abde7a641608ba0bc7b1f9ac06adcca8db2cdbc406d6c"
+    "scripts/conduct/template.mjs": "7d07243e2088e028212943dd98d0261d02bdd0f6ae97ecb80829b7ce8b4d90b4"
   },
   "groups": {
     "pub": {

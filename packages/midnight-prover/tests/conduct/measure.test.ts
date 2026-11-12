@@ -43,6 +43,23 @@ const out = (name: string) => join(scratch, name);
 const pins = JSON.parse(readFileSync(join(pkg, "circuits/conduct/pins.json"), "utf8")) as { units: Record<string, { circuits: Record<string, { k: number }> }> };
 
 describe("T-C08 measure.mjs refuses what it must not do, before it starts any tool or opens any socket", () => {
+  // The recorder under test: a script that starts a child and dials the fail-closed source leaves both in the marker.
+  it("control: the recorder sees a started child and an opened socket, through the bindings measure.mjs imports", () => {
+    const probe = join(scratch, "probe.mjs");
+    writeFileSync(probe, `
+import { spawnSync } from "node:child_process";
+import { connect } from "node:net";
+spawnSync(process.execPath, ["-e", "0"]);
+const socket = connect(9, "127.0.0.1");
+socket.on("error", () => {});
+socket.on("connect", () => socket.destroy());
+`);
+    rmSync(marker, { force: true });
+    const result = spawnSync(process.execPath, ["--import", preload, probe], { encoding: "utf8" });
+    expect(result.status).toBe(0);
+    expect(readFileSync(marker, "utf8").trim().split("\n").sort()).toEqual(["child spawnSync", "socket"]);
+  });
+
   it("st_pa is pinned at k=17, for which no parameters are installed", () => {
     expect(pins.units.steps!.circuits.st_pa!.k).toBe(17);
     expect(readdirSync(params).sort()).toEqual(["bls_midnight_2p13", "bls_midnight_2p14", "bls_midnight_2p16"]);

@@ -42,7 +42,7 @@ describe("T-C06 a step and the opening of its mandate compute one K", () => {
     const [base, capped] = [await pair("within cap"), await pair("exceed by one")];
     expect(() => weld(base.step, capped.mandate)).toThrow("the step's K is not the K of the mandate opening");
     expect(() => weld(capped.step, base.mandate)).toThrow("the step's K is not the K of the mandate opening");
-    expect(() => weld(base.step, { commitment: base.mandate.commitment! })).toThrow("the mandate opening discloses no K");
+    expect(() => weld(base.step, { ...base.mandate, atoms: undefined })).toThrow("the mandate opening discloses no K");
     expect(() => weld({ ...base.step, atoms: new Uint8Array(31) }, base.mandate)).toThrow("the step's K is not the K of the mandate opening");
   });
 

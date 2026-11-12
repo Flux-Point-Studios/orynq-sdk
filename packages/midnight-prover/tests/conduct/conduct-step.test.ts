@@ -267,6 +267,13 @@ describe("T-C03/T-C04 at the ZKIR layer, on copies whose generated JS checks not
     expect(await checkStep(opening)).toEqual(await productStatement(step, world));
   });
 
+  it("st_pa_max_d8: check accepts the honest step at the top of every length, and refuses its verdict moved", async () => {
+    const { step, world } = await maxStep();
+    const opening = stepOpeningOf(step, world);
+    expect(await checkStep(opening)).toEqual(await productStatement(step, world));
+    await expect(checkStep(withClaim(opening, { verdict: 4n }))).rejects.toThrow(/Failed direct assertion/);
+  }, 600_000);
+
   it.each(["st_pa", "st_pd4", "st_ea"])("%s: check refuses a moved statement field, a lie about the prior spend, a moved atom, a junk path and a moved window", async id => {
     const { opening } = representative(id);
     const refused = async (label: string, forged: StepOpening) => expect(checkStep(forged), label).rejects.toThrow(/Failed direct assertion/);

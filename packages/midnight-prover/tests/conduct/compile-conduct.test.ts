@@ -135,6 +135,24 @@ describe("compile-conduct refusals", () => {
     expect(result.stderr).toContain("mutant elsewhere must edit one of predicate.compact, verdict_core.compact, openings.generated.compact");
   });
 
+  // gadgets.compact and verdict_core.compact are sources of two units each, so a mutant of one may name its unit.
+  it.each([
+    ["a unit that does not compile the file", { id: "misplaced", file: "predicate.compact", unit: "steps", find: "export ledger verdictOut: Uint<8>;", replace: "export ledger verdictOut: Uint<16>;" }],
+    ["an unknown unit", { id: "misplaced", file: "gadgets.compact", unit: "ghost", find: "export circuit vis6(", replace: "export circuit vis6x(" }],
+  ])("rejects a mutant that names %s", (_label, mutant) => {
+    const root = packageCopy();
+    writeFileSync(join(root, "circuits/conduct/mutants.json"), JSON.stringify([mutant]));
+    const result = compile(root, ["--check"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("mutant misplaced must edit one of");
+  });
+
+  it("compiles a mutant of a shared source in the unit it names, from that unit's own sources", () => {
+    const sources = (id: string) => readdirSync(join(pkg, "conduct-managed/mutants", id, "source")).sort();
+    expect(sources("window_remainder_unchecked")).toEqual(["gadgets.compact", "steps.generated.compact", "verdict_core.compact"]);
+    expect(sources("hex_digit_g")).toEqual(["gadgets.compact", "openings.generated.compact"]);
+  });
+
   // Each mutant compiles into conduct-managed/mutants/<id>/, so a repeated id would overwrite the earlier mutant.
   it("rejects a repeated mutant id", () => {
     const root = packageCopy();

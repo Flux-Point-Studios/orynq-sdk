@@ -9,6 +9,9 @@ import { isDeepStrictEqual } from "node:util";
  * @typedef {{ c?: string, v?: string, lex?: string, max?: number, nonzero?: boolean }} Segment
  * @typedef {{ kind: string, values: Record<string, string>, lengths: Record<string, number> }} ClassifiedEvent
  * @typedef {{ lengths: Record<string, number>, segments: Record<string, Uint8Array> }} ClassifiedMandate
+ * @typedef {{ active: boolean, sibRight: boolean, sib: Uint8Array }} PathLevel
+ * @typedef {{ notBefore: bigint, notAfter: bigint, assetDigest: Uint8Array, capAmount: bigint, windowSeconds: bigint, egressMode: bigint, counterpartyRoot: Uint8Array, egressRoot: Uint8Array }} StepAtoms
+ * @typedef {{ q: bigint, r: bigint, rClock: bigint }} StepWindow
  */
 
 const circuits = new URL("../../circuits/conduct/", import.meta.url);
@@ -536,7 +539,7 @@ const IDLE_LEVEL = () => ({ active: false, sibRight: false, sib: new Uint8Array(
  * @param {readonly string[]} members
  * @param {string} member
  * @param {number} depth
- * @returns {{ path: { active: boolean, sibRight: boolean, sib: Uint8Array }[], root: Uint8Array }}
+ * @returns {{ path: PathLevel[], root: Uint8Array }}
  */
 export function allowlistPath(members, member, depth) {
   let level = [...new Map(members.map(leafOf).map(leaf => [hexOf(leaf), leaf])).values()].sort((a, b) => Buffer.compare(a, b));
@@ -593,8 +596,8 @@ const hexDecoded = hex => Uint8Array.from({ length: 32 }, (_, i) => Number((nibb
  * @param {string} circuit
  * @param {Readonly<Record<string, Uint8Array>>} segments
  * @param {string} prevRollHex
- * @param {{ atoms: Record<string, bigint | Uint8Array>, path?: readonly object[], priorSpent: bigint, commitment?: Uint8Array, window?: Record<string, bigint> }} context
- * @returns {{ witnesses: Record<string, unknown>, statement: Record<string, Uint8Array | bigint> }}
+ * @param {{ atoms: StepAtoms, path?: readonly PathLevel[], priorSpent: bigint, commitment?: Uint8Array, window?: StepWindow }} context
+ * @returns {{ witnesses: Record<string, Uint8Array | StepAtoms | StepWindow | readonly PathLevel[]>, statement: Record<string, Uint8Array | bigint> }}
  */
 export function stepOpening(circuit, segments, prevRollHex, context) {
   const { kind, cbor, depth } = CLASSES.steps[circuit];
