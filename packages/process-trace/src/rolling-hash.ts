@@ -254,7 +254,10 @@ export async function computeRollingHash(events: TraceEvent[]): Promise<string> 
  *
  * @param events - Array of trace events to verify, in any order
  * @param expectedHash - The expected rolling hash value
- * @returns Promise resolving to true if the hash matches, false otherwise
+ * @returns Promise resolving to true if the hash matches, false otherwise.
+ *   Malformed input never throws: events that are not an array of event
+ *   objects (a sparse array included), an event that cannot be hashed and an
+ *   expected hash that is not a string all resolve to false.
  *
  * @example
  * ```typescript
@@ -268,12 +271,26 @@ export async function verifyRollingHash(
   events: TraceEvent[],
   expectedHash: string
 ): Promise<boolean> {
-  // n events whose seqs include every value from 0 to n - 1 repeat none.
-  const seqs = new Set(events.map((event) => (isRecord(event) ? event.seq : undefined)));
-  if (!events.every((_, seq) => seqs.has(seq))) {
+  if (!Array.isArray(events) || typeof expectedHash !== "string") {
     return false;
   }
-  const computedHash = await computeRollingHash(events);
+  // Array.from fills a sparse array's holes with undefined, which is no event.
+  const listed: unknown[] = Array.from(events as unknown[]);
+  if (!listed.every(isRecord)) {
+    return false;
+  }
+  // n events whose seqs include every value from 0 to n - 1 repeat none.
+  const seqs = new Set(listed.map((event) => event.seq));
+  if (!listed.every((_, seq) => seqs.has(seq))) {
+    return false;
+  }
+  let computedHash: string;
+  try {
+    computedHash = await computeRollingHash(listed as unknown as TraceEvent[]);
+  } catch {
+    // An event that cannot be hashed, such as one holding a cycle or a bigint, chains to nothing.
+    return false;
+  }
   return constantTimeCompare(computedHash, expectedHash.toLowerCase());
 }
 

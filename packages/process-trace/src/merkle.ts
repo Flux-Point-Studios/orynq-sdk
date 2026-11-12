@@ -109,6 +109,17 @@ export async function computeSpanHash(
 // MERKLE TREE BUILDING
 // =============================================================================
 
+/** Options of {@link buildSpanMerkleTree}. */
+export interface BuildSpanMerkleTreeOptions {
+  /**
+   * Called, and awaited, after each span is hashed and after each tree node
+   * is computed, with the number of items that step covered (a span counts as
+   * one plus its events). Hashing is synchronous, so a caller building the tree
+   * of a large or untrusted span list can use this to yield to the event loop.
+   */
+  afterItems?: (items: number) => void | Promise<void>;
+}
+
 /**
  * Build a Merkle tree from spans.
  *
@@ -120,6 +131,7 @@ export async function computeSpanHash(
  *
  * @param spans - Array of spans (will be sorted by spanSeq)
  * @param events - Array of all events (used to get hashes for spans)
+ * @param options - Optional progress callback; it never changes the tree
  * @returns Promise resolving to the complete Merkle tree
  *
  * @example
@@ -128,8 +140,10 @@ export async function computeSpanHash(
  */
 export async function buildSpanMerkleTree(
   spans: TraceSpan[],
-  events: TraceEvent[]
+  events: TraceEvent[],
+  options: BuildSpanMerkleTreeOptions = {}
 ): Promise<TraceMerkleTree> {
+  const afterItems = Object.hasOwn(options, "afterItems") ? options.afterItems : undefined;
   // Handle empty spans case
   if (spans.length === 0) {
     return {
@@ -165,10 +179,11 @@ export async function buildSpanMerkleTree(
 
     // Compute leaf hash: H("poi-trace:leaf:v1|" + spanHash)
     leafHashes.push(sha256Hex(HASH_DOMAIN_PREFIXES.leaf + spanHash));
+    if (afterItems !== undefined) await afterItems(1 + eventHashes.length);
   }
 
   // Build tree bottom-up
-  const tree = await buildTreeFromLeaves(leafHashes);
+  const tree = await buildTreeFromLeaves(leafHashes, afterItems);
 
   return {
     rootHash: tree.rootHash,
@@ -183,7 +198,8 @@ export async function buildSpanMerkleTree(
  * Returns the root hash and tree depth.
  */
 async function buildTreeFromLeaves(
-  leafHashes: string[]
+  leafHashes: string[],
+  afterItems?: BuildSpanMerkleTreeOptions["afterItems"]
 ): Promise<{ rootHash: string; depth: number }> {
   // Handle single leaf case
   if (leafHashes.length === 1) {
@@ -215,6 +231,7 @@ async function buildTreeFromLeaves(
 
       // Compute parent: H("poi-trace:node:v1|" + left + "|" + right)
       nextLevel.push(sha256Hex(HASH_DOMAIN_PREFIXES.node + left + "|" + right));
+      if (afterItems !== undefined) await afterItems(1);
     }
 
     currentLevel = nextLevel;

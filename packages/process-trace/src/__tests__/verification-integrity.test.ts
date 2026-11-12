@@ -392,6 +392,19 @@ describe("verify options a polluted Object.prototype supplies", () => {
     expect(result.errors.join("\n")).toContain("unbound: span id not authenticated");
   });
 
+  it("bind no membership entry through an inherited leafCount beside an own leafHashes", async () => {
+    const bundle = await trace(3);
+    const { leafHashes, leafCount } = await authenticatedLeaves(bundle);
+    const membership = await selectiveDisclose(bundle, [orderedSpans(bundle)[1]!.id], "membership");
+    // The same entry verifies once the caller supplies the leaf count itself.
+    expect((await verifyDisclosure(clone(membership), bundle.rootHash, bundle.merkleRoot, { leafHashes, leafCount })).valid).toBe(true);
+    const result = await withInherited({ leafCount }, () =>
+      verifyDisclosure(clone(membership), bundle.rootHash, bundle.merkleRoot, { leafHashes }));
+    expect(result.valid).toBe(false);
+    expect(result.spans).toEqual([]);
+    expect(result.errors.join("\n")).toContain("unbound");
+  });
+
   it("authenticate no span ID through a key the caller's leafHashes inherits", async () => {
     const { bundle, options, relabelled, leafHash } = await relabelledMembership();
     const result = await withInherited({ "kyc-check-passed": leafHash }, () =>

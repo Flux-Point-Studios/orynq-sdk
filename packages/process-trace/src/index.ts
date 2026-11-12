@@ -199,6 +199,7 @@ export {
   verifyMerkleProof,
   verifySpanInclusion,
 } from "./merkle.js";
+export type { BuildSpanMerkleTreeOptions } from "./merkle.js";
 
 // ---------------------------------------------------------------------------
 // Bundle Exports

@@ -553,7 +553,7 @@
     {
       "id": "checkpoint-primitives",
       "name": "Receipt checkpoint primitives",
-      "desc": "Shared SCALE receipt decoding, canonical certificate encodings, daemon-compatible Merkle proofs whose verifier binds the leaf index and an authenticated leaf count,deterministic census batches, bounded compact member snapshots and canonical Midnight batch-set commitments used by the public verifier, private writer and gateway proof store. Materios detailed-schema wrappers require one correctly typed key, and dcbor certificate reconstruction supports the reviewed live and legacy certificate domains without rewriting a historical checkpoint commitment genesis.",
+      "desc": "Shared SCALE receipt decoding, canonical certificate encodings, daemon-compatible Merkle proofs whose verifier binds the leaf index and an authenticated leaf count, deterministic census batches, bounded compact member snapshots and canonical Midnight batch-set commitments used by the public verifier, private writer and gateway proof store. Materios detailed-schema wrappers require one correctly typed key, and dcbor certificate reconstruction supports the reviewed live and legacy certificate domains without rewriting a historical checkpoint commitment genesis.",
       "kind": "toolkit",
       "paths": [
         "packages/core/src/checkpoint.ts"

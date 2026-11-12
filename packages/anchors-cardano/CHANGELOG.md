@@ -10,7 +10,7 @@
   in which one ID would name different committed data.
 - 14bb540: `verifyAnchor` with `fetchBundle` recomputes a fetched bundle in linear time:
   it hashes each event once and finds each span's events by ID in a map instead of
-  scanning every event, so a document at the 8 MiB cap verifies in seconds
+  scanning every event, so a document at the 8 MiB cap verifies in 10 to 20 seconds
   instead of minutes.
 - Updated dependencies [14bb540]
 - Updated dependencies [14bb540]

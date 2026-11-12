@@ -31,6 +31,8 @@ import {
   createBundle,
   computeEventHash,
   computeRollingHash,
+  initRollingHash,
+  updateRollingHash,
   computeRootHash,
   computeSpanHash,
   getBundleSpanEvents,
@@ -1112,6 +1114,42 @@ describe("verifyAnchor fetchBundle rejects unbound projected data (#77 round-5)"
     expect(result.bundle).toBeUndefined();
   });
 
+  it("rejects two events under one ID that no span lists twice", async () => {
+    const run = await createTrace({ agentId: "repeated-event-id" });
+    const span = addSpan(run, { name: "approval", visibility: "public" });
+    await addEvent<"decision">(run, span.id, { kind: "decision", decision: "REJECTED", visibility: "public" });
+    await addEvent<"decision">(run, span.id, { kind: "decision", decision: "APPROVED", visibility: "public" });
+    await closeSpan(run, span.id);
+    const [rejected, approved] = run.events as [TraceBundle["privateRun"]["events"][number], TraceBundle["privateRun"]["events"][number]];
+    approved.id = rejected.id;
+    const listed = { ...run.spans[0]!, eventIds: [rejected.id] };
+    const document = JSON.parse(JSON.stringify({ privateRun: { events: [rejected, approved], spans: [listed] } })) as unknown;
+
+    // A verifier that finds events by ID sees the later event under the shared
+    // ID wherever it looks, so this is the root it would compute: the anchor
+    // commits to APPROVED twice, and the document still shows REJECTED.
+    const approvedHash = await computeEventHash(approved);
+    let rolling = await initRollingHash();
+    for (let i = 0; i < 2; i++) rolling = await updateRollingHash(rolling, approvedHash);
+    const anchorRoot = await computeRootHash(rolling.currentHash, [
+      { ...listed, hash: await computeSpanHash(listed, [approvedHash]) },
+    ]);
+
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [{ type: "https", uri: "https://storage.example.com/b.json", hash: "" }],
+    });
+    const provider = createMockProvider({ getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])) });
+    const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+      fetchBundle: true,
+      fetchFn: vi.fn().mockResolvedValue(jsonResponse(document)) as unknown as typeof fetch,
+      allowedHosts: ["storage.example.com"],
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.bundle).toBeUndefined();
+  });
+
   it("rejects a bundle whose manifest content does not hash to the committed pin", async () => {
     // A pinned-manifest bundle: rootHash folds the modelManifestHash STRING.
     const run = await createTrace({
@@ -1236,6 +1274,55 @@ describe("verifyAnchor fetchBundle cost", () => {
     expect((result.bundle as { privateRun: { events: unknown[] } }).privateRun.events).toHaveLength(count);
     // About 2.6 s on the development host, where scanning the events for each ID took 23 s.
     expect(elapsedMs).toBeLessThan(10_000);
+  });
+
+  // Hashing awaits nothing that leaves the microtask queue, so without a yield
+  // one large document holds the event loop until it is verified.
+  it.each([
+    // Each event is hashed and chained; each span is hashed, hashed again as a Merkle leaf and joined into the tree.
+    ["events", 20_000, 0, 12],
+    ["empty spans", 0, 20_000, 20],
+  ])("lets timers run while it recomputes a fetched bundle of 20,000 %s", async (_name, eventCount, spanCount, yields) => {
+    const events = Array.from({ length: eventCount }, (_, seq) => ({ id: `e${seq}`, seq })) as never[];
+    const spans = Array.from({ length: spanCount }, (_, spanSeq) => ({ id: `s${spanSeq}`, spanSeq, eventIds: [] }));
+    if (spans.length === 0) spans.push({ id: "s", spanSeq: 0, eventIds: events.map((event: { id: string }) => event.id) });
+    const eventHashes = await Promise.all(events.map((event) => computeEventHash(event)));
+    const hashedSpans = await Promise.all(
+      spans.map(async (span) => ({ ...span, hash: await computeSpanHash(span as never, span.eventIds.length ? eventHashes : []) }))
+    );
+    const anchorRoot = await computeRootHash(await computeRollingHash(events), hashedSpans as never[]);
+    const entry = createValidEntry({
+      rootHash: anchorRoot,
+      storageRefs: [{ type: "https", uri: "https://storage.example.com/b.json", hash: "" }],
+    });
+    const provider = createMockProvider({ getTxMetadata: vi.fn().mockResolvedValue(createValidMetadata([entry])) });
+
+    // Counts the timer callbacks that run between the document's arrival and the verdict.
+    let ticks = 0;
+    let ticking: ReturnType<typeof setInterval> | undefined;
+    const body = JSON.stringify({ privateRun: { events, spans } });
+    const fetchFn = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => {
+        ticking = setInterval(() => ticks++, 0);
+        return body;
+      },
+    });
+    let ticksAtVerdict: number;
+    try {
+      const result = await verifyAnchor(provider, "tx123", anchorRoot, {
+        fetchBundle: true,
+        fetchFn: fetchFn as unknown as typeof fetch,
+        allowedHosts: ["storage.example.com"],
+      });
+      ticksAtVerdict = ticks;
+      expect(result.valid).toBe(true);
+    } finally {
+      clearInterval(ticking);
+    }
+    // One yield for every few thousand items processed.
+    expect(ticksAtVerdict).toBeGreaterThanOrEqual(yields);
   });
 });
 

@@ -147,6 +147,57 @@ describe("verifyMerkleProof", () => {
       expect(verifyMerkleProof(leaf as string, proof, rootHash as string, 4)).toBe(false);
     }
   });
+
+  it("compares every digit of the root", () => {
+    for (const count of [1, 2, 5, 8]) {
+      const leaves = leavesOf(count);
+      const root = bare(merkleRoot(leaves));
+      const proof = merkleInclusionProof(leaves, count - 1);
+      expect([count, verifyMerkleProof(leaves[count - 1]!, proof, root, count)]).toEqual([count, true]);
+      for (let digit = 0; digit < 64; digit++) {
+        const other = root.slice(0, digit) + (root[digit] === "0" ? "1" : "0") + root.slice(digit + 1);
+        for (const given of [other, `0x${other}`]) {
+          expect([count, digit, verifyMerkleProof(leaves[count - 1]!, proof, given, count)]).toEqual([count, digit, false]);
+        }
+      }
+      // Roots that agree with the real one only at one end.
+      expect(verifyMerkleProof(leaves[count - 1]!, proof, "0".repeat(56) + root.slice(-8), count)).toBe(false);
+      expect(verifyMerkleProof(leaves[count - 1]!, proof, root.slice(0, 8) + "0".repeat(56), count)).toBe(false);
+    }
+  });
+
+  it("reads the proof once, so it walks the index and siblings it validated", () => {
+    const leaves = leavesOf(4);
+    const root = merkleRoot(leaves);
+    const honest = merkleInclusionProof(leaves, 2);
+    const other = merkleInclusionProof(leaves, 1);
+    /** An object whose `key` yields `first` when first read and `later` on every read after. */
+    const changing = <T extends object, K extends string>(base: T, key: K, first: unknown, later: unknown) => {
+      const reads = { count: 0 };
+      const value = Object.defineProperty({ ...base }, key, { enumerable: true, get: () => (reads.count++ === 0 ? first : later) });
+      return { value: value as T, reads };
+    };
+
+    // Each proof is honest for leaf 2 on its first read and never again, or the reverse.
+    const cases: Array<[string, (first: boolean) => { value: MerkleInclusionProof; reads: { count: number } }]> = [
+      ["index", (first) => changing(honest, "index", first ? 2 : 1, first ? 1 : 2)],
+      ["siblings", (first) => changing(honest, "siblings", first ? honest.siblings : other.siblings, first ? other.siblings : honest.siblings)],
+      ["sibling hash", (first) => {
+        const sibling = changing(honest.siblings[0]!, "hash", first ? honest.siblings[0]!.hash : other.siblings[0]!.hash, first ? other.siblings[0]!.hash : honest.siblings[0]!.hash);
+        return { value: { index: 2, siblings: [sibling.value, honest.siblings[1]!] }, reads: sibling.reads };
+      }],
+      ["sibling position", (first) => {
+        const sibling = changing(honest.siblings[0]!, "position", first ? "R" : "L", first ? "L" : "R");
+        return { value: { index: 2, siblings: [sibling.value, honest.siblings[1]!] }, reads: sibling.reads };
+      }],
+    ];
+    for (const [name, proofOf] of cases) {
+      for (const honestFirst of [true, false]) {
+        const { value, reads } = proofOf(honestFirst);
+        expect([name, honestFirst, verifyMerkleProof(leaves[2]!, value, root, 4), reads.count]).toEqual([name, honestFirst, honestFirst, 1]);
+      }
+    }
+  });
 });
 
 describe("public receipt and certificate vectors", () => {

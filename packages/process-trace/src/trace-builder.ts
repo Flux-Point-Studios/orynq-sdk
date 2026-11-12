@@ -326,10 +326,68 @@ type EventWithoutRuntimeFields<K extends TraceEventKind> = Omit<
 >;
 
 /**
- * Each run's latest append, settled or not: an append waits for the one
- * before it, so each folds its event into the rolling hash the last one left.
+ * Where a run keeps its latest append, settled or not: an append waits for
+ * the one before it, so each folds its event into the rolling hash the last
+ * one left. The key is in the global symbol registry and the promise sits on
+ * the run, so every copy of this module loaded into a process (the ESM and
+ * CJS builds, or two installed versions) queues behind the same append. The
+ * property is not enumerable: it is no part of the run's data.
  */
-const lastAppend = new WeakMap<TraceRun, Promise<unknown>>();
+const LAST_APPEND = Symbol.for("@fluxpointstudios/orynq-sdk-process-trace/last-append");
+
+/** The latest append of each run that cannot take the {@link LAST_APPEND} property. */
+const lastAppendOfSealedRun = new WeakMap<TraceRun, Promise<unknown>>();
+
+type QueuedRun = TraceRun & { [LAST_APPEND]?: Promise<unknown> };
+
+/** Runs `append` once every earlier append to `run` has settled. */
+function afterLastAppend<T>(run: TraceRun, append: () => Promise<T>): Promise<T> {
+  const queued = run as QueuedRun;
+  const last: unknown = Object.hasOwn(queued, LAST_APPEND) ? queued[LAST_APPEND] : lastAppendOfSealedRun.get(run);
+  const appended = Promise.resolve(last).then(append, append);
+  const settled = Promise.allSettled([appended]);
+  try {
+    Object.defineProperty(queued, LAST_APPEND, { value: settled, writable: true, configurable: true, enumerable: false });
+  } catch {
+    // A frozen, sealed or non-extensible run: this copy of the module still orders its own appends.
+    lastAppendOfSealedRun.set(run, settled);
+  }
+  return appended;
+}
+
+/**
+ * A copy of `value` that shares no object with it: every array and object is
+ * copied, each property read once, so nothing the caller does to `value`
+ * afterwards reaches the copy. Objects are copied as the event hash reads
+ * them, by their own enumerable string keys.
+ */
+function snapshot(value: unknown, ancestors: object[] = []): unknown {
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  if (ancestors.includes(value)) {
+    throw new Error("Cannot add an event that holds a circular reference");
+  }
+  ancestors.push(value);
+  try {
+    if (Array.isArray(value)) {
+      return Array.from(value as unknown[], (item) => snapshot(item, ancestors));
+    }
+    const copy: Record<string, unknown> = {};
+    for (const key of Object.keys(value)) {
+      // Defined, not assigned, so a "__proto__" key stays an own property.
+      Object.defineProperty(copy, key, {
+        value: snapshot((value as Record<string, unknown>)[key], ancestors),
+        writable: true,
+        configurable: true,
+        enumerable: true,
+      });
+    }
+    return copy;
+  } finally {
+    ancestors.pop();
+  }
+}
 
 /**
  * Add an event to a span within a trace run.
@@ -342,7 +400,8 @@ const lastAppend = new WeakMap<TraceRun, Promise<unknown>>();
  * - Computed event hash
  *
  * Also updates the run's rolling hash to maintain cryptographic chain.
- * Concurrent calls on one run append one at a time, in call order. An event
+ * Concurrent calls on one run append one at a time, in call order, and each
+ * records its event as it was when `addEvent` was called. An event
  * the run cannot take changes nothing: one that cannot be hashed, or whose
  * span closes or run is finalized before it is appended, is refused.
  *
@@ -375,9 +434,10 @@ export async function addEvent<K extends TraceEventKind>(
   spanId: string,
   event: EventWithoutRuntimeFields<K>
 ): Promise<TraceEvent> {
-  const appended = (lastAppend.get(run) ?? Promise.resolve()).then(() => appendEvent(run, spanId, event));
-  lastAppend.set(run, Promise.allSettled([appended]));
-  return appended;
+  // Copied before queueing: the event recorded is the one the caller passed,
+  // whatever it does with the object while earlier appends finish.
+  const given = snapshot(event) as EventWithoutRuntimeFields<K>;
+  return afterLastAppend(run, () => appendEvent(run, spanId, given));
 }
 
 /** The running span `spanId` of a run that is not finalized. */

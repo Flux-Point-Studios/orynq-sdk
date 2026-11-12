@@ -14,7 +14,7 @@
   n - 1, so a list that leaves out events no longer verifies against a chain over
   fewer events than the run holds.
 
-  `verifyDisclosure()` and `verifySpanDisclosure()` read only the options' own
+  `verifyDisclosure()` reads only the options' own
   properties, so a `leafHashes` or `leafCount` inherited from a polluted
   `Object.prototype` authenticates nothing.
 
