@@ -226,8 +226,12 @@ describe("T-C04 a step never proves a verdict other than the decision its event 
       ["another visibility", rederivedStep(opening, { segments: { vis: text("Private") } }), /^failed assert: visibility$/],
       ["a guard log position of /", rederivedStep(opening, { segments: { dataSeq: text("/") } }), /^failed assert: decimal digit$/],
       ["a trace sequence of :", rederivedStep(opening, { segments: { traceSeq: text(":") } }), /^failed assert: decimal digit$/],
+      ["an action time of /", rederivedStep(opening, { segments: { ts: text("/") } }), /^failed assert: decimal digit$/],
+      ["a guard clock of :", rederivedStep(opening, { segments: { enforcedAt: text(":") } }), /^failed assert: decimal digit$/],
+      ["an uppercase action digest", rederivedStep(opening, { segments: { actionDigest: text(Buffer.from(opening.segments.actionDigest!).toString().toUpperCase()) } }), /^failed assert: noncanonical hex$/],
       ...(payment ? [
         ["an amount of 0", rederivedStep(opening, { segments: { amount: text("0") } }), /^failed assert: (decimal nonzero|payment amount out of domain)$/],
+        ["an amount of :", rederivedStep(opening, { segments: { amount: text(":") } }), /^failed assert: decimal digit$/],
         ["an asset with a backslash", rederivedStep(opening, { segments: { asset: text("U\\D") } }), /^failed assert: string outside escape-free well-formed UTF-8 class$/],
       ] as [string, StepOpening, RegExp][] : []),
     ];
@@ -249,6 +253,21 @@ describe("T-C04 a step never proves a verdict other than the decision its event 
       for (let verdict = 1n; verdict < 8n; verdict++) expect(await stepOutcome(rederivedStep(opening, { segments }, { verdict })), `${label} claiming ${verdict}`).not.toBe("accepted");
       expect(await stepOutcome(rederivedStep(opening, { segments }, { verdict: label.includes("EUR") ? 3n : 5n })), label).toBe(claimingComputed);
     }
+  });
+
+  it.each(CLASS_IDS)("%s: the witnesses of one step under the statement of another step of its class are refused", async id => {
+    const [, name, at] = REPRESENTATIVES.find(([circuit]) => circuit === id)!;
+    const world = worldOf(caseOf(name));
+    const a = stepOpeningOf(traced.get(name)![at]!, world);
+    // The same sequence run again: another trace, so another event id, rolling chain and action digest in the same class.
+    const b = stepOpeningOf((await runCase(caseOf(name)))[at]!, world);
+    expect([a.circuit, b.circuit]).toEqual([id, id]);
+    expect(await stepOutcome(b), "honest control").toBe("accepted");
+    expect(Buffer.from(a.segments.id!).equals(Buffer.from(b.segments.id!))).toBe(false);
+    for (const statement of [b.statement, { ...a.statement, rollAfter: b.statement.rollAfter! }]) {
+      expect(await stepOutcome({ ...a, statement }), "mutation accepted").toBe("failed assert: rolling root mismatch");
+    }
+    expect(await stepOutcome({ ...a, witnesses: { ...a.witnesses, [`${id}_eventHex`]: b.witnesses[`${id}_eventHex`]! } }), "mutation accepted").toBe("failed assert: hex opening");
   });
 
   it("st_pa: the action fields under an action digest that is not theirs are refused by the digest link", async () => {
