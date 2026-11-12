@@ -60,7 +60,7 @@ describe("T-C06 a step and the opening of its mandate compute one K", () => {
 
 describe("T-C06 asset_ok holds exactly when the action's asset bytes are the mandate's", () => {
   it.each([["USD", "USD", 0, "st_pa"], ["usd", "USD", 3, "st_pd3"], ["USD", "usd", 3, "st_pd3"], ["usd", "usd", 0, "st_pa"], ["USD", "USd", 3, "st_pd3"]] as const)(
-    "a mandate for %s and a payment in %s: the runtime decides %i and %s proves it", async (mandated, paid, verdict, circuit) => {
+    "a mandate for %s and a payment in %s: the runtime decides %i and %s accepts it", async (mandated, paid, verdict, circuit) => {
       const world = stepWorld({ ...STEP_FIXTURE.mandate, asset: mandated });
       const [step] = await traceWorld(world, [{ action: { kind: "payment", asset: paid, amount: 1n, counterparty: "acme", timestamp: 3n } }]);
       expect(step!.verdict).toBe(verdict);
@@ -75,7 +75,7 @@ describe("T-C06 asset_ok holds exactly when the action's asset bytes are the man
     const [allowed] = await traceWorld(world, [{ action: { kind: "payment", asset: "USD", amount: 1n, counterparty: "acme", timestamp: 3n } }]);
     const [denied] = await traceWorld(world, [{ action: { kind: "payment", asset: "usd", amount: 1n, counterparty: "acme", timestamp: 3n } }]);
     expect(await stepOutcome(rederivedStep(stepOpeningOf(allowed!, world), { segments: { asset: text("usd") } }))).toBe("failed assert: verdict mismatch");
-    // The denial class walks no membership path, so with the asset rule passed its verdict is the unprovable 5.
+    // The denial class walks no membership path, so with the asset rule passed its verdict is 5, which no class accepts.
     expect(await stepOutcome(rederivedStep(stepOpeningOf(denied!, world), { segments: { asset: text("USD") } }))).toBe("failed assert: non-membership not provable");
   });
 });

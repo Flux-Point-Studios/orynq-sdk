@@ -28,7 +28,7 @@ describe("the conduct-circuits registry entry", () => {
     const { steps }: { steps: Record<string, unknown> } = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../circuits/conduct/classes.json"), "utf8"));
     expect(entry!.desc).toContain(`st_* step circuits (${Object.keys(steps).length} classes)`);
     const missing = [
-      "a stated prior spend", "verdicts 5 and 7 (non-membership) are refused, never proven",
+      "a stated prior spend", "verdicts 5 and 7 (non-membership) are refused, not accepted",
       "Prior spend, chain continuity, root authenticity and the K weld to a mandate opening are stated assumptions", "no cumulative or whole-run claim",
       "count and index gaps pinned", "only circuits with installed pinned parameters",
     ].filter(phrase => !entry!.desc.includes(phrase));

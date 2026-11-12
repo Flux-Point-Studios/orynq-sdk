@@ -8,8 +8,8 @@
   },
   "sources": {
     "circuits/conduct/classes.json": "48938ca224fd80af4b5c1d98ba0df82820fa091401d1379ac8d40fbb2e29aa32",
-    "circuits/conduct/gadgets.compact": "7b5b5da218b41ddd15aeef349951eae2944bef02dd3a5de2220993fe761129b8",
-    "circuits/conduct/mutants.json": "9aee5b9a5e237559a94d6e219e567de0bd7f74cd3a4dd628036379b777e0363a",
+    "circuits/conduct/gadgets.compact": "4e3c4857455a0475fe0368de46453172872aba6daf64ab05adeb6f29152dd23f",
+    "circuits/conduct/mutants.json": "8747479ad4a641585b6515fae6394b7696400b39c9d1714fa11860ca37d5494c",
     "circuits/conduct/openings.generated.compact": "194cce237e9e0eac2e3797c089565c5de73c3ee358fd7f3da7e87a2cd770ce1a",
     "circuits/conduct/predicate.compact": "b83ec16fbb500bfa9537c7b6930c44489826c772284f7953a922d1abd7e9b2c0",
     "circuits/conduct/reference/poac_verdict_core.compact": "189fc0ac6f6d36f85591d82e1b470478ee5df6be6a580cd97462673a12b29605",
@@ -17,7 +17,7 @@
     "circuits/conduct/templates/guard-event-v1.json": "48537eb87fc8d870896e0dec4b5dfade90f3067c51bee186239d2bfbe83c07ee",
     "circuits/conduct/verdict_core.compact": "bb063e92994397f84757161f4c36c94a1088945b60f40d97bf163e10b76593d1",
     "bench/conduct/bench.json": "a898b8833efb654da248f3ab81af31a0d2ae58386523ee67c2e124ca8a99a323",
-    "scripts/conduct/bench.mjs": "33604c48c7f478c9d7f3c14f272aba448561617a0e974a24c5d9dac58810bf42",
+    "scripts/conduct/bench.mjs": "4020b60bd70396023ce7125d053c159198f9a4b165978f9d7093ed0051976682",
     "scripts/conduct/template.mjs": "7d07243e2088e028212943dd98d0261d02bdd0f6ae97ecb80829b7ce8b4d90b4"
   },
   "groups": {

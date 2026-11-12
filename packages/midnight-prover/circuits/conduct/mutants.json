@@ -727,6 +727,7 @@
   },
   {
     "id": "step_no_recorded_decision",
+    "zkir": true,
     "file": "steps.generated.compact",
     "find": "  assert(verdict == 4, \"recorded decision\");\n",
     "replace": ""

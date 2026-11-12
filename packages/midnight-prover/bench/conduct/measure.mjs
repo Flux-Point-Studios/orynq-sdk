@@ -8,7 +8,7 @@
 // download. It needs the workspace built (pnpm build) for the runtime packages it loads.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { availableParallelism, release, type as osType } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -52,7 +52,20 @@ function realPath(path) {
 }
 const out = realPath(options.out);
 const inside = (path, dir) => path === dir || path.startsWith(dir + sep);
-if (inside(out, realpathSync(repo))) refuse("evidence must be written outside the repository");
+// The checkout, and where this checkout is a linked worktree, the main checkout that holds the repository: read from
+// the worktree's .git file and its commondir, so that no tool is started before a refusal. A repository whose main
+// checkout lies elsewhere than beside its .git directory is not followed.
+function repositoryRoots() {
+  const roots = [realpathSync(repo)];
+  const link = join(repo, ".git");
+  if (existsSync(link) && statSync(link).isFile()) {
+    const gitDir = /^gitdir: (.+)$/m.exec(readFileSync(link, "utf8"))?.[1];
+    const pointer = gitDir === undefined ? undefined : join(resolve(repo, gitDir), "commondir");
+    if (pointer !== undefined && existsSync(pointer)) roots.push(realpathSync(dirname(resolve(dirname(pointer), readFileSync(pointer, "utf8").trim()))));
+  }
+  return roots;
+}
+if (repositoryRoots().some(dir => inside(out, dir))) refuse("evidence must be written outside the repository");
 
 const readJson = path => JSON.parse(readFileSync(path, "utf8"));
 const conductPins = readJson(join(pkg, "circuits/conduct/pins.json"));
@@ -301,7 +314,7 @@ async function measure(id) {
       const headerless = Buffer.from(bytes);
       headerless.fill(0, at, at + body.length);
       const zeroedWithHeader = nativeVerdict(registry, circuitId, headerless, stateBytes);
-      // U2: which statement and witness bytes the serialized transaction carries in the clear.
+      // Which statement and witness bytes the serialized transaction carries in the clear.
       const present = value => (value instanceof Uint8Array && value.length >= 16 ? bytes.includes(Buffer.from(value)) : undefined);
       const statement = input.args[0] ?? {};
       const visible = {

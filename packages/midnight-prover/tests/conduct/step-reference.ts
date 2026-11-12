@@ -32,7 +32,7 @@ const WINDOW: readonly (readonly [string, string])[] = [["q", "Uint<64>"], ["r",
 const PROBE_DEPTHS = [1, 2, 3, 4, 5, 6];
 // The least uint of each CBOR head width.
 const UINT_AT_WIDTH: Readonly<Record<number, bigint>> = { 0: 1n, 1: 24n, 2: 256n, 4: 65536n, 8: 1n << 32n };
-// The verdicts that state a party is on no list: no path shows that, so no class proves them.
+// The verdicts that state a party is on no list: no path shows that, so no class accepts them.
 const NON_MEMBERSHIP = [5, 7];
 // The decisions the runtime reaches only after the party passed its list, so their classes walk its path.
 const READS_MEMBERSHIP: Readonly<Record<string, readonly number[]>> = { payment: [0, 4], egress: [0] };
@@ -87,7 +87,7 @@ function actionInputs(action: string, width: (name: string) => number, cbor: Rea
 function stepCircuit(id: string, { kind, lengths, cbor, depth }: StepClass): string[] {
   const action = actionOf(kind);
   const verdict = VERDICTS.get(kind)!;
-  if (NON_MEMBERSHIP.includes(verdict)) throw new Error(`${id}: a denial ${verdict} states non-membership, which no step class proves`);
+  if (NON_MEMBERSHIP.includes(verdict)) throw new Error(`${id}: a denial ${verdict} states non-membership, which no step class accepts`);
   if (READS_MEMBERSHIP[action]!.includes(verdict) !== (depth !== undefined)) throw new Error(`${id}: a step class walks a membership path exactly when its decision reads one`);
   const values = actionValues(action);
   const widthOf = ({ v, lex }: Segment) => lengths[v] ?? FIXED_WIDTHS[lex]!;

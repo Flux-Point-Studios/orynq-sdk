@@ -125,7 +125,9 @@ module ConductGadgets {
   }
 
   // One level of a path through the conduct allowlist tree. An active level hashes the node of the current hash and its
-  // sibling; an inactive one passes an odd last node up unchanged, and carries no direction and no sibling.
+  // sibling; an inactive one passes the current hash up unchanged, and carries no direction and no sibling. Nothing
+  // fixes where an inactive level stands, so a member's path witness is not unique; every accepted path still hashes
+  // the member's leaf through the tree's own nodes.
   export struct PathStep { active: Boolean, sibRight: Boolean, sib: Bytes<32> }
 
   export circuit allowlistStep(cur: Bytes<32>, step: PathStep): Bytes<32> {

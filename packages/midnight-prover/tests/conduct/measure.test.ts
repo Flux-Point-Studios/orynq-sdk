@@ -98,6 +98,18 @@ socket.on("connect", () => socket.destroy());
       expect(existsSync(join(pkg, "bench/conduct/evidence"))).toBe(false);
     });
 
+  // From a linked worktree the checkout is not the whole repository: the main checkout holds it too.
+  it("refuses to write evidence inside the main checkout of a linked worktree, without starting git", () => {
+    const common = spawnSync("git", ["-C", pkg, "rev-parse", "--path-format=absolute", "--git-common-dir"], { encoding: "utf8" }).stdout.trim();
+    expect(common).toMatch(/\.git$/);
+    const main = resolve(common, "..");
+    const run = measure(["--dry-run", "--circuits", "ev_pa_ascii_min", "--out", join(main, "conduct-evidence-probe")]);
+    expect(run.stderr).toContain("evidence must be written outside the repository");
+    expect(run.status).toBe(2);
+    expect(run.activity).toEqual([]);
+    expect(existsSync(join(main, "conduct-evidence-probe"))).toBe(false);
+  });
+
   it("refuses to run unless a missing parameter file fails closed", () => {
     for (const source of [undefined, "https://example.invalid/"]) {
       const run = measure(["--dry-run", "--circuits", "ev_pa_ascii_min", "--out", out("z")], { MIDNIGHT_PARAM_SOURCE: source });

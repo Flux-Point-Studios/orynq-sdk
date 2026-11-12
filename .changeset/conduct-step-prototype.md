@@ -15,6 +15,8 @@ the opening circuits' pinned ZKIR is unchanged. `scripts/compile-conduct.mjs`
 builds and pins the new unit, and `scripts/conduct/bench.mjs` writes the
 measurement circuits of the repository's `bench/conduct`, which the package
 does not ship. The circuits stay undeployed, unexported from the package entry
-and without a frozen ABI. No key or proof of a step circuit exists; prior
-spend, chain continuity and the authenticity of any root remain stated
-assumptions of a step.
+and without a frozen ABI. No key or proof of a step circuit exists. A step
+leaves five things assumed: the stated prior spend, chain continuity, the
+authenticity of any root, that K is a mandate's (which rests on a separately
+verified mandate opening that discloses the same K), and that the allowlist
+fits the class's depth and the event a compiled class.

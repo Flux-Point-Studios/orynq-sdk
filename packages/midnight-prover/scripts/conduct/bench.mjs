@@ -122,7 +122,7 @@ function spanSection(openings, name, { depth, digits }) {
   return once(s, "paymentOpening = disclose(s);", "spanOpening = disclose(s);");
 }
 
-// The fixed-width candidate encoding (F3/F4): every decimal but the trace sequence zero-padded to 20 digits, and the
+// The fixed-width candidate encoding, with digests in place of identifiers: every decimal but the trace sequence zero-padded to 20 digits, and the
 // asset and counterparty as 64 hex digits of a digest. Synthetic: no producer writes it.
 const V2_PARTS = [
   ['poi-trace:event:v2|{"data":{"action":{"amount":"', "amount", 20], ['","asset":"', "asset", 64], ['","counterparty":"', "counterparty", 64],
@@ -225,7 +225,7 @@ const EMIT = {
       "  allowlistOpening = disclose(s);", "}", "", "",
     ].join("\n"))].join("");
   },
-  // W: one circuit for amounts of 1 to N digits, with one event hash per length and a selector (framing F2).
+  // W: one circuit for amounts of 1 to N digits, with one event hash per length and a selector.
   window(circuits) {
     const openings = emitOpenings();
     return [benchPreamble(openings), ...Object.entries(circuits).map(([name, { lengths }]) => {

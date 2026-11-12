@@ -110,7 +110,21 @@ describe("T-C01 the path gadget reaches a root only from a member of its list, b
     }
   });
 
-  it("an inactive level is canonical: it carries no direction and no sibling", () => {
+  // Pinned gap, not fixed here: the path witness is malleable. An inactive level may stand anywhere, so a member has
+  // more than one accepted path. Every accepted path hashes the same leaf through the same nodes, so no false
+  // membership follows; only the witness is not unique.
+  it("pinned gap: the levels of a path may be permuted around an inactive one, and the walk still reaches the root", () => {
+    const members = list(2);
+    const root = buildAllowlistRoot(members);
+    for (const member of members) {
+      const [active, idle] = pathOf(members, member, 2) as [PathStep, PathStep];
+      expect([active.active, idle.active]).toEqual([true, false]);
+      expect(reaches(root, allowlistLeaf(member), [active, idle]), "the path allowlistPath writes").toBe(true);
+      expect(reaches(root, allowlistLeaf(member), [idle, active]), "the same levels the other way round").toBe(true);
+    }
+  });
+
+  it("an inactive level carries no direction and no sibling", () => {
     const members = list(3);
     const promoted = members.find(m => pathOf(members, m, 2).some(step => !step.active))!;
     const path = pathOf(members, promoted, 2);
@@ -127,7 +141,7 @@ const DESTINATIONS = ["api1", "api2", "api3", "api4"];
 const world = (n: number): StepWorld => stepWorld({ ...fixture, counterparties: COUNTERPARTIES.slice(0, n), egress: DESTINATIONS.slice(0, n) });
 
 describe("T-C01 a step walks the path of its event's own party to the root K commits", () => {
-  it.each([1, 2, 3, 4])("lists of %i: a payment to every counterparty and an egress to every destination prove their allowed decision", async n => {
+  it.each([1, 2, 3, 4])("lists of %i: a payment to every counterparty and an egress to every destination are accepted with their allowed decision", async n => {
     const w = world(n);
     for (const [i, counterparty] of w.counterparties.entries()) {
       const steps = await traceWorld(w, [
@@ -150,6 +164,18 @@ describe("T-C01 a step walks the path of its event's own party to the root K com
     expect(await stepOutcome(withStepWitness(opening, "path", pathOf(w.counterparties, "acme", 2)))).toBe("failed assert: non-membership not provable");
     const elsewhere = ["beta", "zeta", "yoda"];
     expect(await stepOutcome(withStepWitness(opening, "path", pathOf(elsewhere, "beta", 2)))).toBe("failed assert: non-membership not provable");
+  });
+
+  it("pinned gap: a step accepts its member's path with the inactive level first, at the generated JS and at ZKIR, and discloses the same statement", async () => {
+    const w = world(2);
+    const [step] = await traceWorld(w, [{ action: { kind: "payment", asset: "USD", amount: 1n, counterparty: "beta", timestamp: 3n } }]);
+    const opening = stepOpeningOf(step!, w);
+    const [active, idle] = opening.witnesses.st_pa_path as [PathStep, PathStep];
+    expect([active.active, idle.active]).toEqual([true, false]);
+    const permuted = withStepWitness(opening, "path", [idle, active]);
+    expect(await stepOutcome(permuted)).toBe("accepted");
+    const honest = await (await prepareStep(opening)).check();
+    expect(await (await prepareStep(permuted)).check()).toEqual(honest);
   });
 
   it("the generated binding refuses a path flag that is not a Boolean, and the compiled constraints refuse it when the private transcript carries one", async () => {

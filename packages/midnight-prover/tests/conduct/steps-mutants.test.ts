@@ -1,11 +1,11 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { allowlistLeaf, buildAllowlistRoot, compareBytes } from "@fluxpointstudios/orynq-sdk-conduct";
 import { describe, expect, it } from "vitest";
 import { allowlistPath } from "../../scripts/conduct/template.mjs";
-import { loadUnit } from "./harness.js";
+import { loadUnit, unitDir } from "./harness.js";
 import {
-  rederivedStep, runCase, STEP_FIXTURE, stepMutations, stepOpeningOf, stepOutcome, STEPS_MUTANTS, STEPS_UNIT, withClaim, worldOf, type PathStep, type StepOpening,
+  checkOutcome, rederivedStep, runCase, STEP_FIXTURE, stepMutations, stepOpeningOf, stepOutcome, STEPS_MUTANTS, STEPS_UNIT, withClaim, worldOf, type PathStep, type StepOpening,
 } from "./steps.js";
 import { auditStepsStructure } from "./structure.js";
 
@@ -42,7 +42,7 @@ const reaches = async (unit: string, member: string, path: readonly PathStep[]) 
 // Each steps mutant with the forgeries its test must see refused, as the labels of those `unit` judges otherwise.
 const KILLS: Readonly<Record<string, (unit: string) => Promise<string[]>>> = {
   // T-C04: a lower prior spend makes the cap rule allow the payment the guard denied, claimed as allowed.
-  step_no_recorded_decision: async unit => acceptedBy(unit, [["a denial 4 proven as allowed", rederivedStep(await honest("cumulative", 2), { context: { priorSpent: 0n } }, { verdict: 0n })]]),
+  step_no_recorded_decision: async unit => acceptedBy(unit, [["a denial 4 stated as allowed", rederivedStep(await honest("cumulative", 2), { context: { priorSpent: 0n } }, { verdict: 0n })]]),
   step_verdict_unbound: async unit => {
     const o = await honest("deny-all");
     return acceptedBy(unit, [0n, 1n, 2n, 3n, 4n, 5n, 7n].map(verdict => [`a denial 6 stated as verdict ${verdict}`, withClaim(o, { verdict })] as const));
@@ -93,7 +93,27 @@ describe("the steps discrimination mutants are killed, with the compiled unit as
     expect(await kill(`mutants/${id}`), `mutant ${id} survived`).not.toEqual([]);
   });
 
-  // The reviewer bar: a mutant that passes the audit must be killed by the step suites; every one here fails both.
+  // The ZKIR leg's own control. The step tests' ZKIR refusals would mean nothing if a dropped constraint went
+  // unnoticed there, so one steps mutant is mock-compiled: the unit's compiled constraints refuse the forgery its
+  // generated JS refuses, and the mutant's constraints, with the recorded-decision check dropped, accept it.
+  it("step_no_recorded_decision at ZKIR: the unit's constraints refuse a denial 4 stated as allowed, and the mutant's accept it", async () => {
+    const forged = rederivedStep(await honest("cumulative", 2), { context: { priorSpent: 0n } }, { verdict: 0n });
+    expect(await checkOutcome(await honest("cumulative", 2), STEPS_UNIT), "honest control").toBe("accepted");
+    expect(await checkOutcome(forged, STEPS_UNIT), "control").toMatch(/Failed direct assertion/);
+    expect(await checkOutcome(forged, "mutants/step_no_recorded_decision"), "mutant step_no_recorded_decision survived at ZKIR").toBe("accepted");
+  });
+
+  it("mock-compiles exactly the steps mutants that mutants.json marks for ZKIR", () => {
+    const mutants: { id: string; zkir?: boolean }[] = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../circuits/conduct/mutants.json"), "utf8"));
+    const marked = mutants.filter(m => m.zkir === true).map(m => m.id);
+    expect(marked).toEqual(["step_no_recorded_decision"]);
+    const compiled = STEPS_MUTANTS.filter(id => existsSync(join(unitDir(`mutants/${id}`), "zkir/st_pd4.bzkir")));
+    expect(compiled).toEqual(marked);
+  });
+
+  // Each steps mutant must be killed by a step test above; every one here also fails the structure audit. The verdict
+  // core the steps compile is the predicate unit's verdict_core.compact, whose re-wirings the predicate unit's
+  // order-type cell test kills: the steps unit relies on that test through the shared source.
   it("every steps mutant fails the structure audit, besides its kill above", () => {
     expect(STEPS_MUTANTS.filter(id => auditStepsStructure(`mutants/${id}`).length === 0)).toEqual([]);
   });

@@ -23,7 +23,7 @@ async function productStatement(step: TracedStep, world: StepWorld): Promise<Rec
   };
 }
 
-describe("T-C03 every step of the class-fit guard sequences proves the decision the guard recorded", () => {
+describe("T-C03 every step of the class-fit guard sequences opens in its class with the decision the guard recorded", () => {
   it("the sequences meet every verdict code, every step class and a second step in a spend window", () => {
     const steps = CASES.flatMap(c => traced.get(c.name)!.map(step => ({ c, step })));
     expect([...new Set(steps.map(({ step }) => step.verdict))].sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
@@ -56,7 +56,7 @@ describe("T-C03 every step of the class-fit guard sequences proves the decision 
     if (statements.length === c.steps.length) await expect(chain(statements)).resolves.toBeUndefined();
   });
 
-  it("a junk path for an on-list party is refused as non-membership, never proven as a denial", async () => {
+  it("a junk path for an on-list party is refused as non-membership, never accepted as a denial", async () => {
     for (const name of ["cap-exact", "cumulative", "egress allowed"]) {
       const c = CASES.find(x => x.name === name)!;
       const opening = stepOpeningOf(traced.get(name)!.at(-1)!, worldOf(c));
@@ -70,7 +70,7 @@ describe("T-C03 every step of the class-fit guard sequences proves the decision 
     }
   });
 
-  it("st_pa_max_d8 proves an allowed payment at the top of every length, which the runtime allows under the same mandate and clock", async () => {
+  it("st_pa_max_d8 opens an allowed payment at the top of every length, which the runtime allows under the same mandate and clock", async () => {
     const { step, world, runtime } = await maxStep();
     expect(runtime).toEqual({ allowed: true });
     const opening = stepOpeningOf(step, world);
@@ -143,9 +143,9 @@ describe("T-C04 every disclosed field and every witness of a step is bound", () 
     expect(await stepOutcome(withClaim(opening, { priorSpent: crossed, verdict: id === "st_pa" ? 4n : 0n })), "mutation accepted").toBe("failed assert: recorded decision");
   });
 
-  // Assumption A1: the prior spend is a stated input. A step proves its verdict for the prior it states, and any prior
-  // with the same verdict proves as well; only slice 3's committed spend state can tell them apart.
-  it.each(CLASS_IDS)("%s: pinned gap, not fixed here: a stated prior spend that leaves the verdict unchanged still proves", async id => {
+  // Assumption A1: the prior spend is a stated input. A step circuit accepts its verdict for the prior it states, and
+  // any prior with the same verdict as well; only a committed spend state, which is later work, can tell them apart.
+  it.each(CLASS_IDS)("%s: pinned gap, not fixed here: a stated prior spend that leaves the verdict unchanged is still accepted", async id => {
     const { opening, step, world } = representative(id);
     const { amount: cap } = world.mandate.spendCap;
     const amount = step.action.kind === "payment" ? step.action.amount : 0n;
@@ -183,14 +183,14 @@ const lies = (o: StepOpening): [string, Partial<StepOpening["context"]>][] => {
     ["the other egress mode", lie({ egressMode: atoms.egressMode ^ 1n })], ["another mandated asset", lie({ assetDigest: Uint8Array.from(atoms.assetDigest, b => b ^ 1) })],
     ["another counterparty root", lie({ counterpartyRoot: Uint8Array.from(atoms.counterpartyRoot, b => b ^ 1) })],
     ["another egress root", lie({ egressRoot: Uint8Array.from(atoms.egressRoot, b => b ^ 1) })],
-    // An expired step reaches another provable verdict only past its expiry and one more rule.
+    // An expired step reaches another verdict that has a class only past its expiry and one more rule.
     ["a validity window to 2^64-1 and another mandated asset", lie({ notAfter: MAX_U64, assetDigest: Uint8Array.from(atoms.assetDigest, b => b ^ 1) })],
     ["a validity window to 2^64-1 and the other egress mode", lie({ notAfter: MAX_U64, egressMode: atoms.egressMode ^ 1n })],
   ];
 };
 
-describe("T-C04 a step never proves a verdict other than the decision its event records", () => {
-  it.each(CLASS_IDS)("%s: under every lie about the prior spend or the mandate atoms, with K and the statement re-derived, only the recorded decision proves", async id => {
+describe("T-C04 a step circuit never accepts a verdict other than the decision its event records", () => {
+  it.each(CLASS_IDS)("%s: under every lie about the prior spend or the mandate atoms, with K and the statement re-derived, only the recorded decision is accepted", async id => {
     const { opening } = representative(id);
     const recorded = opening.statement.verdict as bigint;
     const accepted: string[] = [];
@@ -241,7 +241,7 @@ describe("T-C04 a step never proves a verdict other than the decision its event 
     expect(await stepOutcome(rederivedStep(opening, { context: { commitment: other } })), "another mandate's commitment").toBe("failed assert: hex opening");
   });
 
-  it("st_pa: another asset, an off-list counterparty or a larger amount than the cap admits never proves the allowed decision", async () => {
+  it("st_pa: another asset, an off-list counterparty or a larger amount than the cap admits is never accepted as the allowed decision", async () => {
     const { opening } = representative("st_pa");
     const text = (s: string) => new TextEncoder().encode(s);
     const crafted: [string, Record<string, Uint8Array>, string[]][] = [

@@ -67,7 +67,8 @@ if (!bench) {
 const unitOf = ({ file, unit }) => (unit === undefined ? Object.keys(UNIT_SOURCES).find(name => UNIT_SOURCES[name].includes(file)) : UNIT_SOURCES[unit]?.includes(file) ? unit : undefined);
 const mutants = JSON.parse(await readFile(join(circuits, "mutants.json"), "utf8"));
 const mutantIds = new Set();
-for (const { id, file, find, unit } of mutants) {
+for (const { id, file, find, unit, zkir: marked } of mutants) {
+  if (marked !== undefined && marked !== true) throw new Error(`mutant ${id} may only set "zkir" to true`);
   if (!/^[a-z0-9_]+$/.test(id)) throw new Error(`mutant id ${JSON.stringify(id)} must be lowercase letters, digits and underscores`);
   if (mutantIds.has(id)) throw new Error(`mutant id ${id} is repeated`);
   mutantIds.add(id);
@@ -217,14 +218,14 @@ const build = {
   steps: () => pinnedUnit("steps"),
   async mutants() {
     await rm(join(managed, "mutants"), { recursive: true, force: true });
-    // A mutant keeps its edited sources in source/, which its source map names and the structure audit reads. Only the
-    // predicate mutants are checked at ZKIR; the openings mutants are judged by their generated JS and the private inputs
-    // of their compactc ZKIR.
+    // A mutant keeps its edited sources in source/, which its source map names and the structure audit reads. The
+    // predicate mutants are checked at ZKIR, and so is a mutant that sets "zkir": the others are judged by their
+    // generated JS, and the openings mutants also by the private inputs of their compactc ZKIR.
     await settled(mutants.map(async mutant => {
       const out = join(managed, "mutants", mutant.id);
       const unit = unitOf(mutant);
       await compileEdited(unit, mutant.file, text => text.replace(mutant.find, () => mutant.replace), join(out, "source"), out);
-      if (unit === "predicate") await mockCompile(out);
+      if (unit === "predicate" || mutant.zkir === true) await mockCompile(out);
     }));
   },
   async reference() {
