@@ -91,8 +91,8 @@ describe("T-B11 the compiled opening constraints refuse forgeries the stripped J
   });
 
   // The statement keeps the field's honest value, and the stripped copy has no narrowing cast to throw first, so the
-  // transcript carries the forged bytes. An all-digit decimal of 2^64 is refused by the Uint<64> cast's bit bound
-  // alone; a digit edge or an uppercase hex letter is refused by its lexical assert before the fold reaches the cast.
+  // transcript carries the forged bytes. An all-digit decimal of 2^64 is refused by the Uint<64> cast's bit bound,
+  // which fires first; a digit edge or an uppercase hex letter is refused by its lexical assert before the fold reaches the cast.
   it("every lexical forgery whose value leaves its field's type, with each all-digit decimal refused by the cast's bit bound", async () => {
     const outcomes: Record<string, string> = {};
     const expected: Record<string, string> = {};

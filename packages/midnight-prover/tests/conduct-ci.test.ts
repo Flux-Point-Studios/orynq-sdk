@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import { configDefaults } from "vitest/config";
 import { describe, expect, it } from "vitest";
 
@@ -9,21 +9,36 @@ const CONDUCT_TESTS = "packages/midnight-prover/tests/conduct";
 const CONDUCT_CONFIG = "packages/midnight-prover/vitest.conduct.config.mts";
 const { scripts } = JSON.parse(readFileSync(resolve(repo, "packages/midnight-prover/package.json"), "utf8"));
 
-/** A step of .woodpecker/ci.yaml as its keys, each with its value and the lines indented under it. */
-function step(name: string): Readonly<Record<string, string>> {
-  const ci = readFileSync(resolve(repo, ".woodpecker/ci.yaml"), "utf8");
-  const start = ci.indexOf(`\n  - name: ${name}\n`);
+const CI = readFileSync(resolve(repo, ".woodpecker/ci.yaml"), "utf8");
+
+/**
+ * A step of a Woodpecker pipeline file as its keys, each with its value and the lines indented under it.
+ * Only an entry of the top-level `steps:` list is a step: the same block under any other key runs nothing.
+ */
+function step(name: string, ci = CI): Readonly<Record<string, string>> {
+  const steps = ci.indexOf("\nsteps:\n");
+  if (steps < 0) throw new Error(".woodpecker/ci.yaml has no steps list");
+  // The list ends at the next line that starts a top-level key.
+  const after = /\n[^\s#]/.exec(ci.slice(steps + 1));
+  const list = ci.slice(steps, after === null ? undefined : steps + 1 + after.index);
+  const start = list.indexOf(`\n  - name: ${name}\n`);
   if (start < 0) throw new Error(`.woodpecker/ci.yaml has no ${name} step`);
-  const end = ci.indexOf("\n  - name: ", start + 1);
+  const end = list.indexOf("\n  - name: ", start + 1);
   const keys: Record<string, string> = {};
   let key: string | undefined;
-  for (const line of ci.slice(start, end < 0 ? undefined : end).split("\n").slice(2)) {
+  for (const line of list.slice(start, end < 0 ? undefined : end).split("\n").slice(2)) {
     const top = /^ {4}([\w-]+):(.*)$/.exec(line);
     if (top !== null) keys[key = top[1]!] = top[2]!.trim();
     else if (key !== undefined && line.startsWith("      ")) keys[key] += `\n${line.slice(6)}`;
     else if (line.trim() !== "" && !line.startsWith("  #")) throw new Error(`unexpected line in the ${name} step: ${JSON.stringify(line)}`);
   }
   return keys;
+}
+
+/** Every file under a directory, recursively. */
+function files(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap(entry =>
+    entry.isDirectory() ? files(resolve(dir, entry.name)) : [resolve(dir, entry.name)]);
 }
 
 describe("AM-9 the conduct circuits compile and run their suite in a CI step of their own", () => {
@@ -61,5 +76,27 @@ describe("AM-9 the conduct circuits compile and run their suite in a CI step of 
       "  '",
     ].join("\n"));
     expect(step("midnight-submit").depends_on).toBe("[build-test]");
+  });
+
+  it("a conduct-circuits block outside the steps list is not a step", () => {
+    const from = CI.indexOf("\n  - name: conduct-circuits\n");
+    const to = CI.indexOf("\n  - name: ", from + 1);
+    const block = CI.slice(from, to);
+    expect(block).toContain("vitest.conduct.config.mts");
+    const moved = `${CI.slice(0, from)}${CI.slice(to)}\nvariables:${block}\n`;
+    expect(() => step("conduct-circuits", moved)).toThrow(".woodpecker/ci.yaml has no conduct-circuits step");
+    expect(step("build-test", moved)).toEqual(step("build-test"));
+    // The pipeline itself runs on every pull request and on pushes to main.
+    expect(CI.slice(0, CI.indexOf("\nsteps:\n"))).toMatch(/^when:\n  - event: pull_request\n  - event: push\n    branch: main\n/);
+  });
+
+  it("no conduct test is skipped, pending, focused or expected to fail, so a green conduct step ran every test", () => {
+    const marked = files(resolve(repo, CONDUCT_TESTS))
+      .filter(file => /\.(ts|mts|mjs)$/.test(file))
+      .flatMap(file => readFileSync(file, "utf8").split("\n")
+        .map((line, i) => ({ at: `${relative(repo, file)}:${i + 1}`, line }))
+        .filter(({ line }) => /\b(?:describe|it|test|suite|bench)\s*\.\s*(?:skip|todo|only|fails|skipIf|runIf)\b|\bx(?:it|describe|test)\s*\(|\.skip\s*\(\s*\)/.test(line))
+        .map(({ at }) => at));
+    expect(marked).toEqual([]);
   });
 });
