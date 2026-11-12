@@ -164,7 +164,10 @@ async function checkLayout(specs, { registry, singletons }, importsToCheck) {
   }
 }
 
-export async function checkLayouts(specs, { registry, singletons = SINGLETONS, visibility = { attempts: 30, delayMs: 10_000 } }) {
+// npm can take tens of minutes to serve a package's first version; the budget waits 30.
+export const VISIBILITY = Object.freeze({ attempts: 180, delayMs: 10_000 });
+
+export async function checkLayouts(specs, { registry, singletons = SINGLETONS, visibility = VISIBILITY }) {
   const problems = [];
   const visible = [];
   for (const spec of specs) {
