@@ -118,14 +118,15 @@ export function makeChain(): Chain {
   return chain;
 }
 
-/** A polkadot.js MortalEra signed at block 42 with period 64: includable up to block 105. */
-export const era = {
-  isMortalEra: true,
-  asMortalEra: {
-    birth: (current: number) => Math.floor((Math.max(current, 42) - 42) / 64) * 64 + 42,
-    death: (current: number) => era.asMortalEra.birth(current) + 64,
-  },
-};
+/** A polkadot.js MortalEra born at block `born`: includable up to block `born + period - 1`. */
+export function mortalEra(born: number, period = 64) {
+  const phase = born % period;
+  const birth = (current: number) => Math.floor((Math.max(current, phase) - phase) / period) * period + phase;
+  return { isMortalEra: true, asMortalEra: { birth, death: (current: number) => birth(current) + period } };
+}
+/** Signed at block 42 with period 64: includable up to block 105. */
+export const era = mortalEra(42);
+const toNumber = (value: unknown) => typeof value === "number" ? value : (value as { toNumber(): number }).toNumber();
 
 export function fixture(chain: Chain) {
   let callback: (result: unknown) => void = () => {};
@@ -140,7 +141,11 @@ export function fixture(chain: Chain) {
     send: live((cb: typeof callback): (() => void) => { callback = cb; return unsubscribe; }),
   };
   const tx = {
-    signAsync: live((): typeof signed => signed),
+    /** Like polkadot.js, an extrinsic signed without an era is born at the finalized block. */
+    signAsync: live((_signer?: unknown, options?: { era?: typeof era }): typeof signed => {
+      signed.era = options?.era ?? mortalEra(chain.finalized);
+      return signed;
+    }),
     signAndSend: vi.fn((_signer: unknown, cb: typeof callback) => signed.send(cb)),
   };
   const numberOf = (at: unknown) => {
@@ -154,6 +159,13 @@ export function fixture(chain: Chain) {
     disconnect: vi.fn(async () => { api.isConnected = false; }),
     genesisHash: { toHex: () => hash("f") },
     tx: { orinqReceipts: { submitReceipt: vi.fn(() => tx), submitAnchor: vi.fn(() => tx) } },
+    derive: {
+      tx: {
+        /** The nonce, signing block and mortal length polkadot.js would sign with: the finalized block. */
+        signingInfo: live((_address: string, _nonce?: number): unknown =>
+          ({ nonce: { toNumber: () => chain.nonce }, header: header(chain.finalized), mortalLength: 64 })),
+      },
+    },
     rpc: {
       system: { dryRun: live((_hex: string): unknown => ({ isErr: false, asOk: { isErr: false } })) },
       chain: {
@@ -172,6 +184,7 @@ export function fixture(chain: Chain) {
     },
     registry: {
       findMetaError: vi.fn((_: unknown) => ({ section: "orinqReceipts", name: "Rejected", docs: ["fixture"] })),
+      createType: vi.fn((_type: string, value: { current: unknown; period: number }) => mortalEra(toNumber(value.current), value.period)),
     },
     at: vi.fn(async (at: unknown) => {
       const n = numberOf(at);
@@ -208,15 +221,17 @@ export const PRIORITY_TOO_LOW = "Priority is too low: (0 vs 0): The transaction 
 
 /**
  * A provider connected to the first fake; `spares` more fakes on the same chain serve the
- * connections it opens later (recovery readers, replacements), in order.
+ * connections it opens later (recovery readers, replacements), in order. A disconnected
+ * `provider` is connected again instead of a new one.
  */
-export async function connected(options: { spares?: number; chain?: Chain } = {}) {
+export async function connected(options: { spares?: number; chain?: Chain; provider?: import("../../src/provider.js").MateriosProvider } = {}) {
   const { MateriosProvider } = await import("../../src/provider.js");
   const chain = options.chain ?? makeChain();
   const main = fixture(chain);
   const spares = Array.from({ length: options.spares ?? 1 }, () => fixture(chain));
   mocks.apis.push(main.api, ...spares.map(spare => spare.api));
-  const provider = new MateriosProvider({ rpcUrl: "ws://fixture.invalid", signerUri: "fixture", connectTimeoutMs: 40 });
+  const provider = options.provider
+    ?? new MateriosProvider({ rpcUrl: "ws://fixture.invalid", signerUri: "fixture", connectTimeoutMs: 40 });
   await provider.connect();
   return { ...main, chain, spares, recovery: spares[0]!, provider };
 }

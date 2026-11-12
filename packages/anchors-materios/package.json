@@ -28,7 +28,7 @@
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.tests.json",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
     "clean": "rimraf dist"
@@ -60,6 +60,7 @@
   },
   "devDependencies": {
     "@polkadot/util-crypto": "^13.0.0",
+    "@types/ws": "8.18.1",
     "tsup": "^8.0.1",
     "typescript": "^5.3.3",
     "vitest": "^4.1.11",
