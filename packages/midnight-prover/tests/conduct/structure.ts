@@ -1,6 +1,7 @@
 import { PREDICATE_LAYOUT, type PredicateInput } from "@fluxpointstudios/orynq-sdk-conduct";
 import { generatedSource, unitSource } from "./harness.js";
 import { referenceOpenings } from "./opening-reference.js";
+import { referenceSteps } from "./step-reference.js";
 
 const AUDITED_FILES = ["verdict_core.compact", "predicate.compact"] as const;
 type AuditedFile = (typeof AUDITED_FILES)[number];
@@ -93,7 +94,9 @@ const COMPILED_METHODS: readonly string[] = [
 const GADGET_OUTLINE: readonly string[] = [
   "module ConductGadgets {", "import CompactStandardLibrary;",
   ...["decU64", "dec53", "cborHeadValue", "cborUint", "utf8Next", "jsonStep", "anyStep", "jsonStr", "utf8Any", "base58", "asciiPrint", "isHex", "nib",
-    "hexHalves", "hexOfHash", "uuid", "iso8601", "vis6", "vis7"].map(name => `circuit ConductGadgets.${name}`),
+    "hexHalves", "hexOfHash", "uuid", "iso8601", "vis6", "vis7", "hexOfBytes"].map(name => `circuit ConductGadgets.${name}`),
+  "export struct PathStep { active: Boolean, sibRight: Boolean, sib: Bytes<32> }",
+  ...["allowlistStep", "allowlistRoot", "windowOf"].map(name => `circuit ConductGadgets.${name}`),
   "}",
 ];
 
@@ -109,6 +112,8 @@ interface AuditedGadget {
 const UTF8_STATE = "[Uint<0..4>, Uint<8>, Uint<8>, Boolean]";
 const STRING_FOLD = (step: string) => [`fold(${step}, [0, 128, 191, true], s)`];
 const HEX_FOLD = (from: number) => `fold((acc, c) => (acc * 16) + nib(c), 0 as Field, slice<32>(h, ${from}))`;
+
+const NODE_HASH = 'persistentHash("orynq:conduct:allowlist:node:v1|", left: Bytes<32>, right: Bytes<32>)';
 
 /** Each gadget's literals, comparisons with their operands, calls with their arguments, signature and statements. */
 export const AUDITED_GADGETS: Readonly<Record<string, AuditedGadget>> = {
@@ -259,6 +264,42 @@ export const AUDITED_GADGETS: Readonly<Record<string, AuditedGadget>> = {
     comparisons: ['(v as Bytes<7>) == "private"'],
     calls: [],
     statements: ["export circuit vis7(v: Vector<7, Uint<8>>): []", 'assert ((v as Bytes<7>) == "private"), "visibility"'],
+  },
+  "ConductGadgets.hexOfBytes": {
+    literals: ["0", "1", "2", "2", "16", "32"],
+    comparisons: ["((nib(h[2 * j]) * 16) + nib(h[(2 * j) + 1])) == (b[j] as Field)"],
+    calls: ["nib(h[2 * j])", "nib(h[(2 * j) + 1])"],
+    statements: [
+      "export circuit hexOfBytes(h: Vector<64, Uint<8>>, b: Vector<32, Uint<8>>): []", "for (const j of 0..32) {",
+      'assert (((nib(h[2 * j]) * 16) + nib(h[(2 * j) + 1])) == (b[j] as Field)), "hex opening"', "}",
+    ],
+  },
+  "ConductGadgets.allowlistStep": {
+    literals: ["32"],
+    comparisons: ['step.sib == pad(32, "")'],
+    calls: ['pad(32, "")', NODE_HASH],
+    statements: [
+      "export circuit allowlistStep(cur: Bytes<32>, step: PathStep): Bytes<32>",
+      'assert (step.active || (!step.sibRight && (step.sib == pad(32, "")))), "allowlist path not canonical"',
+      "const left = step.sibRight ? cur : step.sib", "const right = step.sibRight ? step.sib : cur", `const node = ${NODE_HASH}`, "return step.active ? node : cur",
+    ],
+  },
+  "ConductGadgets.allowlistRoot": {
+    literals: [],
+    comparisons: [],
+    calls: ["fold(allowlistStep, leaf, path)"],
+    statements: ["export circuit allowlistRoot<#D>(leaf: Bytes<32>, path: Vector<D, PathStep>): Bytes<32>", "return fold(allowlistStep, leaf, path)"],
+  },
+  "ConductGadgets.windowOf": {
+    literals: [],
+    comparisons: ["r < w", "rClock < w", "(((q as Field) * (w as Field)) + (r as Field)) == (ts as Field)", "(((q as Field) * (w as Field)) + (rClock as Field)) == (clock as Field)"],
+    calls: [],
+    statements: [
+      "export circuit windowOf(ts: Uint<64>, clock: Uint<64>, w: Uint<64>, q: Uint<64>, r: Uint<64>, rClock: Uint<64>): []",
+      'assert ((r < w) && (rClock < w)), "window remainder"',
+      'assert ((((q as Field) * (w as Field)) + (r as Field)) == (ts as Field)), "action window"',
+      'assert ((((q as Field) * (w as Field)) + (rClock as Field)) == (clock as Field)), "guard clock window"',
+    ],
   },
 };
 
@@ -905,17 +946,18 @@ interface OpeningsAudit {
   readonly names?: { readonly classes: string[]; readonly witnesses: string[]; readonly probes: string[]; readonly gadgets: string[] };
 }
 
-function openingsAudit(sources: OpeningSources): OpeningsAudit {
-  const gadgets = parse("gadgets.compact", sources["gadgets.compact"]);
-  const generated = parse("openings.generated.compact", sources["openings.generated.compact"]);
-  const reference = parse("the reference openings", referenceOpenings());
+// A generated file and the gadgets it includes, against the gadget audit and the reference text of the generated file.
+function generatedAudit(file: string, gadgetSource: string, generatedText: string, referenceName: string, referenceText: string): OpeningsAudit {
+  const gadgets = parse("gadgets.compact", gadgetSource);
+  const generated = parse(file, generatedText);
+  const reference = parse(referenceName, referenceText);
   if (typeof reference === "string") throw new Error(reference);
   const unreadable = [gadgets, generated].filter((outline): outline is string => typeof outline === "string");
   if (typeof gadgets === "string" || typeof generated === "string") return { findings: unreadable };
-  const declarations = multisetDifference("openings.generated.compact declarations", generated.lines, reference.lines);
+  const declarations = multisetDifference(`${file} declarations`, generated.lines, reference.lines);
   const findings = [
     ...gadgetFindings(gadgets),
-    ...(declarations.length > 0 ? declarations : firstDifference("openings.generated.compact differs from its audited outline", generated.lines, reference.lines)),
+    ...(declarations.length > 0 ? declarations : firstDifference(`${file} differs from its audited outline`, generated.lines, reference.lines)),
   ];
   const [found, audited] = [new Set(generated.witnesses), new Set(reference.witnesses)];
   for (const expected of reference.circuits) {
@@ -932,6 +974,9 @@ function openingsAudit(sources: OpeningSources): OpeningsAudit {
   };
 }
 
+const openingsAudit = (sources: OpeningSources): OpeningsAudit =>
+  generatedAudit("openings.generated.compact", sources["gadgets.compact"], sources["openings.generated.compact"], "the reference openings", referenceOpenings());
+
 /** The ways the gadgets and the generated openings differ from the audited structure; empty when they hold exactly it. */
 export const auditOpenings = (sources: OpeningSources): string[] => openingsAudit(sources).findings;
 
@@ -941,20 +986,43 @@ function listed(source: string, from: string, to: string, line: RegExp): string[
   return start < 0 ? [] : [...source.slice(start, source.indexOf(to, start + from.length)).matchAll(line)].map(([, name]) => name!);
 }
 
-/** AM-8 on a compiled openings unit: its sources against the audit and the reference, and its generated contract against both. */
-export function auditOpeningsStructure(unit: string): string[] {
-  const { findings, names } = openingsAudit(openingSources(unit));
+// The generated contract of a unit against the names its source audit holds: its provable circuits, probes and
+// witnesses, and no method beside them, the gadgets, any other audited `modules` circuit and compactc's helpers.
+function compiledUnitFindings(unit: string, { findings, names }: OpeningsAudit, label: string, modules: readonly string[] = []): string[] {
   if (names === undefined) return findings;
   const source = generatedSource(unit);
   const methods = compiledMethods(source);
   if (methods === undefined) return [...findings, `the compiled ${unit} has no contract class`];
-  const allowed = new Set([...names.classes, ...names.witnesses, ...names.probes, ...names.gadgets, ...COMPILED_HELPERS]);
+  const allowed = new Set([...names.classes, ...names.witnesses, ...names.probes, ...names.gadgets, ...modules, ...COMPILED_HELPERS]);
   const outside = [...new Set(methods.filter(name => !allowed.has(name)))].sort();
   return [
     ...findings,
-    ...multisetDifference("compiled opening circuits", listed(source, "this.impureCircuits = {", "}", /^ +(\w+): this\.circuits\.\w+,?$/gm), names.classes),
+    ...multisetDifference(`compiled ${label} circuits`, listed(source, "this.impureCircuits = {", "}", /^ +(\w+): this\.circuits\.\w+,?$/gm), names.classes),
     ...multisetDifference("compiled probes", listed(source, "\nexport const pureCircuits = {", "\n};", /^ {2}(\w+): \(\.\.\.args_0\) => \{$/gm), names.probes),
     ...multisetDifference("compiled witnesses", [...source.matchAll(/does not contain a function-valued field named (\w+)'/g)].map(([, name]) => name!), names.witnesses),
     ...(outside.length === 0 ? [] : [`the compiled ${unit} has contract methods outside the audited circuits: [${outside.join(", ")}]`]),
   ];
 }
+
+/** AM-8 on a compiled openings unit: its sources against the audit and the reference, and its generated contract against both. */
+export const auditOpeningsStructure = (unit: string): string[] => compiledUnitFindings(unit, openingsAudit(openingSources(unit)), "opening");
+
+const STEP_FILES = ["gadgets.compact", "verdict_core.compact", "steps.generated.compact"] as const;
+type StepSources = Readonly<Record<(typeof STEP_FILES)[number], string>>;
+
+export const stepSources = (unit = "steps"): StepSources =>
+  Object.fromEntries(STEP_FILES.map(file => [file, unitSource(unit, file)])) as StepSources;
+
+// The steps unit compiles the verdict core beside its generated circuits. The core is held to T-A16's audit, with the
+// predicate wrapper it is audited beside; the generated steps and the gadgets to the reference steps.
+function stepsAudit(sources: StepSources): OpeningsAudit {
+  const core = auditSources({ "verdict_core.compact": sources["verdict_core.compact"], "predicate.compact": unitSource("predicate", "predicate.compact") });
+  const { findings, names } = generatedAudit("steps.generated.compact", sources["gadgets.compact"], sources["steps.generated.compact"], "the reference steps", referenceSteps());
+  return { findings: [...core, ...findings], ...(names === undefined ? {} : { names }) };
+}
+
+/** The ways the gadgets, the verdict core and the generated steps differ from the audited structure; empty when they hold exactly it. */
+export const auditSteps = (sources: StepSources): string[] => stepsAudit(sources).findings;
+
+/** The structure audit on a compiled steps unit: its sources against the audits and the reference, and its generated contract against them. */
+export const auditStepsStructure = (unit: string): string[] => compiledUnitFindings(unit, stepsAudit(stepSources(unit)), "step", ["evaluate", "decide"]);

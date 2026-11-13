@@ -1,9 +1,11 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const pkg = resolve(import.meta.dirname, "../..");
-const SOURCES = ["tests/conduct", "scripts/conduct"].flatMap(dir => readdirSync(join(pkg, dir)).map(name => `${dir}/${name}`))
+// Every file under a directory, at any depth.
+const files = (dir: string): string[] => readdirSync(join(pkg, dir)).flatMap(name => (statSync(join(pkg, dir, name)).isDirectory() ? files(`${dir}/${name}`) : [`${dir}/${name}`]));
+const SOURCES = ["tests/conduct", "scripts/conduct", "bench/conduct"].flatMap(files)
   .concat("scripts/compile-conduct.mjs", "tests/conduct-ci.test.ts", "vitest.conduct.config.mts");
 // Code points a reader cannot see and an editor may drop or normalize: NEL, the soft hyphen, zero-width and
 // directional format characters, the line and paragraph separators, invisible operators and the BOM.

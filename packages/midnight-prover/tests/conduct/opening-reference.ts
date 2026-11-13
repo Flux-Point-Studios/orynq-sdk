@@ -14,19 +14,19 @@ import { MANDATE_ATOMS_DOMAIN } from "./statement-checker.js";
 // renderer. The structure audit parses this text and the generated circuits alike and compares what they read, so its
 // layout need not match the generated file's.
 
-interface Segment { readonly v: string; readonly lex: string; readonly nonzero?: true }
+export interface Segment { readonly v: string; readonly lex: string; readonly nonzero?: true }
 
 /** A hash input: constant bytes, or an expression with the type the hash lists for it. */
-type Input = Uint8Array | readonly [expression: string, type: string];
+export type Input = Uint8Array | readonly [expression: string, type: string];
 
 const utf8 = (text: string) => new TextEncoder().encode(text);
-const vector = (width: number) => `Vector<${width}, Uint<8>>`;
-const hashOf = (inputs: readonly Input[]) => {
+export const vector = (width: number) => `Vector<${width}, Uint<8>>`;
+export const hashOf = (inputs: readonly Input[]) => {
   const typed = inputs.filter(input => !(input instanceof Uint8Array) || input.length > 0)
     .map(input => (input instanceof Uint8Array ? [`[${input.join(", ")}]`, vector(input.length)] as const : input));
   return `persistentHash<[${typed.map(([, type]) => type).join(", ")}]>([${typed.map(([expression]) => expression).join(", ")}])`;
 };
-const witnessDeclaration = (name: string, width: number) => `witness ${name}(): ${vector(width)};`;
+export const witnessDeclaration = (name: string, width: number) => `witness ${name}(): ${vector(width)};`;
 
 // S-EVENT-OPEN: each value a guard event discloses, with the statement field it is disclosed as and how it is read.
 const OPENED: Readonly<Record<string, readonly ["decimal" | "hex" | "digest" | "leaf", string]>> = {
@@ -34,20 +34,20 @@ const OPENED: Readonly<Record<string, readonly ["decimal" | "hex" | "digest" | "
   ts: ["decimal", "timestamp"], actionDigest: ["hex", "actionDigest"], enforcedAt: ["decimal", "enforcedAt"],
   mandateCommitment: ["hex", "mandateCommitment"], dataSeq: ["decimal", "dataSeq"], traceSeq: ["decimal", "traceSeq"],
 };
-const FIXED_WIDTHS: Readonly<Record<string, number>> = { hex64: 64, uuid: 36, iso24: 24 };
+export const FIXED_WIDTHS: Readonly<Record<string, number>> = { hex64: 64, uuid: 36, iso24: 24 };
 // The class check of each value the statement does not already read through a class-enforcing gadget.
-const LEXICAL: Readonly<Record<string, (name: string, width: number) => string>> = {
+export const LEXICAL: Readonly<Record<string, (name: string, width: number) => string>> = {
   str: (name, width) => `jsonStr<${width}>(${name});`,
   uuid: name => `uuid(${name});`,
   iso24: name => `iso8601(${name});`,
   vis: (name, width) => `vis${width}(${name});`,
 };
 
-const actionOf = (kind: string) => kind.slice(0, kind.indexOf("-"));
+export const actionOf = (kind: string) => kind.slice(0, kind.indexOf("-"));
 const ACTIONS = [...new Set(KINDS.map(actionOf))];
 
 /** Each value of a guard event action with its audited class, once, in the order the producer's preimage first holds it. */
-function actionValues(action: string): Segment[] {
+export function actionValues(action: string): Segment[] {
   const names = EVENT_PREIMAGES.get(`${action}-action`)!.filter((part): part is string => typeof part === "string");
   return [...new Set(names)].map(v => ({ v, ...VALUE_CLASSES[v]! }));
 }
@@ -113,7 +113,7 @@ async function eventPreimages(): Promise<ReadonlyMap<string, (Uint8Array | strin
   return preimages;
 }
 
-const EVENT_PREIMAGES = await eventPreimages();
+export const EVENT_PREIMAGES = await eventPreimages();
 
 function eventCircuit(id: string, kind: string, lengths: Readonly<Record<string, number>>): string[] {
   const action = actionOf(kind);

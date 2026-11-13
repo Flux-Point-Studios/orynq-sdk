@@ -9,6 +9,9 @@ import { isDeepStrictEqual } from "node:util";
  * @typedef {{ c?: string, v?: string, lex?: string, max?: number, nonzero?: boolean }} Segment
  * @typedef {{ kind: string, values: Record<string, string>, lengths: Record<string, number> }} ClassifiedEvent
  * @typedef {{ lengths: Record<string, number>, segments: Record<string, Uint8Array> }} ClassifiedMandate
+ * @typedef {{ active: boolean, sibRight: boolean, sib: Uint8Array }} PathLevel
+ * @typedef {{ notBefore: bigint, notAfter: bigint, assetDigest: Uint8Array, capAmount: bigint, windowSeconds: bigint, egressMode: bigint, counterpartyRoot: Uint8Array, egressRoot: Uint8Array }} StepAtoms
+ * @typedef {{ q: bigint, r: bigint, rClock: bigint }} StepWindow
  */
 
 const circuits = new URL("../../circuits/conduct/", import.meta.url);
@@ -482,4 +485,281 @@ export function emitOpenings() {
   for (const [id, lengths] of Object.entries(CLASSES.openings.mandates)) out.push(...mandateCircuit(id, lengths));
   for (const [name, parameters, returns, call] of PROBES) out.push(`export pure circuit ${name}(${parameters}): ${returns} {`, `  return ${call};`, "}", "");
   return out.join("\n");
+}
+
+const ACTION_DIGEST_DOMAIN = "orynq:conduct:guard:action:v1|";
+const ALLOWLIST_NODE_DOMAIN = "orynq:conduct:allowlist:node:v1|";
+const STEP_FIELDS = [
+  ["prevRollHex", "Bytes<64>"], ["rollAfter", "Bytes<32>"], ["atoms", "Bytes<32>"], ["windowIndex", "Uint<64>"], ["priorSpent", "Uint<64>"],
+  ["verdict", "Uint<8>"], ["dataSeq", "Uint<64>"], ["traceSeq", "Uint<64>"],
+];
+// The atoms of a mandate that K commits after C, in K's order, with the type a step's witness holds each at.
+const ATOM_FIELDS = [
+  ["notBefore", "Uint<64>"], ["notAfter", "Uint<64>"], ["assetDigest", "Bytes<32>"], ["capAmount", "Uint<64>"], ["windowSeconds", "Uint<64>"],
+  ["egressMode", "Uint<8>"], ["counterpartyRoot", "Bytes<32>"], ["egressRoot", "Bytes<32>"],
+];
+const WINDOW_FIELDS = ["q", "r", "rClock"];
+// Verdicts 5 and 7 state that a party is on no list, which a membership path cannot show.
+const NON_MEMBERSHIP = [5, 7];
+// The decisions that read a membership path: an allowed action, and a payment the cap denied after its counterparty passed.
+const READS_MEMBERSHIP = { payment: [0, 4], egress: [0] };
+
+/**
+ * The verdict code a guard event kind records: 0 for an action, the reason's code for a denial.
+ * @type {(kind: string) => number}
+ */
+export const stepVerdict = kind => Number(/-denial-(\d)$/.exec(kind)?.[1] ?? 0);
+
+const U64 = 1n << 64n;
+// The argument bytes of the shortest CBOR head of a uint; 0 where the head byte holds the value.
+const cborWidth = value => (value < 24n ? 0 : value < 256n ? 1 : value < 65536n ? 2 : value < 1n << 32n ? 4 : 8);
+
+/**
+ * The compiled step circuit for a classified event. A denial for a party on no list has none: non-membership is not
+ * provable, so it is refused, never approximated.
+ * @param {ClassifiedEvent} classified
+ * @returns {string}
+ */
+export function stepClass({ kind, values, lengths }) {
+  if (NON_MEMBERSHIP.includes(stepVerdict(kind))) refuse("NON_MEMBERSHIP_UNPROVABLE", "non-membership not provable");
+  const cbor = { ...(values.amount === undefined ? {} : { amount: cborWidth(BigInt(values.amount)) }), ts: cborWidth(BigInt(values.ts)) };
+  const match = Object.entries(CLASSES.steps).find(([, c]) => c.kind === kind && isDeepStrictEqual(c.lengths, lengths) && isDeepStrictEqual(c.cbor, cbor));
+  if (match === undefined) refuse("NO_COMPILED_CLASS", `no compiled ${kind} step class has lengths ${JSON.stringify(lengths)} and uint widths ${JSON.stringify(cbor)}`);
+  return match[0];
+}
+
+const hexOf = bytes => Buffer.from(bytes).toString("hex");
+const leafOf = member => sha256(utf8(ALLOWLIST_LEAF_DOMAIN), Uint8Array.from(textHead(utf8(member).length)), utf8(member));
+const IDLE_LEVEL = () => ({ active: false, sibRight: false, sib: new Uint8Array(32) });
+
+/**
+ * The path of `member` through the conduct allowlist tree of `members`, as `depth` levels: an active level holds the
+ * sibling and its side, and an inactive one stands for an odd last node promoted unchanged and for the levels above
+ * the root. Throws `ALLOWLIST_TOO_DEEP` for a list of more than 2^depth members and `NOT_A_MEMBER` for a party off it.
+ * @param {readonly string[]} members
+ * @param {string} member
+ * @param {number} depth
+ * @returns {{ path: PathLevel[], root: Uint8Array }}
+ */
+export function allowlistPath(members, member, depth) {
+  let level = [...new Map(members.map(leafOf).map(leaf => [hexOf(leaf), leaf])).values()].sort((a, b) => Buffer.compare(a, b));
+  if (level.length > 2 ** depth) refuse("ALLOWLIST_TOO_DEEP", `a list of ${level.length} members needs more than ${depth} levels`);
+  const own = hexOf(leafOf(member));
+  let at = level.findIndex(leaf => hexOf(leaf) === own);
+  if (at < 0) refuse("NOT_A_MEMBER", "the allowlist does not hold the party");
+  const path = [];
+  while (level.length > 1) {
+    const next = [];
+    for (let i = 0; i + 1 < level.length; i += 2) next.push(sha256(utf8(ALLOWLIST_NODE_DOMAIN), level[i], level[i + 1]));
+    const odd = level.length % 2 === 1;
+    if (odd) next.push(level.at(-1));
+    path.push(odd && at === level.length - 1 ? IDLE_LEVEL() : { active: true, sibRight: at % 2 === 0, sib: level[at ^ 1] });
+    at >>= 1;
+    level = next;
+  }
+  while (path.length < depth) path.push(IDLE_LEVEL());
+  return { path, root: level[0] };
+}
+
+const u64 = value => (value >= 0n && value < U64 ? value : 0n);
+const bigEndian = (value, width) => Uint8Array.from({ length: width }, (_, i) => Number((value >> BigInt(8 * (width - 1 - i))) & 0xffn));
+// The CBOR uint a step class hashes for a value: in the head byte, or the head and the class's argument bytes.
+const cborUintBytes = (value, width) => (width === 0 ? [Number(value & 0xffn)] : [...uintHead(width), ...bigEndian(value, width)]);
+const cborText = bytes => [...textHead(bytes.length), ...bytes];
+
+// The CBOR of a guard action (packages/conduct/src/actions.ts) as a step class encodes it from its event's own bytes.
+function actionCbor(circuit, segments) {
+  const { kind, cbor } = CLASSES.steps[circuit];
+  const ts = cborUintBytes(decimal(segments.ts), cbor.ts);
+  return actionOf(kind) === "payment"
+    ? [0xa5, 0x00, ...cborText(utf8("payment")), 0x01, ...cborText(segments.asset), 0x02, ...cborUintBytes(decimal(segments.amount), cbor.amount), 0x03,
+      ...cborText(segments.counterparty), 0x04, ...ts]
+    : [0xa3, 0x00, ...cborText(utf8("egress")), 0x01, ...cborText(segments.destination), 0x02, ...ts];
+}
+
+/**
+ * The lowercase hex of the action digest a step class recomputes from the event's action bytes.
+ * @param {string} circuit
+ * @param {Readonly<Record<string, Uint8Array>>} segments
+ * @returns {Uint8Array}
+ */
+export const stepActionDigest = (circuit, segments) => utf8(hexOf(sha256(utf8(ACTION_DIGEST_DOMAIN), Uint8Array.from(actionCbor(circuit, segments)))));
+
+// The bytes 64 hex digits encode, read with the circuit's own nibble arithmetic.
+const hexDecoded = hex => Uint8Array.from({ length: 32 }, (_, i) => Number((nibbles(hex.subarray(2 * i, 2 * i + 1)) * 16n + nibbles(hex.subarray(2 * i + 1, 2 * i + 2))) & 0xffn));
+
+/**
+ * The witnesses and statement that open `segments` as a step of the class `circuit` after the rolling hash
+ * `prevRollHex`, under the mandate atoms, membership path and prior spend of `context`. The segments may hold any
+ * bytes: the hash chain, K, the window split and the statement are derived from them as the circuit derives them, and
+ * a value outside uint64 is stated as 0.
+ * @param {string} circuit
+ * @param {Readonly<Record<string, Uint8Array>>} segments
+ * @param {string} prevRollHex
+ * @param {{ atoms: StepAtoms, path?: readonly PathLevel[], priorSpent: bigint, commitment?: Uint8Array, window?: StepWindow }} context
+ * @returns {{ witnesses: Record<string, Uint8Array | StepAtoms | StepWindow | readonly PathLevel[]>, statement: Record<string, Uint8Array | bigint> }}
+ */
+export function stepOpening(circuit, segments, prevRollHex, context) {
+  const { kind, cbor, depth } = CLASSES.steps[circuit];
+  const { atoms, priorSpent } = context;
+  const eventHex = utf8(hexOf(sha256(preimageOf(kind, segments))));
+  const commitment = context.commitment ?? hexDecoded(segments.mandateCommitment);
+  const domain = new Uint8Array(32);
+  domain.set(utf8(ATOMS_DOMAIN));
+  const k = sha256(domain, commitment, ...ATOM_FIELDS.map(([name, type]) => (type === "Bytes<32>" ? atoms[name] : type === "Uint<8>" ? Uint8Array.of(Number(atoms[name] & 0xffn)) : le8(atoms[name]))));
+  const [ts, clock, width] = [decimal(segments.ts), decimal(segments.enforcedAt), atoms.windowSeconds];
+  const q = width === 0n ? 0n : u64(ts) / width;
+  const window = context.window ?? { q, r: u64(ts - q * width), rClock: u64(clock - q * width) };
+  const statement = {
+    prevRollHex: utf8(prevRollHex), rollAfter: sha256(utf8(ROLL_DOMAIN), utf8(prevRollHex), utf8("|"), eventHex), atoms: k, windowIndex: window.q, priorSpent,
+    verdict: BigInt(stepVerdict(kind)), dataSeq: u64(decimal(segments.dataSeq)), traceSeq: u64(decimal(segments.traceSeq)),
+  };
+  const derived = [
+    ["eventHex", eventHex],
+    ...Object.entries(cbor).filter(([, w]) => w > 0).map(([name, w]) => [`${name}Cbor`, bigEndian(decimal(segments[name]), w)]),
+    ["commitment", commitment], ["atoms", atoms], ["window", window], ...(depth === undefined ? [] : [["path", context.path]]),
+  ];
+  const witnesses = Object.fromEntries([...Object.entries(segments), ...derived].map(([name, value]) => [`${circuit}_${name}`, value]));
+  return { witnesses, statement };
+}
+
+function stepCircuit(id, { kind, lengths, cbor, depth }) {
+  const action = actionOf(kind);
+  const verdict = stepVerdict(kind);
+  if (NON_MEMBERSHIP.includes(verdict)) throw new Error(`${id}: a denial ${verdict} states non-membership and has no step class`);
+  if (READS_MEMBERSHIP[action].includes(verdict) !== (depth !== undefined)) throw new Error(`${id}: a step class has a depth exactly when its decision reads a membership path`);
+  const specs = valueSpecs(kind);
+  const width = name => valueLength(specs.get(name), lengths);
+  const party = action === "payment" ? "counterparty" : "destination";
+  const uints = Object.keys(cbor);
+  const out = [];
+  for (const name of specs.keys()) out.push(`witness ${id}_${name}(): Vector<${width(name)}, Uint<8>>;`);
+  out.push(`witness ${id}_eventHex(): Vector<64, Uint<8>>;`);
+  for (const name of uints.filter(u => cbor[u] > 0)) out.push(`witness ${id}_${name}Cbor(): Vector<${cbor[name]}, Uint<8>>;`);
+  out.push(`witness ${id}_commitment(): Vector<32, Uint<8>>;`, `witness ${id}_atoms(): MandateAtoms;`, `witness ${id}_window(): WindowSplit;`);
+  if (depth !== undefined) out.push(`witness ${id}_path(): Vector<${depth}, PathStep>;`);
+  out.push("", `export circuit ${id}(s: ConductStep): [] {`);
+  const body = [];
+  for (const name of specs.keys()) body.push(`const ${name} = ${id}_${name}();`);
+  const preimage = KINDS[kind].flatMap(s => (s.c === undefined ? [segment(s.v, width(s.v))] : constant([...utf8(s.c)])));
+  body.push(
+    `const eventHash = ${hashOf(preimage)};`,
+    `const eventHex = ${id}_eventHex();`,
+    "hexOfHash(eventHex, eventHash);",
+    `assert(${hashOf([...constant([...utf8(ROLL_DOMAIN)]), { type: "Bytes<64>", value: "s.prevRollHex" }, ...constant([...utf8("|")]), segment("eventHex", 64)])} == s.rollAfter, "rolling root mismatch");`,
+  );
+  // Every value is read through the gadget of its lexical class: the action's atoms as values the verdict takes, the
+  // two sequences against the statement.
+  if (action === "payment") body.push(`const amountValue = decU64<${width("amount")}>(amount);`, 'assert(amountValue != 0, "decimal nonzero");');
+  body.push(
+    `const tsValue = decU64<${width("ts")}>(ts);`,
+    `const enforcedAtValue = decU64<${width("enforcedAt")}>(enforcedAt);`,
+    `assert(decU64<${width("dataSeq")}>(dataSeq) == s.dataSeq, "dataSeq opening");`,
+    `assert(dec53<${width("traceSeq")}>(traceSeq) == s.traceSeq, "traceSeq opening");`,
+    ...[...specs].flatMap(([name, spec]) => LEXICAL_GADGET[spec.lex]?.(name, width(name)) ?? []),
+  );
+  // D6: the action digest is recomputed from the opened action bytes, each uint in the CBOR head width of the class.
+  const uint = name => {
+    if (cbor[name] === 0) {
+      body.push(`assert(${name}Value <= 23, "action cbor head");`);
+      return [{ type: "Uint<8>", value: `${name}Value as Uint<8>` }];
+    }
+    body.push(`const ${name}Cbor = ${id}_${name}Cbor();`, `assert(cborUint<${cbor[name]}>(${name}Cbor) == ${name}Value, "action cbor uint");`);
+    return [{ c: uintHead(cbor[name]) }, segment(`${name}Cbor`, cbor[name])];
+  };
+  const text = name => [{ c: textHead(width(name)) }, segment(name, width(name))];
+  const digest = [{ c: [...utf8(ACTION_DIGEST_DOMAIN)] }, ...(action === "payment"
+    ? [{ c: [0xa5, 0x00, ...cborText(utf8("payment")), 0x01] }, ...text("asset"), { c: [0x02] }, ...uint("amount"), { c: [0x03] }, ...text("counterparty"), { c: [0x04] }, ...uint("ts")]
+    : [{ c: [0xa3, 0x00, ...cborText(utf8("egress")), 0x01] }, ...text("destination"), { c: [0x02] }, ...uint("ts")])];
+  // Adjacent constants join, so the hash lists one run of constant bytes between two values.
+  const digestParts = merged(digest).flatMap(part => (part.c === undefined ? [part] : constant(part.c)));
+  body.push(
+    `hexOfHash(actionDigest, ${hashOf(digestParts)});`,
+    `const commitment = ${id}_commitment();`,
+    "hexOfBytes(mandateCommitment, commitment);",
+    `const atoms = ${id}_atoms();`,
+    `assert(${hashOf([
+      { type: "Bytes<32>", value: `pad(32, ${JSON.stringify(ATOMS_DOMAIN)})` }, { type: "Vector<32, Uint<8>>", value: "commitment" },
+      ...ATOM_FIELDS.map(([name, type]) => ({ type, value: `atoms.${name}` })),
+    ])} == s.atoms, "mandate atoms mismatch");`,
+    `const window = ${id}_window();`,
+    "windowOf(tsValue, enforcedAtValue, atoms.windowSeconds, window.q, window.r, window.rClock);",
+    'assert(window.q == s.windowIndex, "window index");',
+  );
+  if (action === "payment") body.push(`const assetOk = ${hashOf([segment("asset", width("asset"))])} == atoms.assetDigest;`);
+  if (depth !== undefined) {
+    body.push(
+      `const path = ${id}_path();`,
+      `const memberOk = allowlistRoot<${depth}>(${hashOf([...leafPrefix(width(party)), segment(party, width(party))])}, path) == atoms.${action === "payment" ? "counterpartyRoot" : "egressRoot"};`,
+    );
+  }
+  const member = depth === undefined ? "false" : "memberOk";
+  const decide = action === "payment"
+    ? `0, tsValue, amountValue, assetOk, ${member}, s.priorSpent, false`
+    : `1, tsValue, 0, false, false, s.priorSpent, ${member}`;
+  body.push(
+    `const verdict = CV_decide(enforcedAtValue, atoms.notBefore, atoms.notAfter, atoms.capAmount, atoms.egressMode, ${decide});`,
+    'assert(verdict != 5 && verdict != 7, "non-membership not provable");',
+    'assert(verdict == s.verdict, "verdict mismatch");',
+    `assert(verdict == ${verdict}, "recorded decision");`,
+    "conductStep = disclose(s);",
+  );
+  out.push(...body.map(line => `  ${line}`), "}", "");
+  return out;
+}
+
+/** The depths the steps unit compiles a pure probe of the path gadget at. */
+export const PATH_PROBE_DEPTHS = [1, 2, 3, 4, 5, 6];
+const STEP_PROBES = [
+  ...PATH_PROBE_DEPTHS.map(d => [`allowlist_root_d${d}`, `leaf: Bytes<32>, path: Vector<${d}, PathStep>`, "Bytes<32>", `allowlistRoot<${d}>(leaf, path)`]),
+  ["window_split", "ts: Uint<64>, clock: Uint<64>, w: Uint<64>, q: Uint<64>, r: Uint<64>, rClock: Uint<64>", "[]", "windowOf(ts, clock, w, q, r, rClock)"],
+  ["hex_of_bytes", `${vector(64)}, b: Vector<32, Uint<8>>`, "[]", "hexOfBytes(v, b)"],
+];
+
+/**
+ * The Compact source of the step circuits of every class in classes.json, and the pure probes of their gadgets.
+ * @returns {string}
+ */
+export function emitSteps() {
+  const struct = (name, fields) => [`export struct ${name} {`, fields.map(([key, type]) => `  ${key}: ${type}`).join(",\n"), "}"];
+  const out = [
+    "// Generated from templates/guard-event-v1.json and classes.json by scripts/compile-conduct.mjs --write.",
+    "pragma language_version 0.23;",
+    "import CompactStandardLibrary;",
+    'include "gadgets";',
+    "import ConductGadgets;",
+    'include "verdict_core";',
+    "import ConductVerdict prefix CV_;",
+    "",
+    ...struct("ConductStep", STEP_FIELDS), "export ledger conductStep: ConductStep;", "",
+    ...struct("MandateAtoms", ATOM_FIELDS), "",
+    ...struct("WindowSplit", WINDOW_FIELDS.map(name => [name, "Uint<64>"])), "",
+  ];
+  for (const [id, stepClassOf] of Object.entries(CLASSES.steps)) out.push(...stepCircuit(id, stepClassOf));
+  for (const [name, parameters, returns, call] of STEP_PROBES) out.push(`export pure circuit ${name}(${parameters}): ${returns} {`, `  return ${call};`, "}", "");
+  return out.join("\n");
+}
+
+// A mandate DID is did:key:z and 8 to 256 base58 characters.
+const DID_TAIL = { min: 8, max: 256 };
+const VISIBILITIES = ["public", "private", "secret"];
+
+/**
+ * How many exact-length classes, and so circuits and verifier keys, the v1 encodings span. Arithmetic over the
+ * template's bounds, not a measurement: the whole payment-action envelope, the same with ten-digit times and one asset,
+ * the pairs of DID lengths of a mandate, and what a fixed-width encoding would leave per template (the trace sequence's
+ * digits and the visibility's length).
+ * @returns {{ paymentActionEnvelope: bigint, paymentActionFixedTimesAndAsset: bigint, mandateDidPairs: bigint, fixedWidthPerTemplate: bigint }}
+ */
+export function classCounts() {
+  const lengths = spec => (spec.lex === "vis" ? BigInt(new Set(VISIBILITIES.map(v => v.length)).size) : spec.max === undefined ? 1n : BigInt(spec.max));
+  const specs = [...valueSpecs("payment-action").values()];
+  const product = list => list.reduce((n, spec) => n * lengths(spec), 1n);
+  const dids = BigInt(DID_TAIL.max - DID_TAIL.min + 1);
+  return {
+    paymentActionEnvelope: product(specs),
+    paymentActionFixedTimesAndAsset: product(specs.filter(spec => !["ts", "enforcedAt", "asset"].includes(spec.v))),
+    mandateDidPairs: dids * dids,
+    fixedWidthPerTemplate: product(specs.filter(spec => ["traceSeq", "vis"].includes(spec.v))),
+  };
 }

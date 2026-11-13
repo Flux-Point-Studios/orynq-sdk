@@ -43,7 +43,10 @@ const editPins = (root: string, edit: (pins: { sources: Record<string, string>; 
 // A copy that pins only the predicate unit, so a --check of that unit alone rebuilds every pin it keeps.
 function predicateCopy(): string {
   const root = packageCopy();
-  editPins(root, pins => { delete pins.units.openings; });
+  editPins(root, pins => {
+    delete pins.units.openings;
+    delete pins.units.steps;
+  });
   return root;
 }
 
@@ -97,7 +100,7 @@ describe("compile-conduct refusals", () => {
   ])("rejects %s with the usage text", (_label, args) => {
     const result = compile(packageCopy(), args);
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("usage: compile-conduct.mjs --write|--check [--units predicate,openings,mutants,reference]");
+    expect(result.stderr).toContain("usage: compile-conduct.mjs --write|--check [--units predicate,openings,steps,mutants,reference | --units bench[:group],...]");
   });
 
   it("rejects an unknown unit", () => {
@@ -106,12 +109,48 @@ describe("compile-conduct refusals", () => {
     expect(result.stderr).toContain("unknown conduct unit: nope");
   });
 
+  // The bench groups pin into bench/conduct/pins.json, apart from the units the package ships.
+  it.each([
+    ["a bench group beside a conduct unit", ["--check", "--units", "bench:span,predicate"], "the bench groups build apart from the conduct units: select one or the other"],
+    ["the whole bench beside a conduct unit", ["--write", "--units", "steps,bench"], "the bench groups build apart from the conduct units: select one or the other"],
+    ["an unknown bench group", ["--check", "--units", "bench:nope"], "unknown conduct bench group: nope"],
+  ])("rejects %s", (_label, args, message) => {
+    const result = compile(pkg, args);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(message);
+  });
+
+  it("builds no bench group from the files the npm package ships, which hold no bench specification", () => {
+    expect(shipped.some(entry => entry === "bench" || entry.startsWith("bench/"))).toBe(false);
+    const result = compile(packageCopy(), ["--check", "--units", "bench"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("bench/conduct/bench.json");
+  });
+
   it("rejects a mutant that edits a file outside the compiled units' sources", () => {
     const root = packageCopy();
     writeFileSync(join(root, "circuits/conduct/mutants.json"), JSON.stringify([{ id: "elsewhere", file: "reference/poac_verdict_core.compact", find: "return 6;", replace: "return 7;" }]));
     const result = compile(root, ["--check"]);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("mutant elsewhere must edit one of predicate.compact, verdict_core.compact, openings.generated.compact");
+  });
+
+  // gadgets.compact and verdict_core.compact are sources of two units each, so a mutant of one may name its unit.
+  it.each([
+    ["a unit that does not compile the file", { id: "misplaced", file: "predicate.compact", unit: "steps", find: "export ledger verdictOut: Uint<8>;", replace: "export ledger verdictOut: Uint<16>;" }],
+    ["an unknown unit", { id: "misplaced", file: "gadgets.compact", unit: "ghost", find: "export circuit vis6(", replace: "export circuit vis6x(" }],
+  ])("rejects a mutant that names %s", (_label, mutant) => {
+    const root = packageCopy();
+    writeFileSync(join(root, "circuits/conduct/mutants.json"), JSON.stringify([mutant]));
+    const result = compile(root, ["--check"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("mutant misplaced must edit one of");
+  });
+
+  it("compiles a mutant of a shared source in the unit it names, from that unit's own sources", () => {
+    const sources = (id: string) => readdirSync(join(pkg, "conduct-managed/mutants", id, "source")).sort();
+    expect(sources("window_remainder_unchecked")).toEqual(["gadgets.compact", "steps.generated.compact", "verdict_core.compact"]);
+    expect(sources("hex_digit_g")).toEqual(["gadgets.compact", "openings.generated.compact"]);
   });
 
   // Each mutant compiles into conduct-managed/mutants/<id>/, so a repeated id would overwrite the earlier mutant.
@@ -143,12 +182,27 @@ describe("compile-conduct regenerates the opening circuits from the template and
     ["a class added to classes.json", "circuits/conduct/classes.json", (text: string) => text.replace('"ev_pa_ascii_min": {', '"ev_pa_ascii_min_copy": { "kind": "payment-action", "lengths": { "amount": 2, "asset": 3, "counterparty": 4, "ts": 1, "enforcedAt": 1, "dataSeq": 1, "traceSeq": 1, "vis": 7 } },\n      "ev_pa_ascii_min": {')],
     ["a template constant changed", "circuits/conduct/templates/guard-event-v1.json", (text: string) => text.replace('\\",\\"asset\\":\\"', '\\",\\"Asset\\":\\"')],
     ["a hand edit of the generated circuits", "circuits/conduct/openings.generated.compact", (text: string) => `${text}\n`],
+    ["a step class added to classes.json", "circuits/conduct/classes.json", (text: string) => text.replace('"st_ed6": {', '"st_ed6_copy": { "kind": "egress-denial-6", "lengths": { "destination": 5, "ts": 1, "enforcedAt": 1, "dataSeq": 1, "traceSeq": 1, "vis": 7 }, "cbor": { "ts": 0 } },\n    "st_ed6": {')],
+    ["a step class's depth changed", "circuits/conduct/classes.json", (text: string) => text.replace('"cbor": { "ts": 0 }, "depth": 2 }', '"cbor": { "ts": 0 }, "depth": 3 }')],
+    ["a hand edit of the generated steps", "circuits/conduct/steps.generated.compact", (text: string) => text.replace('assert(verdict == 4, "recorded decision");', 'assert(verdict == 4 || verdict == 0, "recorded decision");')],
   ])("refuses %s until --write regenerates them", (_label, path, edit) => {
     const root = packageCopy();
     editFile(root, path, edit);
     const result = compile(root, ["--check"]);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("generated circuits differ from classes.json; run --write");
+  });
+
+  // A step class walks a membership path exactly when its decision reads one, and none states non-membership.
+  it.each([
+    ["a denial class that states non-membership", '"st_ed6": { "kind": "egress-denial-6"', '"st_ed6": { "kind": "egress-denial-7"', "st_ed6: a denial 7 states non-membership and has no step class"],
+    ["a membership path on a class whose decision reads none", '"cbor": { "amount": 0, "ts": 0 } },\n    "st_pd2"', '"cbor": { "amount": 0, "ts": 0 }, "depth": 2 },\n    "st_pd2"', "st_pd1: a step class has a depth exactly when its decision reads a membership path"],
+  ])("refuses %s in classes.json", (_label, find, replace, message) => {
+    const root = packageCopy();
+    editFile(root, "circuits/conduct/classes.json", text => text.replace(find, replace));
+    const result = compile(root, ["--check"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(message);
   });
 
   it("names a read error of the committed generated circuits instead of asking for --write", () => {
@@ -180,10 +234,10 @@ describe("compile-conduct --check verifies every pin it keeps", () => {
 
   it("refuses pins for a unit it does not know", () => {
     const root = packageCopy();
-    editPins(root, pins => { pins.units.steps = { circuits: { st_pa: { rows: 4000 } } }; });
+    editPins(root, pins => { pins.units.ghost = { circuits: { g_pa: { rows: 4000 } } }; });
     const result = compile(root, ["--check"]);
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("pins.json names unknown conduct unit: steps");
+    expect(result.stderr).toContain("pins.json names unknown conduct unit: ghost");
   });
 
   it("refuses a --check that would carry a pinned unit without rebuilding it", () => {
@@ -195,13 +249,13 @@ describe("compile-conduct --check verifies every pin it keeps", () => {
   });
 
   // As many entries as there are units, but only two distinct: counted as entries, the list would not be partial and
-  // --write would drop the pins of the predicate unit it skips.
+  // --write would drop the pins of the units it skips.
   it("treats a repeated unit as one, so a partial --write keeps the pins of the units it skips", () => {
     const root = packageCopy();
     withoutMutants(root);
     const pinsFile = join(root, "circuits/conduct/pins.json");
     const before = readFileSync(pinsFile, "utf8");
-    const result = compile(root, ["--write", "--units", "mutants,mutants,reference"]);
+    const result = compile(root, ["--write", "--units", "mutants,mutants,mutants,reference,reference"]);
     expect(result.stderr).toBe("");
     expect(readFileSync(pinsFile, "utf8")).toBe(before);
     expect(existsSync(join(root, "conduct-managed/predicate")), "the skipped predicate unit is not rebuilt").toBe(false);
@@ -247,7 +301,18 @@ function openingsCopy(): string {
   const root = packageCopy();
   const classes = join(root, "circuits/conduct/classes.json");
   const { openings } = JSON.parse(readFileSync(classes, "utf8"));
-  writeFileSync(classes, JSON.stringify({ openings: { events: {}, mandates: { m_step: openings.mandates.m_step } } }));
+  writeFileSync(classes, JSON.stringify({ openings: { events: {}, mandates: { m_step: openings.mandates.m_step } }, steps: {} }));
+  writeFileSync(join(root, "circuits/conduct/mutants.json"), "[]\n");
+  rmSync(join(root, "circuits/conduct/pins.json"));
+  return root;
+}
+
+// A copy whose steps unit compiles the one deny-all step class and pins nothing.
+function stepsCopy(): string {
+  const root = packageCopy();
+  const classes = join(root, "circuits/conduct/classes.json");
+  const { steps } = JSON.parse(readFileSync(classes, "utf8"));
+  writeFileSync(classes, JSON.stringify({ openings: { events: {}, mandates: {} }, steps: { st_ed6: steps.st_ed6 } }));
   writeFileSync(join(root, "circuits/conduct/mutants.json"), "[]\n");
   rmSync(join(root, "circuits/conduct/pins.json"));
   return root;
@@ -264,6 +329,10 @@ const EXPORTING_UNITS = [
   {
     unit: "openings", entry: "openings.generated.compact", circuit: "m_step", args: ["--write", "--units", "openings"], done: "Compiled and pinned conduct circuits", copy: openingsCopy,
     demote: (root: string) => editFile(root, "scripts/conduct/template.mjs", text => text.replace("`export pure circuit ${name}(", "`pure circuit ${name}(")),
+  },
+  {
+    unit: "steps", entry: "steps.generated.compact", circuit: "st_ed6", args: ["--write", "--units", "steps"], done: "Compiled and pinned conduct circuits", copy: stepsCopy,
+    demote: (root: string) => editFile(root, "scripts/conduct/template.mjs", text => text.replace("of STEP_PROBES) out.push(`export pure circuit ${name}(", "of STEP_PROBES) out.push(`pure circuit ${name}(")),
   },
 ];
 
