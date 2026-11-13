@@ -65,13 +65,16 @@ export function inclusionUnknownMessage(
     "Settle it with resolveInclusion() before resubmitting; an absent record in one read does not mean it will not land.";
 }
 
-/** One read, ended with `read-timeout` after STALLED_READ_MS or at `deadline`; `onStall` runs on that timeout. */
-export function boundedRead<T>(read: () => Promise<T>, deadline: number, onStall?: () => void): Promise<T> {
+/**
+ * One read, ended with `read-timeout` after STALLED_READ_MS or at `deadline` (`onStall` runs on
+ * that timeout), or with `connect-aborted` when `signal` aborts.
+ */
+export function boundedRead<T>(read: () => Promise<T>, deadline: number, onStall?: () => void, signal?: AbortSignal): Promise<T> {
   const budgetMs = Math.min(deadline - Date.now(), STALLED_READ_MS);
   return withinDeadline(read, Date.now() + budgetMs, () => {
     onStall?.();
     return new MateriosConnectionError("read-timeout", budgetMs);
-  });
+  }, signal);
 }
 
 export interface HeadPoll<T> {
@@ -79,13 +82,19 @@ export interface HeadPoll<T> {
   /** The last head examined without a result. */
   lastHead?: ObservedHead;
   lastError?: unknown;
+  /** `disconnect()` ended the poll before its deadline. */
+  aborted?: true;
 }
+
+/** Why a poll that `disconnect()` ended has no result. */
+export const POLL_ABORTED = "disconnect() ended the storage poll before its deadline";
 
 /**
  * Calls `examine` once for each new head (best, or finalized when `finalized`), polling every
- * `intervalMs` through an isolated connection to the chain with `genesis`, until it returns a
- * value or `deadline` passes. A failed or stalled read reopens the connection; a
- * MateriosSubmissionError from `examine` ends the poll. The connection is always closed.
+ * `intervalMs` through the provider's shared recovery reader, a connection isolated from the main
+ * one and checked against `genesis`, until it returns a value, `deadline` passes or the provider
+ * is disconnected. A failed or stalled read replaces the reader for every poll sharing it; a
+ * MateriosSubmissionError from `examine` ends the poll. The reader is closed with its last poll.
  */
 export async function pollHeads<T>(
   provider: MateriosProvider,
@@ -96,34 +105,33 @@ export async function pollHeads<T>(
   examine: (at: BlockApi, head: ObservedHead) => Promise<T | undefined>,
   onPoll?: () => void,
 ): Promise<HeadPoll<T>> {
-  let reader: ApiPromise | undefined;
-  const close = async () => {
-    const closing = reader;
-    reader = undefined;
-    await closing?.disconnect();
-  };
+  const lease = provider.leaseReader(genesis);
+  const { signal } = lease;
   const result: HeadPoll<T> = {};
   try {
-    while (Date.now() < deadline) {
+    while (Date.now() < deadline && !signal.aborted) {
       onPoll?.();
+      let reader: ApiPromise | undefined;
       try {
-        const api = reader ??= await provider.openReader(genesis, deadline);
-        const head = await boundedRead(() => readHead(api, finalized), deadline);
+        const api = reader = await lease.api(deadline);
+        const head = await boundedRead(() => readHead(api, finalized), deadline, undefined, signal);
         if (head.hash !== result.lastHead?.hash) {
-          const value = await boundedRead(async () => examine(await api.at(head.hash), head), deadline);
+          const value = await boundedRead(async () => examine(await api.at(head.hash), head), deadline, undefined, signal);
           if (value !== undefined) return { value, lastHead: head };
           result.lastHead = head;
         }
       } catch (error) {
         if (error instanceof MateriosSubmissionError) throw error;
+        if (signal.aborted) break;
         result.lastError = error;
-        await close();
+        if (reader) await lease.discard(reader);
       }
-      await sleep(Math.min(intervalMs, deadline - Date.now()));
+      await sleep(Math.min(intervalMs, deadline - Date.now()), signal);
     }
+    if (signal.aborted) result.aborted = true;
     return result;
   } finally {
-    await close();
+    await lease.release();
   }
 }
 
@@ -132,7 +140,7 @@ export async function pollHeads<T>(
  * finalized block holds the matching record, and `not-landed` only once a finalized block without
  * it is past the extrinsic's mortality end, or shows its signer's nonce above the extrinsic's
  * nonce. A different payload stored under the id rejects with `dispatch`; no settlement by the
- * timeout rejects with `inclusion-unknown` again.
+ * timeout, or before `disconnect()`, rejects with `inclusion-unknown` again.
  */
 export async function resolveInclusion(
   provider: MateriosProvider,
@@ -163,7 +171,8 @@ export async function resolveInclusion(
     () => opts.onPoll?.(++attempt, Date.now() - start));
   if (poll.value) return poll.value;
   const lastHead = poll.lastHead ?? error.lastHead;
+  const reason = poll.aborted ? POLL_ABORTED : `finalized storage did not settle it within ${timeoutMs} ms`;
   throw new MateriosSubmissionError("inclusion-unknown", id,
-    inclusionUnknownMessage(expected, id, extrinsic, `finalized storage did not settle it within ${timeoutMs} ms`, lastHead, poll.lastError),
+    inclusionUnknownMessage(expected, id, extrinsic, reason, lastHead, poll.lastError),
     { expected, extrinsic, lastHead, cause: error.cause });
 }

@@ -214,7 +214,8 @@ function checkLimit(name: string, limit: unknown): void {
 
 // A value is a container, a string, a number or a literal: `{"a":[1]}` holds three. Nesting and
 // values are judged first, so a deep or wide text is refused as JSON_DEPTH or JSON_VALUES even
-// when it is also invalid.
+// when it is also invalid. A text over both is refused by the limit its scan meets first, and as
+// JSON_DEPTH at a value over both; a text over the byte limit is JSON_TOO_LARGE whatever it holds.
 export function parseStrictJson(text: string, maxBytes: number, maxValues = Number.POSITIVE_INFINITY): unknown {
   checkLimit("maxBytes", maxBytes);
   checkLimit("maxValues", maxValues);

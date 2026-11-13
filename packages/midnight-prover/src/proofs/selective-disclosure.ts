@@ -512,24 +512,28 @@ export class SelectiveDisclosureProver {
     }
 
     try {
-      if (proof.proofType !== "selective-disclosure") {
-        return invalid(`Proof type ${String(proof.proofType)} is not selective-disclosure`);
+      // Read once: a getter, or code holding the proof, cannot give the checks
+      // below one value and the Merkle path or the result another.
+      const { proofType, proof: proofBytes, proofId, publicInputs: given, disclosedSpan: span, disclosedEvents: events } = proof;
+      if (proofType !== "selective-disclosure") {
+        return invalid(`Proof type ${String(proofType)} is not selective-disclosure`);
       }
-      if (!proof.proof || proof.proof.length === 0) {
+      if (!proofBytes || proofBytes.length === 0) {
         return invalid("Proof bytes are missing");
       }
 
-      const { publicInputs } = proof;
-      if (!publicInputs.spanHash || publicInputs.spanHash.length !== 64) {
+      const { spanHash, merkleRoot, cardanoAnchorTxHash } = given;
+      const publicInputs: DisclosurePublicInputs = { spanHash, merkleRoot, cardanoAnchorTxHash };
+      if (!spanHash || spanHash.length !== 64) {
         return invalid("Public span hash must be 64 hex characters");
       }
-      if (!publicInputs.merkleRoot || publicInputs.merkleRoot.length !== 64) {
+      if (!merkleRoot || merkleRoot.length !== 64) {
         return invalid("Public Merkle root must be 64 hex characters");
       }
-      if (!publicInputs.cardanoAnchorTxHash || publicInputs.cardanoAnchorTxHash.length === 0) {
+      if (!cardanoAnchorTxHash || cardanoAnchorTxHash.length === 0) {
         return invalid("Public Cardano anchor transaction hash is missing");
       }
-      if (proof.proofId !== (await this.generateProofId(publicInputs))) {
+      if (proofId !== (await this.generateProofId(publicInputs))) {
         return invalid("Proof ID does not match the public inputs");
       }
 
@@ -537,18 +541,18 @@ export class SelectiveDisclosureProver {
       if ((tree.leafHashes !== undefined || tree.leafCount !== undefined) && tree.expectedMerkleRoot === undefined) {
         return invalid("Authenticated leaf hashes or a leaf count describe the anchored tree: pass its Merkle root as expectedMerkleRoot");
       }
-      if (tree.expectedMerkleRoot !== undefined && publicInputs.merkleRoot !== tree.expectedMerkleRoot) {
-        return invalid(`The proof's Merkle root ${publicInputs.merkleRoot} is not the expected Merkle root ${tree.expectedMerkleRoot}`);
+      if (tree.expectedMerkleRoot !== undefined && merkleRoot !== tree.expectedMerkleRoot) {
+        return invalid(`The proof's Merkle root ${merkleRoot} is not the expected Merkle root ${tree.expectedMerkleRoot}`);
       }
 
-      const path = await this.merklePath(proof.proof, publicInputs);
+      const path = await this.merklePath(proofBytes, publicInputs);
       if (path === null || !(await verifyMerkleProof(path, tree.leafCount))) {
         return invalid("The Merkle path in the proof bytes does not lead from the public span hash to the public Merkle root");
       }
 
-      const { disclosedSpan: span, disclosedEvents: events } = proof;
       if (span !== undefined && events !== undefined) {
-        return fullDisclosure(path, span, events, tree);
+        // Awaited here, so a disclosure that cannot be read is an invalid result, not a rejection.
+        return await fullDisclosure(path, span, events, tree);
       }
       if (span === undefined && events === undefined) {
         return { valid: true, unbound: false, errors: [] };

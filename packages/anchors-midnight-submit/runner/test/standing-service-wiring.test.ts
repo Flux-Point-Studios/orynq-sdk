@@ -10,7 +10,7 @@ import { FORK, forkBlock, recorded } from "../../../anchors-midnight/src/__tests
 // node replaying the recorded fork.
 const AUTHOR = "02".repeat(32), REGISTRY = "438b1ea134e760e8b4e87409d663f36561f15341880c118dc41e4fc2b224c736";
 // The HOME the service and its shared journal list resolve, fixed before any module reads it.
-const stub = vi.hoisted(() => ({ home: `${process.env.TMPDIR ?? "/tmp"}/standing-service-wiring-home-${process.pid}`, node: undefined as unknown, delivery: undefined as undefined | { runtime: () => Promise<number> } }));
+const stub = vi.hoisted(() => ({ home: `${process.env.TMPDIR ?? "/tmp"}/standing-service-wiring-home-${process.pid}`, node: undefined as unknown, walletOpens: [] as { stateFile?: string }[], delivery: undefined as undefined | { runtime: () => Promise<number> } }));
 vi.mock("node:os", async (original) => ({ ...(await original<object>()), homedir: () => stub.home }));
 vi.mock("@fluxpointstudios/orynq-sdk-anchors-midnight", async (original) => ({ ...(await original<object>()),
   knownAuthors: () => ({ authors: () => [{ key: AUTHOR, role: "batch" }], checkpoints: () => [] }), midnightSource: () => ({ operator: "fork", node: { call: (method: string, params?: unknown[]) => (stub.node as MidnightSource["node"]).call(method, params), batch: async () => [] }, indexer: {} }) }));
@@ -25,7 +25,7 @@ vi.mock("../standing-delivery.js", async (original) => ({ ...(await original<obj
 vi.mock("../../src/endpoints.js", async (original) => ({ ...(await original<object>()), networkEndpoints: () => ({ headers: {} }) }));
 vi.mock("../../src/preflight.js", async (original) => ({ ...(await original<object>()), assertChainIdentity: async () => ({}) }));
 vi.mock("../../src/submission.js", async (original) => ({ ...(await original<object>()), registryStateOnNode: async () => true }));
-vi.mock("../../src/wallet.js", async (original) => ({ ...(await original<object>()), openWallet: async () => ({ secrets: [], close: async () => ({ saved: true }) }) }));
+vi.mock("../../src/wallet.js", async (original) => ({ ...(await original<object>()), openWallet: async (options: { stateFile?: string }) => { stub.walletOpens.push(options); return { secrets: [], close: async () => ({ saved: true }) }; } }));
 vi.mock("../../src/operator.js", async (original) => ({ ...(await original<object>()), registryOperator: () => ({ authorKey: AUTHOR, close: () => {} }) }));
 vi.mock("../../src/sync.js", async (original) => ({ ...(await original<object>()), syncWithCheckpoints: async () => {} }));
 vi.mock("../publisher.js", async (original) => ({ ...(await original<object>()), readProofStoreKey: () => "store-key-0123456789" }));
@@ -46,9 +46,11 @@ function forkedNode(height: number, stateOf: number): MidnightSource["node"] {
 }
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); stub.delivery = undefined; });
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); stub.delivery = undefined; stub.walletOpens = []; });
 
-async function deliveryRuntime() {
+// The state file the mainnet scripts share, under the HOME the service resolves.
+const sharedState = () => join(stub.home, ".local/state/orynq-midnight/mainnet-wallet.state.json");
+async function service(state = sharedState()) {
   const { parseStandingConfig, runStandingService } = await import("../standing-service.js");
   const root = mkdtempSync(join(tmpdir(), "standing-service-wiring-")); roots.push(root, stub.home);
   const file = (name: string) => join(root, name);
@@ -56,11 +58,23 @@ async function deliveryRuntime() {
   writeFileSync(file("record.json"), JSON.stringify({ addresses: { unshielded: "u", shielded: "s", dust: "d" } }), { mode: 0o600 });
   const config = parseStandingConfig({ mode: "anchor", network: "mainnet", genesis: "01".repeat(32), registry: REGISTRY, author: AUTHOR, stateRoot: join(stub.home, ".local/state/orynq-midnight/standing"),
     materiosRpcUrl: "https://materios.example/rpc", midnightReadRpcUrl: "https://midnight.example/rpc", knownAuthorsFile: file("authors.json"),
-    wallet: { mnemonic: file("mnemonic"), record: file("record.json"), state: file("wallet.state"), blockfrost: file("blockfrost"), zk: file("zk"), author: file("author") },
+    wallet: { mnemonic: file("mnemonic"), record: file("record.json"), state, blockfrost: file("blockfrost"), zk: file("zk"), author: file("author") },
     stores: [{ url: "https://store-a.example/proofs", keyFile: file("store-a") }, { url: "https://store-b.example/proofs", keyFile: file("store-b") }] });
-  await expect(runStandingService(config)).rejects.toThrow("delivery captured");
+  return { root, stopped: runStandingService(config) };
+}
+async function deliveryRuntime() {
+  await expect((await service()).stopped).rejects.toThrow("delivery captured");
   return stub.delivery!.runtime;
 }
+
+it("opens the mainnet wallet from the state file the mainnet scripts share, and from no other", async () => {
+  await deliveryRuntime();
+  expect(stub.walletOpens.map(options => options.stateFile)).toEqual([sharedState()]);
+  stub.walletOpens = [];
+  const elsewhere = await service(join(tmpdir(), "standing-service-wiring-elsewhere", "mainnet-wallet.state.json"));
+  await expect(elsewhere.stopped).rejects.toThrow(`is not the state file the shared mainnet wallet is opened with (${sharedState()})`);
+  expect(stub.walletOpens).toEqual([]);
+});
 
 it("asks the node, at the send boundary, for the runtime of the block after its best, whatever the follower last verified", async () => {
   const runtime = await deliveryRuntime();

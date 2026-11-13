@@ -60,6 +60,29 @@ interface Opening {
   abort: AbortController;
 }
 
+/** The provider's one recovery connection, shared by every poll that holds a lease. */
+interface Reader {
+  opening: Promise<ApiPromise>;
+  abort: AbortController;
+  /** Set once the connection is open. */
+  api?: ApiPromise;
+}
+
+/** One poll's hold on the provider's shared recovery reader. */
+export interface ReaderLease {
+  /** Aborted by `disconnect()`: the poll must stop. */
+  readonly signal: AbortSignal;
+  /**
+   * The shared reader, opened when there is none and checked against the lease's genesis hash.
+   * Rejects with `connect-aborted` once `disconnect()` was called.
+   */
+  api(deadline: number): Promise<ApiPromise>;
+  /** Closes the shared reader if it still is `api`, so the next `api()` opens a fresh one for every lease. */
+  discard(api: ApiPromise): Promise<void>;
+  /** Ends the lease; the reader is closed with its last lease. */
+  release(): Promise<void>;
+}
+
 export class MateriosProvider {
   private api: ApiPromise | null = null;
   private keypair: KeyringPair | null = null;
@@ -67,6 +90,10 @@ export class MateriosProvider {
   private connecting: Opening | null = null;
   private replacing: Opening | null = null;
   private unresponsive: ApiPromise | null = null;
+  private reader: Reader | null = null;
+  private leases = 0;
+  /** Aborted and renewed by `disconnect()`; polls started before it stop. */
+  private session = new AbortController();
 
   constructor(config: MateriosAnchorConfig) {
     this.config = config;
@@ -97,8 +124,14 @@ export class MateriosProvider {
     return withinDeadline(() => promise, Date.now() + timeoutMs, () => new MateriosConnectionError("connect-timeout", timeoutMs));
   }
 
-  /** Aborts a connect or replacement in flight (its caller gets `connect-aborted`) and closes the connection. */
+  /**
+   * Aborts a connect or replacement in flight (its caller gets `connect-aborted`), ends every
+   * recovery poll and its reader, and closes the connection.
+   */
   async disconnect(): Promise<void> {
+    this.session.abort();
+    this.session = new AbortController();
+    await this.closeReader();
     const pending = [this.connecting, this.replacing].filter((opening): opening is Opening => opening !== null);
     for (const opening of pending) opening.abort.abort();
     await Promise.allSettled(pending.map(opening => opening.promise));
@@ -109,7 +142,11 @@ export class MateriosProvider {
     await api?.disconnect();
   }
 
-  /** Records that `api` stopped answering a read or a transaction watch; the next `connection()` replaces it. */
+  /**
+   * Records that `api` did not answer: a read or preparation step got no reply, or a transaction
+   * watch saw neither a reply nor a status. The next `connection()` replaces it, which cuts every
+   * watch still open on it, so a watch that merely outlasted its window must not mark it.
+   */
   markUnresponsive(api: ApiPromise): void {
     if (this.api === api) this.unresponsive = api;
   }
@@ -133,16 +170,38 @@ export class MateriosProvider {
     return this.getApi();
   }
 
-  /** An isolated connection for storage reads, checked against `genesis`; the caller disconnects it. */
-  async openReader(genesis: string, deadline: number): Promise<ApiPromise> {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new MateriosConnectionError("connect-timeout", 0);
-    const api = await openApi(this.config.rpcUrl, Math.min(remaining, this.connectTimeoutMs));
-    if (api.genesisHash.toHex() !== genesis) {
-      await api.disconnect();
-      throw new Error("Recovery endpoint returned a different genesis hash");
-    }
-    return api;
+  /**
+   * A lease on the provider's recovery reader: one connection, isolated from the main one, that
+   * every poll of this provider shares for storage reads on the chain with `genesis`. It is opened
+   * by the first `api()` and closed with the last lease, or by `disconnect()`.
+   */
+  leaseReader(genesis: string): ReaderLease {
+    const { signal } = this.session;
+    this.leases++;
+    let released = false;
+    return {
+      signal,
+      api: async deadline => {
+        const remaining = deadline - Date.now();
+        if (signal.aborted) throw new MateriosConnectionError("connect-aborted", Math.max(0, remaining));
+        if (remaining <= 0) throw new MateriosConnectionError("connect-timeout", 0);
+        const reader = this.reader ??= this.openReader(Math.min(remaining, this.connectTimeoutMs));
+        const api = await withinDeadline(() => reader.opening, deadline, () => new MateriosConnectionError("connect-timeout", remaining), signal);
+        if (api.genesisHash.toHex() !== genesis) {
+          await this.closeReader(reader);
+          throw new Error("Recovery endpoint returned a different genesis hash");
+        }
+        return api;
+      },
+      discard: async api => {
+        if (this.reader?.api === api) await this.closeReader(this.reader);
+      },
+      release: async () => {
+        if (released) return;
+        released = true;
+        if (--this.leases === 0) await this.closeReader();
+      },
+    };
   }
 
   getApi(): ApiPromise {
@@ -158,6 +217,30 @@ export class MateriosProvider {
   private open(run: (signal: AbortSignal) => Promise<void>, done: () => void): Opening {
     const abort = new AbortController();
     return { abort, promise: run(abort.signal).finally(done) };
+  }
+
+  private openReader(timeoutMs: number): Reader {
+    const abort = new AbortController();
+    const opening = openApi(this.config.rpcUrl, timeoutMs, abort.signal).then(
+      api => { reader.api = api; return api; },
+      error => {
+        if (this.reader === reader) this.reader = null;
+        throw error;
+      });
+    const reader: Reader = { opening, abort };
+    // Every lease waiting for it sees the failure; without one, it must not go unhandled.
+    opening.catch(() => {});
+    return reader;
+  }
+
+  /** Closes the shared reader (only `only`, when given), aborting it if it is still opening. */
+  private async closeReader(only?: Reader): Promise<void> {
+    const reader = this.reader;
+    if (!reader || (only && reader !== only)) return;
+    this.reader = null;
+    reader.abort.abort();
+    const api = await reader.opening.catch(() => undefined);
+    await api?.disconnect();
   }
 
   private async replace(stale: ApiPromise, signal: AbortSignal): Promise<void> {

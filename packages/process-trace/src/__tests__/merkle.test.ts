@@ -181,6 +181,26 @@ describe('buildSpanMerkleTree', () => {
     expect(tree.leafHashes).toEqual([]);
   });
 
+  it('awaits afterItems for every span and tree node, and builds the same tree', async () => {
+    const event = await createEventWithHash(createCommandEvent({ id: 'e1', seq: 0 }));
+    const spans = [0, 1, 2, 3, 4].map((spanSeq) => createSpan({ id: `s${spanSeq}`, spanSeq, eventIds: spanSeq === 2 ? [event.id] : [] }));
+    const reported: number[] = [];
+    let pending = 0;
+    const tree = await buildSpanMerkleTree(spans, [event], {
+      afterItems: async (items) => {
+        pending++;
+        await new Promise((resume) => setTimeout(resume, 0));
+        pending--;
+        reported.push(items);
+      },
+    });
+    // Five spans, one of them with an event, then levels of 3, 2 and 1 nodes; none overlapped.
+    expect(reported).toEqual([1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1]);
+    expect(pending).toBe(0);
+    expect(tree).toEqual(await buildSpanMerkleTree(spans, [event]));
+    expect(tree).toEqual(await buildSpanMerkleTree(spans, [event], {}));
+  });
+
   it('single span produces depth 0', async () => {
     const event = await createEventWithHash(createCommandEvent({ id: 'e1', seq: 0 }));
     const span = createSpan({ id: 's1', spanSeq: 0, eventIds: [event.id] });

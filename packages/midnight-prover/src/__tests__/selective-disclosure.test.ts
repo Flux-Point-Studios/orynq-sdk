@@ -1078,6 +1078,52 @@ describe("SelectiveDisclosureProver anchored tree", () => {
   });
 });
 
+describe("SelectiveDisclosureProver reads its proof once", () => {
+  it("verifies the Merkle root it compared, whatever the public inputs return on later reads", async () => {
+    const prover = new SelectiveDisclosureProver({ mode: "simulation" });
+    const anchored = await decisionTrace(["a", "b", "c", "d", "e"]);
+    const foreign = await decisionTrace(["v", "KYC PASSED", "x", "y", "z"]);
+    const authenticated = await anchoredTree(anchored);
+    const forged = await proofFrom(foreign, spanAt(foreign, 1).id);
+    // The ID a proof carrying the anchored root would have: the attacker computes it too.
+    const anchoredInputs = { ...forged.publicInputs, merkleRoot: anchored.merkleRoot };
+    const anchoredId = await (prover as unknown as { generateProofId(inputs: typeof anchoredInputs): Promise<string> })
+      .generateProofId(anchoredInputs);
+
+    // The public inputs name the anchored root for their first reads and the forged tree's root afterwards.
+    for (let anchoredReads = 0; anchoredReads <= 12; anchoredReads++) {
+      for (const proofId of [anchoredId, forged.proofId]) {
+        let reads = 0;
+        const publicInputs = {
+          ...forged.publicInputs,
+          get merkleRoot() {
+            return reads++ < anchoredReads ? anchored.merkleRoot : foreign.merkleRoot;
+          },
+        };
+        const result = await prover.verifyDisclosure({ ...forged, proofId, publicInputs }, authenticated);
+        expect([anchoredReads, proofId, result.valid, result.span]).toEqual([anchoredReads, proofId, false, undefined]);
+        expect([anchoredReads, reads]).toEqual([anchoredReads, 1]);
+      }
+    }
+  });
+
+  it.each([
+    ["span and events", { disclosedSpan: null, disclosedEvents: null }],
+    ["span", { disclosedSpan: null }],
+    ["events", { disclosedEvents: null }],
+  ])("returns an invalid result, without rejecting, for a null disclosed %s", async (_name, disclosed) => {
+    const prover = new SelectiveDisclosureProver({ mode: "simulation" });
+    const bundle = await decisionTrace(["a", "b", "c"]);
+    const proof = { ...(await proofFrom(bundle, spanAt(bundle, 1).id)), ...disclosed } as unknown as DisclosureProof;
+    for (const options of [{}, await anchoredTree(bundle)]) {
+      const result = await prover.verifyDisclosure(proof, options);
+      expect([result.valid, result.span, result.events]).toEqual([false, undefined, undefined]);
+      expect(result.errors.length).toBeGreaterThan(0);
+      expect(await prover.verifyProof(proof, options)).toBe(false);
+    }
+  });
+});
+
 /** Runs `body` while Object.prototype carries `inherited`, as a polluted prototype would. */
 async function withInherited<T>(inherited: Record<string, unknown>, body: () => Promise<T>): Promise<T> {
   for (const [key, value] of Object.entries(inherited)) {

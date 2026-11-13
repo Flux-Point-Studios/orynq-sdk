@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { errorChain, holdLine, parseStandingConfig, printChanges, runStandingLoops } from "../standing-service.js";
+import { errorChain, holdLine, parseStandingConfig, printChanges, redact, redactionWork, runStandingLoops } from "../standing-service.js";
 import { StandingFeeCap } from "../standing-budget.js";
 
 const roots: string[] = [];
@@ -177,6 +177,66 @@ it.each<[string, string, string]>([
   for (const secret of secrets.split("|")) expect(printed).not.toContain(secret);
 });
 
+// A limit on how long a key name, a scheme or a user name may be is a limit on what is redacted:
+// gluing a long word in front must not carry the secret past it.
+const glue = "w".repeat(80), jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+it.each<[string, string, string]>([
+  ["a key name glued to a long word", `${glue}api_key=SECRETGLUEDKEY`, "SECRETGLUEDKEY"],
+  ["a key name with a long suffix", `api_key_${glue}=SECRETLONGNAME`, "SECRETLONGNAME"],
+  ["a key name after another name's separator", "status:token=SECRETAFTERSEP", "SECRETAFTERSEP"],
+  ["a scheme glued to a long word, its userinfo", `${glue}https://user:SECRETGLUEDPW@h.example/x`, "SECRETGLUEDPW|user:"],
+  ["a scheme glued to a long word, its query", `${glue}https://h.example/x?sig=SECRETGLUEDQ`, "SECRETGLUEDQ"],
+  ["a scheme longer than any registered one", `${"s".repeat(40)}://user:SECRETLONGSCHEME@h.example/x`, "SECRETLONGSCHEME"],
+  ["a JWT glued to a word character", `x${jwt}`, "eyJhbGciOiJIUzI1NiJ9|eyJzdWIiOiIxIn0|SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"],
+  ["a JWT glued to a dotted name", `session.id_${jwt}`, "eyJhbGciOiJIUzI1NiJ9|eyJzdWIiOiIxIn0|SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"],
+  ["a JWT cut after its payload", "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0", "eyJhbGciOiJIUzI1NiJ9|eyJzdWIiOiIxIn0"],
+  ["scheme-less userinfo with a long user name", `connect ${"u".repeat(300)}:SECRETLONGUSER@db.example refused`, "SECRETLONGUSER"],
+  ["scheme-less userinfo after a slash", "connect db/user:SECRETSLASH@db.example refused", "SECRETSLASH"],
+  ["scheme-less userinfo whose password holds an @", "connect user:SECRETAT@TAILPW@db.example refused", "SECRETAT|TAILPW"],
+  ["a Bearer value glued to a word character", "xBearer SECRETGLUEDBEARER", "SECRETGLUEDBEARER"],
+  ["a hex private key glued to a word character", "x" + "7f3a".repeat(16), "7f3a"],
+  ["a hex private key after an underscore", "key_" + "7f3a".repeat(16), "7f3a"],
+  ["a project id glued to a long word", `${"w".repeat(40)}${pid}`, pid.slice(7)],
+])("redacts %s", (_, message, secrets) => {
+  const printed = JSON.stringify(errorChain(new Error(message), []));
+  for (const secret of secrets.split("|")) expect(printed).not.toContain(secret);
+});
+
+// Shapes of a secret no configuration names.
+it.each<[string, string, string]>([
+  ["63 hex characters", "seed " + "7f3a".repeat(16).slice(1), "7f3a"],
+  ["a hex echo cut to 40 characters", "seed " + "7f3a".repeat(10), "7f3a"],
+  ["a 0x hex echo cut to 40 characters", "seed 0x" + "7f3a".repeat(10), "7f3a"],
+  ["unpadded base64 of 32 bytes", "secret is c2VjcmV0S2V5TWF0ZXJpYWwwMTIzNDU2Nzg5QUJDREVGR0g", "c2VjcmV0S2V5TWF0ZXJpYWwwMTIzNDU2Nzg5QUJDREVGR0g"],
+  ["padded base64", "secret is c2VjcmV0S2V5TWF0ZXJpYWwwMTIzNDU2Nzg5QUJDREU=", "c2VjcmV0S2V5TWF0ZXJpYWwwMTIzNDU2Nzg5QUJDREU"],
+  ["upper-case mnemonic words", "bad seed ABANDON ABILITY ABLE ABOUT ABOVE ABSENT ABSORB", "ABANDON|ABSENT|ABSORB"],
+  ["capitalised mnemonic words", "bad seed Abandon Ability Able About Above Absent Absorb", "Abandon|Absent|Absorb"],
+  ["a letters-only path token of 32 characters", `https://rpc.example/v1/${"SecretPathLetter".repeat(2)}/ws`, "SecretPathLetter"],
+])("redacts %s", (_, message, secrets) => {
+  const printed = JSON.stringify(errorChain(new Error(message), []));
+  for (const secret of secrets.split("|")) expect(printed).not.toContain(secret);
+});
+
+it.each<[string]>([
+  ["connect ECONNREFUSED 127.0.0.1:443 at block 3346139"],
+  ["Standing signed author policy is unreadable: /tmp/standing-service-stop-Ab3xYz/authors.json can be read or written by group or others"],
+  ["mail ops@example.com at 12:30:05 about rpc.example.com"],
+  ["read https://rpc.example.com:8443/api/v0/blocks/latest failed with HTTP 503"],
+  ["packages/anchors-midnight-ledger9-write-path.md names keyJournal.sqlite and a balance of 340282366920938463463374607431768211455"],
+  [`a ${"q".repeat(200)} word and a.b.c`],
+])("keeps what locates a failure: %s", message => {
+  expect(errorChain(new Error(message), [])).toEqual([{ name: "Error", message }]);
+});
+
+it("cuts the redaction window at its last space, tab or line break, and prints nothing of a text with none", () => {
+  const hex = "7f3a".repeat(16);
+  for (const gap of [" ", "\t", "\n", "\r\n"]) {
+    const printed = JSON.stringify(errorChain(new Error(`head${gap}${"z ".repeat(2280)}${gap}${hex}`), []));
+    expect(printed).toContain("head"); expect(printed).not.toContain(hex.slice(0, 16));
+  }
+  expect(errorChain(new Error("z".repeat(4600) + hex), [])).toEqual([{ name: "Error", message: "" }]);
+});
+
 it("redacts the error name and every link of the cause chain", () => {
   const inner = new Error("ok"); inner.name = "Bearer SECRETNAME";
   expect(JSON.stringify(errorChain(new Error("outer", { cause: new Error("mid", { cause: inner }) }), []))).not.toContain("SECRETNAME");
@@ -220,21 +280,42 @@ it("prints a line once per change, and again after a different line", () => {
   expect(lines).toEqual([held("first"), held("second"), "progress", held("second")]);
 });
 
-it.each<[string, string]>([
-  ["colon runs", "a:".repeat(500_000)],
-  ["key-word runs", "k-".repeat(500_000) + "key"],
-  ["mnemonic runs", "abandon ".repeat(125_000) + "zzz"],
-  ["scheme runs", "https://".repeat(125_000)],
-  ["dotted scheme-like runs", "a.".repeat(500_000)],
-  ["JWT-like runs", "eyJ-".repeat(250_000)],
-  ["hex runs", "a".repeat(1_000_000) + "g"],
-  ["project-id-like runs", "1a".repeat(500_000)],
-])("redacts a 1 MB message of %s within 50 ms", (_, message) => {
-  errorChain(new Error("warm"), ["somesecretvalue1"]);
-  const started = performance.now();
-  const chain = errorChain(new Error(message), ["somesecretvalue1"]);
-  expect(performance.now() - started).toBeLessThan(50);
-  expect((chain as { message: string }[])[0]!.message.length).toBeLessThanOrEqual(512);
+// What bounds a redaction is the work it does, which no clock on a shared runner measures: each
+// distinct form of a configured secret is one pass over the text, and every shape rule reads the
+// same bounded window however long the text is. So the cost grows with the text's length times
+// the configured values, never with its square.
+const MB = 1_000_000;
+it.each<[string, (size: number) => string]>([
+  ["colon runs", size => "a:".repeat(size / 2)],
+  ["key-word runs", size => "k-".repeat(size / 2) + "key"],
+  ["mnemonic runs", size => "abandon ".repeat(size / 8) + "zzz"],
+  ["scheme runs", size => "https://".repeat(size / 8)],
+  ["dotted scheme-like runs", size => "a.".repeat(size / 2)],
+  ["JWT-like runs", size => "eyJ-".repeat(size / 4)],
+  ["hex runs", size => "a".repeat(size) + "g"],
+  ["project-id-like runs", size => "1a".repeat(size / 2)],
+  ["runs without a space to cut the window at", size => "x".repeat(size)],
+])("redacts a 1 MB message of %s in one pass per configured value and a fixed window of shape rules", (_, run) => {
+  const secrets = ["somesecretvalue1", "store-key/with+chars&more"], forms = 1 + 2;
+  const measure = (size: number) => {
+    const message = run(size), work = redactionWork();
+    const printed = redact(message, secrets, 512, work);
+    expect(printed.length).toBeLessThanOrEqual(512);
+    expect(work.values).toBe(forms);
+    expect(work.textCharacters).toBe(forms * message.length);
+    expect(work.rules).toBeLessThanOrEqual(16);
+    expect(work.windowCharacters).toBeLessThanOrEqual(work.rules * (512 + 4096));
+    return work;
+  };
+  const one = measure(MB), two = measure(2 * MB);
+  expect({ values: two.values, rules: two.rules, windowCharacters: two.windowCharacters }).toEqual({ values: one.values, rules: one.rules, windowCharacters: one.windowCharacters });
+});
+
+it("counts the work of the redaction errorChain prints, and none it does not do", () => {
+  const work = redactionWork();
+  expect(redact("upstream refused token=SECRETTOK", [], 512, work)).toBe((errorChain(new Error("upstream refused token=SECRETTOK"), []) as { message: string }[])[0]!.message);
+  expect(work.values).toBe(0); expect(work.textCharacters).toBe(0);
+  expect(work.rules).toBeGreaterThan(0); expect(work.windowCharacters).toBeGreaterThan(0);
 });
 
 it("drops a token cut at the edge of the redaction window, which a shorter redacted prefix could bring into view", () => {

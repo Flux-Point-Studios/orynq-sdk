@@ -22,13 +22,17 @@ hash commits to it.
 ## Building traces
 
 `addEvent()` calls on one run append one at a time, in call order, so events
-added concurrently all chain into the rolling hash. An event the run cannot
-take changes nothing: one that cannot be hashed, or whose span closes or run is
-finalized before it is appended, is refused.
+added concurrently all chain into the rolling hash, including calls made
+through the ESM and CJS builds in one process. Each call copies its event
+before it queues, so the event recorded is the one passed, whatever the caller
+does with the object afterwards. An event the run cannot take changes nothing:
+one that cannot be hashed, or whose span closes or run is finalized before it
+is appended, is refused.
 
 `verifyRollingHash(events, expectedHash)` requires the events' `seq` values to
 be exactly 0 to n - 1, in any order: a list that leaves out events, matching a
-chain stored over fewer events than the run holds, never verifies.
+chain stored over fewer events than the run holds, never verifies. Malformed
+input resolves to `false` instead of throwing.
 
 ## Bundles
 

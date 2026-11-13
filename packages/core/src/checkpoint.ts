@@ -125,15 +125,23 @@ export function merkleInclusionProof(leaves: readonly string[], index: number): 
 
 const isLowercaseHash = (value: unknown): value is string => typeof value === "string" && /^(?:0x)?[0-9a-f]{64}$/.test(value);
 
-/** A proof shaped as `merkleInclusionProof` makes it, for a leaf index below `leafCount`. */
-function isInclusionProof(value: unknown, leafCount: number): value is MerkleInclusionProof {
-  if (typeof value !== "object" || value === null) return false;
-  const { index, siblings } = value as { index?: unknown; siblings?: unknown };
-  return isLeafIndex(index, leafCount) && Array.isArray(siblings) && siblings.every((sibling: unknown) => {
-    if (typeof sibling !== "object" || sibling === null) return false;
+/**
+ * A plain copy of a proof shaped as `merkleInclusionProof` makes it, for a leaf
+ * index below `leafCount`, or null. Each property is read once, so a getter or
+ * proxy cannot show the checks one value and the walk another.
+ */
+function readInclusionProof(value: unknown, leafCount: number): MerkleInclusionProof | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { index, siblings: given } = value as { index?: unknown; siblings?: unknown };
+  if (!isLeafIndex(index, leafCount) || !Array.isArray(given)) return null;
+  const siblings: MerkleInclusionProof["siblings"][number][] = [];
+  for (const sibling of Array.from(given as unknown[])) {
+    if (typeof sibling !== "object" || sibling === null) return null;
     const { hash, position } = sibling as { hash?: unknown; position?: unknown };
-    return isLowercaseHash(hash) && (position === "L" || position === "R");
-  });
+    if (!isLowercaseHash(hash) || (position !== "L" && position !== "R")) return null;
+    siblings.push({ hash, position });
+  }
+  return { index, siblings };
 }
 
 /**
@@ -146,11 +154,12 @@ function isInclusionProof(value: unknown, leafCount: number): value is MerkleInc
  * input returns false.
  */
 export function verifyMerkleProof(leaf: string, proof: MerkleInclusionProof, root: string, leafCount: number): boolean {
-  if (!isLowercaseHash(leaf) || !isLowercaseHash(root) || !isLeafCount(leafCount) || !isInclusionProof(proof, leafCount)) {
-    return false;
-  }
-  if (proof.siblings.some((sibling, depth) => sibling.position !== siblingPosition(proof.index, depth))) return false;
-  const walked = walkPath(leaf, proof.index, leafCount, proof.siblings.map((sibling) => sibling.hash));
+  if (!isLowercaseHash(leaf) || !isLowercaseHash(root) || !isLeafCount(leafCount)) return false;
+  const read = readInclusionProof(proof, leafCount);
+  if (read === null) return false;
+  const { index, siblings } = read;
+  if (siblings.some((sibling, depth) => sibling.position !== siblingPosition(index, depth))) return false;
+  const walked = walkPath(leaf, index, leafCount, siblings.map((sibling) => sibling.hash));
   return "root" in walked && walked.root === `0x${bareHash(root)}`;
 }
 

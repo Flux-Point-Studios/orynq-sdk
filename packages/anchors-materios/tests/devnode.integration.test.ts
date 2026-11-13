@@ -102,9 +102,19 @@ describe("Materios dev node", () => {
     expect(error).toMatchObject({ name: "MateriosSubmissionError", code: "not-landed", safeToResubmit: true, nonce, signer: alice.address });
     expect(error.message).toMatch(NONCE_COLLISION);
     expect(error.cause.code).toBe(1014);
+    // The refused receipt is neither pooled nor stored, and it stays off chain once the
+    // transaction that held its nonce is included.
+    const pooled = (await chain.rpc.author.pendingExtrinsics()).map(extrinsic => extrinsic.hash.toHex());
+    expect(pooled).not.toContain(error.txHash);
+    expect(await receiptStored(receiptIdOf(input))).toBe(false);
     await untilBlock(async () => await stateNonce() > nonce);
+    await nextBlock();
+    expect(await receiptStored(receiptIdOf(input))).toBe(false);
+    expect(await stateNonce()).toBe(nonce + 1);
     const retried = await sdk.submitReceipt(p, input, { timeoutMs: 60_000 });
     expect(retried).toMatchObject({ receiptId: receiptIdOf(input), status: "submitted", confirmed: true });
+    expect(retried.txHash).not.toBe(error.txHash);
+    expect(await receiptStored(receiptIdOf(input))).toBe(true);
   }, 120_000);
 
   it("reports an unfunded signer's 1010 behind a dry-run filter as not-landed with the node's text (s4)", async () => {
@@ -184,6 +194,49 @@ describe("Materios dev node", () => {
     expect(await receiptStored(receiptIdOf(next))).toBe(true);
   }, 150_000);
 
+  it("refuses the next receipt with 1014 while the dropped watch's receipt is still pending, and both land in the end (s11)", async () => {
+    const px = await proxy();
+    const p = await provider(px.url);
+    const main = px.connections[0]!;
+    let dropped: () => void = () => {};
+    const watchDropped = new Promise<void>(resolve => { dropped = resolve; });
+    let killed = false;
+    px.hooks.onUpstream = (connection, message) => {
+      if (connection !== main || killed || !isStatus(message, status => status === "ready")) return undefined;
+      killed = true;
+      dropped();
+      return "kill-after";
+    };
+    const first = freshInput();
+    const next = freshInput();
+    // A fresh block leaves the longest time before the next one includes the first receipt.
+    await nextBlock();
+    const nonce = await stateNonce();
+    const pending = sdk.submitReceipt(p, first, { timeoutMs: 120_000 });
+    const settled = pending.then(value => ({ value }), (error: unknown) => ({ error }));
+    await watchDropped;
+    // The first receipt is in the pool and its watch is gone. The node reads the signer's nonce
+    // from state, so the next receipt is signed with the same nonce and collides with it.
+    const error = await failure(sdk.submitReceipt(p, next, { timeoutMs: 30_000 }));
+    expect(error, "the first receipt was included before the next one reached the pool").toMatchObject({
+      name: "MateriosSubmissionError", code: "not-landed", safeToResubmit: true, id: receiptIdOf(next), nonce, signer: alice.address,
+    });
+    expect(error.message).toMatch(NONCE_COLLISION);
+    expect(error.cause.code).toBe(1014);
+    expect(await receiptStored(receiptIdOf(next))).toBe(false);
+    // The collision does not disturb the first receipt: its lost watch still reconciles.
+    expect(await settled).toMatchObject({ value: { receiptId: receiptIdOf(first), reconciled: true, confirmed: true } });
+    expect(await receiptStored(receiptIdOf(first))).toBe(true);
+    await untilBlock(async () => await stateNonce() > nonce);
+    await nextBlock();
+    // Only the first receipt used that nonce; the refused one stayed off chain.
+    expect(await stateNonce()).toBe(nonce + 1);
+    expect(await receiptStored(receiptIdOf(next))).toBe(false);
+    const retried = await sdk.submitReceipt(p, next, { timeoutMs: 60_000 });
+    expect(retried).toMatchObject({ receiptId: receiptIdOf(next), status: "submitted", confirmed: true });
+    expect(await receiptStored(receiptIdOf(next))).toBe(true);
+  }, 240_000);
+
   it("resolves an inclusion-unknown receipt as landed from finalized storage", async () => {
     const px = await proxy();
     const p = await provider(px.url);
@@ -222,6 +275,30 @@ describe("Materios dev node", () => {
     expect(resolution).toMatchObject({ status: "not-landed", reason: "nonce-consumed", id: receiptIdOf(input) });
     expect(await receiptStored(receiptIdOf(input))).toBe(false);
   }, 180_000);
+
+  it("reports the mortality end of the era the extrinsic was signed with (#213)", async () => {
+    const px = await proxy();
+    const p = await provider(px.url);
+    let sent: string | undefined;
+    px.hooks.onClient = (_connection, message) => {
+      if (message.method !== "author_submitAndWatchExtrinsic") return undefined;
+      sent = (message.params as unknown[])[0] as string;
+      return "kill";
+    };
+    const finalizedBefore = (await chain.rpc.chain.getHeader(await chain.rpc.chain.getFinalizedHead())).number.toNumber();
+    const error = await failure(sdk.submitReceipt(p, freshInput(), { timeoutMs: 6_000 }));
+    expect(error).toMatchObject({ code: "inclusion-unknown", safeToResubmit: false });
+    // The extrinsic never reached the node, so its nonce stays free. Its era, read from the bytes
+    // the SDK sent, names the birth block once a block inside its window is given.
+    const era = chain.registry.createType("Extrinsic", sent).era;
+    expect(era.isMortalEra).toBe(true);
+    const birth = era.asMortalEra.birth(await bestNumber());
+    expect(error.mortalityEnd).toBe(birth + era.asMortalEra.period.toNumber() - 1);
+    // Born at the block polkadot.js signs against: the finalized head, or the best block's
+    // parent when finality lags more than five blocks. Never an older block.
+    expect(birth).toBeGreaterThanOrEqual(finalizedBefore);
+    expect(birth).toBeLessThanOrEqual(await bestNumber());
+  }, 60_000);
 
   it("keeps an orchestrated receipt's on-chain result through a lost socket, and a retry does not rebroadcast (s5/sk3)", async () => {
     const gateway = http.createServer((request, response) => {
@@ -295,7 +372,8 @@ describe("Materios dev node", () => {
     };
     // The runtime fills some blocks with mandatory weight (every 60 blocks on a dev chain); a
     // dry-run applies on the best block's own state, so it reports those as exhausted.
-    const maxWeight = BigInt(chain.consts.system!.blockWeights!.maxBlock.refTime.toString());
+    const blockWeights = chain.consts.system!.blockWeights as unknown as { maxBlock: { refTime: { toString(): string } } };
+    const maxWeight = BigInt(blockWeights.maxBlock.refTime.toString());
     let full = 0;
     await untilBlock(async () => {
       const header = await chain.rpc.chain.getHeader();

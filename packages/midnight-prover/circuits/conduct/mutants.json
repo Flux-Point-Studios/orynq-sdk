@@ -598,5 +598,11 @@
     "file": "verdict_core.compact",
     "find": "    assert(action_kind <= 1, \"action kind out of domain\");\n    assert(egress_mode <= 1, \"egress mode out of domain\");\n",
     "replace": "    assert(action_kind <= 1, \"egress mode out of domain\");\n    assert(egress_mode <= 1, \"action kind out of domain\");\n"
+  },
+  {
+    "id": "r8_rewire_kind_mode_conditions",
+    "file": "verdict_core.compact",
+    "find": "    assert(action_kind <= 1, \"action kind out of domain\");\n    assert(egress_mode <= 1, \"egress mode out of domain\");\n",
+    "replace": "    assert(egress_mode <= 1, \"action kind out of domain\");\n    assert(action_kind <= 1, \"egress mode out of domain\");\n"
   }
 ]

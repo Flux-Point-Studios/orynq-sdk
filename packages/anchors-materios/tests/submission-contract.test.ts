@@ -43,6 +43,7 @@ describe("F1: node refusals and pre-send failures are not-landed", () => {
     [1010, "Invalid Transaction: Inability to pay some fees , e.g. account balance too low"],
     [1011, "Unknown Transaction Validity: cannot lookup"],
     [1014, PRIORITY_TOO_LOW],
+    [1016, "Immediately Dropped: The transaction couldn't enter the pool because of the limit"],
   ])("reports refusal %i as not-landed with the node's message verbatim and the cause attached", async (code, text) => {
     const f = await connected();
     const refusal = rpcError(code, text);
@@ -451,6 +452,8 @@ describe("F5: an unresponsive main connection is replaced", () => {
 
   it("replaces the main connection after a silent watch", async () => {
     const f = await connected({ spares: 2 });
+    // Silent: the node neither answers the submission nor reports a status (#213).
+    f.signed.send.mockImplementation(never);
     const first = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }), () => f.chain.storeReceipt());
     expect(first.value.reconciled).toBe(true);
     const fresh = f.spares[1]!;

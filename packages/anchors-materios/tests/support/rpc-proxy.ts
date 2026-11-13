@@ -28,7 +28,7 @@ export async function startProxy(upstreamUrl: string) {
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await new Promise<void>(resolve => server.once("listening", () => resolve()));
   const address = server.address();
-  if (typeof address === "string") throw new Error("Proxy has no port");
+  if (typeof address === "string" || !address) throw new Error("Proxy has no port");
   const connections: ProxyConnection[] = [];
   const hooks: {
     onClient?: (connection: ProxyConnection, message: JsonRpcMessage) => ClientVerdict;

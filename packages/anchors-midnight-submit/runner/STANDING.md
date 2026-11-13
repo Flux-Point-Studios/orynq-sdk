@@ -43,6 +43,12 @@ service's user, the public wallet `record` and signed author policy included; on
 public parameters are checked by hash, is exempt. The service refuses any other file and names it
 and the reason as it stops.
 
+On mainnet the wallet is the one the mainnet scripts share. Anchor mode opens it only when
+`stateRoot` is `~/.local/state/orynq-midnight/standing` and `wallet.state` is
+`~/.local/state/orynq-midnight/mainnet-wallet.state.json`, both under the service's own `HOME`.
+A service started under another `HOME` therefore cannot open the shared state file with
+journals that do not record its fees.
+
 Each proof store `keyFile` must contain a single ASCII token of 8–4096 non-space printable
 characters (a trailing newline is allowed). Invalid files are refused before publication and
 only their paths are named. Publication errors discard underlying transport messages, which

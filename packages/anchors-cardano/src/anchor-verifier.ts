@@ -996,6 +996,30 @@ export interface CommittedBundle {
 }
 
 /**
+ * Items of a fetched document hashed between two yields to the event loop.
+ * Hashing is synchronous, so awaiting a hash never leaves the microtask queue.
+ */
+const ITEMS_PER_YIELD = 2048;
+
+/**
+ * A pause that lets timers, I/O and other requests run once `items` more items
+ * have been processed since the last pause: `pause.after(items)` resolves at
+ * once until {@link ITEMS_PER_YIELD} items have accumulated.
+ */
+function eventLoopPause(): { after(items: number): Promise<void> } {
+  let pending = 0;
+  return {
+    async after(items: number): Promise<void> {
+      pending += items;
+      if (pending >= ITEMS_PER_YIELD) {
+        pending = 0;
+        await new Promise<void>((resume) => setTimeout(resume, 0));
+      }
+    },
+  };
+}
+
+/**
  * Recompute a fetched trace bundle's rootHash from its ACTUAL content, using the
  * same canonical derivation the bundle builder uses, and return it alongside the
  * anchor-COMMITTED subset. The rolling hash is recomputed from the events
@@ -1007,6 +1031,18 @@ export interface CommittedBundle {
  * event ID, OR when it carries model-manifest content whose bytes do not hash
  * to the committed pin — in which case integrity cannot be established from
  * the fetch alone.
+ *
+ * Cost: linear in the document, but not small at the size cap. A document at
+ * the default 8 MiB cap holding about 300,000 empty spans or 600,000 bare
+ * events takes on the order of 10 to 20 s of CPU time (measured: 9 to 20 s and
+ * 13 to 16 s on a loaded 4-core host). The event and span loops and the Merkle
+ * tree yield to the event loop every {@link ITEMS_PER_YIELD} items, so timers,
+ * I/O and other requests are served meanwhile. What still runs without a
+ * yield is the JSON parse, the ID uniqueness check, sorting, one span's own
+ * hash (a single span may list every event) and the root hash over all span
+ * hashes: stretches of up to about a second each at the cap. A caller that
+ * verifies untrusted anchors where that matters should lower `maxBundleBytes`
+ * or verify in a worker.
  */
 async function recomputeBundleRootHash(
   parsed: unknown
@@ -1037,15 +1073,19 @@ async function recomputeBundleRootHash(
     // Carry each event and span only as its hash commits to it, so keys the
     // hashes skip (null values, non-header span keys) cannot read as verified.
     // The document is attacker-chosen up to the size cap, so each event is
-    // hashed once and found by ID in constant time.
+    // hashed once and found by ID in constant time, and the loops pause for
+    // the event loop every few thousand items.
+    const pause = eventLoopPause();
     const eventById = new Map(events.map((event) => [event.id, event]));
     const eventHashById = new Map<string, string>();
     for (const event of events) {
       eventHashById.set(event.id, await computeEventHash(event));
+      await pause.after(1);
     }
     let rolling = await initRollingHash();
     for (const event of [...events].sort((a, b) => a.seq - b.seq)) {
       rolling = await updateRollingHash(rolling, eventHashById.get(event.id)!);
+      await pause.after(1);
     }
     const rollingHash = rolling.currentHash;
     const rehashedEvents: TraceEvent[] = events.map((e) =>
@@ -1060,12 +1100,15 @@ async function recomputeBundleRootHash(
         .map((event) => eventHashById.get(event.id)!);
       const spanHash = await computeSpanHash(span, spanEventHashes);
       rehashedSpans.push(committedSpan(span, spanHash));
+      await pause.after(1 + spanEventHashes.length);
     }
 
     const rootHash = await computeRootHash(rollingHash, rehashedSpans, run.modelManifestHash);
     // Merkle root is recomputed from the rehashed spans+events so it too is
     // independent of the fetched document's self-declared merkleRoot.
-    const merkle = await buildSpanMerkleTree(rehashedSpans, rehashedEvents);
+    const merkle = await buildSpanMerkleTree(rehashedSpans, rehashedEvents, {
+      afterItems: (items) => pause.after(items),
+    });
 
     // The rootHash folds run.modelManifestHash (the commitment STRING) but NOT
     // the manifest CONTENT. A fetched document can therefore carry a manifest

@@ -492,6 +492,50 @@ describe('verifyRollingHash', () => {
   it.each([[[null]], [[{}]], [[{ seq: 0 }, null]]])('returns false for the malformed events %j', async (events) => {
     expect(await verifyRollingHash(events as unknown as TraceEvent[], await getGenesisHash())).toBe(false);
   });
+
+  it('returns false, without throwing, for events that are not an array', async () => {
+    const genesis = await getGenesisHash();
+    const event = createCommandEvent({ seq: 0 });
+    const arrayLike = { length: 1, 0: event, map: undefined };
+    for (const events of [undefined, null, 7, 'events', {}, arrayLike, new Set([event]), { ...[event] }]) {
+      expect([events, await verifyRollingHash(events as unknown as TraceEvent[], genesis)]).toEqual([events, false]);
+    }
+  });
+
+  it('returns false, without throwing, for an expected hash that is not a string', async () => {
+    const events = [createCommandEvent({ seq: 0 })];
+    const hash = await computeRollingHash(events);
+    expect(await verifyRollingHash(events, hash)).toBe(true);
+    for (const expected of [undefined, null, 0, {}, [hash], { toLowerCase: () => hash }, new String(hash)]) {
+      expect([expected, await verifyRollingHash(events, expected as unknown as string)]).toEqual([expected, false]);
+      expect(await verifyRollingHash([], expected as unknown as string)).toBe(false);
+    }
+  });
+
+  it('returns false, without throwing, for events holding a cycle or a value that cannot be hashed', async () => {
+    const cyclic = createCommandEvent({ seq: 0 }) as TraceEvent & { self?: unknown };
+    cyclic.self = cyclic;
+    const nested = createCommandEvent({ seq: 0, args: [] });
+    (nested.args as unknown[]).push(nested.args);
+    const bigint = { ...createCommandEvent({ seq: 0 }), amount: 10n };
+    for (const event of [cyclic, nested, bigint]) {
+      expect(await verifyRollingHash([event as TraceEvent], await getGenesisHash())).toBe(false);
+    }
+  });
+
+  it('returns false, without throwing, for sparse arrays', async () => {
+    const events = [0, 1, 2].map((seq) => createCommandEvent({ seq, command: `cmd-${seq}` }));
+    const hash = await computeRollingHash(events);
+    const holed = [...events];
+    delete holed[1];
+    const trailing = [...events];
+    trailing.length = 4;
+    // eslint-disable-next-line no-sparse-arrays
+    for (const sparse of [new Array(1), new Array(3), [, events[0]], holed, trailing]) {
+      expect(await verifyRollingHash(sparse as TraceEvent[], hash)).toBe(false);
+      expect(await verifyRollingHash(sparse as TraceEvent[], await getGenesisHash())).toBe(false);
+    }
+  });
 });
 
 // -----------------------------------------------------------------------------

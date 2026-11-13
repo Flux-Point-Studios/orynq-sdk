@@ -8,6 +8,7 @@ import {
   addSpan,
   addEvent,
   closeSpan,
+  computeEventHash,
   computeRollingHash,
   finalizeTrace,
   verifyBundle,
@@ -983,6 +984,70 @@ describe('concurrent addEvent on one run', () => {
     expect(outcomes.map((outcome) => outcome.status)).toEqual(['fulfilled', 'rejected', 'fulfilled']);
     expect(run.events.map((event) => event.seq)).toEqual([0, 1]);
     expect(await verified(run)).toBe(true);
+  });
+
+  it('records each event as it was when addEvent was called, whatever the caller changes afterwards', async () => {
+    const run = await createTrace({ agentId: 'concurrent' });
+    const span = addSpan(run, { name: 'snapshot' });
+    const given = { kind: 'command' as const, command: 'deploy', args: ['--dry-run'], env: { TARGET: 'staging' }, visibility: 'public' as const };
+    const first = addEvent(run, span.id, given);
+    const second = addEvent(run, span.id, given);
+    // Still pending: the caller reuses the object for something else.
+    given.command = 'rm';
+    given.args.push('--force');
+    given.args[0] = '-rf';
+    given.env.TARGET = 'production';
+    (given as { visibility: string }).visibility = 'secret';
+    (given as { extra?: string }).extra = 'added later';
+
+    const expected = { kind: 'command', command: 'deploy', args: ['--dry-run'], env: { TARGET: 'staging' }, visibility: 'public' };
+    for (const event of await Promise.all([first, second])) {
+      expect(event).toMatchObject(expected);
+      expect(event).not.toHaveProperty('extra');
+      expect(event.hash).toBe(await computeEventHash({ ...expected, id: event.id, seq: event.seq, timestamp: event.timestamp } as TraceEvent));
+    }
+    expect(run.events.map((event) => (event as { args: string[] }).args)).toEqual([['--dry-run'], ['--dry-run']]);
+    expect(await verified(run)).toBe(true);
+  });
+
+  it('reads each property of an event once', async () => {
+    const run = await createTrace({ agentId: 'concurrent' });
+    const span = addSpan(run, { name: 'snapshot' });
+    let reads = 0;
+    const data = { get attempt() { return ++reads; } };
+    const event = await addEvent(run, span.id, { kind: 'custom', eventType: 'note', data, visibility: 'private' });
+    expect([reads, (event as { data: unknown }).data]).toEqual([1, { attempt: 1 }]);
+    expect(event.hash).toBe(await computeEventHash(event));
+    expect(await verified(run)).toBe(true);
+  });
+
+  it('appends one at a time through two copies of the module, as the ESM and CJS builds are', async () => {
+    vi.resetModules();
+    const one = await import('../trace-builder.js');
+    vi.resetModules();
+    const other = await import('../trace-builder.js');
+    expect(other.addEvent).not.toBe(one.addEvent);
+
+    const run = await createTrace({ agentId: 'concurrent' });
+    const span = addSpan(run, { name: 'two builds' });
+    const builds = [one, other, { addEvent }, other, one];
+    const events = await Promise.all(builds.map((build, i) => build.addEvent(run, span.id, note(i))));
+    expect(events.map((event) => event.seq)).toEqual([0, 1, 2, 3, 4]);
+    expect(events.map((event) => (event as { data: { i: number } }).data.i)).toEqual([0, 1, 2, 3, 4]);
+    expect(run.events).toEqual(events);
+    expect(run.rollingHash).toBe(await computeRollingHash(run.events));
+    // The queue is no part of the run's data.
+    expect(Object.keys(run)).toEqual(Object.keys(JSON.parse(JSON.stringify(run)) as object));
+    expect(Object.getOwnPropertySymbols(run).filter((key) => Object.getOwnPropertyDescriptor(run, key)!.enumerable)).toEqual([]);
+    expect(await verified(run)).toBe(true);
+  });
+
+  it('appends one at a time to a run that cannot take new properties', async () => {
+    const run = Object.preventExtensions(await createTrace({ agentId: 'concurrent' }));
+    const span = addSpan(run, { name: 'sealed' });
+    const events = await Promise.all([1, 2, 3].map((i) => addEvent(run, span.id, note(i))));
+    expect(events.map((event) => event.seq)).toEqual([0, 1, 2]);
+    expect(run.rollingHash).toBe(await computeRollingHash(run.events));
   });
 });
 

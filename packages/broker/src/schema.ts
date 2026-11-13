@@ -1,4 +1,5 @@
 import { array, bytes, choice, literal, map, optional, text, uint, type Shape } from "./dcbor.js";
+import { MAX_REQUEST_VALUES } from "./strict-json.js";
 
 // The runtime form of docs/params.cddl, mandate-draft.cddl and release.cddl, keyed by CDDL rule
 // name. The CDDL is normative: test/schema.test.ts holds both to one verdict on every vector and
@@ -93,6 +94,26 @@ const releaseRecord = map({
   proofRefs: optional(array(digest, 1, 258)),
 });
 
+// The most JSON values a value of this shape can hold, counted as the strict JSON parser counts
+// them: every container and scalar, keys excluded.
+function valuesAtMost(shape: Shape): number {
+  switch (shape.type) {
+    case "array":
+      return 1 + shape.max * valuesAtMost(shape.items);
+    case "map":
+      return 1 + [...shape.fields.values()].reduce((sum, field) => sum + valuesAtMost(field.shape), 0);
+    case "choice":
+      return Math.max(0, ...shape.options.map(valuesAtMost));
+    default:
+      return 1;
+  }
+}
+
+// The request object and its jsonrpc, id and method values.
+const ENVELOPE_VALUES = 4;
+
+// Throws RangeError for an effect kind whose shapes would let a request the rules accept hold more
+// than MAX_REQUEST_VALUES values, which the parser would refuse as -32700 before any rule saw it.
 export function schemaRules(effects: Readonly<Record<string, EffectKind>>) {
   const kinds = Object.entries(effects);
   const intentSubmit = choice(...kinds.map(([kind, { params }]) => map({
@@ -110,7 +131,7 @@ export function schemaRules(effects: Readonly<Record<string, EffectKind>>) {
       map({ ...common, mandates: array(mandateRelease, 0, 0), approval: map({ nonce: bytes(16), assertion }) }),
     ];
   }));
-  return {
+  const rules = {
     "broker-hello-params": map({}),
     "credential-list-params": map({}),
     "mandate-get-params": map({ mandate: commitment }),
@@ -131,6 +152,14 @@ export function schemaRules(effects: Readonly<Record<string, EffectKind>>) {
     "release-record": releaseRecord,
     "mandate-draft": mandateDraft,
   } as const satisfies Readonly<Record<string, Shape>>;
+  for (const [rule, shape] of Object.entries(rules)) {
+    const values = ENVELOPE_VALUES + valuesAtMost(shape);
+    // Not `values > MAX`: an array bound of NaN would pass that.
+    if (!(values <= MAX_REQUEST_VALUES)) {
+      throw new RangeError(`a request for ${rule} could hold ${values} JSON values, above MAX_REQUEST_VALUES (${MAX_REQUEST_VALUES})`);
+    }
+  }
+  return rules;
 }
 
 // Effect kinds register here as their handlers land; until then every effect is refused.

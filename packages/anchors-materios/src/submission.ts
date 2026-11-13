@@ -10,7 +10,7 @@ import type { TimeoutOptions } from "./types.js";
 import { MateriosConnectionError, MateriosSubmissionError, type ExpectedRecord, type SubmittedExtrinsic } from "./errors.js";
 import { timeoutBudget, withinDeadline } from "./deadline.js";
 import { describeDispatch, watchSubmission, type DispatchFailure } from "./subscription.js";
-import { POLL_MS, boundedRead, conflictError, inclusionUnknownMessage, pollHeads, readHead, readRecord } from "./inclusion.js";
+import { POLL_ABORTED, POLL_MS, boundedRead, conflictError, inclusionUnknownMessage, pollHeads, readHead, readRecord } from "./inclusion.js";
 
 type Signed = SubmittableExtrinsic<"promise">;
 
@@ -39,6 +39,21 @@ export function mortalityEnd(era: Signed["era"], reference: number): number | nu
 }
 
 /**
+ * Signs `tx` with an explicit era born at a known block and that block's hash, and returns the
+ * block's number. The block, nonce and period are the ones polkadot.js signs with by default:
+ * the finalized head, or the best block's parent when finality lags more than five blocks.
+ * Passing them explicitly tells this call the era's birth block, which an era alone does not
+ * name: read back with a later best block that a reorg left below the birth, the era would end
+ * one period early.
+ */
+export async function signAt(api: ApiPromise, tx: Signed, keypair: ReturnType<MateriosProvider["getKeypair"]>): Promise<{ signed: Signed; born: number }> {
+  const { header, mortalLength, nonce } = await api.derive.tx.signingInfo(keypair.address, -1);
+  if (!header) throw new Error("The node returned no block to sign against");
+  const era = api.registry.createType("ExtrinsicEra", { current: header.number, period: mortalLength });
+  return { signed: await tx.signAsync(keypair, { nonce, era, blockHash: header.hash }), born: header.number.toNumber() };
+}
+
+/**
  * The dispatch failure a dry-run predicts. Validity is left to the pool: the dry-run applies on the
  * best block's own state, so when the runtime fills that block with mandatory weight it reports
  * `exhaustsResources` for a transaction the next block accepts.
@@ -59,7 +74,7 @@ async function dryRunFailure(api: ApiPromise, signed: Signed): Promise<DispatchF
 
 /**
  * Submission contract:
- * - `not-landed`: this call broadcast nothing, or the pool refused it (1010/1011/1014, whose
+ * - `not-landed`: this call broadcast nothing, or the pool refused it (1010/1011/1014/1016, whose
  *   message is kept verbatim); resubmit with the same id. The pool alone judges validity.
  * - `inclusion-unknown`: it may still land; settle it with `resolveInclusion`.
  * - `dispatch`: the runtime rejects it, or its id holds a different payload.
@@ -114,10 +129,9 @@ export async function submit<T>(provider: MateriosProvider, submission: Submissi
 
   const tx = submission.build(api);
   const keypair = provider.getKeypair();
-  const signed = await prepare("signing", () => tx.signAsync(keypair, { nonce: -1 }));
-  const best = await prepare("reading the best block", () => readHead(api, false));
-  extrinsic = { txHash: signed.hash.toHex(), signer: keypair.address, nonce: signed.nonce.toNumber(), mortalityEnd: mortalityEnd(signed.era, best.number) };
-  const head = finalized ? await prepare("reading the finalized block", () => readHead(api, true)) : best;
+  const { signed, born } = await prepare("signing", () => signAt(api, tx, keypair));
+  extrinsic = { txHash: signed.hash.toHex(), signer: keypair.address, nonce: signed.nonce.toNumber(), mortalityEnd: mortalityEnd(signed.era, born) };
+  const head = await prepare(`reading the ${finalized ? "finalized" : "best"} block`, () => readHead(api, finalized));
   const stored = await prepare("reading storage", async () => readRecord(await api.at(head.hash), expected, id));
   if (stored === "match") return submission.result({ blockHash: head.hash, blockNumber: head.number, reconciled: true });
   if (stored === "conflict") throw conflictError(id, expected, head, extrinsic);
@@ -150,14 +164,17 @@ export async function submit<T>(provider: MateriosProvider, submission: Submissi
       break;
     }
     case "lost":
-      if (outcome.timedOut) provider.markUnresponsive(api);
+      // A watch that saw a reply or a status only outlasted its window, as an anchor's does
+      // whenever finality is slower: replacing its socket would cut other calls' watches.
+      if (outcome.silent) provider.markUnresponsive(api);
       lost = outcome.cause;
       break;
   }
 
   const recovery = await reconcile(extrinsic.txHash);
   if (recovery.value !== undefined) return recovery.value;
+  const reason = recovery.aborted ? `${lost.message}; ${POLL_ABORTED}` : lost.message;
   throw new MateriosSubmissionError("inclusion-unknown", id,
-    inclusionUnknownMessage(expected, id, extrinsic, lost.message, recovery.lastHead, recovery.lastError),
+    inclusionUnknownMessage(expected, id, extrinsic, reason, recovery.lastHead, recovery.lastError),
     { expected, extrinsic, lastHead: recovery.lastHead, cause: lost });
 }

@@ -42,7 +42,7 @@ const VERDICT_CORE_MUTANTS = [
   "amount_floor_waived_for_asset_mismatch", "amount_floor_waived_off_list", "amount_floor_waived_with_egress_ok", "amount_floor_waived_at_time_zero",
   "amount_floor_waived_late_with_prior", "amount_floor_waived_with_prior_under_large_cap", "validity_window_assert_removed",
   ...GATED_MUTANTS.map(([id]) => id), "kind_domain_assert_waived_past_cap", "rewire_window_conditions", "rewire_counterparty_cap_conditions",
-  "rewire_asset_rule_negated", "rewire_amount_floor_conjunction", "rewire_clock_assert_and_rule", "refusal_messages_swapped",
+  "rewire_asset_rule_negated", "rewire_amount_floor_conjunction", "rewire_clock_assert_and_rule", "refusal_messages_swapped", "r8_rewire_kind_mode_conditions",
 ];
 const PREDICATE_MUTANTS = [
   "unconstrained_verdict", "ledger_verdict_constant", "claim_high_bits", "check_verdict_waived_off_list", "check_verdict_refuses_off_list",
@@ -53,6 +53,11 @@ const HIDDEN_CODE_MUTANTS = ["hidden_waiver", "hidden_waiver_behind_struct", "hi
 // ZKIR carries no assert message, so a mutant that only moves messages between asserts compiles to the predicate's
 // constraints and only the generated JS can tell it apart.
 const MESSAGE_ONLY_MUTANTS = ["refusal_messages_swapped"];
+// A mutant that swaps the conditions of two asserts changes check_verdict's ZKIR, yet both conditions are still
+// asserted, so its constraints accept the predicate's claims and only the refusal raised in the generated JS differs.
+const REFUSAL_ONLY_MUTANTS = ["r8_rewire_kind_mode_conditions"];
+// The named cases a refusal-only mutant is checked on at ZKIR, and the T-A17 cell added to them: all 816 take about 113 s.
+const REFUSAL_ONLY_ZKIR_SAMPLE = { named: 66, cells: 1 };
 // AM-1: the egress-mode domain assert runs before the deny-all rule on every path, so `mode != 1` returning 6 cannot
 // differ from the circuit. It is compiled only to show that, and is never counted as killed.
 const EQUIVALENT_MUTANTS = ["egress_mode_not_one_denies"];
@@ -66,7 +71,7 @@ const DOMAIN_KILLED_MUTANTS = ["kind_domain_assert_removed", "mode_domain_assert
 const REWIRING_MUTANTS = [
   "deny_all_needs_off_list", "kind_branch_on_asset_ok", "amount_floor_waived_for_asset_mismatch", "amount_floor_waived_off_list",
   "amount_floor_waived_with_egress_ok", "rewire_window_conditions", "rewire_counterparty_cap_conditions", "rewire_asset_rule_negated",
-  "rewire_amount_floor_conjunction", "rewire_clock_assert_and_rule",
+  "rewire_amount_floor_conjunction", "rewire_clock_assert_and_rule", ...REFUSAL_ONLY_MUTANTS,
 ];
 
 const { pureCircuits } = await loadUnit("predicate");
@@ -230,6 +235,42 @@ async function checkedDifferently(unit: string, c: Judgeable): Promise<boolean> 
   return false;
 }
 
+// One named case from each stratum, in the order of `allCases`: a stratum is a case group, the guard_verdict expected
+// there and whether the mutant's guard_verdict differs from it at JS. The first T-A17 cell the mutant gets wrong follows.
+async function zkirSample(id: string): Promise<Judgeable[]> {
+  const pure = (await loadUnit(`mutants/${id}`)).pureCircuits;
+  const strata = new Map<string, Judgeable>();
+  for (const c of cases) {
+    const key = JSON.stringify([c.group, c.guard, isDeepStrictEqual(circuitOutcomes(pure, c).guard, c.guard)]);
+    if (!strata.has(key)) strata.set(key, c);
+  }
+  const cell = await orderGuardKill(id);
+  return [...strata.values(), ...(cell === undefined ? [] : [cell])];
+}
+
+// The claims check_verdict accepts are fixed by whether guard_verdict refuses and by the verdict it returns otherwise.
+const acceptsAlike = (got: Outcome, expected: Outcome | Judged) =>
+  (typeof expected === "number" ? got === expected : typeof got !== "number");
+
+describe("a mutant that swaps the conditions of two asserts raises the wrong refusal, and the compiled constraints cannot tell", () => {
+  it.each(REFUSAL_ONLY_MUTANTS)("%s compiles to a different check_verdict, and at JS differs only in the refusal it raises", async id => {
+    const unit = `mutants/${id}`;
+    expect(readFileSync(join(unitDir(unit), "zkir/check_verdict.zkir")).equals(readFileSync(join(unitDir("predicate"), "zkir/check_verdict.zkir")))).toBe(false);
+    const pure = (await loadUnit(unit)).pureCircuits;
+    expect(cases.filter(c => !acceptsAlike(circuitOutcomes(pure, c).guard, c.guard)).map(c => c.name)).toEqual([]);
+    const cells = withoutStacks(() => representatives.filter(({ cell, judged }) => !acceptsAlike(circuitOutcomes(pure, cell).guard, judged.guard)));
+    expect(cells.map(({ cell }) => cell.name)).toEqual([]);
+  });
+
+  it.each(REFUSAL_ONLY_MUTANTS)("%s differs on no case of a stratified sample at ZKIR", async id => {
+    const sample = await zkirSample(id);
+    const differing: string[] = [];
+    for (const c of sample) if (await checkedDifferently(`mutants/${id}`, c)) differing.push(c.name);
+    expect(differing).toEqual([]);
+    expect(sample).toHaveLength(REFUSAL_ONLY_ZKIR_SAMPLE.named + REFUSAL_ONLY_ZKIR_SAMPLE.cells);
+  });
+});
+
 describe("T-A14 ZKIR leg: every mutant that reaches check_verdict is killed by the compiled constraints", () => {
   it.each(EVALUATE_ONLY_MUTANTS)("%s changes the 12-argument evaluate and never guard_verdict, on any case or T-A17 cell", async id => {
     const pure = (await loadUnit(`mutants/${id}`)).pureCircuits;
@@ -240,7 +281,7 @@ describe("T-A14 ZKIR leg: every mutant that reaches check_verdict is killed by t
 
   // The cases whose guard_verdict the mutant gets wrong at JS come first; when no named case does, the first such T-A17
   // cell. A predicate.compact mutant leaves the pure circuits as they are, so no JS case can differ.
-  it.each(mutants.map(m => m.id).filter(id => ![...EVALUATE_ONLY_MUTANTS, ...EQUIVALENT_MUTANTS, ...HIDDEN_CODE_MUTANTS, ...MESSAGE_ONLY_MUTANTS].includes(id)))("kills %s", async id => {
+  it.each(mutants.map(m => m.id).filter(id => ![...EVALUATE_ONLY_MUTANTS, ...EQUIVALENT_MUTANTS, ...HIDDEN_CODE_MUTANTS, ...MESSAGE_ONLY_MUTANTS, ...REFUSAL_ONLY_MUTANTS].includes(id)))("kills %s", async id => {
     const unit = `mutants/${id}`;
     const pure = (await loadUnit(unit)).pureCircuits;
     const jsKills = (c: VerdictCase) => !isDeepStrictEqual(circuitOutcomes(pure, c).guard, c.guard);

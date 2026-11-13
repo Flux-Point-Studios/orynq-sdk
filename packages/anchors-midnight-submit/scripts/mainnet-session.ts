@@ -25,6 +25,7 @@ import {
   ANCHORS_JOURNAL,
   DEPLOY_JOURNAL,
   MAINNET_WALLET_JOURNALS,
+  MAINNET_WALLET_STATE,
   STATE,
   type ChainFacts,
   type OperatorWallet,
@@ -85,7 +86,7 @@ export function mainnetScript<F extends string>({ name, noun, does, flags }: { n
   const defaults: Record<string, string | undefined> = {
     mnemonic: `${SECRETS}/mnemonic.txt`,
     "wallet-record": `${home}/work/orynq-midnight-mainnet-wallet.json`,
-    "wallet-state": `${STATE}/mainnet-wallet.state.json`,
+    "wallet-state": MAINNET_WALLET_STATE,
     blockfrost: `${home}/.secrets/blockfrost-midnight-mainnet.project_id`,
     zk: process.env.MIDNIGHT_PP ?? `${home}/.cache/orynq-midnight/zk`,
     "dust-floor": "20",

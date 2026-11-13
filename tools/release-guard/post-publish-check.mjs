@@ -53,9 +53,10 @@ export function singletonCopies(projectDir, singletons) {
 }
 
 const nameOf = (spec) => spec.slice(0, spec.lastIndexOf("@"));
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const wallSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function served(spec, registry, { attempts, delayMs }) {
+// `sleep` is injectable so a test can count the waits instead of timing them.
+async function served(spec, registry, { attempts, delayMs, sleep = wallSleep }) {
   const name = nameOf(spec), version = spec.slice(spec.lastIndexOf("@") + 1);
   const url = `${registry.replace(/\/$/, "")}/${name.replace("/", "%2f")}`;
   for (let i = 1; i <= attempts; i++) {

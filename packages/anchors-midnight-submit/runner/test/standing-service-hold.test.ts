@@ -106,6 +106,31 @@ it("classifies a hold as dust-cap only for a StandingFeeCap in its chain, never 
   expect(stub.statusHolds).toEqual([["follower", "dust-cap"], ["follower", "source"], ["follower", "source"]]);
 });
 
+// The messages are the follower's, the session's and the clock's own; a reason is read from the
+// outermost message alone, warmup before policy before history in a loop hold.
+it("classifies a startup hold as policy, warmup or source from the failure's own message", async () => {
+  stub.starts = [new Error("Follower original checkpoint policy differs"), new Error("Follower startup lacks an earlier pinned checkpoint"), new Error("Standing batch author is not pinned and authorized"),
+    new Error("Standing authenticated head is stale"), new Error("Standing clock evidence differs from the durable head"),
+    new Error("fetch failed", { cause: new Error("Standing authenticated head is stale") }), new Error("process restart required")];
+  const { holds } = await run("observe");
+  const reasons = ["policy", "policy", "policy", "warmup", "warmup", "source", "source"];
+  expect(holds.map(hold => [hold.event, hold.loop, hold.reason])).toEqual(reasons.map(reason => ["standing-startup-hold", "follower", reason]));
+  expect(stub.statusHolds).toEqual(reasons.map(reason => ["follower", reason]));
+});
+
+it("classifies a loop hold as warmup, policy, history or source from the failure's own message", async () => {
+  stub.starts = [{ authenticated: true }];
+  stub.turns = [new Error("Standing warmup requires twenty authenticated chain minutes in this process"), new Error("Standing warmup must pass the full restore TTL margin"), new Error("Standing warmup needs follower history"),
+    new Error("Standing author checkpoints differ from the follower finality policy"), new Error("Follower checkpoint changes require retained-history migration"), new Error("Follower author has no retained batch history window"),
+    new Error("Follower history window requires retained-floor repair"), new Error("Follower floor height hint differs"), new Error("Follower lost attempt coverage; retained-history repair required"), new Error("Retained checkpoint identity differs"),
+    new Error("Standing authenticated head is stale"), new Error("process restart required")];
+  const { holds } = await run("observe");
+  const reasons = ["warmup", "warmup", "warmup", "policy", "history", "policy", "history", "history", "history", "history", "source", "source"];
+  expect(holds.map(hold => [hold.event, hold.loop, hold.reason])).toEqual(reasons.map(reason => ["standing-hold", "follower", reason]));
+  expect(stub.statusHolds).toEqual(reasons.map(reason => ["follower", reason]));
+  expect(holds[0].causes).toEqual([{ name: "Error", message: "Standing warmup requires twenty authenticated chain minutes in this process" }]);
+});
+
 it("opens the wallet with the journals standingWalletJournals names for its network and state root", async () => {
   stub.starts = [{ authenticated: true }];
   const { root } = await run("anchor");
