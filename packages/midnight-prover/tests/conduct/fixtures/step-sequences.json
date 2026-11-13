@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "note": "Class-fit mirrors of packages/conduct/tests/fixtures/guard-vectors.json: each case keeps a guard-vector case's structure with values the st_* step classes hold (one-digit decimals, 3-byte assets, 4-byte parties). Every expectation is the runtime guard's decision; 5 and 7 are refused, never proven.",
+  "mandate": {
+    "asset": "USD",
+    "capAmount": "9",
+    "windowSeconds": "4",
+    "notBefore": "2",
+    "notAfter": "8",
+    "counterparties": ["acme", "beta", "cafe"],
+    "egress": ["api1", "api2", "api3"]
+  },
+  "defaults": { "asset": "USD", "counterparty": "acme", "destination": "api1", "amount": "1", "at": "3" },
+  "cases": [
+    { "name": "within cap", "steps": [{ "kind": "payment", "amount": "5", "at": "2", "clock": "3", "expect": 0 }] },
+    { "name": "cap-exact", "steps": [{ "kind": "payment", "amount": "9", "expect": 0 }] },
+    { "name": "cumulative", "steps": [
+      { "kind": "payment", "amount": "4", "at": "2", "expect": 0 },
+      { "kind": "payment", "amount": "5", "expect": 0 },
+      { "kind": "payment", "amount": "1", "expect": 4 }
+    ] },
+    { "name": "exceed by one", "mandate": { "capAmount": "8" }, "steps": [{ "kind": "payment", "amount": "9", "expect": 4 }] },
+    { "name": "denied consumes nothing", "steps": [
+      { "kind": "payment", "amount": "6", "at": "2", "expect": 0 },
+      { "kind": "payment", "amount": "6", "expect": 4 },
+      { "kind": "payment", "amount": "3", "expect": 0 }
+    ] },
+    { "name": "window edge", "steps": [
+      { "kind": "payment", "amount": "9", "expect": 0 },
+      { "kind": "payment", "amount": "1", "expect": 4 },
+      { "kind": "payment", "amount": "1", "at": "4", "expect": 0 }
+    ] },
+    { "name": "before notBefore", "steps": [{ "kind": "payment", "at": "1", "expect": 1 }] },
+    { "name": "notBefore inclusive", "steps": [{ "kind": "payment", "at": "2", "expect": 0 }] },
+    { "name": "notAfter exclusive", "steps": [{ "kind": "payment", "at": "8", "expect": 2 }] },
+    { "name": "last valid second", "steps": [{ "kind": "payment", "at": "7", "expect": 0 }] },
+    { "name": "counterparty miss", "steps": [{ "kind": "payment", "counterparty": "zzzz", "expect": 5 }] },
+    { "name": "asset mismatch", "steps": [{ "kind": "payment", "asset": "EUR", "expect": 3 }] },
+    { "name": "egress allowed", "steps": [{ "kind": "egress", "expect": 0 }] },
+    { "name": "egress miss", "steps": [{ "kind": "egress", "destination": "evil", "expect": 7 }] },
+    { "name": "window before allowlist", "steps": [{ "kind": "payment", "counterparty": "zzzz", "at": "1", "expect": 1 }] },
+    { "name": "asset before counterparty and cap", "mandate": { "capAmount": "8" }, "steps": [{ "kind": "payment", "amount": "9", "asset": "EUR", "counterparty": "zzzz", "expect": 3 }] },
+    { "name": "counterparty before cap", "mandate": { "capAmount": "8" }, "steps": [{ "kind": "payment", "amount": "9", "counterparty": "zzzz", "expect": 5 }] },
+    { "name": "validity before everything", "mandate": { "capAmount": "8" }, "steps": [{ "kind": "payment", "amount": "9", "asset": "EUR", "counterparty": "zzzz", "at": "1", "expect": 1 }] },
+    { "name": "egress early", "steps": [{ "kind": "egress", "at": "1", "expect": 1 }] },
+    { "name": "egress expiry", "steps": [{ "kind": "egress", "at": "8", "expect": 2 }] },
+    { "name": "egress cannot use counterparty membership", "steps": [{ "kind": "egress", "destination": "acme", "expect": 7 }] },
+    { "name": "expired + off-list", "steps": [{ "kind": "payment", "counterparty": "zzzz", "at": "8", "expect": 2 }] },
+    { "name": "clock expiry", "mandate": { "windowSeconds": "9" }, "steps": [{ "kind": "payment", "at": "7", "clock": "8", "expect": 2 }] },
+    { "name": "deny-all", "mandate": { "egress": null }, "steps": [
+      { "kind": "egress", "expect": 6 },
+      { "kind": "payment", "expect": 0 }
+    ] }
+  ]
+}

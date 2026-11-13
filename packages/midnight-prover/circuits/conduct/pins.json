@@ -7,12 +7,13 @@
     "zkir": "midnight-zkir 2.1.0"
   },
   "sources": {
-    "circuits/conduct/classes.json": "3e0d1fff738d9fdedb4bff7fe4903aad49f1ec327ec3aba398b8a8fedadc0f7c",
-    "circuits/conduct/gadgets.compact": "bc2f24702b414100b28decc5c36085fb5340b59aeff348a71fed4d1425a14843",
-    "circuits/conduct/mutants.json": "c775163647230aebd35125cbaeb301eb21248a707af98cdbddab463bf0506e00",
+    "circuits/conduct/classes.json": "48938ca224fd80af4b5c1d98ba0df82820fa091401d1379ac8d40fbb2e29aa32",
+    "circuits/conduct/gadgets.compact": "4e3c4857455a0475fe0368de46453172872aba6daf64ab05adeb6f29152dd23f",
+    "circuits/conduct/mutants.json": "8747479ad4a641585b6515fae6394b7696400b39c9d1714fa11860ca37d5494c",
     "circuits/conduct/openings.generated.compact": "194cce237e9e0eac2e3797c089565c5de73c3ee358fd7f3da7e87a2cd770ce1a",
     "circuits/conduct/predicate.compact": "b83ec16fbb500bfa9537c7b6930c44489826c772284f7953a922d1abd7e9b2c0",
     "circuits/conduct/reference/poac_verdict_core.compact": "189fc0ac6f6d36f85591d82e1b470478ee5df6be6a580cd97462673a12b29605",
+    "circuits/conduct/steps.generated.compact": "2f5927226ed82e3e98d36e836e2795dd5851963e50d81d90ab354c69fac4bb8d",
     "circuits/conduct/templates/guard-event-v1.json": "48537eb87fc8d870896e0dec4b5dfade90f3067c51bee186239d2bfbe83c07ee",
     "circuits/conduct/verdict_core.compact": "bb063e92994397f84757161f4c36c94a1088945b60f40d97bf163e10b76593d1"
   },
@@ -275,6 +276,245 @@
             "pi_skip": 3,
             "private_input": 244,
             "test_eq": 171
+          }
+        }
+      }
+    },
+    "steps": {
+      "pureExportInvariant": true,
+      "circuits": {
+        "st_ea": {
+          "zkirSha256": "7c215ba4264c1877577ba266bf7f9b3358281d297c764afa7dfa0407b043b923",
+          "k": 17,
+          "rows": 85337,
+          "ops": {
+            "total": 4808,
+            "persistent_hash": 7,
+            "add": 486,
+            "assert": 372,
+            "cond_select": 1489,
+            "constrain_bits": 334,
+            "constrain_to_boolean": 4,
+            "declare_pub_input": 29,
+            "div_mod_power_of_two": 60,
+            "less_than": 986,
+            "load_imm": 68,
+            "mul": 97,
+            "neg": 388,
+            "pi_skip": 3,
+            "private_input": 321,
+            "reconstitute_field": 6,
+            "test_eq": 158
+          }
+        },
+        "st_ed1": {
+          "zkirSha256": "35fa015b06e8581034a2978564d4e90d2e6b25e535df85c0137ed13d8b7e5d80",
+          "k": 17,
+          "rows": 76845,
+          "ops": {
+            "total": 4759,
+            "persistent_hash": 4,
+            "add": 486,
+            "assert": 370,
+            "cond_select": 1469,
+            "constrain_bits": 330,
+            "declare_pub_input": 29,
+            "div_mod_power_of_two": 60,
+            "less_than": 986,
+            "load_imm": 66,
+            "mul": 97,
+            "neg": 388,
+            "pi_skip": 3,
+            "private_input": 313,
+            "reconstitute_field": 6,
+            "test_eq": 152
+          }
+        },
+        "st_ed2": {
+          "zkirSha256": "c1beac41d9bdef6e6557268f89b9760775f3e5f43b812c7a3ed4ee55a0507623",
+          "k": 17,
+          "rows": 76847,
+          "ops": {
+            "total": 4759,
+            "persistent_hash": 4,
+            "add": 486,
+            "assert": 370,
+            "cond_select": 1469,
+            "constrain_bits": 330,
+            "declare_pub_input": 29,
+            "div_mod_power_of_two": 60,
+            "less_than": 986,
+            "load_imm": 66,
+            "mul": 97,
+            "neg": 388,
+            "pi_skip": 3,
+            "private_input": 313,
+            "reconstitute_field": 6,
+            "test_eq": 152
+          }
+        },
+        "st_ed6": {
+          "zkirSha256": "0f0b3baffeaee049a9d71a7abb047fc5756851da9907769920250a99c9bf6ace",
+          "k": 17,
+          "rows": 76835,
+          "ops": {
+            "total": 4759,
+            "persistent_hash": 4,
+            "add": 486,
+            "assert": 370,
+            "cond_select": 1469,
+            "constrain_bits": 330,
+            "declare_pub_input": 29,
+            "div_mod_power_of_two": 60,
+            "less_than": 986,
+            "load_imm": 66,
+            "mul": 97,
+            "neg": 388,
+            "pi_skip": 3,
+            "private_input": 313,
+            "reconstitute_field": 6,
+            "test_eq": 152
+          }
+        },
+        "st_pa": {
+          "zkirSha256": "c9a4151a5f02af8d363be6463a79106171945de0c99b3e7b6290b05aabbe39e7",
+          "k": 17,
+          "rows": 88023,
+          "ops": {
+            "total": 4972,
+            "persistent_hash": 8,
+            "add": 488,
+            "assert": 377,
+            "cond_select": 1575,
+            "constrain_bits": 340,
+            "constrain_to_boolean": 4,
+            "declare_pub_input": 29,
+            "div_mod_power_of_two": 60,
+            "less_than": 1019,
+            "load_imm": 71,
+            "mul": 97,
+            "neg": 389,
+            "pi_skip": 3,
+            "private_input": 325,
+            "reconstitute_field": 6,
+            "test_eq": 181
+          }
+        },
+        "st_pa_max_d8": {
+          "zkirSha256": "deb7588528a4764262c81b49e398b52eb88c283330b1617a7790a24ffffcb9a9",
+          "k": 18,
+          "rows": 225037,
+          "ops": {
+            "total": 25037,
+            "persistent_hash": 14,
+            "add": 684,
+            "assert": 481,
+            "cond_select": 12749,
+            "constrain_bits": 836,
+            "constrain_to_boolean": 16,
+            "declare_pub_input": 29,
+            "div_mod_power_of_two": 60,
+            "less_than": 4971,
+            "load_imm": 80,
+            "mul": 202,
+            "neg": 480,
+            "pi_skip": 3,
+            "private_input": 833,
+            "reconstitute_field": 6,
+            "test_eq": 3593
+          }
+        },
+        "st_pd1": {
+          "zkirSha256": "4290accf4a10d646f56c6650cdc210dcfb4b9850fe0d67ff9d22af55ae10325e",
+          "k": 17,
+          "rows": 81344,
+          "ops": {
+            "total": 4915,
+            "persistent_hash": 5,
+            "add": 487,
+            "assert": 375,
+            "cond_select": 1549,
+            "constrain_bits": 336,
+            "declare_pub_input": 29,
+            "div_mod_power_of_two": 60,
+            "less_than": 1018,
+            "load_imm": 69,
+            "mul": 97,
+            "neg": 389,
+            "pi_skip": 3,
+            "private_input": 317,
+            "reconstitute_field": 6,
+            "test_eq": 175
+          }
+        },
+        "st_pd2": {
+          "zkirSha256": "33723cc5c2b8cba8aab84f5f89b815956adb6352b1b87575f11138c15ef2f945",
+          "k": 17,
+          "rows": 81346,
+          "ops": {
+            "total": 4915,
+            "persistent_hash": 5,
+            "add": 487,
+            "assert": 375,
+            "cond_select": 1549,
+            "constrain_bits": 336,
+            "declare_pub_input": 29,
+            "div_mod_power_of_two": 60,
+            "less_than": 1018,
+            "load_imm": 69,
+            "mul": 97,
+            "neg": 389,
+            "pi_skip": 3,
+            "private_input": 317,
+            "reconstitute_field": 6,
+            "test_eq": 175
+          }
+        },
+        "st_pd3": {
+          "zkirSha256": "2cfa494ad83a081b0eca4e53d82a74cf2ea004c345fbae13d055e90aa3c210d7",
+          "k": 17,
+          "rows": 79469,
+          "ops": {
+            "total": 4915,
+            "persistent_hash": 5,
+            "add": 487,
+            "assert": 375,
+            "cond_select": 1549,
+            "constrain_bits": 336,
+            "declare_pub_input": 29,
+            "div_mod_power_of_two": 60,
+            "less_than": 1018,
+            "load_imm": 69,
+            "mul": 97,
+            "neg": 389,
+            "pi_skip": 3,
+            "private_input": 317,
+            "reconstitute_field": 6,
+            "test_eq": 175
+          }
+        },
+        "st_pd4": {
+          "zkirSha256": "d26436d935d69cb33c29e82ea71d8d85c73c3d6532ccf4be870f01af116a5801",
+          "k": 17,
+          "rows": 91837,
+          "ops": {
+            "total": 4975,
+            "persistent_hash": 8,
+            "add": 488,
+            "assert": 377,
+            "cond_select": 1575,
+            "constrain_bits": 340,
+            "constrain_to_boolean": 4,
+            "declare_pub_input": 29,
+            "div_mod_power_of_two": 60,
+            "less_than": 1019,
+            "load_imm": 74,
+            "mul": 97,
+            "neg": 389,
+            "pi_skip": 3,
+            "private_input": 325,
+            "reconstitute_field": 6,
+            "test_eq": 181
           }
         }
       }

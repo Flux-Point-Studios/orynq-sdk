@@ -28,14 +28,15 @@ describe("conduct circuit pins", () => {
     for (const path of sources) expect(pins().sources[path], path).toBe(sha256(path));
   });
 
-  it("pin exactly the predicate and openings units, and one provable circuit per verdict and compiled class", () => {
-    const { events, mandates } = JSON.parse(readFileSync(join(pkg, "circuits/conduct/classes.json"), "utf8")).openings;
-    expect(Object.keys(pins().units)).toEqual(["predicate", "openings"]);
+  it("pin exactly the predicate, openings and steps units, and one provable circuit per verdict and compiled class", () => {
+    const { openings: { events, mandates }, steps } = JSON.parse(readFileSync(join(pkg, "circuits/conduct/classes.json"), "utf8"));
+    expect(Object.keys(pins().units)).toEqual(["predicate", "openings", "steps"]);
     expect(Object.keys(pins().units.predicate!.circuits)).toEqual(["check_verdict"]);
     expect(Object.keys(pins().units.openings!.circuits)).toEqual([...Object.keys(events), ...Object.keys(mandates)].sort());
+    expect(Object.keys(pins().units.steps!.circuits)).toEqual(Object.keys(steps).sort());
   });
 
-  it.each(["predicate", "openings"])("the compiled %s unit under test carries the pinned ZKIR", unit => {
+  it.each(["predicate", "openings", "steps"])("the compiled %s unit under test carries the pinned ZKIR", unit => {
     for (const [name, pin] of Object.entries(pins().units[unit]!.circuits)) {
       const ir = relative(pkg, join(unitDir(unit), `zkir/${name}.zkir`));
       expect(existsSync(join(pkg, ir)), "conduct circuits not compiled: run pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:conduct").toBe(true);
@@ -45,7 +46,7 @@ describe("conduct circuit pins", () => {
 
   // compile-conduct writes this only after an unexported recompile yielded identical ZKIR; it refuses otherwise, which
   // compile-conduct.test.ts exercises with a perturbing compiler.
-  it.each(["predicate", "openings"])("T-A15: pin that exporting the %s unit's pure circuits leaves its provable circuits' ZKIR unchanged", unit => {
+  it.each(["predicate", "openings", "steps"])("T-A15: pin that exporting the %s unit's pure circuits leaves its provable circuits' ZKIR unchanged", unit => {
     expect(pins().units[unit]!.pureExportInvariant).toBe(true);
   });
 
@@ -61,5 +62,31 @@ describe("conduct circuit pins", () => {
         expect(pin.zkirSha256, label).toMatch(/^[0-9a-f]{64}$/);
       }
     }
+  });
+});
+
+interface BenchPins { toolchain: Record<string, string>; sources: Record<string, string>; groups: Record<string, { circuits: Record<string, CircuitPin> }> }
+const benchPins = (): BenchPins => JSON.parse(readFileSync(join(pkg, "bench/conduct/pins.json"), "utf8"));
+const readme = readFileSync(join(pkg, "circuits/conduct/README.md"), "utf8");
+const grouped = (n: number) => n.toLocaleString("en-US");
+
+describe("the bench pins and the sizes the README states", () => {
+  it("the bench pins hold the conduct toolchain, every conduct source and the bench's own sources, and one group per group of bench.json", () => {
+    const { groups }: { groups: Record<string, { circuits: Record<string, unknown> }> } = JSON.parse(readFileSync(join(pkg, "bench/conduct/bench.json"), "utf8"));
+    expect(benchPins().toolchain).toEqual(pins().toolchain);
+    expect(benchPins().sources).toEqual({
+      ...pins().sources, ...Object.fromEntries(["bench/conduct/bench.json", "scripts/conduct/bench.mjs", "scripts/conduct/template.mjs"].map(path => [path, sha256(path)])),
+    });
+    expect(Object.keys(benchPins().groups)).toEqual(Object.keys(groups));
+    for (const [group, { circuits }] of Object.entries(groups)) expect(Object.keys(benchPins().groups[group]!.circuits), group).toEqual(Object.keys(circuits).sort());
+  });
+
+  // The README's tables are written from the pins; a re-pin that moves a size must move its row.
+  it("the README states the pinned k, rows and hash count of every step and bench circuit, and the two sizes its comparisons start from", () => {
+    const stated = [...Object.entries(pins().units.steps!.circuits), ...Object.values(benchPins().groups).flatMap(({ circuits }) => Object.entries(circuits))];
+    expect(stated.length).toBeGreaterThan(30);
+    const missing = stated.filter(([name, pin]) => !new RegExp(String.raw`^\| \`${name}\` \| [^|]+ \| ${pin.k} \| ${grouped(pin.rows)} \| ${pin.ops.persistent_hash} \|$`, "m").test(readme)).map(([name]) => name);
+    expect(missing).toEqual([]);
+    expect(readme).toContain(`\`ev_pa_ascii_min\` (${grouped(pins().units.openings!.circuits.ev_pa_ascii_min!.rows)} rows) and \`st_pa\` (${grouped(pins().units.steps!.circuits.st_pa!.rows)} rows)`);
   });
 });

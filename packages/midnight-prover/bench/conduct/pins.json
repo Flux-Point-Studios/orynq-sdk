@@ -1,0 +1,735 @@
+{
+  "version": 1,
+  "toolchain": {
+    "compactc": "0.31.1",
+    "language": "0.23.0",
+    "runtime": "0.16.0",
+    "zkir": "midnight-zkir 2.1.0"
+  },
+  "sources": {
+    "circuits/conduct/classes.json": "48938ca224fd80af4b5c1d98ba0df82820fa091401d1379ac8d40fbb2e29aa32",
+    "circuits/conduct/gadgets.compact": "4e3c4857455a0475fe0368de46453172872aba6daf64ab05adeb6f29152dd23f",
+    "circuits/conduct/mutants.json": "8747479ad4a641585b6515fae6394b7696400b39c9d1714fa11860ca37d5494c",
+    "circuits/conduct/openings.generated.compact": "194cce237e9e0eac2e3797c089565c5de73c3ee358fd7f3da7e87a2cd770ce1a",
+    "circuits/conduct/predicate.compact": "b83ec16fbb500bfa9537c7b6930c44489826c772284f7953a922d1abd7e9b2c0",
+    "circuits/conduct/reference/poac_verdict_core.compact": "189fc0ac6f6d36f85591d82e1b470478ee5df6be6a580cd97462673a12b29605",
+    "circuits/conduct/steps.generated.compact": "2f5927226ed82e3e98d36e836e2795dd5851963e50d81d90ab354c69fac4bb8d",
+    "circuits/conduct/templates/guard-event-v1.json": "48537eb87fc8d870896e0dec4b5dfade90f3067c51bee186239d2bfbe83c07ee",
+    "circuits/conduct/verdict_core.compact": "bb063e92994397f84757161f4c36c94a1088945b60f40d97bf163e10b76593d1",
+    "bench/conduct/bench.json": "a898b8833efb654da248f3ab81af31a0d2ae58386523ee67c2e124ca8a99a323",
+    "scripts/conduct/bench.mjs": "4020b60bd70396023ce7125d053c159198f9a4b165978f9d7093ed0051976682",
+    "scripts/conduct/template.mjs": "7d07243e2088e028212943dd98d0261d02bdd0f6ae97ecb80829b7ce8b4d90b4"
+  },
+  "groups": {
+    "pub": {
+      "circuits": {
+        "b_pub_ascii_min": {
+          "zkirSha256": "17900ea684318d130bbf771a87e7a1549b56a824176f6e0336edd7a1cb3d6756",
+          "k": 16,
+          "rows": 36832,
+          "ops": {
+            "total": 3502,
+            "persistent_hash": 3,
+            "add": 385,
+            "assert": 208,
+            "cond_select": 1155,
+            "constrain_bits": 227,
+            "declare_pub_input": 36,
+            "less_than": 751,
+            "load_imm": 57,
+            "mul": 124,
+            "neg": 261,
+            "pi_skip": 3,
+            "private_input": 207,
+            "reconstitute_field": 6,
+            "test_eq": 79
+          }
+        },
+        "b_pub_max": {
+          "zkirSha256": "b4ca10ce12822872e182c18531534a53bcf34cbf453a2cd853fb3bdf0dc9fb7e",
+          "k": 18,
+          "rows": 134421,
+          "ops": {
+            "total": 23369,
+            "persistent_hash": 3,
+            "add": 567,
+            "assert": 304,
+            "cond_select": 12275,
+            "constrain_bits": 695,
+            "declare_pub_input": 36,
+            "less_than": 4703,
+            "load_imm": 58,
+            "mul": 215,
+            "neg": 352,
+            "pi_skip": 3,
+            "private_input": 675,
+            "reconstitute_field": 6,
+            "test_eq": 3477
+          }
+        }
+      }
+    },
+    "lhash": {
+      "circuits": {
+        "b_lhash_ascii_min": {
+          "zkirSha256": "e8c96c464c6adeffbb9964f214239e19ec83b41d3b067c9fdc85ab11084b1182",
+          "k": 16,
+          "rows": 51399,
+          "ops": {
+            "total": 4799,
+            "persistent_hash": 6,
+            "add": 545,
+            "assert": 305,
+            "cond_select": 1540,
+            "constrain_bits": 326,
+            "declare_pub_input": 40,
+            "less_than": 1007,
+            "load_imm": 60,
+            "mul": 156,
+            "neg": 389,
+            "pi_skip": 3,
+            "private_input": 303,
+            "reconstitute_field": 6,
+            "test_eq": 113
+          }
+        }
+      }
+    },
+    "inline": {
+      "circuits": {
+        "b_inline_max": {
+          "zkirSha256": "3813295d6c307e97c0a34e50aa1d5efd0067ab2c819930df598ffe29f7f803b7",
+          "k": 19,
+          "rows": 367219,
+          "ops": {
+            "total": 48271,
+            "persistent_hash": 17,
+            "add": 726,
+            "assert": 1167,
+            "cond_select": 24813,
+            "constrain_bits": 1775,
+            "constrain_to_boolean": 16,
+            "declare_pub_input": 44,
+            "div_mod_power_of_two": 60,
+            "less_than": 12532,
+            "load_imm": 101,
+            "mul": 244,
+            "neg": 480,
+            "pi_skip": 6,
+            "private_input": 1762,
+            "reconstitute_field": 6,
+            "test_eq": 4522
+          }
+        },
+        "b_inline_pa": {
+          "zkirSha256": "b56e70bfbc0ee81e346d74b15b021c80b1fe91ef7fd52cf0ef986506bed38e94",
+          "k": 17,
+          "rows": 110066,
+          "ops": {
+            "total": 5954,
+            "persistent_hash": 11,
+            "add": 488,
+            "assert": 442,
+            "cond_select": 1911,
+            "constrain_bits": 483,
+            "constrain_to_boolean": 4,
+            "declare_pub_input": 44,
+            "div_mod_power_of_two": 60,
+            "less_than": 1235,
+            "load_imm": 93,
+            "mul": 97,
+            "neg": 389,
+            "pi_skip": 6,
+            "private_input": 464,
+            "reconstitute_field": 6,
+            "test_eq": 221
+          }
+        }
+      }
+    },
+    "adlex": {
+      "circuits": {
+        "b_ad_lex": {
+          "zkirSha256": "d1050a1aa478db265469e615f60a8de2bc61dd6deab347682fd08ce3a7364d7f",
+          "k": 17,
+          "rows": 74497,
+          "ops": {
+            "total": 4479,
+            "persistent_hash": 7,
+            "add": 328,
+            "assert": 343,
+            "cond_select": 1509,
+            "constrain_bits": 338,
+            "constrain_to_boolean": 4,
+            "declare_pub_input": 29,
+            "div_mod_power_of_two": 30,
+            "less_than": 1017,
+            "load_imm": 65,
+            "mul": 65,
+            "neg": 261,
+            "pi_skip": 3,
+            "private_input": 325,
+            "reconstitute_field": 6,
+            "test_eq": 149
+          }
+        }
+      }
+    },
+    "allowlist": {
+      "circuits": {
+        "b_allowlist_d1": {
+          "zkirSha256": "b42fe7b67cbb2d930de38b11d4238f80d9e0a882b551ae2fce3455036a2b545d",
+          "k": 13,
+          "rows": 7174,
+          "ops": {
+            "total": 250,
+            "persistent_hash": 2,
+            "assert": 3,
+            "cond_select": 113,
+            "constrain_bits": 8,
+            "constrain_to_boolean": 2,
+            "declare_pub_input": 12,
+            "less_than": 38,
+            "load_imm": 27,
+            "pi_skip": 3,
+            "private_input": 8,
+            "test_eq": 34
+          }
+        },
+        "b_allowlist_d10": {
+          "zkirSha256": "19c5c1650a5dece2b01d782b9ddf727d1da0aa4f28d9f875b3c25c3c226e6671",
+          "k": 16,
+          "rows": 45091,
+          "ops": {
+            "total": 448,
+            "persistent_hash": 11,
+            "assert": 12,
+            "cond_select": 194,
+            "constrain_bits": 26,
+            "constrain_to_boolean": 20,
+            "declare_pub_input": 12,
+            "less_than": 38,
+            "load_imm": 36,
+            "pi_skip": 3,
+            "private_input": 44,
+            "test_eq": 52
+          }
+        },
+        "b_allowlist_d16": {
+          "zkirSha256": "57cd6a13a3b8d49df20595c6345e0105554aeb0957e079e266bf6fc0160bc573",
+          "k": 17,
+          "rows": 70369,
+          "ops": {
+            "total": 580,
+            "persistent_hash": 17,
+            "assert": 18,
+            "cond_select": 248,
+            "constrain_bits": 38,
+            "constrain_to_boolean": 32,
+            "declare_pub_input": 12,
+            "less_than": 38,
+            "load_imm": 42,
+            "pi_skip": 3,
+            "private_input": 68,
+            "test_eq": 64
+          }
+        },
+        "b_allowlist_d2": {
+          "zkirSha256": "464ed8319769bc15f4c2e03f1c72432f52577050ebf7b6387089a2198b79d049",
+          "k": 14,
+          "rows": 11387,
+          "ops": {
+            "total": 272,
+            "persistent_hash": 3,
+            "assert": 4,
+            "cond_select": 122,
+            "constrain_bits": 10,
+            "constrain_to_boolean": 4,
+            "declare_pub_input": 12,
+            "less_than": 38,
+            "load_imm": 28,
+            "pi_skip": 3,
+            "private_input": 12,
+            "test_eq": 36
+          }
+        },
+        "b_allowlist_d4": {
+          "zkirSha256": "c98dcb6b19285b0901591996c3651dd0a3aa22a49857dd24bffdd157bf69c519",
+          "k": 15,
+          "rows": 19813,
+          "ops": {
+            "total": 316,
+            "persistent_hash": 5,
+            "assert": 6,
+            "cond_select": 140,
+            "constrain_bits": 14,
+            "constrain_to_boolean": 8,
+            "declare_pub_input": 12,
+            "less_than": 38,
+            "load_imm": 30,
+            "pi_skip": 3,
+            "private_input": 20,
+            "test_eq": 40
+          }
+        },
+        "b_allowlist_d8": {
+          "zkirSha256": "60ba913f26d4980cce9bf70ef79ebfa184d515c59d98ded3dbd34f64aae06fdd",
+          "k": 16,
+          "rows": 36665,
+          "ops": {
+            "total": 404,
+            "persistent_hash": 9,
+            "assert": 10,
+            "cond_select": 176,
+            "constrain_bits": 22,
+            "constrain_to_boolean": 16,
+            "declare_pub_input": 12,
+            "less_than": 38,
+            "load_imm": 34,
+            "pi_skip": 3,
+            "private_input": 36,
+            "test_eq": 48
+          }
+        }
+      }
+    },
+    "window": {
+      "circuits": {
+        "b_window_1": {
+          "zkirSha256": "1262e2ceff7fa3f104b4430407414e246fac35d3c5b8bffc5d8c8fc610a82aed",
+          "k": 16,
+          "rows": 57952,
+          "ops": {
+            "total": 4766,
+            "persistent_hash": 4,
+            "add": 545,
+            "assert": 305,
+            "cond_select": 1541,
+            "constrain_bits": 295,
+            "declare_pub_input": 40,
+            "div_mod_power_of_two": 30,
+            "less_than": 1009,
+            "load_imm": 60,
+            "mul": 156,
+            "neg": 389,
+            "pi_skip": 3,
+            "private_input": 272,
+            "reconstitute_field": 6,
+            "test_eq": 111
+          }
+        },
+        "b_window_2": {
+          "zkirSha256": "24e36ab49fe161d17de1acd73c493e60bb9bfb384f10b32dff77315d58a05cda",
+          "k": 17,
+          "rows": 76372,
+          "ops": {
+            "total": 4823,
+            "persistent_hash": 5,
+            "add": 548,
+            "assert": 310,
+            "cond_select": 1555,
+            "constrain_bits": 296,
+            "declare_pub_input": 40,
+            "div_mod_power_of_two": 32,
+            "less_than": 1013,
+            "load_imm": 78,
+            "mul": 157,
+            "neg": 391,
+            "pi_skip": 3,
+            "private_input": 274,
+            "reconstitute_field": 6,
+            "test_eq": 115
+          }
+        },
+        "b_window_4": {
+          "zkirSha256": "d1dcf2f62205519a12f884387d67a033710a54cfc4bc66a4370c7b5e26f83b44",
+          "k": 17,
+          "rows": 112725,
+          "ops": {
+            "total": 4969,
+            "persistent_hash": 7,
+            "add": 560,
+            "assert": 321,
+            "cond_select": 1593,
+            "constrain_bits": 303,
+            "declare_pub_input": 40,
+            "div_mod_power_of_two": 34,
+            "less_than": 1027,
+            "load_imm": 113,
+            "mul": 162,
+            "neg": 398,
+            "pi_skip": 3,
+            "private_input": 281,
+            "reconstitute_field": 6,
+            "test_eq": 121
+          }
+        },
+        "b_window_7": {
+          "zkirSha256": "584db83e46bfafd820d769afda6172bfa570050335a962f72639d07743b0c70f",
+          "k": 18,
+          "rows": 171263,
+          "ops": {
+            "total": 5278,
+            "persistent_hash": 10,
+            "add": 593,
+            "assert": 345,
+            "cond_select": 1671,
+            "constrain_bits": 321,
+            "declare_pub_input": 40,
+            "div_mod_power_of_two": 37,
+            "less_than": 1063,
+            "load_imm": 167,
+            "mul": 177,
+            "neg": 416,
+            "pi_skip": 3,
+            "private_input": 299,
+            "reconstitute_field": 6,
+            "test_eq": 130
+          }
+        }
+      }
+    },
+    "v2": {
+      "circuits": {
+        "b_v2_fixed": {
+          "zkirSha256": "98e1cdd4b5af6ada3925b239f9997258e14c2e954f2a6bc0dafc49bbf05df17c",
+          "k": 17,
+          "rows": 70786,
+          "ops": {
+            "total": 7692,
+            "persistent_hash": 2,
+            "add": 1077,
+            "assert": 506,
+            "cond_select": 2282,
+            "constrain_bits": 491,
+            "declare_pub_input": 42,
+            "div_mod_power_of_two": 30,
+            "less_than": 1605,
+            "load_imm": 43,
+            "mul": 356,
+            "neg": 721,
+            "pi_skip": 3,
+            "private_input": 468,
+            "reconstitute_field": 6,
+            "test_eq": 60
+          }
+        }
+      }
+    },
+    "span": {
+      "circuits": {
+        "b_span_d0_s1": {
+          "zkirSha256": "a9cb524676e907cb2273f047fbedab8de2e3e24ed42fb64efa0fe56bad12e9e0",
+          "k": 17,
+          "rows": 84952,
+          "ops": {
+            "total": 6727,
+            "persistent_hash": 5,
+            "add": 707,
+            "assert": 489,
+            "cond_select": 2156,
+            "constrain_bits": 443,
+            "declare_pub_input": 36,
+            "div_mod_power_of_two": 60,
+            "less_than": 1465,
+            "load_imm": 68,
+            "mul": 188,
+            "neg": 519,
+            "pi_skip": 3,
+            "private_input": 421,
+            "reconstitute_field": 6,
+            "test_eq": 161
+          }
+        },
+        "b_span_d1_s1": {
+          "zkirSha256": "62b8aaa4e75b11b0e30a3a0eb1e12e1ca1b52fc566e926fb812385a6ca5c53bf",
+          "k": 17,
+          "rows": 106513,
+          "ops": {
+            "total": 8234,
+            "persistent_hash": 6,
+            "add": 867,
+            "assert": 585,
+            "cond_select": 2668,
+            "constrain_bits": 571,
+            "constrain_to_boolean": 1,
+            "declare_pub_input": 36,
+            "div_mod_power_of_two": 90,
+            "less_than": 1721,
+            "load_imm": 70,
+            "mul": 220,
+            "neg": 647,
+            "pi_skip": 3,
+            "private_input": 550,
+            "reconstitute_field": 6,
+            "test_eq": 193
+          }
+        },
+        "b_span_d2_s1": {
+          "zkirSha256": "65bce17410d40b20d42e910820bedac841ebd871df723b3c086649e3a06f29f2",
+          "k": 17,
+          "rows": 128074,
+          "ops": {
+            "total": 9740,
+            "persistent_hash": 7,
+            "add": 1027,
+            "assert": 681,
+            "cond_select": 3180,
+            "constrain_bits": 699,
+            "constrain_to_boolean": 2,
+            "declare_pub_input": 36,
+            "div_mod_power_of_two": 120,
+            "less_than": 1977,
+            "load_imm": 71,
+            "mul": 252,
+            "neg": 775,
+            "pi_skip": 3,
+            "private_input": 679,
+            "reconstitute_field": 6,
+            "test_eq": 225
+          }
+        },
+        "b_span_d3_s1": {
+          "zkirSha256": "ebadf4baca82116b2faefd9b6a2c8139a4f49a67e431efc6a56d77e8b8685e9b",
+          "k": 18,
+          "rows": 149635,
+          "ops": {
+            "total": 11246,
+            "persistent_hash": 8,
+            "add": 1187,
+            "assert": 777,
+            "cond_select": 3692,
+            "constrain_bits": 827,
+            "constrain_to_boolean": 3,
+            "declare_pub_input": 36,
+            "div_mod_power_of_two": 150,
+            "less_than": 2233,
+            "load_imm": 72,
+            "mul": 284,
+            "neg": 903,
+            "pi_skip": 3,
+            "private_input": 808,
+            "reconstitute_field": 6,
+            "test_eq": 257
+          }
+        },
+        "b_span_d4_s1": {
+          "zkirSha256": "52d9964bd1d20ddb9b61a0896bcf786b3c4b3e4651c668fef1b7df8a26df2a32",
+          "k": 18,
+          "rows": 171196,
+          "ops": {
+            "total": 12752,
+            "persistent_hash": 9,
+            "add": 1347,
+            "assert": 873,
+            "cond_select": 4204,
+            "constrain_bits": 955,
+            "constrain_to_boolean": 4,
+            "declare_pub_input": 36,
+            "div_mod_power_of_two": 180,
+            "less_than": 2489,
+            "load_imm": 73,
+            "mul": 316,
+            "neg": 1031,
+            "pi_skip": 3,
+            "private_input": 937,
+            "reconstitute_field": 6,
+            "test_eq": 289
+          }
+        },
+        "b_span_d4_s2": {
+          "zkirSha256": "18bf1f42aadbd3cbe0bb0fba9ff11c480b5cc62fb222f647bc238e370dd5dcfe",
+          "k": 18,
+          "rows": 171278,
+          "ops": {
+            "total": 12781,
+            "persistent_hash": 9,
+            "add": 1351,
+            "assert": 877,
+            "cond_select": 4210,
+            "constrain_bits": 957,
+            "constrain_to_boolean": 4,
+            "declare_pub_input": 36,
+            "div_mod_power_of_two": 180,
+            "less_than": 2493,
+            "load_imm": 74,
+            "mul": 318,
+            "neg": 1033,
+            "pi_skip": 3,
+            "private_input": 939,
+            "reconstitute_field": 6,
+            "test_eq": 291
+          }
+        },
+        "b_span_d5_s1": {
+          "zkirSha256": "507d458cdf3776b52458c953477606d163f92fae542d9785b795aaa7b26d378d",
+          "k": 18,
+          "rows": 192757,
+          "ops": {
+            "total": 14258,
+            "persistent_hash": 10,
+            "add": 1507,
+            "assert": 969,
+            "cond_select": 4716,
+            "constrain_bits": 1083,
+            "constrain_to_boolean": 5,
+            "declare_pub_input": 36,
+            "div_mod_power_of_two": 210,
+            "less_than": 2745,
+            "load_imm": 74,
+            "mul": 348,
+            "neg": 1159,
+            "pi_skip": 3,
+            "private_input": 1066,
+            "reconstitute_field": 6,
+            "test_eq": 321
+          }
+        },
+        "b_span_d5_s2": {
+          "zkirSha256": "872f3b83b55b79eebd37818e3eee3e6ce41241265a2105dfc4bd552d3fd7a46c",
+          "k": 18,
+          "rows": 192839,
+          "ops": {
+            "total": 14287,
+            "persistent_hash": 10,
+            "add": 1511,
+            "assert": 973,
+            "cond_select": 4722,
+            "constrain_bits": 1085,
+            "constrain_to_boolean": 5,
+            "declare_pub_input": 36,
+            "div_mod_power_of_two": 210,
+            "less_than": 2749,
+            "load_imm": 75,
+            "mul": 350,
+            "neg": 1161,
+            "pi_skip": 3,
+            "private_input": 1068,
+            "reconstitute_field": 6,
+            "test_eq": 323
+          }
+        }
+      }
+    },
+    "spandeep": {
+      "circuits": {
+        "b_span_d16_s1": {
+          "zkirSha256": "93ea85562de5767ca5179cc548158383084ba30c02c665e8c62c168b4d342861",
+          "k": 19,
+          "rows": 429928,
+          "ops": {
+            "total": 30824,
+            "persistent_hash": 21,
+            "add": 3267,
+            "assert": 2025,
+            "cond_select": 10348,
+            "constrain_bits": 2491,
+            "constrain_to_boolean": 16,
+            "declare_pub_input": 36,
+            "div_mod_power_of_two": 540,
+            "less_than": 5561,
+            "load_imm": 85,
+            "mul": 700,
+            "neg": 2567,
+            "pi_skip": 3,
+            "private_input": 2485,
+            "reconstitute_field": 6,
+            "test_eq": 673
+          }
+        },
+        "b_span_d8_s1": {
+          "zkirSha256": "1b06a27d85cd5366f32f791249d9d1d5178adc79c127ddda55e0a577f81187a1",
+          "k": 18,
+          "rows": 257440,
+          "ops": {
+            "total": 18776,
+            "persistent_hash": 13,
+            "add": 1987,
+            "assert": 1257,
+            "cond_select": 6252,
+            "constrain_bits": 1467,
+            "constrain_to_boolean": 8,
+            "declare_pub_input": 36,
+            "div_mod_power_of_two": 300,
+            "less_than": 3513,
+            "load_imm": 77,
+            "mul": 444,
+            "neg": 1543,
+            "pi_skip": 3,
+            "private_input": 1453,
+            "reconstitute_field": 6,
+            "test_eq": 417
+          }
+        }
+      }
+    },
+    "poacwalk": {
+      "circuits": {
+        "b_poac_walk_ifelse_d20": {
+          "zkirSha256": "341f3aa2fb455d0e3654fb505b3b89570d8752ba8b1a501b58dc41461234177a",
+          "k": 18,
+          "rows": 161389,
+          "ops": {
+            "total": 251,
+            "persistent_hash": 40,
+            "assert": 1,
+            "cond_select": 61,
+            "constrain_bits": 44,
+            "constrain_to_boolean": 20,
+            "declare_pub_input": 12,
+            "load_imm": 6,
+            "pi_skip": 3,
+            "private_input": 62,
+            "test_eq": 2
+          }
+        },
+        "b_poac_walk_select_d20": {
+          "zkirSha256": "b111978e92ded8587d7df93142a48460cf02096a3f8e15284e510ca4a5d3ab9e",
+          "k": 17,
+          "rows": 83729,
+          "ops": {
+            "total": 251,
+            "persistent_hash": 20,
+            "assert": 1,
+            "cond_select": 81,
+            "constrain_bits": 44,
+            "constrain_to_boolean": 20,
+            "declare_pub_input": 12,
+            "load_imm": 6,
+            "pi_skip": 3,
+            "private_input": 62,
+            "test_eq": 2
+          }
+        }
+      }
+    },
+    "add": {
+      "circuits": {
+        "b_add_d20": {
+          "zkirSha256": "a3defbeedd9e8f304f87e083dfe33409612ad5f9b79f8043ba925d884302a317",
+          "k": 18,
+          "rows": 141636,
+          "ops": {
+            "total": 5008,
+            "persistent_hash": 24,
+            "add": 545,
+            "assert": 306,
+            "cond_select": 1621,
+            "constrain_bits": 338,
+            "constrain_to_boolean": 20,
+            "declare_pub_input": 52,
+            "div_mod_power_of_two": 30,
+            "less_than": 1007,
+            "load_imm": 60,
+            "mul": 156,
+            "neg": 389,
+            "pi_skip": 6,
+            "private_input": 333,
+            "reconstitute_field": 6,
+            "test_eq": 115
+          }
+        }
+      }
+    }
+  }
+}
