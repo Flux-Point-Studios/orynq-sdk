@@ -59,14 +59,14 @@ describe("AM-9 the conduct circuits compile and run their suite in a CI step of 
     expect(conduct.test).toEqual({ globals, environment, testTimeout, hookTimeout, include: [`${CONDUCT_TESTS}/**/*.test.ts`] });
   });
 
-  it("conduct-circuits always runs after build-test, beside midnight-submit, with its image and Compact install, build:conduct then the conduct suite", () => {
+  it("conduct-circuits runs once the submitter and the real proofs have passed, never beside them, with build-test's image and Compact install, build:conduct then the conduct suite", () => {
     const buildTest = step("build-test");
     expect(Object.values(buildTest).join("\n")).not.toMatch(/conduct/);
     const conduct = step("conduct-circuits");
     expect(Object.keys(conduct)).toEqual(["image", "depends_on", "environment", "commands"]);
     expect(conduct.image).toMatch(/@sha256:[0-9a-f]{64}$/);
     expect(conduct.image).toBe(buildTest.image);
-    expect(conduct.depends_on).toBe("[build-test]");
+    expect(conduct.depends_on).toBe("[midnight-submit, midnight-real-proofs]");
     expect(conduct.environment).toBe(buildTest.environment);
     expect(conduct.environment).toBe("\nCOMPACTC: /woodpecker/orynq-midnight-tools/compactc/compactc\nMIDNIGHT_PP: /woodpecker/orynq-midnight-tools/zk-params");
     expect(conduct.commands).toBe([
@@ -76,6 +76,8 @@ describe("AM-9 the conduct circuits compile and run their suite in a CI step of 
       "  '",
     ].join("\n"));
     expect(step("midnight-submit").depends_on).toBe("[build-test]");
+    expect(step("midnight-real-proofs").depends_on).toBe("[midnight-native]");
+    expect(step("midnight-native").depends_on).toBe("[build-test]");
   });
 
   it("a conduct-circuits block outside the steps list is not a step", () => {
