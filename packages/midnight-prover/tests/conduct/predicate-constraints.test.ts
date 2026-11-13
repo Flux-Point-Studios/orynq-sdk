@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { allCases, checkVerdictArgs as claim, CIRCUIT_REFUSALS, CLAIMS, guardVectorCases, MAX_U64, predicateVectorCases, slot, VERDICT_CODES, type VerdictCase } from "./cases.js";
-import { generatedSource, prepareCheck, runCircuit, stripAsserts, unitDir, zkCheck } from "./harness.js";
+import { generatedSource, prepareCheck, runCircuit, stripChecks, unitDir, zkCheck } from "./harness.js";
 
 const GROUPS = ["predicate-vectors", "guard-vectors", "clock", "matrix", "boundary", "unicode", "range", "invariance", "prior", "spent", "domain"];
 const cases = allCases();
@@ -147,9 +147,10 @@ describe("T-A12 and T-A13 the compiled constraints accept and disclose every hon
     const circuits = resolve(import.meta.dirname, "../../circuits/conduct");
     const compactAsserts = ["verdict_core.compact", "predicate.compact"]
       .reduce((count, file) => count + (readFileSync(join(circuits, file), "utf8").match(/\bassert\(/g) ?? []).length, 0);
-    const { source, removed } = stripAsserts(generatedSource("predicate"));
+    const { source, asserts, casts } = stripChecks(generatedSource("predicate"));
     expect(source).not.toContain("__compactRuntime.assert(");
-    expect(removed).toBe(compactAsserts);
+    expect(asserts).toBe(compactAsserts);
+    expect(casts).toBe(0);
   });
 
   it("the stripped copy names no source map", async () => {

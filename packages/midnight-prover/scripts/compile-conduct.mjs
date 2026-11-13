@@ -1,20 +1,24 @@
 // Compiles the conduct circuits into the gitignored conduct-managed/ and pins their deterministic outputs.
-//   node scripts/compile-conduct.mjs --write|--check [--units predicate,mutants,reference]
-// Build-order rule: node builtins only, because build:circuits runs before the workspace is built.
-import { execFileSync, spawnSync } from "node:child_process";
+//   node scripts/compile-conduct.mjs --write|--check [--units predicate,openings,mutants,reference]
+// Build-order rule: node builtins and scripts/conduct only, so the script runs from the files the npm package ships,
+// with no workspace build.
+import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { emitOpenings } from "./conduct/template.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const circuits = join(root, "circuits/conduct");
 const reference = join(circuits, "reference");
 const managed = join(root, "conduct-managed");
 const pinsFile = join(circuits, "pins.json");
-const UNITS = ["predicate", "mutants", "reference"];
+const UNITS = ["predicate", "openings", "mutants", "reference"];
+// The sources each compiled unit is built from, its entry first.
+const UNIT_SOURCES = { predicate: ["predicate.compact", "verdict_core.compact"], openings: ["openings.generated.compact", "gadgets.compact"] };
 
 const usage = `usage: compile-conduct.mjs --write|--check [--units ${UNITS.join(",")}]`;
 let mode;
@@ -31,14 +35,25 @@ const units = unitList === undefined ? UNITS : [...new Set(unitList.split(","))]
 for (const unit of units) if (!UNITS.includes(unit)) throw new Error(`unknown conduct unit: ${unit}`);
 const partial = units.length < UNITS.length;
 
-const PREDICATE_SOURCES = ["predicate.compact", "verdict_core.compact"];
+// A committed file's text, or undefined where it does not exist yet; any other read error propagates.
+const readIfPresent = file => readFile(file, "utf8").catch(error => {
+  if (error.code !== "ENOENT") throw error;
+  return undefined;
+});
+
+const generatedFile = join(circuits, UNIT_SOURCES.openings[0]);
+const generated = emitOpenings();
+if (!check) await writeFile(generatedFile, generated);
+else if (await readIfPresent(generatedFile) !== generated) throw new Error("generated circuits differ from classes.json; run --write");
+
+const unitOf = file => Object.keys(UNIT_SOURCES).find(unit => UNIT_SOURCES[unit].includes(file));
 const mutants = JSON.parse(await readFile(join(circuits, "mutants.json"), "utf8"));
 const mutantIds = new Set();
 for (const { id, file, find } of mutants) {
   if (!/^[a-z0-9_]+$/.test(id)) throw new Error(`mutant id ${JSON.stringify(id)} must be lowercase letters, digits and underscores`);
   if (mutantIds.has(id)) throw new Error(`mutant id ${id} is repeated`);
   mutantIds.add(id);
-  if (!PREDICATE_SOURCES.includes(file)) throw new Error(`mutant ${id} must edit one of ${PREDICATE_SOURCES.join(", ")}`);
+  if (unitOf(file) === undefined) throw new Error(`mutant ${id} must edit one of ${Object.values(UNIT_SOURCES).flat().join(", ")}`);
   if ((await readFile(join(circuits, file), "utf8")).split(find).length !== 2) throw new Error(`mutant ${id} does not apply exactly once`);
 }
 
@@ -47,10 +62,7 @@ const sourcePaths = (await readdir(circuits, { recursive: true })).filter(name =
 const sources = {};
 for (const path of sourcePaths.sort()) sources[path] = sha256(await readFile(join(root, path)));
 
-const committed = await readFile(pinsFile, "utf8").catch(error => {
-  if (error.code !== "ENOENT") throw error;
-  return "";
-});
+const committed = (await readIfPresent(pinsFile)) ?? "";
 const committedPins = committed ? JSON.parse(committed) : { sources: {}, units: {} };
 for (const unit of Object.keys(committedPins.units)) if (!UNITS.includes(unit)) throw new Error(`pins.json names unknown conduct unit: ${unit}`);
 // A pin survives only by being rebuilt: --check never compares a unit against itself, and a partial --write keeps the
@@ -68,13 +80,39 @@ const zkir = process.env.ZKIR ?? (process.env.COMPACTC ? join(dirname(compiler),
 const toolchain = { compactc: "0.31.1", language: tool(compiler, ["--language-version"]), runtime: tool(compiler, ["--runtime-version"]), zkir: tool(zkir, ["--version"]) };
 if (toolchain.zkir !== "midnight-zkir 2.1.0") throw new Error("midnight-zkir 2.1.0 is required");
 
+// Units, mutants and circuits build concurrently, with at most one compactc or zkir process per CPU. Every branch of a
+// fan-out settles before its first failure is thrown, so no compiler outlives the script and every scratch is removed.
+const execFileAsync = promisify(execFile);
+async function settled(promises) {
+  const results = await Promise.allSettled(promises);
+  const failed = results.find(result => result.status === "rejected");
+  if (failed) throw failed.reason;
+  return results.map(result => result.value);
+}
+let freeSlots = availableParallelism();
+const waiting = [];
+async function run(file, argv, options = {}) {
+  if (freeSlots > 0) freeSlots -= 1;
+  else await new Promise(resolve => waiting.push(resolve));
+  try {
+    return await execFileAsync(file, argv, { encoding: "utf8", maxBuffer: 65536, ...options });
+  } finally {
+    const next = waiting.shift();
+    if (next) next();
+    else freeSlots += 1;
+  }
+}
+
 // The source map names its sources relative to the compile's working directory; rooting it there lets a loader that
-// reads the map, such as vitest, find them.
+// reads the map, such as vitest, find them. compactc's standard library is built in and has no file, so it is marked
+// virtual for loaders not to look for one.
+const STANDARD_LIBRARY = "compiler/standard-library.compact";
 async function compile(sourceDir, entry, out) {
-  execFileSync(compiler, ["--skip-zk", entry, out], { cwd: sourceDir, encoding: "utf8", maxBuffer: 65536 });
+  await run(compiler, ["--skip-zk", entry, out], { cwd: sourceDir });
   const mapFile = join(out, "contract/index.js.map");
   const map = JSON.parse(await readFile(mapFile, "utf8"));
-  await writeFile(mapFile, JSON.stringify({ ...map, sourceRoot: `${relative(dirname(mapFile), sourceDir)}/` }));
+  const sources = map.sources.map(source => (source === STANDARD_LIBRARY ? `virtual:${source}` : source));
+  await writeFile(mapFile, JSON.stringify({ ...map, sources, sourceRoot: `${relative(dirname(mapFile), sourceDir)}/` }));
 }
 
 async function withScratch(prefix, body) {
@@ -86,14 +124,14 @@ async function withScratch(prefix, body) {
   }
 }
 
-// Writes the predicate sources with one file edited into `sourceDir`, then compiles them from there.
-async function compileEditedPredicate(file, edit, sourceDir, out) {
+// Writes a unit's sources with one file edited into `sourceDir`, then compiles them from there.
+async function compileEdited(unit, file, edit, sourceDir, out) {
   await mkdir(sourceDir, { recursive: true });
-  for (const name of PREDICATE_SOURCES) {
+  for (const name of UNIT_SOURCES[unit]) {
     const text = await readFile(join(circuits, name), "utf8");
     await writeFile(join(sourceDir, name), name === file ? edit(text) : text);
   }
-  await compile(sourceDir, "predicate.compact", out);
+  await compile(sourceDir, UNIT_SOURCES[unit][0], out);
 }
 
 const zkirFiles = async dir => (await readdir(join(dir, "zkir"))).filter(name => name.endsWith(".zkir")).sort();
@@ -106,60 +144,67 @@ function opsOf(ir) {
 
 // zkir writes the .bzkir beside its input, so it only ever runs on a scratch copy.
 async function mockCompile(out) {
-  const pins = {};
   const dir = join(out, "zkir");
-  for (const file of await zkirFiles(out)) {
+  const files = await zkirFiles(out);
+  const pins = await settled(files.map(async file => {
     const name = file.slice(0, -".zkir".length);
     const ir = await readFile(join(dir, file));
-    pins[name] = await withScratch("conduct-zkir-", async scratch => {
+    return withScratch("conduct-zkir-", async scratch => {
       await writeFile(join(scratch, file), ir);
-      const run = spawnSync(zkir, ["mock-compile", "-v", join(scratch, file)], { encoding: "utf8", maxBuffer: 65536 });
-      if (run.error || run.status !== 0) throw new Error(`zkir mock-compile ${file} failed: ${run.error?.message ?? run.stderr}`);
-      const size = /Mock compiling circuit "[^"]*" \(k=(\d+), rows=(\d+)\)/.exec(run.stderr);
+      const { stderr } = await run(zkir, ["mock-compile", "-v", join(scratch, file)]).catch(error => {
+        throw new Error(`zkir mock-compile ${file} failed: ${error.stderr || error.message}`);
+      });
+      const size = /Mock compiling circuit "[^"]*" \(k=(\d+), rows=(\d+)\)/.exec(stderr);
       if (!size) throw new Error(`zkir mock-compile ${file} reported no k and rows`);
       await copyFile(join(scratch, `${name}.bzkir`), join(dir, `${name}.bzkir`));
-      return { zkirSha256: sha256(ir), k: Number(size[1]), rows: Number(size[2]), ops: opsOf(JSON.parse(ir)) };
+      return [name, { zkirSha256: sha256(ir), k: Number(size[1]), rows: Number(size[2]), ops: opsOf(JSON.parse(ir)) }];
     });
-  }
-  return pins;
+  }));
+  return Object.fromEntries(pins);
 }
 
-// The parity tests call the exported pure circuits; the proof statement must not depend on their being exported. A
-// second compile with every pure circuit unexported must yield the same ZKIR.
-async function requireExportInvariance(out) {
+// The tests call the exported pure circuits; the proof statements must not depend on their being exported. A second
+// compile with every pure circuit unexported must yield the same ZKIR.
+async function requireExportInvariance(unit, out) {
+  const entry = UNIT_SOURCES[unit][0];
   await withScratch("conduct-unexported-", async scratch => {
     const unexported = join(scratch, "out");
-    await compileEditedPredicate("predicate.compact", text => {
+    await compileEdited(unit, entry, text => {
       const demoted = text.replace(/^export pure circuit /gm, "pure circuit ");
-      if (demoted === text) throw new Error("predicate.compact exports no pure circuit");
+      if (demoted === text) throw new Error(`${entry} exports no pure circuit`);
       return demoted;
     }, join(scratch, "source"), unexported);
     const names = await zkirFiles(out);
     if (!isDeepStrictEqual(await zkirFiles(unexported), names)) throw new Error("the provable circuits depend on which pure circuits are exported");
     for (const name of names) {
-      const [exported, demoted] = await Promise.all([out, unexported].map(dir => readFile(join(dir, "zkir", name))));
+      const [exported, demoted] = await settled([out, unexported].map(dir => readFile(join(dir, "zkir", name))));
       if (!exported.equals(demoted)) throw new Error(`${name} depends on which pure circuits are exported`);
     }
   });
 }
 
+async function pinnedUnit(unit) {
+  const out = join(managed, unit);
+  await rm(out, { recursive: true, force: true });
+  await compile(circuits, UNIT_SOURCES[unit][0], out);
+  const [circuitPins] = await settled([mockCompile(out), requireExportInvariance(unit, out)]);
+  return { pureExportInvariant: true, circuits: circuitPins };
+}
+
 const build = {
-  async predicate() {
-    const out = join(managed, "predicate");
-    await rm(out, { recursive: true, force: true });
-    await compile(circuits, "predicate.compact", out);
-    const circuitPins = await mockCompile(out);
-    await requireExportInvariance(out);
-    return { pureExportInvariant: true, circuits: circuitPins };
-  },
+  predicate: () => pinnedUnit("predicate"),
+  openings: () => pinnedUnit("openings"),
   async mutants() {
     await rm(join(managed, "mutants"), { recursive: true, force: true });
-    // A mutant keeps its edited sources in source/, which its source map names and the structure audit reads.
-    for (const mutant of mutants) {
+    // A mutant keeps its edited sources in source/, which its source map names and the structure audit reads. Only the
+    // predicate mutants are checked at ZKIR; the openings mutants are judged by their generated JS and the private inputs
+    // of their compactc ZKIR.
+    await settled(mutants.map(async mutant => {
       const out = join(managed, "mutants", mutant.id);
-      await compileEditedPredicate(mutant.file, text => text.replace(mutant.find, () => mutant.replace), join(out, "source"), out);
-      await mockCompile(out);
-    }
+      const unit = unitOf(mutant.file);
+      await compileEdited(unit, mutant.file, text => text.replace(mutant.find, () => mutant.replace), join(out, "source"), out);
+      if (unit === "predicate") await mockCompile(out);
+    }));
   },
   async reference() {
     const out = join(managed, "reference/poac");
@@ -168,11 +213,7 @@ const build = {
   },
 };
 
-const rebuilt = {};
-for (const unit of units) {
-  const pins = await build[unit]();
-  if (pins) rebuilt[unit] = pins;
-}
+const rebuilt = Object.fromEntries(await settled(units.map(async unit => [unit, await build[unit]()])));
 const kept = check || !partial ? {} : committedPins.units;
 const pinnedUnits = {};
 for (const unit of UNITS) {
