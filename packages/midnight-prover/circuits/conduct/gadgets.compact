@@ -1,0 +1,119 @@
+module ConductGadgets {
+  import CompactStandardLibrary;
+
+  // The value of N decimal digits with no leading zero; the cast to Uint<64> refuses 2^64 and above.
+  export circuit decU64<#N>(ds: Vector<N, Uint<8>>): Uint<64> {
+    for (const c of ds) {
+      assert(c >= 48 && c <= 57, "decimal digit");
+    }
+    assert(N == 1 || ds[0] != 48, "decimal leading zero");
+    return fold((acc, c) => acc * 10 + (c as Field) - 48, 0 as Field, ds) as Uint<64>;
+  }
+
+  // A JavaScript number that JSON writes exactly: below 2^53.
+  export circuit dec53<#N>(ds: Vector<N, Uint<8>>): Uint<64> {
+    const value = decU64<N>(ds);
+    assert(value < 9007199254740992, "trace seq unsafe");
+    return value;
+  }
+
+  // A CBOR uint held in its head byte.
+  export circuit cborHeadValue(head: Uint<8>): Uint<64> {
+    assert(head <= 23, "cbor head");
+    return head as Uint<64>;
+  }
+
+  // A CBOR uint in W big-endian argument bytes, which the strict decoder accepts only as the shortest encoding.
+  export circuit cborUint<#W>(body: Vector<W, Uint<8>>): Uint<64> {
+    assert(W == 1 || W == 2 || W == 4 || W == 8, "cbor uint width");
+    const value = fold((acc, b) => acc * 256 + (b as Field), 0 as Field, body) as Uint<64>;
+    assert(value >= (W == 1 ? 24 : (W == 2 ? 256 : (W == 4 ? 65536 : 4294967296))), "cbor uint not minimal");
+    return value;
+  }
+
+  // One step of a strict UTF-8 decoder: no surrogates, no overlongs, nothing above U+10FFFF, and a one-byte character
+  // only where `ascii` allows it. The state is the continuation bytes still due and the range the next must fall in.
+  circuit utf8Next(s: [Uint<0..4>, Uint<8>, Uint<8>, Boolean], b: Uint<8>, ascii: Boolean): [Uint<0..4>, Uint<8>, Uint<8>, Boolean] {
+    const due = s[0];
+    const lead2 = b >= 194 && b <= 223;
+    const lead3 = b >= 224 && b <= 239;
+    const lead4 = b >= 240 && b <= 244;
+    const next: Uint<0..4> = due != 0 ? (due == 3 ? 2 : (due == 2 ? 1 : 0)) : (lead2 ? 1 : (lead3 ? 2 : (lead4 ? 3 : 0)));
+    const lo: Uint<8> = due != 0 ? 128 : (b == 224 ? 160 : (b == 240 ? 144 : 128));
+    const hi: Uint<8> = due != 0 ? 191 : (b == 237 ? 159 : (b == 244 ? 143 : 191));
+    return [next, lo, hi, s[3] && (due != 0 ? b >= s[1] && b <= s[2] : ascii || lead2 || lead3 || lead4)];
+  }
+
+  // JSON.stringify writes these bytes raw: printable ASCII and DEL, but not the quote or the backslash.
+  circuit jsonStep(s: [Uint<0..4>, Uint<8>, Uint<8>, Boolean], b: Uint<8>): [Uint<0..4>, Uint<8>, Uint<8>, Boolean] {
+    return utf8Next(s, b, b >= 32 && b < 128 && b != 34 && b != 92);
+  }
+
+  circuit anyStep(s: [Uint<0..4>, Uint<8>, Uint<8>, Boolean], b: Uint<8>): [Uint<0..4>, Uint<8>, Uint<8>, Boolean] {
+    return utf8Next(s, b, b < 128);
+  }
+
+  export circuit jsonStr<#N>(s: Vector<N, Uint<8>>): [] {
+    const end = fold(jsonStep, [0, 128, 191, true], s);
+    assert(end[3] && end[0] == 0, "string outside escape-free well-formed UTF-8 class");
+  }
+
+  export circuit utf8Any<#N>(s: Vector<N, Uint<8>>): [] {
+    const end = fold(anyStep, [0, 128, 191, true], s);
+    assert(end[3] && end[0] == 0, "well-formed UTF-8");
+  }
+
+  export circuit base58<#N>(s: Vector<N, Uint<8>>): [] {
+    for (const c of s) {
+      assert((c >= 49 && c <= 57) || (c >= 65 && c <= 72) || (c >= 74 && c <= 78) || (c >= 80 && c <= 90) || (c >= 97 && c <= 107) || (c >= 109 && c <= 122), "base58");
+    }
+  }
+
+  export circuit asciiPrint<#N>(s: Vector<N, Uint<8>>): [] {
+    for (const c of s) {
+      assert(c >= 33 && c <= 126, "printable ASCII");
+    }
+  }
+
+  circuit isHex(c: Uint<8>): Boolean {
+    return (c >= 48 && c <= 57) || (c >= 97 && c <= 102);
+  }
+
+  circuit nib(c: Uint<8>): Field {
+    assert(isHex(c), "noncanonical hex");
+    return (c as Field) - 48 - (c >= 97 ? 39 : 0);
+  }
+
+  // The two 128-bit halves of 64 lowercase hex digits.
+  export circuit hexHalves(h: Vector<64, Uint<8>>): [Field, Field] {
+    return [fold((acc, c) => acc * 16 + nib(c), 0 as Field, slice<32>(h, 0)), fold((acc, c) => acc * 16 + nib(c), 0 as Field, slice<32>(h, 32))];
+  }
+
+  export circuit hexOfHash(h: Vector<64, Uint<8>>, b: Bytes<32>): [] {
+    const bv = b as Vector<32, Uint<8>>;
+    for (const i of 0..32) {
+      assert(nib(h[2 * i]) * 16 + nib(h[2 * i + 1]) == (bv[i] as Field), "hex opening");
+    }
+  }
+
+  export circuit uuid(v: Vector<36, Uint<8>>): [] {
+    for (const i of 0..36) {
+      assert((i == 8 || i == 13 || i == 18 || i == 23) ? v[i] == 45 : isHex(v[i]), "uuid");
+    }
+  }
+
+  // YYYY-MM-DDTHH:MM:SS.sssZ, shape only.
+  export circuit iso8601(v: Vector<24, Uint<8>>): [] {
+    for (const i of 0..24) {
+      assert(i == 4 || i == 7 ? v[i] == 45 : (i == 10 ? v[i] == 84 : (i == 13 || i == 16 ? v[i] == 58 : (i == 19 ? v[i] == 46 : (i == 23 ? v[i] == 90 : (v[i] >= 48 && v[i] <= 57))))), "iso8601");
+    }
+  }
+
+  export circuit vis6(v: Vector<6, Uint<8>>): [] {
+    assert((v as Bytes<6>) == "public" || (v as Bytes<6>) == "secret", "visibility");
+  }
+
+  export circuit vis7(v: Vector<7, Uint<8>>): [] {
+    assert((v as Bytes<7>) == "private", "visibility");
+  }
+}

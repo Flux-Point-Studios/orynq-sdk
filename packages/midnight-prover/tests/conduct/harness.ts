@@ -11,6 +11,9 @@ import { withFixtureProof } from "../fixture-prover.js";
 const managed = resolve(import.meta.dirname, "../../conduct-managed");
 const circuits = resolve(import.meta.dirname, "../../circuits/conduct");
 const ASSERT_CALL = "__compactRuntime.assert(";
+export const CAST_FAILED = "cast from Field or Uint value to smaller Uint value failed";
+// compactc's runtime check of a narrowing cast, which the ZKIR holds as a bit bound.
+const NARROWING_CAST = new RegExp(String.raw`if \((\w+) > \d+n\) \{\s*throw new __compactRuntime\.CompactError\('[^']*: ${CAST_FAILED}: ' \+ \1 \+ ' is greater than \d+'\);\s*\}`, "g");
 
 export interface ProofData {
   input: { value: Uint8Array[]; alignment: unknown[] };
@@ -19,9 +22,14 @@ export interface ProofData {
   privateTranscriptOutputs: unknown[];
 }
 
+interface CircuitResult {
+  readonly proofData: ProofData;
+  readonly context: { currentQueryContext: { state: runtime.StateValue } };
+}
+
 interface CompiledContract {
   initialState(context: unknown): { currentContractState: { serialize(): Uint8Array } };
-  readonly circuits: Record<string, (context: unknown, ...args: unknown[]) => { proofData: ProofData }>;
+  readonly circuits: Record<string, (context: unknown, ...args: unknown[]) => CircuitResult>;
 }
 
 export interface UnitModule {
@@ -43,7 +51,7 @@ export function unitDir(unit: string): string {
 
 function contractFile(unit: string): string {
   const file = join(unitDir(unit), "contract/index.js");
-  if (!existsSync(file)) throw new Error("conduct circuits not compiled: run pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:circuits");
+  if (!existsSync(file)) throw new Error("conduct circuits not compiled: run pnpm --filter @fluxpointstudios/orynq-sdk-midnight-prover build:conduct");
   return file;
 }
 
@@ -55,28 +63,40 @@ export function generatedSource(unit: string): string {
   return readFileSync(contractFile(unit), "utf8");
 }
 
-/** A Compact source file of a predicate unit: the committed file, or the edited copy a mutant was compiled from. */
+/** A Compact source file of a unit: the committed file, or the edited copy a mutant was compiled from. */
 export function unitSource(unit: string, file: string): string {
   const dir = unitDir(unit);
   contractFile(unit);
-  return readFileSync(join(dir === join(managed, "predicate") ? circuits : join(dir, "source"), file), "utf8");
+  return readFileSync(join(dir.startsWith(join(managed, "mutants") + sep) ? join(dir, "source") : circuits, file), "utf8");
 }
 
-export function stripAsserts(source: string): { source: string; removed: number } {
-  return { source: source.replaceAll(ASSERT_CALL, "((_c, _m) => {})("), removed: source.split(ASSERT_CALL).length - 1 };
+/** The generated JS with every assert a no-op and every narrowing cast unchecked, and how many of each it held. */
+export function stripChecks(source: string): { source: string; asserts: number; casts: number } {
+  return {
+    source: source.replace(NARROWING_CAST, "").replaceAll(ASSERT_CALL, "((_c, _m) => {})("),
+    asserts: source.split(ASSERT_CALL).length - 1,
+    casts: source.match(NARROWING_CAST)?.length ?? 0,
+  };
 }
 
 // The copy keeps every ZKIR constraint but none of the generated JS checks, so only `check` can refuse a forgery. Its
-// columns no longer match the compiled source map, so it names none.
-async function loadStripped(unit: string): Promise<UnitModule> {
+// columns no longer match the compiled source map, so it names none. Each compiled unit is stripped once per process.
+const strippedUnits = new Map<string, Promise<UnitModule>>();
+function loadStripped(unit: string): Promise<UnitModule> {
   const file = contractFile(unit);
-  const { source, removed } = stripAsserts(generatedSource(unit).replace(/^\/\/# sourceMappingURL=.*$/m, ""));
-  if (removed === 0) throw new Error(`no generated assertions to strip in ${unit}`);
-  const stripped = join(file, "../index.stripped.js");
-  const temp = `${stripped}.${randomUUID()}`;
-  writeFileSync(temp, source);
-  renameSync(temp, stripped);
-  return import(pathToFileURL(stripped).href);
+  let module = strippedUnits.get(file);
+  if (module === undefined) {
+    const { source, asserts } = stripChecks(generatedSource(unit).replace(/^\/\/# sourceMappingURL=.*$/m, ""));
+    if (asserts === 0) throw new Error(`no generated assertions to strip in ${unit}`);
+    if (source.includes(CAST_FAILED)) throw new Error(`a narrowing cast in ${unit} is not in the form the strip removes`);
+    const stripped = join(file, "../index.stripped.js");
+    const temp = `${stripped}.${randomUUID()}`;
+    writeFileSync(temp, source);
+    renameSync(temp, stripped);
+    module = import(pathToFileURL(stripped).href);
+    strippedUnits.set(file, module);
+  }
+  return module;
 }
 
 export function outcome(run: () => unknown): Outcome {
@@ -87,21 +107,43 @@ export function outcome(run: () => unknown): Outcome {
   }
 }
 
+// A unit's initial state reads no witness, so every call of a unit shares one, and every call of a circuit one deployment
+// of it: the state with the circuit's operation and its address.
+const initials = new WeakMap<UnitModule, {
+  readonly coinKey: string;
+  readonly state: { serialize(): Uint8Array };
+  readonly deployments: Map<string, { state: ledger.ContractState; address: string }>;
+}>();
+
 function callCircuit(module: UnitModule, name: string, witnesses: object, args: readonly unknown[]) {
   const contract = new module.Contract(witnesses);
-  const coinKey = ledger.sampleCoinPublicKey();
-  const initial = contract.initialState(runtime.createConstructorContext(undefined, coinKey));
-  const state = ledger.ContractState.deserialize(initial.currentContractState.serialize());
-  state.setOperation(name, new ledger.ContractOperation());
-  const address = new ledger.ContractDeploy(state).address;
-  const context = runtime.createCircuitContext(address, coinKey, initial.currentContractState as never, undefined);
+  let initial = initials.get(module);
+  if (initial === undefined) {
+    const coinKey = ledger.sampleCoinPublicKey();
+    initial = { coinKey, state: contract.initialState(runtime.createConstructorContext(undefined, coinKey)).currentContractState, deployments: new Map() };
+    initials.set(module, initial);
+  }
+  let deployment = initial.deployments.get(name);
+  if (deployment === undefined) {
+    const state = ledger.ContractState.deserialize(initial.state.serialize());
+    state.setOperation(name, new ledger.ContractOperation());
+    deployment = { state, address: new ledger.ContractDeploy(state).address };
+    initial.deployments.set(name, deployment);
+  }
   const circuit = contract.circuits[name];
   if (typeof circuit !== "function") throw new TypeError(`contract.circuits.${name} is not a function`);
-  return { state, address, data: circuit(context, ...args).proofData };
+  const context = runtime.createCircuitContext(deployment.address, initial.coinKey, initial.state as never, undefined);
+  return { ...deployment, result: circuit(context, ...args) };
 }
 
 export async function runCircuit(unit: string, name: string, witnesses: object, args: readonly unknown[]): Promise<ProofData> {
-  return callCircuit(await loadUnit(unit), name, witnesses, args).data;
+  return callCircuit(await loadUnit(unit), name, witnesses, args).result.proofData;
+}
+
+/** Runs a circuit in the generated JS and returns the ledger its call wrote: the disclosed statement. */
+export async function runLedger(unit: string, name: string, witnesses: object, args: readonly unknown[]): Promise<Record<string, unknown>> {
+  const module = await loadUnit(unit);
+  return module.ledger(callCircuit(module, name, witnesses, args).result.context.currentQueryContext.state);
 }
 
 // `check` reads only the IR; the provider insists on key fields, and empty ones show no key or parameter is consulted.
@@ -121,7 +163,7 @@ export interface PreparedCheck {
 
 export async function prepareCheck(unit: string, name: string, witnesses: object, args: readonly unknown[]): Promise<PreparedCheck> {
   const module = await loadStripped(unit);
-  const { state, address, data } = callCircuit(module, name, witnesses, args);
+  const { state, address, result: { proofData: data } } = callCircuit(module, name, witnesses, args);
   return {
     data,
     async check() {

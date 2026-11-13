@@ -1,0 +1,19 @@
+{
+  "openings": {
+    "events": {
+      "ev_pa_ascii_min": { "kind": "payment-action", "lengths": { "amount": 1, "asset": 3, "counterparty": 4, "ts": 1, "enforcedAt": 1, "dataSeq": 1, "traceSeq": 1, "vis": 7 } },
+      "ev_pa_unicode_max": { "kind": "payment-action", "lengths": { "amount": 20, "asset": 6, "counterparty": 11, "ts": 10, "enforcedAt": 10, "dataSeq": 2, "traceSeq": 1, "vis": 6 } },
+      "ev_pa_max": { "kind": "payment-action", "lengths": { "amount": 20, "asset": 128, "counterparty": 256, "ts": 20, "enforcedAt": 20, "dataSeq": 20, "traceSeq": 16, "vis": 7 } },
+      "ev_pd4_ascii_min": { "kind": "payment-denial-4", "lengths": { "amount": 1, "asset": 3, "counterparty": 4, "ts": 1, "enforcedAt": 1, "dataSeq": 1, "traceSeq": 1, "vis": 7 } },
+      "ev_ea_ascii_min": { "kind": "egress-action", "lengths": { "destination": 4, "ts": 1, "enforcedAt": 1, "dataSeq": 1, "traceSeq": 1, "vis": 7 } }
+    },
+    "mandates": {
+      "m_base": { "principalDid": 56, "agentDid": 56, "asset": 8, "capAmount": 4, "windowSeconds": 4, "notBefore": 4, "notAfter": 4, "committeeId": 20, "threshold": 0, "committeeSize": 0 },
+      "m_zero_cap": { "principalDid": 56, "agentDid": 56, "asset": 5, "capAmount": 0, "windowSeconds": 0, "notBefore": 4, "notAfter": 4, "committeeId": 20, "threshold": 0, "committeeSize": 0 },
+      "m_field_maxima": { "principalDid": 56, "agentDid": 56, "asset": 81, "capAmount": 8, "windowSeconds": 4, "notBefore": 0, "notAfter": 8, "committeeId": 26, "threshold": 0, "committeeSize": 1 },
+      "m_one_second": { "principalDid": 56, "agentDid": 56, "asset": 8, "capAmount": 4, "windowSeconds": 4, "notBefore": 4, "notAfter": 4, "committeeId": 1, "threshold": 0, "committeeSize": 0 },
+      "m_max": { "principalDid": 265, "agentDid": 265, "asset": 128, "capAmount": 8, "windowSeconds": 8, "notBefore": 8, "notAfter": 8, "committeeId": 128, "threshold": 8, "committeeSize": 8 },
+      "m_step": { "principalDid": 17, "agentDid": 17, "asset": 3, "capAmount": 0, "windowSeconds": 0, "notBefore": 0, "notAfter": 0, "committeeId": 1, "threshold": 0, "committeeSize": 0 }
+    }
+  }
+}
