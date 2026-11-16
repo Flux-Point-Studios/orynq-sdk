@@ -127,7 +127,26 @@ describe("Materios dev node", () => {
     expect(error).toMatchObject({ code: "not-landed", safeToResubmit: true });
     expect(error.message).toMatch(/^1010: Invalid Transaction/);
     expect(error.cause.code).toBe(1010);
+    expect(error.feeShortfall).toEqual({ reason: "unregistered-account", account: error.signer, providers: 0, sufficients: 0 });
+    expect(error.message).toContain(`Materios account ${error.signer} is not registered`);
   }, 60_000);
+
+  it("ends an unregistered signer's MOTRA wait with an unregistered-account fee error", async () => {
+    const p = await provider(NODE_URL!, "//O4UnregisteredMotraWait");
+    const error = await failure(sdk.waitForMotra(p, 1n, { intervalMs: 500, timeoutMs: 2_000 }));
+    expect(error).toBeInstanceOf(sdk.MateriosFeeError);
+    expect(error).toMatchObject({ balance: 0n, minBalance: 1n });
+    expect(error.shortfall).toEqual({ reason: "unregistered-account", account: p.getKeypair().address, providers: 0, sufficients: 0 });
+  }, 30_000);
+
+  it("reads //Alice as registered, so her MOTRA wait can only end short of MOTRA", async () => {
+    const p = await provider(NODE_URL!);
+    const balance = await sdk.queryMotraBalance(p);
+    const error = await failure(sdk.waitForMotra(p, balance * 1_000_000n + 1n, { intervalMs: 500, timeoutMs: 1_000 }));
+    expect(error).toBeInstanceOf(sdk.MateriosFeeError);
+    expect(error.shortfall).toMatchObject({ reason: "insufficient-motra", account: alice.address });
+    expect(error.shortfall.providers).toBeGreaterThan(0);
+  }, 30_000);
 
   it("reports an anchor whose connection drops while signing as not-landed, with nothing sent (s12)", async () => {
     const px = await proxy();

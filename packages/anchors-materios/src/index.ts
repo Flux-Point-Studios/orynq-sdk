@@ -36,8 +36,10 @@
 
 // Provider
 export { MateriosProvider } from "./provider.js";
-export { MateriosConnectionError, MateriosSubmissionError, MateriosCertificationError } from "./errors.js";
+export { MateriosConnectionError, MateriosSubmissionError, MateriosCertificationError, MateriosFeeError } from "./errors.js";
 export type {
+  MateriosFeeShortfall,
+  MateriosFeeShortfallReason,
   MateriosConnectionErrorCode,
   MateriosSubmissionErrorCode,
   MateriosSubmissionErrorOptions,

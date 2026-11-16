@@ -124,6 +124,11 @@ milliseconds are reserved for recovery, so a silent watch ends before the total 
 - A node refusal keeps the node's message verbatim (`1014: Priority is too low: ...`),
   so `/^1014: Priority is too low/` matchers keep working; `cause` is the original
   error. Every error built from an underlying failure keeps it as `cause`.
+- A `1010` refusal for fees (`Inability to pay some fees`) reads the signer's account and
+  appends to the node's message whether the account is unregistered or short of MOTRA,
+  with what to do; `feeShortfall` carries the reading (see
+  [MOTRA Fee Token](#motra-fee-token)). When the account cannot be read, the message says
+  so and `feeShortfall` is absent. The refusal stays `not-landed`.
 - `1012` (temporarily banned) and `1013` (already imported) are not refusals: that
   transaction may already be pooled or included, so they go to recovery like a lost watch.
 - "Already exists" with the same stored payload is success, for receipts and anchors,
@@ -342,7 +347,20 @@ Provide either `apiKey` or `signerKeypair` (not both).
 | Function                                   | Description                                      |
 |-------------------------------------------|--------------------------------------------------|
 | `queryMotraBalance(provider, address?)`    | Query MOTRA balance for an account.              |
-| `waitForMotra(provider, minBalance?, opts?)` | Wait until MOTRA balance reaches minimum.      |
+| `waitForMotra(provider, minBalance?, opts?)` | Wait until MOTRA balance reaches minimum; at the timeout it throws `MateriosFeeError`. |
+
+An account the chain has never registered (no provider and no sufficient reference) cannot sign
+anything: `CheckNonce` refuses it with `InvalidTransaction::Payment`, the code a MOTRA shortfall
+also gets. The SDK reads the signer's account to tell them apart and reports a `shortfall` of
+`{ reason, account, providers, sufficients }`:
+
+| `reason` | Meaning | What to do |
+| --- | --- | --- |
+| `unregistered-account` | No provider or sufficient reference: every transaction the account signs is refused. | Register cMATRA for the account on Cardano, or ask the Materios operator for capacity. |
+| `insufficient-motra` | Registered, but its MOTRA cannot cover the fee. | Wait for MOTRA to generate (`waitForMotra`), or ask the Materios operator for capacity. |
+
+`MateriosFeeError` (from `waitForMotra`) carries it as `shortfall` with `balance` and
+`minBalance`; a `1010` fee refusal on submission carries it as `feeShortfall`.
 
 ### Merkle Tree
 
