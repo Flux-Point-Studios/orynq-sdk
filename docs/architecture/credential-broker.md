@@ -130,7 +130,7 @@ A head extends once, so it is the nonce. Failures return `VERIFY_REFUSED` and co
 
 **Replay** (the shipped `MandateGuard`, D12 included) is sound for verifiers allowed to see the mandate and gates every release until these gates hold.
 
-**Why 2c is too early.** 2c yields real proofs and native-verifier evidence only for k ≤ 16 (stop S6). Step classes are ESTIMATEs: `st_pa` (4-byte ids, D = 2) ≈ 99k rows, k = 17; broker steps (64-byte ids, D = 8) near k = 18. Exact-length classes multiply amount and seq widths into hundreds of verifying keys (`orynq:call` alone ≈ 49), the predicted R-ENC failure.
+**Why 2c is too early.** 2c yielded real proofs and native-verifier evidence only for k ≤ 16 (stop S6). A later measurement keyed its 4-byte-id step classes: `st_pa` (D = 2) is 88,023 rows at k = 17, and a proof of it on a synthetic witness verified natively, which shows that the proof system accepts that statement for that witness and nothing more. Broker steps (64-byte ids, D = 8) remain ESTIMATEs near k = 18, with no key or proof. Exact-length classes multiply amount and seq widths into hundreds of verifying keys (`orynq:call` alone ≈ 49), the predicted R-ENC failure.
 
 **Gates, in order:**
 1. **ABI freeze** (PoAC slice 3) with broker inputs: F3 fixed-width guard events (zero-padded uint64 decimals and seqs, fixed asset digest) or F4, per R-ENC with a broker class count; mandateId in K's preimage (209 bytes, still 4 SHA blocks), making K hiding; S-MANDATE-OPEN disclosing SHA-256(agentDid) and SHA-256(principalDid).
