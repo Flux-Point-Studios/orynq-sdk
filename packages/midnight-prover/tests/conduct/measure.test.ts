@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -150,12 +150,46 @@ socket.on("connect", () => socket.destroy());
     expect(existsSync(join(main, "conduct-evidence-probe"))).toBe(false);
   });
 
+  // The path given is outside the repository; where it leads is not.
+  it("refuses an --out whose symbolic link resolves into the repository", () => {
+    const link = join(scratch, "into-repository");
+    symlinkSync(pkg, link, "dir");
+    for (const dir of [link, join(link, "bench/conduct/evidence")]) {
+      const run = measure(["--dry-run", "--circuits", "ev_pa_ascii_min", "--out", dir]);
+      expect(run.stderr).toContain("evidence must be written outside the repository");
+      expect(run.status).toBe(2);
+      expect(run.stdout).toBe("");
+      expect(run.activity).toEqual([]);
+    }
+    expect(existsSync(join(pkg, "bench/conduct/evidence"))).toBe(false);
+  });
+
+  it("refuses to run without MIDNIGHT_PP, the directory of the installed parameters", () => {
+    const run = measure(["--dry-run", "--circuits", "ev_pa_ascii_min", "--out", out("no-pp")], { MIDNIGHT_PP: undefined });
+    expect(run.stderr).toBe("MIDNIGHT_PP must name the directory of the installed proving parameters\n");
+    expect(run.status).toBe(2);
+    expect(run.stdout).toBe("");
+    expect(run.activity).toEqual([]);
+  });
+
   it("refuses to run unless a missing parameter file fails closed", () => {
     for (const source of [undefined, "https://example.invalid/"]) {
       const run = measure(["--dry-run", "--circuits", "ev_pa_ascii_min", "--out", out("z")], { MIDNIGHT_PARAM_SOURCE: source });
       expect(run.stderr).toContain(`MIDNIGHT_PARAM_SOURCE must be ${FAIL_CLOSED}`);
       expect(run.status).toBe(2);
     }
+  });
+
+  // The pin check covers every selected circuit's file, not the first alone: the refusal names each file that differs.
+  it("a run of two circuits refuses both parameter files that differ from their pins, naming each", () => {
+    const compiler = join(scratch, "compactc-stand-in");
+    writeFileSync(compiler, "#!/bin/sh\necho 0.31.1\n", { mode: 0o755 });
+    const run = measure(["--circuits", "check_verdict,st_pa", "--out", out("unpinned-two"), "--native", compiler], { MIDNIGHT_PP: more, COMPACTC: compiler });
+    expect(run.stderr).toBe("params 2p10, 2p17 differ from the installer's pin\n");
+    expect(run.status).toBe(2);
+    expect(run.stdout).toBe("");
+    expect(run.activity).toEqual(["child spawnSync"]);
+    expect(existsSync(out("unpinned-two"))).toBe(false);
   });
 
   it.each([

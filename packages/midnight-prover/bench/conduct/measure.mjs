@@ -1,7 +1,7 @@
 // Real keys, real proofs and native verification for conduct circuits whose k has installed, pinned parameters.
 //   node bench/conduct/measure.mjs --out <dir outside the repository> --circuits a,b [--reps 3] --native <verifier> [--dry-run]
 // For each circuit: a one-circuit contract written by the unit's own generator is keyed twice (its ZKIR must equal the
-// unit's pin and the two verifier keys must agree), proved --reps times, and each proof is judged by the native
+// unit's pin and the two verifier keys and prover keys must agree), proved --reps times, and each proof is judged by the native
 // verifier, as are four bit flips of the proof and a zeroed proof. Evidence is written under --out only. Timings are
 // evidence of this host on this run, never pins. It refuses, with exit 2 and before it starts any tool: a circuit
 // whose k has no installed pinned parameters, any k above 17, an --out inside the repository, and a parameter source
@@ -114,10 +114,9 @@ if (!existsSync(native)) refuse(`native verifier not found: ${native}`);
 const compiler = process.env.COMPACTC ?? "compactc";
 const version = spawnSync(compiler, ["--version"], { encoding: "utf8" }).stdout?.trim();
 if (version !== "0.31.1") refuse("Compact compiler 0.31.1 is required");
-for (const { k } of plan) {
-  const file = join(paramsDir, `bls_midnight_2p${k}`);
-  if (sha256(readFileSync(file)) !== paramPins[k]) refuse(`params 2p${k} differ from the installer's pin`);
-}
+// Every selected circuit's parameter file is held to its pin, and the refusal names each that differs.
+const differing = [...new Set(plan.map(({ k }) => k))].filter(k => sha256(readFileSync(join(paramsDir, `bls_midnight_2p${k}`))) !== paramPins[k]);
+if (differing.length > 0) refuse(`params ${differing.map(k => `2p${k}`).join(", ")} differ from the installer's pin`);
 
 const { emitBench, benchInput, mandateInput, oneCircuitSource, sampleEventInput, BENCH_INCLUDES } = await import(pathToFileURL(join(pkg, "scripts/conduct/bench.mjs")).href);
 const { allowlistPath, CLASSES, stepActionDigest, stepOpening, stepVerdict, valueSpecs } = await import(pathToFileURL(join(pkg, "scripts/conduct/template.mjs")).href);
@@ -307,7 +306,7 @@ async function measure(id) {
 
   // The trusted registry of this circuit: its verifier key in the operation of its initial contract state.
   const module = await import(pathToFileURL(join(first.dir, "contract/index.js")).href);
-  const input = await inputOf(id);
+  const input = inputs.get(id);
   const contract = new module.Contract(witnessFunctions(input.witnesses));
   const coinKey = ledger.sampleCoinPublicKey();
   const initial = contract.initialState(runtime.createConstructorContext(undefined, coinKey));
@@ -403,6 +402,11 @@ async function measure(id) {
   };
 }
 
+// Every honest input is built before any key is generated, so a circuit with no input builder, or a workspace
+// package that is not built, fails here and not after minutes of key generation.
+const inputs = new Map();
+for (const id of selected) inputs.set(id, await inputOf(id));
+
 mkdirSync(out, { recursive: true });
 const environment = {
   uname: text(["uname", "-a"]) ?? `${osType()} ${release()}`, nproc: availableParallelism(), node: process.version, rustc: text(["rustc", "-V"]), cargo: text(["cargo", "--version"]),
@@ -421,7 +425,7 @@ for (const id of selected) {
   const entry = await measure(id);
   writeFileSync(join(out, `${id}.json`), `${JSON.stringify(entry, null, 2)}\n`);
   const sound = entry.native.allHonest && entry.native.flips.length === 4 && entry.native.flips.every(f => f.code === "invalid-proof") && entry.native.zeroed.code === "invalid-proof"
-    && entry.keygen.vkReproducible && entry.keygen.zkirMatchesUnit;
+    && entry.keygen.vkReproducible && entry.keygen.pkReproducible && entry.keygen.zkirMatchesUnit;
   if (!sound) failed = true;
   summary.push(entry);
   writeFileSync(join(out, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
