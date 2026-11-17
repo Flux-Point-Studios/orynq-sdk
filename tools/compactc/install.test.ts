@@ -46,9 +46,12 @@ function fakeRelease(version = "0.31.1") {
   const zipper = "import sys, zipfile\nwith zipfile.ZipFile(sys.argv[1], 'w') as z:\n  for name, body in zip(sys.argv[2::2], sys.argv[3::2]):\n    i = zipfile.ZipInfo(name); i.external_attr = 0o100555 << 16; z.writestr(i, body)\n";
   execFileSync("python3", ["-c", zipper, zip, ...Object.entries(files).flat()]);
   const params: Record<string, string> = {
+    bls_midnight_2p10: "params for k=10",
     bls_midnight_2p13: "params for k=13",
     bls_midnight_2p14: "params for k=14",
+    bls_midnight_2p15: "params for k=15",
     bls_midnight_2p16: "params for k=16",
+    bls_midnight_2p17: "params for k=17",
     "dust/9/spend.prover": "dust spend prover key",
     "dust/9/spend.verifier": "dust spend verifier key",
     "dust/9/spend.bzkir": "dust spend zkir",
@@ -98,7 +101,7 @@ describe("compactc installer", () => {
     expect(execFileSync("find", [dest, params, "-type", "f"], { encoding: "utf8" })).toBe("");
   });
 
-  it("pins compactc 0.31.1 for every published platform and the k=13, 14 and 16 parameters", () => {
+  it("pins compactc 0.31.1 for every published platform and the k=10, 13, 14, 15, 16 and 17 parameters", () => {
     expect(pinned).toContain("e291b4bab4d4e857707008f8b1c25c2b8e0c843f6c737d0ee6c0d9ac69a6bbfb  compactc_v0.31.1_x86_64-unknown-linux-musl.zip");
     expect(pinned).toContain("3054ffa89d7a4dfe24afd31c27ef37e87a95757de0fc24485f335635e26dce57  x86_64-unknown-linux-musl/compactc.bin");
     expect(pinned).toContain("15646793d3ff7f36cd81aa63419163e29d9893538bb4a6911a21012e8735b537  x86_64-unknown-linux-musl/compactc");
@@ -106,6 +109,13 @@ describe("compactc installer", () => {
     expect(pinned).toContain("fc253016885ec830e97808c9ec920bb5cab5c21af590380a6cb5eb0538e2b244  bls_midnight_2p14");
     // midnight-prover's rolling-digest circuit is k=16.
     expect(pinned).toContain("09c877216d6589b370263e18af40a030a901b41a7a7c37ef58c9901db41f05c6  bls_midnight_2p16");
+    // The conduct circuits: the verdict check is k=10, the step mandate class k=15 and the one-digit step
+    // classes k=17. Each pin is the digest midnight-ledger 8.1.3 compiles into its data provider.
+    expect(pinned).toContain("46b2290933cbed4c378889e4ba971f1a92888331ffb09466acd4ff61a1e2cb42  bls_midnight_2p10");
+    expect(pinned).toContain("724c7c3d779148bb113c7ee9c034b2f27db16e6bdf315fde90105a9bad00b1de  bls_midnight_2p15");
+    expect(pinned).toContain("4a9ef6c7c0619aab74eede44b13e753e3ba54508a02dd3b7106a949aabb73b74  bls_midnight_2p17");
+    // Nothing larger is pinned: k=18 and above stay out until a circuit that is kept needs them.
+    expect(pinned).not.toMatch(/bls_midnight_2p(1[89]|[2-9]\d)$/m);
     // The DUST spend circuit (k=13) whose proof pays every registry transaction's fee, as
     // midnight-ledger 8.1.3 pins it in ledger/static/dust/*.sha256.
     expect(pinned).toContain("996602da7ca386284e656c78ea03e55bffdba29475e6a67965c50de05e13efc2  dust/9/spend.prover");
