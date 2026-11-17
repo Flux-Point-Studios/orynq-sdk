@@ -483,6 +483,8 @@ describe("the write-ahead journal", () => {
     expect(net.arrived).toEqual([fixture.anchor.txHash]); journal.close();
   });
 
+  // The only test here that loads ledger 9 and builds a call with it: under a second on an idle
+  // host, past the default 5 s when CI runs it beside the native builds and the submitter suite.
   it("writes a ledger 9 transaction's row under the hash ledger 9 computes from its bytes", async () => {
     const { state, parameters } = deployedRegistry9(fixture.network);
     const { tx } = unprovenRegistryCall({ networkId: fixture.network, address: fixture.registry.address, state, parameters, call: { circuit: "anchor", args: [Buffer.from(fixture.anchor.commitment, "hex"), 1n] }, witnesses: { authorSecret: Buffer.from(fixture.author.secret, "hex") }, ttl: TTL });
@@ -491,7 +493,7 @@ describe("the write-ahead journal", () => {
     const row = await journal.submitOnce(key, { prepare: async () => ({ bytes: v12, ttl: TTL }), broadcast: async () => undefined, chain: network().chain });
     expect(row).toMatchObject({ txHash: decodeTransaction(v12).tx.transactionHash(), state: "pending", broadcasts: 1 });
     journal.close();
-  });
+  }, 60_000);
 
   it("refuses bytes that are not a final transaction before writing anything", async () => {
     const journal = openJournal(file());
