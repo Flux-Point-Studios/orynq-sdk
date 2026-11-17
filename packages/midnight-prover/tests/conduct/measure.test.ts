@@ -8,7 +8,7 @@ const pkg = resolve(import.meta.dirname, "../..");
 const scratch = mkdtempSync(join(tmpdir(), "conduct-measure-test-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
-// Only the three parameter files the installer pins exist here, as on every host this repository builds on.
+// A host that holds only the k = 13, 14 and 16 parameter files, of the six the installer pins.
 const params = join(scratch, "params");
 mkdirSync(params);
 for (const k of [13, 14, 16]) writeFileSync(join(params, `bls_midnight_2p${k}`), "");
@@ -60,7 +60,7 @@ socket.on("connect", () => socket.destroy());
     expect(readFileSync(marker, "utf8").trim().split("\n").sort()).toEqual(["child spawnSync", "socket"]);
   });
 
-  it("st_pa is pinned at k=17, for which no parameters are installed", () => {
+  it("st_pa is pinned at k=17, for which this host holds no parameters", () => {
     expect(pins.units.steps!.circuits.st_pa!.k).toBe(17);
     expect(readdirSync(params).sort()).toEqual(["bls_midnight_2p13", "bls_midnight_2p14", "bls_midnight_2p16"]);
   });
@@ -80,7 +80,7 @@ socket.on("connect", () => socket.destroy());
     expect(run.stdout).toBe("");
   });
 
-  it("refuses a k above 16 even where a parameter file of that size is present: nothing above k=16 is pinned", () => {
+  it("refuses a k above 16 even where a parameter file of that size is present: keys and proofs above k=16 are out of scope", () => {
     const more = join(scratch, "params-17");
     mkdirSync(more);
     for (const k of [13, 14, 16, 17]) writeFileSync(join(more, `bls_midnight_2p${k}`), "");
@@ -130,7 +130,7 @@ socket.on("connect", () => socket.destroy());
     expect(run.activity).toEqual([]);
   });
 
-  // The installer pins parameters for k = 13, 14 and 16 only, so a circuit pinned at any other k cannot be keyed here.
+  // This host holds parameters for k = 13, 14 and 16 only, so a circuit pinned at any other k cannot be keyed here.
   it.each([["check_verdict", "predicate"], ["m_step", "openings"]])("refuses %s, whose pinned k is below 16 yet has no installed parameters", (id, unit) => {
     const { k } = pins.units[unit]!.circuits[id]!;
     expect([13, 14, 16]).not.toContain(k);

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Installs compactc 0.31.1 into DEST, and into PARAMS_DIR the ZK public parameters the registry
-# circuits need (k=13 and k=14), the one midnight-prover's rolling-digest circuit needs (k=16), and
+# circuits need (k=13 and k=14), the one midnight-prover's rolling-digest circuit needs (k=16), the
+# ones that cover its prototype conduct circuits up to k=17 (k=10, 15 and 17; the conduct circuits
+# at k=18 and 19 have none installed), and
 # each ledger's DUST spend circuit keys and zkir (ledger 8's dust/9/ and ledger 9's dust/10/, k=13),
 # whose proof pays every registry transaction's fee; it refuses any file whose sha256 differs from
 # compactc.sha256 beside this script. The zip pins are the digests GitHub publishes for the
@@ -95,7 +97,7 @@ reported=$("$compiler" --version)
 private_dir "$params/dust"
 private_dir "$params/dust/9"
 private_dir "$params/dust/10"
-parameters="bls_midnight_2p13 bls_midnight_2p14 bls_midnight_2p16 dust/9/spend.prover dust/9/spend.verifier dust/9/spend.bzkir dust/10/spend.prover dust/10/spend.verifier dust/10/spend.bzkir"
+parameters="bls_midnight_2p10 bls_midnight_2p13 bls_midnight_2p14 bls_midnight_2p15 bls_midnight_2p16 bls_midnight_2p17 dust/9/spend.prover dust/9/spend.verifier dust/9/spend.bzkir dust/10/spend.prover dust/10/spend.verifier dust/10/spend.bzkir"
 for name in $parameters; do
   installed "$params/$name" "$name" && continue
   fetched=$work/${name//\//_}
@@ -119,4 +121,4 @@ for name in $parameters; do
   mv "$fetched" "$params/$name"
 done
 
-echo "compactc $version ($platform) verified in $dest; bls_midnight_2p13, 2p14, 2p16 and the dust/9 and dust/10 spend keys verified in $params"
+echo "compactc $version ($platform) verified in $dest; bls_midnight_2p10, 2p13, 2p14, 2p15, 2p16, 2p17 and the dust/9 and dust/10 spend keys verified in $params"
