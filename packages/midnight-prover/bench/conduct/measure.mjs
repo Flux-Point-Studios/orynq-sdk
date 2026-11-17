@@ -4,8 +4,9 @@
 // unit's pin and the two verifier keys must agree), proved --reps times, and each proof is judged by the native
 // verifier, as are four bit flips of the proof and a zeroed proof. Evidence is written under --out only. Timings are
 // evidence of this host on this run, never pins. It refuses, with exit 2 and before it starts any tool: a circuit
-// whose k has no installed pinned parameters, an --out inside the repository, and a parameter source that could
-// download. It needs the workspace built (pnpm build) for the runtime packages it loads.
+// whose k has no installed pinned parameters, any k above 17, an --out inside the repository, and a parameter source
+// that could download; and, once it has read the compiler's version, a parameter file that differs from its pin. It
+// needs the workspace built (pnpm build) for the runtime packages it loads.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -16,7 +17,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const pkg = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const repo = resolve(pkg, "../..");
 const FAIL_CLOSED = "http://127.0.0.1:9/";
-const MAX_K = 16;
+const MAX_K = 17;
 const usage = "usage: measure.mjs --out <dir outside the repository> --circuits a,b [--reps 1-9] --native <orynq-midnight-verifier> [--dry-run]";
 
 function refuse(message) {
@@ -92,8 +93,17 @@ for (const id of selected) {
 }
 
 const plan = selected.map(id => ({ id, unit: pinned.get(id).unit, k: pinned.get(id).pin.k, params: `bls_midnight_2p${pinned.get(id).pin.k}` }));
+// Every other pinned circuit, with the reason this run has no key or proof of it: the one that holds.
+function reason({ pin }) {
+  const causes = [
+    ...(pin.k > MAX_K ? [`k=${pin.k} is above this tool's limit of k=${MAX_K}`] : []),
+    ...(Object.hasOwn(paramPins, String(pin.k)) ? [] : [`the installer pins no 2p${pin.k} params`]),
+  ];
+  return causes.length === 0 ? "not selected in this run" : `UNMEASURED: ${causes.join(", and ")}`;
+}
+const unmeasured = [...pinned].filter(([id]) => !selected.includes(id)).map(([id, entry]) => ({ id, unit: entry.unit, ...(entry.group === undefined ? {} : { group: entry.group }), k: entry.pin.k, rows: entry.pin.rows, ops: entry.pin.ops, status: reason(entry) }));
 if (options.dryRun) {
-  process.stdout.write(`${JSON.stringify({ dryRun: true, reps, paramSource: FAIL_CLOSED, circuits: plan }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ dryRun: true, reps, paramSource: FAIL_CLOSED, circuits: plan, unmeasured: unmeasured.map(({ id, k, status }) => ({ id, k, status })) }, null, 2)}\n`);
   process.exit(0);
 }
 
@@ -110,6 +120,7 @@ for (const { k } of plan) {
 }
 
 const { emitBench, benchInput, mandateInput, oneCircuitSource, sampleEventInput, BENCH_INCLUDES } = await import(pathToFileURL(join(pkg, "scripts/conduct/bench.mjs")).href);
+const { allowlistPath, CLASSES, stepActionDigest, stepOpening, stepVerdict, valueSpecs } = await import(pathToFileURL(join(pkg, "scripts/conduct/template.mjs")).href);
 const runtime = await import("@midnight-ntwrk/compact-runtime");
 const ledger = await import("@midnightntwrk/ledger-v8");
 const { provingProvider } = await import("@midnightntwrk/zkir-v2");
@@ -163,9 +174,65 @@ function writeSource(id, dir) {
   return `${id}.compact`;
 }
 
+// The mandate the step classes weld to, as tests/conduct/steps.ts builds it from its step fixture: the m_step opening
+// class, with the lists its roots commit. Under deny-all it has egress mode 0 and a zero egress root.
+async function stepWorld(denyAll = false) {
+  const conduct = await import("@fluxpointstudios/orynq-sdk-conduct");
+  const lists = { counterparties: ["acme", "beta", "cafe"], egress: ["api1", "api2", "api3"] };
+  const mandate = {
+    schemaVersion: 1n, mandateId: new Uint8Array(16).fill(0x5a), principalDid: "did:key:z6MkhaXgB", agentDid: "did:key:z6MkjchhF", didFormatVersion: 0n,
+    spendCap: { asset: "USD", amount: 9n, windowSeconds: 4n }, counterpartyAllowlistRoot: conduct.buildAllowlistRoot(lists.counterparties),
+    egressPolicy: denyAll ? { mode: 0n, allowlistRoot: new Uint8Array(32) } : { mode: 1n, allowlistRoot: conduct.buildAllowlistRoot(lists.egress) },
+    approvedMeasurementSetRoot: new Uint8Array(32), validityWindow: { notBefore: 2n, notAfter: 8n }, disclosurePolicy: { committeeId: "c", threshold: 1n, committeeSize: 1n },
+  };
+  return { conduct, mandate, lists };
+}
+
+// A synthetic guard event of a step class under the step mandate, whose recorded decision is the class's: before the
+// validity window for a denial 1, at its end for 2, another asset for 3, a stated prior spend that leaves less than
+// the amount for 4, and a deny-all mandate for 6. The circuit's own run in JS, before any proof, refuses a wrong one.
+async function stepInput(id) {
+  const { kind, depth } = CLASSES.steps[id];
+  const verdict = stepVerdict(kind);
+  const payment = kind.startsWith("payment");
+  const { conduct, mandate, lists } = await stepWorld(verdict === 6);
+  const at = verdict === 1 ? "1" : verdict === 2 ? "8" : "3";
+  const text = {
+    amount: "5", asset: verdict === 3 ? "EUR" : "USD", counterparty: "acme", destination: "api1", ts: at, enforcedAt: at, mandateCommitment: conduct.mandateCommitmentHex(mandate),
+    dataSeq: "0", id: "550e8400-e29b-41d4-a716-446655440000", traceSeq: "2", iso: "2026-10-27T00:00:00.000Z", vis: "private",
+  };
+  const opened = Object.fromEntries([...valueSpecs(kind).keys()].filter(name => name !== "actionDigest").map(name => [name, Uint8Array.from(Buffer.from(text[name]))]));
+  const segments = { ...opened, actionDigest: stepActionDigest(id, opened) };
+  const atoms = {
+    notBefore: mandate.validityWindow.notBefore, notAfter: mandate.validityWindow.notAfter, assetDigest: Uint8Array.from(createHash("sha256").update(mandate.spendCap.asset).digest()),
+    capAmount: mandate.spendCap.amount, windowSeconds: mandate.spendCap.windowSeconds, egressMode: mandate.egressPolicy.mode,
+    counterpartyRoot: mandate.counterpartyAllowlistRoot, egressRoot: mandate.egressPolicy.allowlistRoot,
+  };
+  const path = depth === undefined ? {} : { path: allowlistPath(payment ? lists.counterparties : lists.egress, payment ? text.counterparty : text.destination, depth).path };
+  const { witnesses, statement } = stepOpening(id, segments, sha256(Buffer.from("conduct bench chain")), { atoms, ...path, priorSpent: verdict === 4 ? 5n : 0n });
+  return { witnesses, args: [statement], source: `synthetic in-class ${kind} event under the step mandate of tests/conduct, built by bench/conduct/measure.mjs` };
+}
+
+// The first known answer of the predicate ABI, an allowed payment, with the guard clock at the action's own time.
+function predicateInput() {
+  const [vector] = readJson(join(repo, "packages/conduct/tests/fixtures/predicate-vectors.json")).cases;
+  const [step] = vector.steps;
+  if (step.verdict !== "ALLOW") throw new Error("the first predicate vector is not an allowed action");
+  const args = step.args.map(arg => (typeof arg === "boolean" ? arg : BigInt(arg)));
+  return { witnesses: {}, args: [BigInt(step.action.timestamp), ...args, 0n], source: `predicate vector "${vector.name}" of packages/conduct/tests/fixtures/predicate-vectors.json, with the guard clock at the action time` };
+}
+
 // An honest in-class input of a pinned circuit.
-function inputOf(id) {
+async function inputOf(id) {
   const { unit, group } = pinned.get(id);
+  if (unit === "predicate") return predicateInput();
+  if (unit === "steps") return stepInput(id);
+  if (id === "m_step") {
+    const { conduct, mandate } = await stepWorld();
+    const input = mandateInput(conduct.encodeMandate(mandate));
+    if (input.circuit !== id) throw new Error(`the step mandate opens in ${input.circuit}`);
+    return { witnesses: input.witnesses, args: input.args, source: "the step mandate of tests/conduct, built by bench/conduct/measure.mjs" };
+  }
   if (unit === "bench") {
     const input = benchInput(benchSpec.groups[group].kind, id, benchSpec.groups[group].circuits[id]);
     if (input === undefined) throw new Error(`${id} has no honest input builder: it has rows and k only`);
@@ -240,7 +307,7 @@ async function measure(id) {
 
   // The trusted registry of this circuit: its verifier key in the operation of its initial contract state.
   const module = await import(pathToFileURL(join(first.dir, "contract/index.js")).href);
-  const input = inputOf(id);
+  const input = await inputOf(id);
   const contract = new module.Contract(witnessFunctions(input.witnesses));
   const coinKey = ledger.sampleCoinPublicKey();
   const initial = contract.initialState(runtime.createConstructorContext(undefined, coinKey));
@@ -360,9 +427,6 @@ for (const id of selected) {
   writeFileSync(join(out, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
 }
 
-// Every other pinned circuit, with why this run has no key or proof of it.
-const reason = ({ pin }) => (Object.hasOwn(paramPins, String(pin.k)) && pin.k <= MAX_K ? "not selected in this run" : `UNMEASURED: keys/proof need 2p${pin.k} params`);
-const unmeasured = [...pinned].filter(([id]) => !selected.includes(id)).map(([id, entry]) => ({ id, unit: entry.unit, ...(entry.group === undefined ? {} : { group: entry.group }), k: entry.pin.k, rows: entry.pin.rows, ops: entry.pin.ops, status: reason(entry) }));
 writeFileSync(join(out, "unmeasured.json"), `${JSON.stringify(unmeasured, null, 2)}\n`);
 process.stdout.write(`${JSON.stringify({ measured: summary.map(e => e.id), unmeasured: unmeasured.length, out, sound: !failed })}\n`);
 process.exit(failed ? 1 : 0);
