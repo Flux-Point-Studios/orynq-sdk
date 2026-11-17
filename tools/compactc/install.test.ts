@@ -114,8 +114,10 @@ describe("compactc installer", () => {
     expect(pinned).toContain("46b2290933cbed4c378889e4ba971f1a92888331ffb09466acd4ff61a1e2cb42  bls_midnight_2p10");
     expect(pinned).toContain("724c7c3d779148bb113c7ee9c034b2f27db16e6bdf315fde90105a9bad00b1de  bls_midnight_2p15");
     expect(pinned).toContain("4a9ef6c7c0619aab74eede44b13e753e3ba54508a02dd3b7106a949aabb73b74  bls_midnight_2p17");
-    // Nothing larger is pinned: k=18 and above stay out until a circuit that is kept needs them.
-    expect(pinned).not.toMatch(/bls_midnight_2p(1[89]|[2-9]\d)$/m);
+    // Exactly these six are pinned: k=18 and above stay out until a circuit that is kept needs them.
+    expect([...pinned.matchAll(/^.*bls_midnight_2p.*$/gm)].map(([line]) => line.replace(/^[0-9a-f]{64} {2}/, ""))).toEqual(
+      [10, 13, 14, 15, 16, 17].map(k => `bls_midnight_2p${k}`),
+    );
     // The DUST spend circuit (k=13) whose proof pays every registry transaction's fee, as
     // midnight-ledger 8.1.3 pins it in ledger/static/dust/*.sha256.
     expect(pinned).toContain("996602da7ca386284e656c78ea03e55bffdba29475e6a67965c50de05e13efc2  dust/9/spend.prover");
@@ -169,17 +171,17 @@ describe("compactc installer", () => {
     expect(r.stderr).toContain("compactc reports 0.31.0, expected 0.31.1");
   });
 
-  it("refuses a parameters file that does not match its pin and leaves it out of the cache", async () => {
+  it.each(["bls_midnight_2p10", "bls_midnight_2p14", "bls_midnight_2p15", "bls_midnight_2p17"])("refuses a parameters file, %s, that does not match its pin and leaves it out of the cache", async (name) => {
     const release = fakeRelease();
-    writeFileSync(join(release.dir, "bls_midnight_2p14"), "tampered");
+    writeFileSync(join(release.dir, name), "tampered");
     const params = temp("zk-params-");
     const r = await run(installerWith(release.pins), [join(temp("compactc-dest-"), "bin"), params], {
       COMPACTC_RELEASE_URL: release.url,
       MIDNIGHT_PARAM_SOURCE: release.url,
     });
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain("sha256 mismatch for bls_midnight_2p14");
-    expect(existsSync(join(params, "bls_midnight_2p14"))).toBe(false);
+    expect(r.stderr).toContain(`sha256 mismatch for ${name}`);
+    expect(existsSync(join(params, name))).toBe(false);
   });
 
   it.each(["dust/9/spend.prover", "dust/10/spend.prover"])("refuses a DUST spend key, %s, that does not match its pin and leaves it out of the cache", async (key) => {

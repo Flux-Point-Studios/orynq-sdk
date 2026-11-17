@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Installs compactc 0.31.1 into DEST, and into PARAMS_DIR the ZK public parameters the registry
 # circuits need (k=13 and k=14), the one midnight-prover's rolling-digest circuit needs (k=16), the
-# ones its prototype conduct circuits need (k=10, 15 and 17; nothing at k=18 or above), and
+# ones that cover its prototype conduct circuits up to k=17 (k=10, 15 and 17; the conduct circuits
+# at k=18 and 19 have none installed), and
 # each ledger's DUST spend circuit keys and zkir (ledger 8's dust/9/ and ledger 9's dust/10/, k=13),
 # whose proof pays every registry transaction's fee; it refuses any file whose sha256 differs from
 # compactc.sha256 beside this script. The zip pins are the digests GitHub publishes for the

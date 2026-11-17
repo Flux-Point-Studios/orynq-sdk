@@ -17,7 +17,7 @@ For broker authorization, a trusted issuer separately signs the commitment and e
 
 ## Build
 
-Use Node >=22.12.0 and Rust 1.99.0. Install the workspace dependencies with the committed pnpm lockfile. `tools/compactc/install.sh` installs Compact 0.31.1 and the ZK parameters the circuits need (k=13, 14 and 16, and k=10, 15 and 17 for the prototype conduct circuits), refusing any file whose sha256 differs from its pin:
+Use Node >=22.12.0 and Rust 1.99.0. Install the workspace dependencies with the committed pnpm lockfile. `tools/compactc/install.sh` installs Compact 0.31.1 and the ZK parameters the circuits need (k=13, 14 and 16), and k=10, 15 and 17, which cover the prototype conduct circuits up to k=17, refusing any file whose sha256 differs from its pin:
 
 ```sh
 pnpm install --frozen-lockfile
