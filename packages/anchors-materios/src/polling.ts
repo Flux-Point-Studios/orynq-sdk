@@ -22,7 +22,8 @@ import { getReceipt, queryMotraBalance } from "./receipt.js";
 import { stripPrefix, ensureHex, isZeroHash } from "./hex.js";
 import { merkleRoot } from "./merkle.js";
 import { sleep } from "./deadline.js";
-import { MateriosConnectionError } from "./errors.js";
+import { MateriosConnectionError, MateriosFeeError } from "./errors.js";
+import { readFeeShortfall } from "./fee.js";
 import { boundedRead } from "./inclusion.js";
 
 const DEFAULT_INTERVAL_MS = 6_000; // ~1 Substrate block
@@ -354,6 +355,8 @@ export function computeCheckpointLeaf(
  *   and the poll will return immediately with a balance that can't pay fees.
  * @param opts - Poll interval and timeout options.
  * @returns The MOTRA balance once it reaches the minimum.
+ * @throws MateriosFeeError at the timeout; its `shortfall` says whether the account is unregistered
+ *   (no provider or sufficient reference, so it can never sign) or registered but short of MOTRA.
  */
 export async function waitForMotra(
   provider: MateriosProvider,
@@ -364,20 +367,19 @@ export async function waitForMotra(
   const timeout = opts.timeoutMs ?? 60_000;
   const start = Date.now();
   let attempt = 0;
+  let balance = 0n;
 
   for (;;) {
     attempt++;
     const elapsed = Date.now() - start;
     if (elapsed >= timeout) {
-      throw new Error(
-        `MOTRA warm-up timeout after ${timeout}ms (${attempt} polls). ` +
-          `Account may not have sufficient MATRA holdings to generate MOTRA.`,
-      );
+      const shortfall = await readFeeShortfall(provider.getApi(), provider.getKeypair().address);
+      throw new MateriosFeeError(shortfall, balance, minBalance, `MOTRA warm-up timeout after ${timeout}ms (${attempt} polls)`);
     }
 
     opts.onPoll?.(attempt, elapsed);
 
-    const balance = await queryMotraBalance(provider);
+    balance = await queryMotraBalance(provider);
     if (balance >= minBalance) return balance;
 
     await sleep(interval);

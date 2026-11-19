@@ -80,6 +80,9 @@ export interface Chain {
   readonly finalized: number;
   nonce: number;
   nonceBumpAt: number;
+  /** The signer's provider and sufficient reference counts. */
+  providers: number;
+  sufficients: number;
   recordAt(item: "receipts" | "anchors", id: string, n: number): ReturnType<typeof option>;
   nonceAt(n: number): number;
   storeReceipt(json?: Record<string, unknown>, placement?: Placement): void;
@@ -103,6 +106,8 @@ export function makeChain(): Chain {
     get finalized(): number { return chain.best - chain.finalityLag; },
     nonce: 7,
     nonceBumpAt: Infinity,
+    providers: 1,
+    sufficients: 0,
     recordAt(item: keyof typeof storage, id: string, n: number) {
       const stored = storage[item].get(id.toLowerCase());
       return option(stored && n >= stored.from ? stored.json : undefined);
@@ -179,7 +184,11 @@ export function fixture(chain: Chain) {
         anchors: live((id: string, at: number = chain.best): unknown => chain.recordAt("anchors", id, at)),
       },
       system: {
-        account: live((_who: string, at: number = chain.best) => ({ nonce: { toNumber: () => chain.nonceAt(at) } })),
+        account: live((_who: string, at: number = chain.best) => ({
+          nonce: { toNumber: () => chain.nonceAt(at) },
+          providers: { toNumber: () => chain.providers },
+          sufficients: { toNumber: () => chain.sufficients },
+        })),
       },
     },
     registry: {

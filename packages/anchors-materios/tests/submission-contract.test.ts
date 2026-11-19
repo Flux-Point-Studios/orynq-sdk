@@ -17,6 +17,8 @@ const blockHash = hash("b");
 const okDryRun = { isErr: false, asOk: { isErr: false } };
 const moduleError = { isModule: true, asModule: {}, toString: () => "module error" };
 const other = { contentHash: hash("4"), rootHash: hash("5"), manifestHash: hash("6") };
+/** How polkadot.js reports InvalidTransaction::Payment from the pool. */
+const PAYMENT = "Invalid Transaction: Inability to pay some fees , e.g. account balance too low";
 
 beforeEach(() => { vi.useFakeTimers(); mocks.apis.length = 0; mocks.sockets.length = 0; });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -38,9 +40,55 @@ async function pendingFor(promise: Promise<unknown>, ms: number) {
   return !settled;
 }
 
+describe("F1b: a fee refusal names an unregistered account apart from a MOTRA shortfall", () => {
+  it("reports a signer with no provider or sufficient reference as an unregistered account", async () => {
+    const f = await connected();
+    f.chain.providers = 0;
+    const refusal = rpcError(1010, PAYMENT);
+    f.signed.send.mockRejectedValue(refusal);
+    const { error } = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }));
+    expect(error).toMatchObject({ name: "MateriosSubmissionError", code: "not-landed", safeToResubmit: true, id: receiptId, cause: refusal });
+    expect(error.feeShortfall).toEqual({ reason: "unregistered-account", account: SIGNER, providers: 0, sufficients: 0 });
+    expect(error.message.startsWith(refusal.message)).toBe(true);
+    expect(error.message).toContain(`Materios account ${SIGNER} is not registered`);
+    expect(error.message).toContain("Register cMATRA for it on Cardano, or ask the Materios operator for capacity");
+    expect(f.api.query.system.account).toHaveBeenCalledWith(SIGNER);
+  });
+
+  it("reports a signer with a provider as short of MOTRA", async () => {
+    const f = await connected();
+    const refusal = rpcError(1010, PAYMENT);
+    f.signed.send.mockRejectedValue(refusal);
+    const { error } = await observe(submitAnchor(f.provider, entry, { timeoutMs: 100 }));
+    expect(error).toMatchObject({ code: "not-landed", safeToResubmit: true, id: anchorId, cause: refusal });
+    expect(error.feeShortfall).toEqual({ reason: "insufficient-motra", account: SIGNER, providers: 1, sufficients: 0 });
+    expect(error.message).toContain(`Materios account ${SIGNER} is registered but holds too little MOTRA to pay the fee`);
+  });
+
+  it("counts a sufficient reference as registered, as CheckNonce does", async () => {
+    const f = await connected();
+    f.chain.providers = 0;
+    f.chain.sufficients = 1;
+    f.signed.send.mockRejectedValue(rpcError(1010, PAYMENT));
+    const { error } = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }));
+    expect(error.feeShortfall).toMatchObject({ reason: "insufficient-motra", providers: 0, sufficients: 1 });
+  });
+
+  it("keeps the refusal not-landed and says why when the account cannot be read", async () => {
+    const f = await connected();
+    f.api.query.system.account.mockRejectedValue(new Error("state unavailable"));
+    const refusal = rpcError(1010, PAYMENT);
+    f.signed.send.mockRejectedValue(refusal);
+    const { error } = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }));
+    expect(error).toMatchObject({ code: "not-landed", safeToResubmit: true, cause: refusal });
+    expect(error.feeShortfall).toBeUndefined();
+    expect(error.message).toBe(`${refusal.message}. Could not read account ${SIGNER} to tell an unregistered account from a MOTRA shortfall: state unavailable`);
+  });
+});
+
 describe("F1: node refusals and pre-send failures are not-landed", () => {
   it.each([
-    [1010, "Invalid Transaction: Inability to pay some fees , e.g. account balance too low"],
+    [1010, "Invalid Transaction: Transaction has a bad signature"],
     [1011, "Unknown Transaction Validity: cannot lookup"],
     [1014, PRIORITY_TOO_LOW],
     [1016, "Immediately Dropped: The transaction couldn't enter the pool because of the limit"],
@@ -53,6 +101,8 @@ describe("F1: node refusals and pre-send failures are not-landed", () => {
     expect(error.message).toBe(refusal.message);
     expect(error.cause).toBe(refusal);
     expect(error).toMatchObject({ txHash, signer: SIGNER, nonce: 7 });
+    expect(error.feeShortfall).toBeUndefined();
+    expect(f.api.query.system.account).not.toHaveBeenCalled();
     expect(mocks.apis).toHaveLength(1);
     expect(f.api.listenerCount("disconnected")).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
@@ -81,7 +131,7 @@ describe("F1: node refusals and pre-send failures are not-landed", () => {
     const f = await connected();
     vi.spyOn(console, "warn").mockImplementation(() => {});
     f.api.rpc.system.dryRun.mockRejectedValue(rpcError(-32601, "RPC call is unsafe to be called externally"));
-    const refusal = rpcError(1010, "Invalid Transaction: Inability to pay some fees , e.g. account balance too low");
+    const refusal = rpcError(1010, PAYMENT);
     f.signed.send.mockRejectedValue(refusal);
     const { error } = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }));
     expect(error).toMatchObject({ code: "not-landed", safeToResubmit: true, cause: refusal });
@@ -119,10 +169,11 @@ describe("F1: node refusals and pre-send failures are not-landed", () => {
   it("leaves validity to the pool: a dry-run validity verdict defers to the node's refusal", async () => {
     const f = await connected();
     f.api.rpc.system.dryRun.mockResolvedValue({ isErr: true, asErr: { toString: () => '{"invalid":{"payment":null}}' } });
-    const refusal = rpcError(1010, "Invalid Transaction: Inability to pay some fees , e.g. account balance too low");
+    const refusal = rpcError(1010, PAYMENT);
     f.signed.send.mockRejectedValue(refusal);
     const { error } = await observe(submitReceipt(f.provider, input, { timeoutMs: 100 }));
-    expect(error).toMatchObject({ code: "not-landed", safeToResubmit: true, cause: refusal, message: refusal.message });
+    expect(error).toMatchObject({ code: "not-landed", safeToResubmit: true, cause: refusal });
+    expect(error.message.startsWith(refusal.message)).toBe(true);
   });
 
   it("signs an anchor before sending, so a signing failure is not-landed and nothing is sent (s12)", async () => {

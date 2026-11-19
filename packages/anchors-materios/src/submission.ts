@@ -7,7 +7,8 @@ import type { ApiPromise } from "@polkadot/api";
 import type { SubmittableExtrinsic } from "@polkadot/api/types";
 import type { MateriosProvider } from "./provider.js";
 import type { TimeoutOptions } from "./types.js";
-import { MateriosConnectionError, MateriosSubmissionError, type ExpectedRecord, type SubmittedExtrinsic } from "./errors.js";
+import { MateriosConnectionError, MateriosSubmissionError, describeFeeShortfall, type ExpectedRecord, type MateriosFeeShortfall, type SubmittedExtrinsic } from "./errors.js";
+import { readFeeShortfall } from "./fee.js";
 import { timeoutBudget, withinDeadline } from "./deadline.js";
 import { describeDispatch, watchSubmission, type DispatchFailure } from "./subscription.js";
 import { POLL_ABORTED, POLL_MS, boundedRead, conflictError, inclusionUnknownMessage, pollHeads, readHead, readRecord } from "./inclusion.js";
@@ -30,6 +31,8 @@ export interface Submission<T> {
 }
 
 const ALREADY_EXISTS = { receipt: "orinqReceipts.ReceiptAlreadyExists", anchor: "orinqReceipts.AnchorAlreadyExists" };
+/** The pool's text for `InvalidTransaction::Payment`, as the node and polkadot.js render it. */
+const PAYMENT_REFUSAL = "Inability to pay some fees";
 
 const asError = (value: unknown) => value instanceof Error ? value : new Error(String(value));
 
@@ -75,7 +78,9 @@ async function dryRunFailure(api: ApiPromise, signed: Signed): Promise<DispatchF
 /**
  * Submission contract:
  * - `not-landed`: this call broadcast nothing, or the pool refused it (1010/1011/1014/1016, whose
- *   message is kept verbatim); resubmit with the same id. The pool alone judges validity.
+ *   message is kept verbatim); resubmit with the same id. The pool alone judges validity. A
+ *   refusal for fees reads the signer's account and appends whether it is unregistered or short
+ *   of MOTRA (`feeShortfall`).
  * - `inclusion-unknown`: it may still land; settle it with `resolveInclusion`.
  * - `dispatch`: the runtime rejects it, or its id holds a different payload.
  * A stored record matching the payload is success (`reconciled: true`), whoever stored it.
@@ -147,8 +152,19 @@ export async function submit<T>(provider: MateriosProvider, submission: Submissi
   const outcome = await watchSubmission(api, callback => signed.send(callback), watchDeadline, finalized);
   let lost: Error;
   switch (outcome.status) {
-    case "refused":
-      throw notLanded(outcome.cause.message, outcome.cause);
+    case "refused": {
+      const { cause } = outcome;
+      if ((cause as { code?: unknown }).code !== 1010 || !cause.message.includes(PAYMENT_REFUSAL)) throw notLanded(cause.message, cause);
+      let feeShortfall: MateriosFeeShortfall;
+      try {
+        feeShortfall = await boundedRead(() => readFeeShortfall(api, keypair.address), deadline, () => provider.markUnresponsive(api));
+      } catch (error) {
+        throw notLanded(`${cause.message}. Could not read account ${keypair.address} to tell an unregistered account ` +
+          `from a MOTRA shortfall: ${asError(error).message}`, cause);
+      }
+      throw new MateriosSubmissionError("not-landed", id, `${cause.message}. ${describeFeeShortfall(feeShortfall)}`,
+        { expected, extrinsic, cause, feeShortfall });
+    }
     case "failed":
       return alreadyExists(outcome.failure, outcome.failure.message, extrinsic.txHash);
     case "included": {
